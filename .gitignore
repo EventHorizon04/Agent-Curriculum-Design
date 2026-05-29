@@ -10,3 +10,6 @@ dist/
 .pytest_cache/
 checkpoints.db
 _skill_extract.txt
+.uvicorn.pid
+frontend/node_modules/
+frontend/dist/
