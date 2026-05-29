@@ -40,7 +40,7 @@ try {
 
 # --- 3. Start Docker DB services ---
 Write-Step "Starting DB services (postgres, qdrant, minio)..."
-docker compose up -d
+docker compose up -d --remove-orphans
 if ($LASTEXITCODE -ne 0) { Write-Fail "docker compose up failed" }
 Write-Ok "Containers started"
 
