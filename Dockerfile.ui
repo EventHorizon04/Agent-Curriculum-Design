@@ -1,0 +1,12 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN pip install uv
+
+COPY pyproject.toml .
+RUN uv pip install --system .
+
+COPY streamlit_app/ ./streamlit_app/
+
+CMD ["streamlit", "run", "streamlit_app/app.py", "--server.port", "8501", "--server.address", "0.0.0.0"]

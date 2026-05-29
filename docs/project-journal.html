@@ -1,0 +1,1456 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Project Journal — Curriculum Design Agent</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,300;1,400;1,500&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,500;1,8..60,300;1,8..60,400&family=Sarabun:ital,wght@0,300;0,400;0,500;0,600;1,300;1,400&family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+/* ─── TOKENS ─── */
+:root {
+  --ink:       #111118;
+  --ink-mid:   #444450;
+  --ink-faint: #9090a0;
+  --paper:     #FAFAF7;
+  --paper2:    #F3F3EE;
+  --line:      #DDDDD5;
+  --red:       #C41230;
+  --red-pale:  #FDF0F2;
+  --red-dim:   rgba(196,18,48,0.08);
+
+  --f-display: 'Cormorant Garamond', 'Sarabun', serif;
+  --f-body:    'Source Serif 4', 'Sarabun', serif;
+  --f-ui:      'Sarabun', sans-serif;
+  --f-mono:    'IBM Plex Mono', monospace;
+
+  --gutter:    clamp(1.5rem, 5vw, 4rem);
+  --col:       680px;
+}
+
+/* ─── RESET ─── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; font-size: 17px; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 1rem;
+  line-height: 1.75;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ─── DOT-GRID BACKGROUND ─── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(circle, #C0C0B8 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.25;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ─── LAYOUT WRAPPER ─── */
+.journal {
+  position: relative;
+  z-index: 1;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+
+/* ─── MASTHEAD ─── */
+.masthead {
+  padding: 5rem 0 3rem;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 4rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 2rem;
+}
+
+.masthead-eyebrow {
+  font-family: var(--f-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--red);
+  margin-bottom: 1rem;
+}
+
+.masthead h1 {
+  font-family: var(--f-display);
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+
+.masthead h1 em {
+  font-style: italic;
+  font-weight: 300;
+  color: var(--red);
+}
+
+.masthead-meta {
+  text-align: right;
+}
+
+.masthead-date {
+  font-family: var(--f-display);
+  font-size: 0.85rem;
+  font-weight: 300;
+  font-style: italic;
+  color: var(--ink-mid);
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.stamp {
+  display: inline-block;
+  border: 2px solid var(--red);
+  color: var(--red);
+  font-family: var(--f-mono);
+  font-size: 0.6rem;
+  font-weight: 500;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  padding: 0.35rem 0.75rem;
+  transform: rotate(-4deg);
+}
+
+/* ─── CONTENT COLUMNS ─── */
+.content-full { max-width: var(--col); }
+.content-wide { max-width: 100%; }
+
+/* ─── SECTION ─── */
+.section {
+  margin-bottom: 5rem;
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+
+.section.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.section-rule {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+.section-num {
+  font-family: var(--f-mono);
+  font-size: 0.65rem;
+  color: var(--red);
+  letter-spacing: 0.15em;
+  flex-shrink: 0;
+}
+
+.section-rule hr {
+  flex: 1;
+  border: none;
+  border-top: 1px solid var(--line);
+}
+
+.section-title {
+  font-family: var(--f-display);
+  font-size: clamp(1.6rem, 3vw, 2.4rem);
+  font-weight: 600;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+  margin-bottom: 1.25rem;
+}
+
+.section-lead {
+  font-family: var(--f-body);
+  font-size: 1.05rem;
+  color: var(--ink-mid);
+  line-height: 1.75;
+  margin-bottom: 2rem;
+  max-width: var(--col);
+}
+
+/* ─── ABSTRACT BOX ─── */
+.abstract {
+  background: var(--paper2);
+  border-left: 3px solid var(--red);
+  padding: 1.5rem 2rem;
+  margin-bottom: 2rem;
+  max-width: var(--col);
+}
+
+.abstract-label {
+  font-family: var(--f-mono);
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: var(--red);
+  margin-bottom: 0.6rem;
+}
+
+.abstract p {
+  font-size: 0.95rem;
+  line-height: 1.8;
+  color: var(--ink-mid);
+}
+
+/* ─── PULL QUOTE ─── */
+.pull-quote {
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  padding: 1.5rem 0;
+  margin: 2.5rem 0;
+  max-width: var(--col);
+}
+
+.pull-quote p {
+  font-family: var(--f-display);
+  font-size: clamp(1.15rem, 2vw, 1.5rem);
+  font-style: italic;
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--ink);
+}
+
+.pull-quote cite {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: 0.65rem;
+  font-style: normal;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  margin-top: 0.75rem;
+}
+
+/* ─── PIPELINE DIAGRAM ─── */
+.pipeline-diagram {
+  margin: 2.5rem 0;
+  overflow-x: auto;
+  padding-bottom: 1rem;
+}
+
+.pipeline-track {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-width: 700px;
+  position: relative;
+}
+
+.pipeline-stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.pipeline-stage-inner {
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  padding: 1.25rem 1rem 1rem;
+  flex: 1;
+  position: relative;
+  transition: background 0.2s;
+}
+
+.pipeline-stage-inner:hover {
+  background: var(--red-dim);
+}
+
+.pipeline-stage:not(:last-child) .pipeline-stage-inner {
+  border-right: none;
+}
+
+.pipeline-stage-num {
+  font-family: var(--f-mono);
+  font-size: 0.6rem;
+  color: var(--red);
+  letter-spacing: 0.12em;
+  margin-bottom: 0.4rem;
+}
+
+.pipeline-stage-name {
+  font-family: var(--f-display);
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+  line-height: 1.2;
+}
+
+.pipeline-stage-desc {
+  font-family: var(--f-ui);
+  font-size: 0.72rem;
+  color: var(--ink-mid);
+  line-height: 1.45;
+}
+
+.pipeline-hitl {
+  margin-top: 1rem;
+  padding-top: 0.6rem;
+  border-top: 1px dashed var(--line);
+  font-family: var(--f-mono);
+  font-size: 0.6rem;
+  color: var(--red);
+  letter-spacing: 0.1em;
+}
+
+.pipeline-arrow {
+  width: 36px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--paper);
+  border-top: 1px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
+  font-size: 1rem;
+  color: var(--ink-faint);
+  position: relative;
+  z-index: 1;
+}
+
+/* Data flow animation */
+.pipeline-flow {
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  min-width: 700px;
+  gap: 0;
+}
+
+.flow-segment {
+  flex: 1;
+  height: 2px;
+  background: linear-gradient(90deg, var(--red) 0%, var(--red) 50%, transparent 50%);
+  background-size: 20px 2px;
+  animation: flowMove 1.2s linear infinite;
+}
+
+.flow-gap {
+  width: 36px;
+  flex-shrink: 0;
+  height: 2px;
+  background: var(--red);
+  opacity: 0.3;
+}
+
+@keyframes flowMove {
+  0%   { background-position: 0 0; }
+  100% { background-position: 20px 0; }
+}
+
+/* ─── ARCHITECTURE DIAGRAM ─── */
+.arch-diagram {
+  margin: 2.5rem 0;
+  border: 1px solid var(--line);
+  padding: 2rem;
+  background: var(--paper2);
+  font-family: var(--f-mono);
+  position: relative;
+  overflow: hidden;
+}
+
+.arch-diagram::before {
+  content: 'SYSTEM ARCHITECTURE';
+  position: absolute;
+  top: 1rem;
+  right: 1.25rem;
+  font-size: 0.6rem;
+  letter-spacing: 0.2em;
+  color: var(--ink-faint);
+}
+
+.arch-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr 1fr;
+  grid-template-rows: auto auto auto;
+  gap: 1rem;
+  align-items: start;
+}
+
+.arch-box {
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  padding: 0.75rem 1rem;
+}
+
+.arch-box.red-border {
+  border-color: var(--red);
+  border-width: 2px;
+}
+
+.arch-box.dashed {
+  border-style: dashed;
+  border-color: var(--ink-faint);
+}
+
+.arch-box-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--red);
+  margin-bottom: 0.3rem;
+}
+
+.arch-box-name {
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.arch-box-detail {
+  font-size: 0.62rem;
+  color: var(--ink-faint);
+  margin-top: 0.25rem;
+  line-height: 1.4;
+}
+
+.arch-connector {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.1rem;
+  color: var(--ink-faint);
+  padding: 0.5rem;
+}
+
+.arch-layer-label {
+  font-size: 0.6rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem 0;
+  border-right: 1px solid var(--line);
+  margin-right: 1rem;
+}
+
+.arch-section {
+  display: flex;
+  margin-bottom: 1.25rem;
+}
+
+.arch-group {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.6rem;
+}
+
+.arch-group.two { grid-template-columns: 1fr 1fr; }
+.arch-group.four { grid-template-columns: repeat(4, 1fr); }
+.arch-group.five { grid-template-columns: repeat(5, 1fr); }
+
+/* ─── TECH STACK TABLE ─── */
+.stack-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.5rem 0;
+  max-width: var(--col);
+}
+
+.stack-table th {
+  font-family: var(--f-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-align: left;
+  padding: 0.5rem 1rem 0.5rem 0;
+  border-bottom: 2px solid var(--ink);
+  color: var(--ink);
+}
+
+.stack-table td {
+  padding: 0.65rem 1rem 0.65rem 0;
+  font-size: 0.88rem;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  line-height: 1.5;
+}
+
+.stack-table td:first-child {
+  font-family: var(--f-mono);
+  font-size: 0.72rem;
+  color: var(--red);
+  white-space: nowrap;
+  width: 160px;
+}
+
+.stack-table td:last-child {
+  color: var(--ink-mid);
+  font-size: 0.82rem;
+}
+
+/* ─── OBE HIERARCHY ─── */
+.obe-tree {
+  margin: 2rem 0;
+  max-width: var(--col);
+}
+
+.obe-level {
+  display: flex;
+  align-items: stretch;
+  margin-bottom: 0.4rem;
+}
+
+.obe-connector {
+  width: 2rem;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+  position: relative;
+}
+
+.obe-connector::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+.obe-connector::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1rem;
+  height: 1px;
+  background: var(--line);
+}
+
+.obe-node {
+  flex: 1;
+  border: 1px solid;
+  padding: 0.75rem 1rem;
+  position: relative;
+}
+
+.obe-node.plo { border-color: var(--ink); border-width: 2px; background: var(--paper); }
+.obe-node.ylo { border-color: var(--red); background: var(--red-pale); margin-left: 2rem; }
+.obe-node.clo { border-color: var(--line); background: var(--paper2); margin-left: 4rem; font-style: italic; }
+
+.obe-node-tag {
+  font-family: var(--f-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+.obe-node.plo .obe-node-tag { color: var(--ink); }
+.obe-node.ylo .obe-node-tag { color: var(--red); }
+.obe-node.clo .obe-node-tag { color: var(--ink-faint); }
+
+.obe-node-text {
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: var(--ink-mid);
+}
+
+/* ─── RULES GRID ─── */
+.rules-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  margin: 1.5rem 0;
+}
+
+.rule-item {
+  background: var(--paper);
+  padding: 1rem 1.25rem;
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.rule-num {
+  font-family: var(--f-mono);
+  font-size: 0.65rem;
+  color: var(--red);
+  flex-shrink: 0;
+  padding-top: 0.15rem;
+  min-width: 1.5rem;
+}
+
+.rule-text {
+  font-size: 0.85rem;
+  line-height: 1.55;
+  color: var(--ink-mid);
+}
+
+.rule-text strong {
+  display: block;
+  color: var(--ink);
+  font-weight: 500;
+  margin-bottom: 0.15rem;
+  font-family: var(--f-ui);
+  font-size: 0.8rem;
+}
+
+/* ─── DEVELOPMENT LOG ─── */
+.log-timeline {
+  position: relative;
+  margin: 1.5rem 0;
+  max-width: var(--col);
+}
+
+.log-timeline::before {
+  content: '';
+  position: absolute;
+  left: 3.5rem;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--line);
+}
+
+.log-entry {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 1.75rem;
+  position: relative;
+}
+
+.log-date {
+  font-family: var(--f-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-faint);
+  width: 3rem;
+  flex-shrink: 0;
+  padding-top: 0.15rem;
+  text-align: right;
+  line-height: 1.4;
+}
+
+.log-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  flex-shrink: 0;
+  margin-top: 0.3rem;
+  position: relative;
+  z-index: 1;
+}
+
+.log-dot.red { border-color: var(--red); background: var(--red); }
+
+.log-body { flex: 1; }
+
+.log-title {
+  font-family: var(--f-display);
+  font-size: 1.05rem;
+  font-weight: 600;
+  margin-bottom: 0.35rem;
+  line-height: 1.3;
+}
+
+.log-desc {
+  font-size: 0.85rem;
+  color: var(--ink-mid);
+  line-height: 1.65;
+}
+
+.log-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+}
+
+.log-tag {
+  font-family: var(--f-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--line);
+  color: var(--ink-faint);
+}
+
+.log-tag.red { border-color: var(--red); color: var(--red); }
+
+/* ─── DATA FLOW SECTION ─── */
+.dataflow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  margin: 1.5rem 0;
+}
+
+.dataflow-cell {
+  background: var(--paper);
+  padding: 1.25rem 1rem;
+}
+
+.dataflow-cell-label {
+  font-family: var(--f-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--red);
+  margin-bottom: 0.5rem;
+}
+
+.dataflow-cell-items {
+  list-style: none;
+}
+
+.dataflow-cell-items li {
+  font-size: 0.8rem;
+  color: var(--ink-mid);
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 0.5rem;
+}
+
+.dataflow-cell-items li:last-child { border-bottom: none; }
+
+.dataflow-cell-items li::before {
+  content: '—';
+  color: var(--ink-faint);
+  flex-shrink: 0;
+}
+
+/* ─── FOOTER ─── */
+.journal-footer {
+  border-top: 2px solid var(--ink);
+  padding: 2rem 0 4rem;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: start;
+  gap: 2rem;
+  margin-top: 2rem;
+}
+
+.footer-colophon {
+  font-family: var(--f-display);
+  font-style: italic;
+  font-size: 0.9rem;
+  color: var(--ink-mid);
+  line-height: 1.7;
+  max-width: 480px;
+}
+
+.footer-details {
+  font-family: var(--f-mono);
+  font-size: 0.62rem;
+  color: var(--ink-faint);
+  letter-spacing: 0.08em;
+  line-height: 2;
+  text-align: right;
+}
+
+/* ─── SCROLL REVEAL ─── */
+.reveal { opacity: 0; transform: translateY(20px); transition: opacity 0.55s ease, transform 0.55s ease; }
+.reveal.visible { opacity: 1; transform: translateY(0); }
+
+/* stagger children */
+.reveal-stagger > * { opacity: 0; transform: translateY(16px); transition: opacity 0.45s ease, transform 0.45s ease; }
+.reveal-stagger.visible > *:nth-child(1) { opacity:1; transform:none; transition-delay:0.05s; }
+.reveal-stagger.visible > *:nth-child(2) { opacity:1; transform:none; transition-delay:0.12s; }
+.reveal-stagger.visible > *:nth-child(3) { opacity:1; transform:none; transition-delay:0.19s; }
+.reveal-stagger.visible > *:nth-child(4) { opacity:1; transform:none; transition-delay:0.26s; }
+.reveal-stagger.visible > *:nth-child(5) { opacity:1; transform:none; transition-delay:0.33s; }
+.reveal-stagger.visible > *:nth-child(6) { opacity:1; transform:none; transition-delay:0.40s; }
+.reveal-stagger.visible > *:nth-child(7) { opacity:1; transform:none; transition-delay:0.47s; }
+
+p + p { margin-top: 0.75rem; }
+</style>
+</head>
+<body>
+
+<article class="journal">
+
+  <!-- ═══ MASTHEAD ═══ -->
+  <header class="masthead">
+    <div>
+      <div class="masthead-eyebrow">Research &amp; Development Journal — Vol. I</div>
+      <h1>Curriculum Design<br><em>Agent</em></h1>
+    </div>
+    <div class="masthead-meta">
+      <span class="masthead-date">26 พฤษภาคม 2568</span>
+      <div class="stamp">Proof of Concept</div>
+    </div>
+  </header>
+
+  <!-- ═══ 01 ABSTRACT ═══ -->
+  <section class="section reveal" id="abstract">
+    <div class="section-rule">
+      <span class="section-num">01</span>
+      <hr>
+    </div>
+    <h2 class="section-title">บทคัดย่อ<br><em style="font-weight:300">Abstract</em></h2>
+
+    <div class="abstract">
+      <div class="abstract-label">Project Overview</div>
+      <p>
+        Curriculum Design Agent เป็น AI agent ที่ช่วยนักออกแบบหลักสูตรอุดมศึกษาไทยผลิตหลักสูตรที่ตรงตาม
+        มาตรฐาน MHESI (กระทรวงอุดมศึกษา วิทยาศาสตร์ วิจัยและนวัตกรรม) และหลักการ Outcome-Based Education (OBE)
+        โดยดำเนินการผ่าน pipeline 5 ขั้นตอนพร้อม Human-in-the-Loop review ณ ทุกจุดเปลี่ยนขั้นตอน
+        Agent หยุดที่ระดับ YLO และส่งต่องาน CLO ให้คณาจารย์ดำเนินการต่อ
+      </p>
+    </div>
+
+    <div class="pull-quote">
+      <p>"PLO → YLO → CLO. ห่วงโซ่นี้ไม่มีการข้ามขั้น — ทุก outcome ต้องสืบสาวกลับถึง evidence จากผู้มีส่วนได้ส่วนเสีย"</p>
+      <cite>Immutable Rule #1 — CLAUDE.md</cite>
+    </div>
+
+    <p class="section-lead">
+      ระบบนี้ถูกออกแบบให้ทำงานบน open-source LLM (Typhoon 2 + Qwen 2.5) ผ่าน Ollama
+      เพื่อให้สถาบันการศึกษาสามารถ deploy ได้โดยไม่พึ่งพา paid API
+      ทุก output ผ่านการตรวจสอบ Pydantic validators ก่อนบันทึก — ไม่มีการ hand-parse JSON จาก LLM
+    </p>
+  </section>
+
+  <!-- ═══ 02 WORKFLOW ═══ -->
+  <section class="section reveal" id="workflow">
+    <div class="section-rule">
+      <span class="section-num">02</span>
+      <hr>
+    </div>
+    <h2 class="section-title">กระบวนการทำงาน<br><em style="font-weight:300">5-Stage Pipeline</em></h2>
+    <p class="section-lead">
+      Pipeline ทำงานตามลำดับโดยไม่ข้ามขั้นตอน Human-in-the-Loop interrupt ทำให้ผู้ออกแบบหลักสูตรสามารถ
+      แก้ไข ปฏิเสธ หรืออนุมัติ output ของแต่ละ stage ก่อนดำเนินต่อ
+    </p>
+
+    <div class="pipeline-diagram reveal">
+      <div class="pipeline-track">
+        <div class="pipeline-stage">
+          <div class="pipeline-stage-inner">
+            <div class="pipeline-stage-num">STAGE 00</div>
+            <div class="pipeline-stage-name">Intake</div>
+            <div class="pipeline-stage-desc">รับข้อมูลโปรแกรม — ProgramMetadata, vision, วัตถุประสงค์หลักสูตร</div>
+            <div class="pipeline-hitl">▲ HITL CHECKPOINT</div>
+          </div>
+        </div>
+        <div class="pipeline-arrow">→</div>
+        <div class="pipeline-stage">
+          <div class="pipeline-stage-inner">
+            <div class="pipeline-stage-num">STAGE 01</div>
+            <div class="pipeline-stage-name">Stakeholder Needs</div>
+            <div class="pipeline-stage-desc">จำแนก evidence จาก employers, alumni, professional councils ด้วย LLM light</div>
+            <div class="pipeline-hitl">▲ HITL CHECKPOINT</div>
+          </div>
+        </div>
+        <div class="pipeline-arrow">→</div>
+        <div class="pipeline-stage">
+          <div class="pipeline-stage-inner">
+            <div class="pipeline-stage-num">STAGE 02</div>
+            <div class="pipeline-stage-name">Skill Extraction</div>
+            <div class="pipeline-stage-desc">KeyBERT + BERTopic สกัดทักษะ, จัดกลุ่ม clusters, embed ด้วย BGE-M3</div>
+            <div class="pipeline-hitl">▲ HITL CHECKPOINT</div>
+          </div>
+        </div>
+        <div class="pipeline-arrow">→</div>
+        <div class="pipeline-stage">
+          <div class="pipeline-stage-inner">
+            <div class="pipeline-stage-num">STAGE 03</div>
+            <div class="pipeline-stage-name">PLO Synthesis</div>
+            <div class="pipeline-stage-desc">สังเคราะห์ 4–6 PLO จาก skill clusters, ตรวจ SMART + forbidden words</div>
+            <div class="pipeline-hitl">▲ HITL CHECKPOINT</div>
+          </div>
+        </div>
+        <div class="pipeline-arrow">→</div>
+        <div class="pipeline-stage">
+          <div class="pipeline-stage-inner">
+            <div class="pipeline-stage-num">STAGE 04</div>
+            <div class="pipeline-stage-name">YLO Derivation</div>
+            <div class="pipeline-stage-desc">อนุมาน YLO matrix ต่อ PLO ทุกตัว Bloom level monotone ตามปี</div>
+            <div class="pipeline-hitl">▲ HITL CHECKPOINT</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="pipeline-flow" style="margin-top:0.5rem">
+        <div class="flow-segment"></div>
+        <div class="flow-gap"></div>
+        <div class="flow-segment"></div>
+        <div class="flow-gap"></div>
+        <div class="flow-segment"></div>
+        <div class="flow-gap"></div>
+        <div class="flow-segment"></div>
+        <div class="flow-gap"></div>
+        <div class="flow-segment"></div>
+      </div>
+    </div>
+
+    <!-- Data in/out -->
+    <div class="dataflow reveal reveal-stagger">
+      <div class="dataflow-cell">
+        <div class="dataflow-cell-label">Input per Stage</div>
+        <ul class="dataflow-cell-items">
+          <li>ProgramMetadata (MHESI fields)</li>
+          <li>Raw stakeholder evidence docs</li>
+          <li>LinkedIn job postings CSV</li>
+          <li>Occupation taxonomy XLSX</li>
+        </ul>
+      </div>
+      <div class="dataflow-cell">
+        <div class="dataflow-cell-label">Intermediate Artifacts</div>
+        <ul class="dataflow-cell-items">
+          <li>StakeholderEvidence (classified)</li>
+          <li>ExtractedSkill list</li>
+          <li>SkillCluster with demand_score</li>
+          <li>PLO drafts + SMARTCheck</li>
+        </ul>
+      </div>
+      <div class="dataflow-cell">
+        <div class="dataflow-cell-label">Final Output</div>
+        <ul class="dataflow-cell-items">
+          <li>YLOMatrix (PLO × Year)</li>
+          <li>CHECO export (JSON)</li>
+          <li>มคอ.2 report (Word)</li>
+          <li>Excel Bloom matrix</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 03 ARCHITECTURE ═══ -->
+  <section class="section reveal" id="architecture">
+    <div class="section-rule">
+      <span class="section-num">03</span>
+      <hr>
+    </div>
+    <h2 class="section-title">สถาปัตยกรรมระบบ<br><em style="font-weight:300">System Architecture</em></h2>
+    <p class="section-lead">
+      ระบบแบ่งออกเป็น 5 ชั้น — UI, API, Agent Core, Storage, และ Infrastructure
+      แต่ละชั้นสื่อสารผ่าน interface ที่กำหนดชัดเจน ไม่มี coupling ข้ามชั้น
+    </p>
+
+    <!-- Architecture diagram CSS -->
+    <div class="arch-diagram reveal">
+
+      <!-- UI Layer -->
+      <div class="arch-section">
+        <div class="arch-layer-label">UI LAYER</div>
+        <div class="arch-group two">
+          <div class="arch-box">
+            <div class="arch-box-label">Streamlit App</div>
+            <div class="arch-box-name">5-Page UI</div>
+            <div class="arch-box-detail">intake / evidence / clusters / plos / ylos — one page per stage</div>
+          </div>
+          <div class="arch-box">
+            <div class="arch-box-label">FastAPI Backend</div>
+            <div class="arch-box-name">REST API</div>
+            <div class="arch-box-detail">/programs /evidence /clusters /plos /ylos — X-API-Key auth</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align:center;padding:0.35rem 0;color:var(--ink-faint);font-size:0.9rem;letter-spacing:0.1em">↕ ↕ ↕</div>
+
+      <!-- Agent Layer -->
+      <div class="arch-section">
+        <div class="arch-layer-label">AGENT CORE</div>
+        <div class="arch-group five">
+          <div class="arch-box red-border">
+            <div class="arch-box-label">LangGraph</div>
+            <div class="arch-box-name">State Machine</div>
+            <div class="arch-box-detail">AgentState TypedDict, HITL interrupts</div>
+          </div>
+          <div class="arch-box">
+            <div class="arch-box-label">LLM Router</div>
+            <div class="arch-box-name">Dual Model</div>
+            <div class="arch-box-detail">Light: Typhoon2-8B<br>Heavy: Qwen2.5-32B</div>
+          </div>
+          <div class="arch-box">
+            <div class="arch-box-label">Instructor</div>
+            <div class="arch-box-name">Structured Output</div>
+            <div class="arch-box-detail">Pydantic v2 schemas — no hand-parsing</div>
+          </div>
+          <div class="arch-box">
+            <div class="arch-box-label">NLP Pipeline</div>
+            <div class="arch-box-name">Thai NLP</div>
+            <div class="arch-box-detail">PyThaiNLP + KeyBERT + BERTopic</div>
+          </div>
+          <div class="arch-box">
+            <div class="arch-box-label">Embeddings</div>
+            <div class="arch-box-name">BGE-M3</div>
+            <div class="arch-box-detail">1024-dim multilingual vectors</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align:center;padding:0.35rem 0;color:var(--ink-faint);font-size:0.9rem;letter-spacing:0.1em">↕ ↕ ↕</div>
+
+      <!-- Storage Layer -->
+      <div class="arch-section">
+        <div class="arch-layer-label">STORAGE</div>
+        <div class="arch-group four">
+          <div class="arch-box">
+            <div class="arch-box-label">PostgreSQL</div>
+            <div class="arch-box-name">Structured Data</div>
+            <div class="arch-box-detail">Programs, PLOs, YLOs, Evidence — Alembic migrations</div>
+          </div>
+          <div class="arch-box">
+            <div class="arch-box-label">Qdrant</div>
+            <div class="arch-box-name">Vector Store</div>
+            <div class="arch-box-detail">Evidence embeddings — semantic retrieval for Stage 3</div>
+          </div>
+          <div class="arch-box">
+            <div class="arch-box-label">MinIO</div>
+            <div class="arch-box-name">Object Storage</div>
+            <div class="arch-box-detail">Raw docs, Excel exports, มคอ.2 files</div>
+          </div>
+          <div class="arch-box">
+            <div class="arch-box-label">DuckDB</div>
+            <div class="arch-box-name">Analytics</div>
+            <div class="arch-box-detail">Demand score, skill frequency analytics</div>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align:center;padding:0.35rem 0;color:var(--ink-faint);font-size:0.9rem;letter-spacing:0.1em">↕</div>
+
+      <!-- Infra Layer -->
+      <div class="arch-section" style="margin-bottom:0">
+        <div class="arch-layer-label">INFRA</div>
+        <div class="arch-group two">
+          <div class="arch-box dashed">
+            <div class="arch-box-label">Ollama Server</div>
+            <div class="arch-box-name">Local LLM Host</div>
+            <div class="arch-box-detail">OpenAI-compatible /v1 endpoint — Docker volume for model weights</div>
+          </div>
+          <div class="arch-box dashed">
+            <div class="arch-box-label">Docker Compose</div>
+            <div class="arch-box-name">PoC Deployment</div>
+            <div class="arch-box-detail">postgres · qdrant · minio · ollama · api · ui — single compose file</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /arch-diagram -->
+  </section>
+
+  <!-- ═══ 04 TECH STACK ═══ -->
+  <section class="section reveal" id="stack">
+    <div class="section-rule">
+      <span class="section-num">04</span>
+      <hr>
+    </div>
+    <h2 class="section-title">Technology Stack</h2>
+
+    <table class="stack-table reveal">
+      <thead>
+        <tr>
+          <th>Component</th>
+          <th>Technology</th>
+          <th>Rationale</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Runtime</td>
+          <td>Python 3.11+, uv</td>
+          <td>type hints enforced, fast dependency resolution</td>
+        </tr>
+        <tr>
+          <td>Agent Framework</td>
+          <td>LangGraph</td>
+          <td>state machine + interrupt() สำหรับ HITL — ไม่ใช่ simple chain</td>
+        </tr>
+        <tr>
+          <td>LLM (Light)</td>
+          <td>Typhoon 2 8B Instruct</td>
+          <td>Thai-first model — classification, SMART validation</td>
+        </tr>
+        <tr>
+          <td>LLM (Heavy)</td>
+          <td>Qwen 2.5 14B/32B</td>
+          <td>PLO synthesis, YLO derivation — long context reasoning</td>
+        </tr>
+        <tr>
+          <td>Structured Output</td>
+          <td>Instructor + Pydantic v2</td>
+          <td>zero hand-parsing — LLM output เป็น typed Python objects</td>
+        </tr>
+        <tr>
+          <td>Thai NLP</td>
+          <td>PyThaiNLP + BGE-M3</td>
+          <td>tokenization + 1024-dim multilingual embeddings</td>
+        </tr>
+        <tr>
+          <td>Skill Extraction</td>
+          <td>KeyBERT + BERTopic</td>
+          <td>unsupervised keyword extraction + topic clustering</td>
+        </tr>
+        <tr>
+          <td>Vector Store</td>
+          <td>Qdrant</td>
+          <td>COSINE similarity, filterable — semantic evidence retrieval</td>
+        </tr>
+        <tr>
+          <td>Database</td>
+          <td>PostgreSQL + Alembic</td>
+          <td>structured storage + migration management</td>
+        </tr>
+        <tr>
+          <td>API</td>
+          <td>FastAPI + APIKeyHeader</td>
+          <td>async, auto OpenAPI docs, X-API-Key auth middleware</td>
+        </tr>
+        <tr>
+          <td>UI</td>
+          <td>Streamlit</td>
+          <td>rapid prototype — 1 page per pipeline stage</td>
+        </tr>
+        <tr>
+          <td>Logging</td>
+          <td>loguru</td>
+          <td>structured, colored — ไม่ใช้ stdlib logging โดยตรง</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ═══ 05 OBE FRAMEWORK ═══ -->
+  <section class="section reveal" id="obe">
+    <div class="section-rule">
+      <span class="section-num">05</span>
+      <hr>
+    </div>
+    <h2 class="section-title">OBE Framework<br><em style="font-weight:300">&amp; Immutable Rules</em></h2>
+    <p class="section-lead">
+      Outcome-Based Education กำหนดลำดับชั้น PLO → YLO → CLO ที่ไม่สามารถข้ามได้
+      Agent ทำหน้าที่ถึงระดับ YLO เท่านั้น — CLO เป็นหน้าที่ของคณาจารย์
+    </p>
+
+    <!-- OBE hierarchy -->
+    <div class="obe-tree reveal">
+      <div class="obe-level">
+        <div class="obe-node plo">
+          <div class="obe-node-tag">PLO — Programme Learning Outcome</div>
+          <div class="obe-node-text">วิเคราะห์และออกแบบระบบซอฟต์แวร์ขนาดใหญ่โดยประยุกต์ใช้หลักวิศวกรรมซอฟต์แวร์ที่เหมาะสมกับบริบทของอุตสาหกรรมไทยได้อย่างเป็นระบบ</div>
+        </div>
+      </div>
+      <div style="padding-left:2rem;margin-bottom:0.4rem">
+        <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem">
+          <div style="width:1px;height:1.2rem;background:var(--line);margin-left:0.25rem"></div>
+          <div style="height:1px;width:1.5rem;background:var(--line)"></div>
+          <span style="font-family:var(--f-mono);font-size:0.6rem;color:var(--ink-faint)">Year 1–4 YLOs</span>
+        </div>
+      </div>
+      <div class="obe-level">
+        <div class="obe-node ylo">
+          <div class="obe-node-tag">YLO ปีที่ 1 — Bloom: APPLY</div>
+          <div class="obe-node-text">ประยุกต์ใช้ design patterns พื้นฐานเพื่อแก้ปัญหาการออกแบบซอฟต์แวร์ในระดับ module ได้อย่างถูกต้อง</div>
+        </div>
+      </div>
+      <div class="obe-level">
+        <div class="obe-node ylo">
+          <div class="obe-node-tag">YLO ปีที่ 2 — Bloom: ANALYZE</div>
+          <div class="obe-node-text">วิเคราะห์ trade-offs ของ architectural patterns และเลือกใช้ได้เหมาะสมกับ requirement ที่กำหนด</div>
+        </div>
+      </div>
+      <div class="obe-level">
+        <div class="obe-node ylo">
+          <div class="obe-node-tag">YLO ปีที่ 3 — Bloom: EVALUATE</div>
+          <div class="obe-node-text">ประเมินคุณภาพของระบบซอฟต์แวร์และเสนอแนวทางการปรับปรุงโดยอ้างอิง quality attributes ที่วัดได้</div>
+        </div>
+      </div>
+      <div class="obe-level">
+        <div class="obe-node ylo">
+          <div class="obe-node-tag">YLO ปีที่ 4 — Bloom: CREATE</div>
+          <div class="obe-node-text">ออกแบบและพัฒนาระบบซอฟต์แวร์ขนาดใหญ่ครบวงจรตั้งแต่ requirements ถึง deployment โดยคำนึงถึง maintainability และ scalability</div>
+        </div>
+      </div>
+      <div style="padding-left:4rem;margin-bottom:0.4rem">
+        <div style="display:flex;align-items:center;gap:0.5rem">
+          <div style="width:1px;height:1rem;background:var(--line);margin-left:0.25rem"></div>
+          <div style="height:1px;width:1rem;background:var(--line)"></div>
+          <span style="font-family:var(--f-mono);font-size:0.6rem;color:var(--ink-faint)">Faculty → CLO</span>
+        </div>
+      </div>
+      <div class="obe-level">
+        <div class="obe-node clo">
+          <div class="obe-node-tag">CLO — Course Learning Outcome (คณาจารย์ออกแบบ)</div>
+          <div class="obe-node-text">Agent หยุดที่ YLO — CLO เป็นหน้าที่ของอาจารย์ผู้รับผิดชอบรายวิชา</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Immutable rules -->
+    <h3 style="font-family:var(--f-display);font-size:1.1rem;font-weight:600;margin:2rem 0 0.75rem;letter-spacing:-0.01em">กฎที่ไม่สามารถแก้ไขได้ <em style="font-weight:300">Immutable Rules</em></h3>
+
+    <div class="rules-grid reveal reveal-stagger">
+      <div class="rule-item">
+        <span class="rule-num">R1</span>
+        <div class="rule-text">
+          <strong>PLO → YLO → CLO เท่านั้น</strong>
+          ห้ามข้าม YLO ไปหา CLO โดยตรง — Agent หยุดที่ YLO
+        </div>
+      </div>
+      <div class="rule-item">
+        <span class="rule-num">R2</span>
+        <div class="rule-text">
+          <strong>ทุก PLO/YLO ต้องสืบสาวถึง evidence</strong>
+          source_cluster_ids และ source_evidence_ids ต้องไม่ว่าง — Pydantic enforce
+        </div>
+      </div>
+      <div class="rule-item">
+        <span class="rule-num">R3</span>
+        <div class="rule-text">
+          <strong>คำต้องห้ามใน PLO/YLO</strong>
+          รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก — model_validator ปฏิเสธอัตโนมัติ
+        </div>
+      </div>
+      <div class="rule-item">
+        <span class="rule-num">R4</span>
+        <div class="rule-text">
+          <strong>หนึ่ง Bloom verb ต่อ outcome</strong>
+          อนุญาต 2 verbs เฉพาะเมื่ออยู่ใน adjacent Bloom levels เท่านั้น
+        </div>
+      </div>
+      <div class="rule-item">
+        <span class="rule-num">R5</span>
+        <div class="rule-text">
+          <strong>Bloom level monotone ข้ามปี</strong>
+          YLO ปีหลังต้องมี Bloom level ≥ ปีก่อน ครอบคลุม 3 domains (Cognitive/Affective/Psychomotor)
+        </div>
+      </div>
+      <div class="rule-item">
+        <span class="rule-num">R6</span>
+        <div class="rule-text">
+          <strong>HITL ทุก stage boundary</strong>
+          ไม่มี stage ใดที่ auto-chain ข้ามไปถัดไปโดยไม่ผ่าน human checkpoint approval
+        </div>
+      </div>
+      <div class="rule-item">
+        <span class="rule-num">R7</span>
+        <div class="rule-text">
+          <strong>Open-source LLM โดย default</strong>
+          Paid APIs (Claude, GPT-4o) เป็น config option ไม่ใช่ default — ไม่ hardcode
+        </div>
+      </div>
+      <div class="rule-item">
+        <span class="rule-num">R8</span>
+        <div class="rule-text">
+          <strong>4–6 PLO เท่านั้น</strong>
+          ห้ามสั่ง model ให้สร้าง "เท่าที่ต้องการ" — overlap เพิ่มเมื่อมากกว่า 6
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 06 DEVELOPMENT LOG ═══ -->
+  <section class="section reveal" id="log">
+    <div class="section-rule">
+      <span class="section-num">06</span>
+      <hr>
+    </div>
+    <h2 class="section-title">Development Journal<br><em style="font-weight:300">บันทึกการพัฒนา</em></h2>
+    <p class="section-lead">
+      บันทึกการตัดสินใจสำคัญและ milestones ตั้งแต่เริ่มโปรเจกต์ถึงปัจจุบัน
+    </p>
+
+    <div class="log-timeline reveal">
+
+      <div class="log-entry">
+        <div class="log-date">Phase<br>0</div>
+        <div class="log-dot"></div>
+        <div class="log-body">
+          <div class="log-title">Project Foundation &amp; Architecture Design</div>
+          <div class="log-desc">
+            กำหนด 5-stage pipeline, เลือก LangGraph สำหรับ HITL state machine,
+            ออกแบบ dual-model routing (light/heavy), กำหนด OBE domain rules ทั้งหมด
+            เลือก Pydantic v2 + Instructor เพื่อหลีกเลี่ยง hand-parsing LLM JSON
+          </div>
+          <div class="log-tags">
+            <span class="log-tag">Architecture</span>
+            <span class="log-tag">LangGraph</span>
+            <span class="log-tag">OBE Rules</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="log-entry">
+        <div class="log-date">Phase<br>1</div>
+        <div class="log-dot"></div>
+        <div class="log-body">
+          <div class="log-title">Core Models &amp; Validators</div>
+          <div class="log-desc">
+            สร้าง Pydantic schemas ครบ — PLO, YLO, YLOMatrix, SkillCluster, StakeholderEvidence
+            เขียน model_validators สำหรับ forbidden words, evidence tracing, Bloom monotonicity
+            test suite ครอบคลุม validators ทุกตัว
+          </div>
+          <div class="log-tags">
+            <span class="log-tag">Pydantic v2</span>
+            <span class="log-tag">Validators</span>
+            <span class="log-tag">TDD</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="log-entry">
+        <div class="log-date">Phase<br>2</div>
+        <div class="log-dot"></div>
+        <div class="log-body">
+          <div class="log-title">Pipeline Implementation &amp; LLM Integration</div>
+          <div class="log-desc">
+            implement 5 stage handlers, LangGraph graph ครบ, Instructor integration,
+            prompt templates สำหรับทุก stage, SMART validator prompt,
+            embedding pipeline (BGE-M3), Qdrant upsert, PostgreSQL repositories
+          </div>
+          <div class="log-tags">
+            <span class="log-tag">Stages 0–4</span>
+            <span class="log-tag">Instructor</span>
+            <span class="log-tag">BGE-M3</span>
+            <span class="log-tag">Qdrant</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="log-entry">
+        <div class="log-date">Phase<br>3</div>
+        <div class="log-dot"></div>
+        <div class="log-body">
+          <div class="log-title">API, UI &amp; Exporters</div>
+          <div class="log-desc">
+            FastAPI routes ทุก resource, Streamlit UI 5 หน้า,
+            exporters — CHECO JSON, มคอ.2 Word, Excel Bloom matrix
+            Docker Compose ครบ services — postgres, qdrant, minio, ollama
+          </div>
+          <div class="log-tags">
+            <span class="log-tag">FastAPI</span>
+            <span class="log-tag">Streamlit</span>
+            <span class="log-tag">Docker</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="log-entry">
+        <div class="log-date">2026<br>05·26</div>
+        <div class="log-dot red"></div>
+        <div class="log-body">
+          <div class="log-title">Code Audit &amp; Architecture Hardening</div>
+          <div class="log-desc">
+            ตรวจพบและแก้ไข 10 bugs จาก 3-angle code review — Critical: HITL interrupt merge,
+            YLO SMART constant. High: auth missing, zero clusters guard, evidence validation.
+            Medium: PSYCHOMOTOR coverage, retry loop, LLM singleton, state KeyError, year index.
+            เพิ่ม auth ทุก write route, จัดระเบียบ project structure, สร้าง architecture report.
+            40 tests passing.
+          </div>
+          <div class="log-tags">
+            <span class="log-tag red">10 Bugs Fixed</span>
+            <span class="log-tag red">40 Tests</span>
+            <span class="log-tag">Auth Added</span>
+            <span class="log-tag">Structure Cleaned</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ═══ 07 PROJECT STRUCTURE ═══ -->
+  <section class="section reveal" id="structure">
+    <div class="section-rule">
+      <span class="section-num">07</span>
+      <hr>
+    </div>
+    <h2 class="section-title">Project Structure</h2>
+
+    <pre style="font-family:var(--f-mono);font-size:0.72rem;line-height:1.8;color:var(--ink-mid);background:var(--paper2);border:1px solid var(--line);padding:1.75rem 2rem;overflow-x:auto;max-width:var(--col)" class="reveal"><span style="color:var(--ink);font-weight:500">curriculum-design-agent/</span>
+├── <span style="color:var(--red)">src/curriculum_agent/</span>
+│   ├── models.py            <span style="color:var(--ink-faint)">← Pydantic schemas (PLO, YLO, SkillCluster…)</span>
+│   ├── graph.py             <span style="color:var(--ink-faint)">← LangGraph state machine + HITL nodes</span>
+│   ├── llm.py               <span style="color:var(--ink-faint)">← Ollama client factory (lazy singleton)</span>
+│   ├── config.py            <span style="color:var(--ink-faint)">← pydantic-settings, reads .env</span>
+│   ├── prompts/             <span style="color:var(--ink-faint)">← classify_evidence, name_cluster, stage_3, stage_4, smart</span>
+│   ├── stages/              <span style="color:var(--ink-faint)">← intake, stakeholder_needs, skill_extraction, plo_synthesis, ylo_derivation</span>
+│   ├── data/                <span style="color:var(--ink-faint)">← repositories, orm, postgres, qdrant, minio_store</span>
+│   ├── nlp/                 <span style="color:var(--ink-faint)">← thai_tokenizer, embedding, extraction (KeyBERT/BERTopic)</span>
+│   ├── api/                 <span style="color:var(--ink-faint)">← FastAPI main, deps, routes/</span>
+│   ├── exporters/           <span style="color:var(--ink-faint)">← checo, mko2, excel_matrix</span>
+│   ├── scrapers/            <span style="color:var(--ink-faint)">← jobthai, jobsdb</span>
+│   └── parsers/             <span style="color:var(--ink-faint)">← tika_parser, mko1_parser</span>
+├── <span style="color:var(--red)">tests/</span>
+│   ├── unit/                <span style="color:var(--ink-faint)">← models, ylo_matrix, smart, graph_hitl, api, llm, state</span>
+│   └── integration/         <span style="color:var(--ink-faint)">← stage_3_plo, end_to_end (LLM mocked)</span>
+├── <span style="color:var(--red)">docs/</span>
+│   ├── diagrams/            <span style="color:var(--ink-faint)">← architecture_poc.svg, workflow.svg</span>
+│   ├── superpowers/plans/   <span style="color:var(--ink-faint)">← implementation plans</span>
+│   ├── architecture-report.html
+│   └── project-journal.html <span style="color:var(--red)">← (this file)</span>
+├── streamlit_app/           <span style="color:var(--ink-faint)">← app.py + pages/ (1–5)</span>
+├── migrations/              <span style="color:var(--ink-faint)">← Alembic env + versions/</span>
+├── Data/                    <span style="color:var(--ink-faint)">← Occupation.xlsx, Skills.xlsx, linkedin CSV</span>
+├── docker-compose.yml
+├── pyproject.toml
+└── CLAUDE.md</pre>
+  </section>
+
+  <!-- ═══ FOOTER ═══ -->
+  <footer class="journal-footer reveal">
+    <div class="footer-colophon">
+      งานนี้เป็นส่วนหนึ่งของความพยายามในการนำ AI มาสนับสนุนกระบวนการออกแบบหลักสูตรอุดมศึกษาไทย
+      ให้โปร่งใส ตรวจสอบได้ และสอดคล้องกับมาตรฐาน MHESI โดยไม่ลดทอนบทบาทของคณาจารย์
+      ในการตัดสินใจขั้นสุดท้าย
+    </div>
+    <div class="footer-details">
+      Project: curriculum-design-agent<br>
+      Version: 0.1.0 (PoC)<br>
+      Stack: Python 3.11 · LangGraph · FastAPI<br>
+      LLM: Typhoon2-8B + Qwen2.5-32B<br>
+      Tests: 40 passing<br>
+      Date: 2026-05-26
+    </div>
+  </footer>
+
+</article>
+
+<script>
+// Intersection Observer for scroll reveals
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, {
+  threshold: 0.08,
+  rootMargin: '0px 0px -60px 0px'
+});
+
+document.querySelectorAll('.reveal, .section').forEach(el => {
+  observer.observe(el);
+});
+
+// Immediately reveal above-fold content
+document.querySelectorAll('.masthead, .section:first-of-type').forEach(el => {
+  el.classList.add('visible');
+});
+</script>
+
+</body>
+</html>

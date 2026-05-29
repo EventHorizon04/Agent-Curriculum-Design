@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Path \"E:\\\\SideProject\\\\Agent-Curriculum-Design\")",
+      "Bash(Select-Object Name, Mode)",
+      "Bash(python -c ' *)",
+      "Bash(Out-File -FilePath \"E:\\\\SideProject\\\\Agent-Curriculum-Design\\\\_skill_extract.txt\" -Encoding utf8)",
+      "PowerShell(Get-Content *)",
+      "PowerShell(uv *)",
+      "PowerShell(pip install *)",
+      "Bash(Get-ChildItem -Path \"E:\\\\SideProject\\\\Agent-Curriculum-Design\" -Recurse -Directory)",
+      "Bash(Select-Object FullName)",
+      "Bash(Sort-Object FullName)",
+      "Bash(uv run *)",
+      "Bash(docker compose *)",
+      "Bash(ollama --version)",
+      "PowerShell(ollama --version 2>&1)",
+      "PowerShell(ollama list 2>&1)",
+      "Bash(ollama list *)",
+      "PowerShell(Test-Path \"$env:LOCALAPPDATA\\\\Programs\\\\Ollama\\\\ollama.exe\"; Test-Path \"C:\\\\Program Files\\\\Ollama\\\\ollama.exe\")",
+      "PowerShell(& \"$env:LOCALAPPDATA\\\\Programs\\\\Ollama\\\\ollama.exe\" list 2>&1)",
+      "PowerShell(Invoke-RestMethod http://localhost:11434/api/tags 2>&1)",
+      "PowerShell(Invoke-RestMethod -Method Post -Uri http://localhost:11434/api/chat -ContentType \"application/json\" -Body '{\"model\":\"gemma4:31b-cloud\",\"messages\":[{\"role\":\"user\",\"content\":\"reply ok only\"}],\"stream\":false}' 2>&1)",
+      "PowerShell(Invoke-RestMethod -Method Post -Uri http://localhost:11434/api/chat -ContentType \"application/json\" -Body '{\"model\":\"gemma4:latest\",\"messages\":[{\"role\":\"user\",\"content\":\"reply ok only\"}],\"stream\":false}' 2>&1)",
+      "PowerShell($body = '{\"model\":\"gemma4:31b-cloud\",\"messages\":[{\"role\":\"user\",\"content\":\"reply ok only\"}],\"stream\":false}'; $resp = Invoke-RestMethod -Method Post -Uri http://localhost:11434/api/chat -ContentType \"application/json\" -Body $body; $resp.message.content)"
+    ]
+  }
+}

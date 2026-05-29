@@ -1,0 +1,1316 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Curriculum Design Agent — Architecture Audit Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Syne:wght@400;600;700;800&family=Noto+Sans+Thai:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg:        #08090d;
+    --surface:   #0f1117;
+    --surface2:  #161820;
+    --border:    #1e2130;
+    --border2:   #2a2d3e;
+    --text:      #e2e4f0;
+    --muted:     #6b7091;
+    --red:       #f24c4c;
+    --amber:     #f59e0b;
+    --green:     #10d97e;
+    --blue:      #4f9cf9;
+    --purple:    #a78bfa;
+    --cyan:      #22d3ee;
+    --red-dim:   rgba(242,76,76,0.12);
+    --amber-dim: rgba(245,158,11,0.12);
+    --green-dim: rgba(16,217,126,0.10);
+    --blue-dim:  rgba(79,156,249,0.10);
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Noto Sans Thai', 'Syne', sans-serif;
+    font-size: 15px;
+    line-height: 1.7;
+    min-height: 100vh;
+  }
+
+  /* ─── NOISE TEXTURE OVERLAY ─── */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.6;
+  }
+
+  /* ─── LAYOUT ─── */
+  .layout {
+    display: grid;
+    grid-template-columns: 260px 1fr;
+    min-height: 100vh;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ─── SIDEBAR ─── */
+  .sidebar {
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    overflow-y: auto;
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 2rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .sidebar::-webkit-scrollbar { width: 3px; }
+  .sidebar::-webkit-scrollbar-track { background: transparent; }
+  .sidebar::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
+
+  .sidebar-logo {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    margin-bottom: 2rem;
+  }
+
+  .sidebar-logo-mark {
+    width: 32px;
+    height: 32px;
+    background: linear-gradient(135deg, var(--amber), var(--red));
+    border-radius: 6px;
+    display: grid;
+    place-items: center;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 14px;
+    font-weight: 600;
+    color: #000;
+    flex-shrink: 0;
+  }
+
+  .sidebar-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    line-height: 1.3;
+  }
+
+  .nav-section {
+    margin-bottom: 0.25rem;
+  }
+
+  .nav-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--muted);
+    padding: 1.5rem 0 0.5rem;
+  }
+
+  .nav-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: 6px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+    text-decoration: none;
+    transition: all 0.15s;
+    border: 1px solid transparent;
+  }
+
+  .nav-item:hover {
+    color: var(--text);
+    background: var(--surface2);
+    border-color: var(--border);
+  }
+
+  .nav-item.active { color: var(--amber); }
+  .nav-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+
+  .sidebar-stats {
+    margin-top: auto;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+  }
+
+  .stat-pill {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+    text-align: center;
+  }
+
+  .stat-pill-number {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 22px;
+    font-weight: 600;
+    line-height: 1;
+    margin-bottom: 0.25rem;
+  }
+
+  .stat-pill-label {
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  /* ─── MAIN CONTENT ─── */
+  main {
+    padding: 3rem 3rem 5rem;
+    max-width: 1000px;
+  }
+
+  /* ─── HERO ─── */
+  .hero {
+    margin-bottom: 4rem;
+    padding-bottom: 3rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .hero-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--amber-dim);
+    border: 1px solid var(--amber);
+    border-radius: 99px;
+    padding: 0.3rem 0.9rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--amber);
+    margin-bottom: 1.5rem;
+    letter-spacing: 0.05em;
+  }
+
+  .hero-badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--amber);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.4; transform: scale(0.8); }
+  }
+
+  .hero h1 {
+    font-family: 'Syne', 'Noto Sans Thai', sans-serif;
+    font-size: clamp(2rem, 4vw, 3rem);
+    font-weight: 800;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+    margin-bottom: 0.75rem;
+    background: linear-gradient(135deg, #fff 30%, var(--muted));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-sub {
+    color: var(--muted);
+    font-size: 15px;
+    max-width: 600px;
+    line-height: 1.7;
+    margin-bottom: 2rem;
+  }
+
+  .hero-meta {
+    display: flex;
+    gap: 2rem;
+    flex-wrap: wrap;
+  }
+
+  .meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+
+  .meta-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+  }
+
+  .meta-value {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    color: var(--text);
+  }
+
+  /* ─── SECTION ─── */
+  section { margin-bottom: 4rem; }
+
+  .section-header {
+    display: flex;
+    align-items: baseline;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+    padding-bottom: 0.75rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .section-number {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  h2 {
+    font-family: 'Syne', 'Noto Sans Thai', sans-serif;
+    font-size: 1.3rem;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+
+  h3 {
+    font-family: 'Syne', 'Noto Sans Thai', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+  }
+
+  /* ─── SUMMARY GRID ─── */
+  .summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  .summary-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .summary-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+  }
+
+  .summary-card.critical::before { background: var(--red); }
+  .summary-card.high::before { background: var(--amber); }
+  .summary-card.arch::before { background: var(--blue); }
+  .summary-card.fixed::before { background: var(--green); }
+
+  .summary-count {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 2.5rem;
+    font-weight: 600;
+    line-height: 1;
+    margin-bottom: 0.35rem;
+  }
+
+  .summary-card.critical .summary-count { color: var(--red); }
+  .summary-card.high .summary-count { color: var(--amber); }
+  .summary-card.arch .summary-count { color: var(--blue); }
+  .summary-card.fixed .summary-count { color: var(--green); }
+
+  .summary-desc { font-size: 13px; color: var(--muted); }
+
+  /* ─── BUG CARDS ─── */
+  .bug-list { display: flex; flex-direction: column; gap: 1rem; }
+
+  .bug-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+
+  .bug-card:hover { border-color: var(--border2); }
+
+  .bug-header {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: start;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    cursor: pointer;
+  }
+
+  .bug-index {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    padding-top: 0.1rem;
+    min-width: 2.5ch;
+  }
+
+  .bug-info { min-width: 0; }
+
+  .bug-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+    margin-bottom: 0.25rem;
+    line-height: 1.4;
+  }
+
+  .bug-location {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .bug-location span {
+    color: var(--blue);
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 99px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .badge.critical { background: var(--red-dim); color: var(--red); border: 1px solid rgba(242,76,76,0.3); }
+  .badge.high { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+  .badge.medium { background: var(--blue-dim); color: var(--blue); border: 1px solid rgba(79,156,249,0.25); }
+  .badge.fixed { background: var(--green-dim); color: var(--green); border: 1px solid rgba(16,217,126,0.25); }
+  .badge.arch { background: rgba(167,139,250,0.1); color: var(--purple); border: 1px solid rgba(167,139,250,0.25); }
+
+  .bug-body {
+    padding: 0 1.25rem 1.25rem 1.25rem;
+    padding-left: calc(1.25rem + 2.5ch + 1rem);
+    display: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .bug-body.open { display: block; padding-top: 1rem; }
+
+  .bug-field {
+    margin-bottom: 0.75rem;
+  }
+
+  .bug-field-label {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin-bottom: 0.3rem;
+  }
+
+  .bug-field-value {
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--text);
+  }
+
+  .scenario-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--amber);
+    border-radius: 0 6px 6px 0;
+    padding: 0.75rem 1rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+
+  .fix-box {
+    background: var(--green-dim);
+    border: 1px solid rgba(16,217,126,0.2);
+    border-left: 3px solid var(--green);
+    border-radius: 0 6px 6px 0;
+    padding: 0.75rem 1rem;
+    font-size: 13px;
+    line-height: 1.65;
+    color: var(--text);
+  }
+
+  code {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    color: var(--cyan);
+  }
+
+  /* ─── ARCH SECTION ─── */
+  .arch-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin-bottom: 2rem;
+  }
+
+  .arch-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+  }
+
+  .arch-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.75rem;
+  }
+
+  .arch-card-title {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text);
+  }
+
+  .arch-card-body {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.65;
+  }
+
+  /* ─── CHECKLIST ─── */
+  .checklist { display: flex; flex-direction: column; gap: 0.5rem; }
+
+  .check-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13.5px;
+  }
+
+  .check-icon {
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 10px;
+    margin-top: 2px;
+  }
+
+  .check-icon.pass { background: var(--green-dim); color: var(--green); border: 1px solid rgba(16,217,126,0.3); }
+  .check-icon.warn { background: var(--amber-dim); color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+  .check-icon.fail { background: var(--red-dim); color: var(--red); border: 1px solid rgba(242,76,76,0.3); }
+
+  .check-text { flex: 1; line-height: 1.5; }
+  .check-label { font-weight: 500; display: block; color: var(--text); }
+  .check-note { font-size: 12px; color: var(--muted); margin-top: 0.15rem; display: block; }
+
+  /* ─── PIPELINE DIAGRAM ─── */
+  .pipeline {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    margin: 1.5rem 0;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+  }
+
+  .pipeline-step {
+    flex: 1;
+    min-width: 130px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-right: none;
+    padding: 1rem 0.75rem;
+    text-align: center;
+    position: relative;
+  }
+
+  .pipeline-step:first-child { border-radius: 10px 0 0 10px; }
+  .pipeline-step:last-child { border-right: 1px solid var(--border); border-radius: 0 10px 10px 0; }
+
+  .pipeline-step::after {
+    content: '→';
+    position: absolute;
+    right: -12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--muted);
+    font-size: 14px;
+    z-index: 2;
+    background: var(--bg);
+    padding: 2px;
+  }
+
+  .pipeline-step:last-child::after { display: none; }
+
+  .pipeline-step-num {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 10px;
+    color: var(--muted);
+    margin-bottom: 0.25rem;
+  }
+
+  .pipeline-step-name {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 0.4rem;
+  }
+
+  .pipeline-hitl {
+    display: inline-block;
+    background: var(--amber-dim);
+    border: 1px solid rgba(245,158,11,0.3);
+    border-radius: 4px;
+    padding: 0.1rem 0.4rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 9px;
+    color: var(--amber);
+    margin-top: 0.25rem;
+  }
+
+  .pipeline-step.affected { border-color: rgba(242,76,76,0.4); }
+  .pipeline-step.affected .pipeline-step-name { color: var(--red); }
+
+  /* ─── FOOTER ─── */
+  .report-footer {
+    margin-top: 4rem;
+    padding-top: 2rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: gap;
+    gap: 1rem;
+  }
+
+  .footer-text {
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: var(--green);
+    background: var(--green-dim);
+    border: 1px solid rgba(16,217,126,0.25);
+    border-radius: 99px;
+    padding: 0.3rem 0.9rem;
+  }
+
+  .status-indicator::before {
+    content: '';
+    width: 7px;
+    height: 7px;
+    background: var(--green);
+    border-radius: 50%;
+    animation: pulse 1.8s ease-in-out infinite;
+  }
+
+  /* ─── ANIMATIONS ─── */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  .hero, section {
+    animation: fadeUp 0.5s ease-out both;
+  }
+
+  section:nth-child(2) { animation-delay: 0.05s; }
+  section:nth-child(3) { animation-delay: 0.10s; }
+  section:nth-child(4) { animation-delay: 0.15s; }
+  section:nth-child(5) { animation-delay: 0.20s; }
+
+  /* ─── SCROLLBAR ─── */
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 99px; }
+
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; }
+    main { padding: 2rem 1.5rem; }
+    .summary-grid, .arch-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="layout">
+
+  <!-- ─── SIDEBAR ─── -->
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="sidebar-logo-mark">CA</div>
+      <div class="sidebar-title">Curriculum Agent<br>Audit Report</div>
+    </div>
+
+    <nav>
+      <div class="nav-label">Sections</div>
+      <a href="#overview" class="nav-item active">
+        <span class="nav-dot" style="background:var(--amber)"></span> Overview
+      </a>
+      <a href="#pipeline" class="nav-item">
+        <span class="nav-dot" style="background:var(--blue)"></span> Pipeline
+      </a>
+      <a href="#bugs" class="nav-item">
+        <span class="nav-dot" style="background:var(--red)"></span> Bugs (10)
+      </a>
+      <a href="#architecture" class="nav-item">
+        <span class="nav-dot" style="background:var(--purple)"></span> Architecture
+      </a>
+      <a href="#checklist" class="nav-item">
+        <span class="nav-dot" style="background:var(--green)"></span> Checklist
+      </a>
+    </nav>
+
+    <div class="sidebar-stats">
+      <div class="stat-pill">
+        <div class="stat-pill-number" style="color:var(--red)">2</div>
+        <div class="stat-pill-label">Critical</div>
+      </div>
+      <div class="stat-pill">
+        <div class="stat-pill-number" style="color:var(--amber)">4</div>
+        <div class="stat-pill-label">High</div>
+      </div>
+      <div class="stat-pill">
+        <div class="stat-pill-number" style="color:var(--blue)">4</div>
+        <div class="stat-pill-label">Medium</div>
+      </div>
+      <div class="stat-pill">
+        <div class="stat-pill-number" style="color:var(--green)">40</div>
+        <div class="stat-pill-label">Tests Pass</div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ─── MAIN ─── -->
+  <main>
+
+    <!-- HERO -->
+    <div class="hero" id="overview">
+      <div class="hero-badge">AUDIT COMPLETE — 2026-05-26</div>
+      <h1>Architecture Audit<br>Report</h1>
+      <p class="hero-sub">
+        ผลการตรวจสอบ codebase ของ Curriculum Design Agent ครอบคลุม 10 bugs, 2 architecture improvements
+        และ best practices assessment สำหรับ Thai higher-education OBE pipeline
+      </p>
+      <div class="hero-meta">
+        <div class="meta-item">
+          <span class="meta-label">Project</span>
+          <span class="meta-value">curriculum-design-agent</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Stack</span>
+          <span class="meta-value">Python 3.11 · LangGraph · FastAPI</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Tests</span>
+          <span class="meta-value">40 passing · 0 failing</span>
+        </div>
+        <div class="meta-item">
+          <span class="meta-label">Scope</span>
+          <span class="meta-value">53 source files</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- SUMMARY -->
+    <section>
+      <div class="section-header">
+        <span class="section-number">01</span>
+        <h2>Summary</h2>
+      </div>
+
+      <div class="summary-grid">
+        <div class="summary-card critical">
+          <div class="summary-count">2</div>
+          <div class="summary-desc">Critical — feature-breaking: HITL edit ไม่ทำงาน, SMART validation ไม่รันจริง</div>
+        </div>
+        <div class="summary-card high">
+          <div class="summary-count">4</div>
+          <div class="summary-desc">High — API 422 errors, no auth on POST, empty cluster hallucination, missing evidence tracing</div>
+        </div>
+        <div class="summary-card arch" style="grid-column: span 1;">
+          <div class="summary-count">4</div>
+          <div class="summary-desc">Medium — PSYCHOMOTOR skip, retry loop, event loop singleton, state KeyError</div>
+        </div>
+      </div>
+
+      <div class="summary-grid" style="grid-template-columns: repeat(2,1fr)">
+        <div class="summary-card fixed">
+          <div class="summary-count">10</div>
+          <div class="summary-desc">Bugs ทั้งหมดได้รับการแก้ไขแล้ว — tests ผ่านครบ</div>
+        </div>
+        <div class="summary-card" style="background:var(--surface);">
+          <div class="summary-count" style="color:var(--purple)">2</div>
+          <div class="summary-desc">Architecture improvements เพิ่มเติม — auth + validate_coverage index fix</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PIPELINE -->
+    <section id="pipeline">
+      <div class="section-header">
+        <span class="section-number">02</span>
+        <h2>Pipeline Overview</h2>
+      </div>
+      <p style="color:var(--muted);font-size:13.5px;margin-bottom:1.25rem">
+        5-stage HITL pipeline — stages ที่มีสีแดงคือส่วนที่พบ bugs ระดับ Critical/High
+      </p>
+
+      <div class="pipeline">
+        <div class="pipeline-step affected">
+          <div class="pipeline-step-num">Stage 0</div>
+          <div class="pipeline-step-name">Intake</div>
+          <div style="font-size:11px;color:var(--muted)">ProgramMetadata</div>
+          <div class="pipeline-hitl">HITL ✓</div>
+        </div>
+        <div class="pipeline-step">
+          <div class="pipeline-step-num">Stage 1</div>
+          <div class="pipeline-step-name">Stakeholder</div>
+          <div style="font-size:11px;color:var(--muted)">Evidence classify</div>
+          <div class="pipeline-hitl">HITL ✓</div>
+        </div>
+        <div class="pipeline-step">
+          <div class="pipeline-step-num">Stage 2</div>
+          <div class="pipeline-step-name">Skill Extract</div>
+          <div style="font-size:11px;color:var(--muted)">KeyBERT + BERTopic</div>
+          <div class="pipeline-hitl">HITL ✓</div>
+        </div>
+        <div class="pipeline-step affected">
+          <div class="pipeline-step-num">Stage 3</div>
+          <div class="pipeline-step-name">PLO Synthesis</div>
+          <div style="font-size:11px;color:var(--muted)">4–6 PLOs + SMART</div>
+          <div class="pipeline-hitl">HITL ✓</div>
+        </div>
+        <div class="pipeline-step affected">
+          <div class="pipeline-step-num">Stage 4</div>
+          <div class="pipeline-step-name">YLO Derivation</div>
+          <div style="font-size:11px;color:var(--muted)">YLO matrix</div>
+          <div class="pipeline-hitl">HITL ✓</div>
+        </div>
+      </div>
+
+      <p style="font-size:12px;color:var(--muted);font-family:'IBM Plex Mono',monospace">
+        ⚠ Stage 0, 3, 4 — affected by critical/high bugs. Stage 1, 2 — architecture concerns only.
+      </p>
+    </section>
+
+    <!-- BUGS -->
+    <section id="bugs">
+      <div class="section-header">
+        <span class="section-number">03</span>
+        <h2>Bug Findings &amp; Fixes</h2>
+      </div>
+
+      <div class="bug-list">
+
+        <!-- BUG 1 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#01</span>
+            <div class="bug-info">
+              <div class="bug-title">interrupt() return value ถูกทิ้ง — HITL edits หายทั้งหมด</div>
+              <div class="bug-location"><span>src/curriculum_agent/graph.py</span> :83–100</div>
+            </div>
+            <span class="badge critical">Critical</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">4 review nodes เรียก <code>interrupt(...)</code> แต่ทิ้ง return value ทำให้ designer edits ที่ส่งผ่าน <code>graph.aupdate_state()</code> ไม่เคยถูก merge เข้า state</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Failure Scenario</div>
+              <div class="scenario-box">Designer แก้ classified_evidence แล้ว resume graph → node return state เดิม → downstream stages เห็นข้อมูลที่ไม่ได้แก้ไข → HITL feature ไม่ทำงาน</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box">Capture <code>payload = interrupt(...)</code> และ <code>return &#123;**state, **payload&#125; if isinstance(payload, dict) else state</code> ทุก review node</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 2 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#02</span>
+            <div class="bug-info">
+              <div class="bug-title">_SMART_PASS constant — YLO ทุกตัวอ้างว่าผ่าน SMART โดยไม่รัน validation</div>
+              <div class="bug-location"><span>src/curriculum_agent/stages/ylo_derivation.py</span> :25, 58</div>
+            </div>
+            <span class="badge critical">Critical</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">Stage 3 (PLO) เรียก <code>_validate_smart()</code> จริง แต่ Stage 4 (YLO) stamp <code>_SMART_PASS</code> constant ทุกตัว — ละเมิด OBE principle</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Failure Scenario</div>
+              <div class="scenario-box">YLO "นักศึกษาเข้าใจทฤษฎี..." → SMARTCheck(all=True) → ผ่าน CHECO export → MHESI audit fail</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box">ลบ <code>_SMART_PASS</code>, เปลี่ยน <code>_draft_to_ylo</code> เป็น async, เรียก <code>complete_light(SMARTCheck, build_smart_validate_prompt(...))</code> ต่อ YLO draft</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 3 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#03</span>
+            <div class="bug-info">
+              <div class="bug-title">POST /programs/ ไม่มี auth — ใครก็ trigger LangGraph pipeline ได้</div>
+              <div class="bug-location"><span>src/curriculum_agent/api/routes/programs.py</span> :13</div>
+            </div>
+            <span class="badge high">High</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">Unauthenticated POST สร้าง program และเริ่ม full graph execution ทันที รวมถึง module-level <code>_repo</code> singleton ที่ bypass FastAPI DI</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box">เพิ่ม <code>require_api_key</code> dependency (<code>X-API-Key</code> header), ย้าย repo instantiation เข้า function, เพิ่ม <code>api_key: str | None</code> ใน Settings</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 4 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#04</span>
+            <div class="bug-info">
+              <div class="bug-title">Stage 3 เรียก LLM ด้วย zero evidence clusters — hallucination หรือ ValidationError</div>
+              <div class="bug-location"><span>src/curriculum_agent/stages/plo_synthesis.py</span> :134–141</div>
+            </div>
+            <span class="badge high">High</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">ถ้า <code>skill_clusters</code> ว่างหรือไม่มี <code>is_common_need=True</code> → <code>selected=[]</code> → <code>build_plo_synthesis_prompt(metadata, [])</code> → LLM สร้าง PLO จากอากาศ</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box"><code>if not selected: raise ValueError("no skill clusters...")</code> ก่อน build prompt</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 5 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#05</span>
+            <div class="bug-info">
+              <div class="bug-title">PLO validator ไม่เช็ก source_evidence_ids — traceability rule ถูก bypass</div>
+              <div class="bug-location"><span>src/curriculum_agent/models.py</span> :175–181</div>
+            </div>
+            <span class="badge high">High</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">Immutable rule: "source_evidence_ids ต้องไม่ว่าง" แต่ <code>check_evidence</code> validator เช็กแค่ <code>source_cluster_ids</code> → PLO ที่ไม่มี evidence trace ผ่านได้</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box">เพิ่ม <code>if not self.source_evidence_ids: raise ValueError(...)</code> ใน <code>check_evidence</code> validator, อัพเดท fixtures ทุก test file</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 6 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#06</span>
+            <div class="bug-info">
+              <div class="bug-title">validate_coverage ข้าม Domain.PSYCHOMOTOR — Bloom decrease ไม่ถูก detect</div>
+              <div class="bug-location"><span>src/curriculum_agent/models.py</span> :238</div>
+            </div>
+            <span class="badge high">High</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">Branch condition <code>if plo.domain == Domain.COGNITIVE</code> ไม่ครอบ PSYCHOMOTOR → psychomotor PLO ที่ Bloom ถดถอยปี 3 → ปี 2 ผ่านโดยไม่มี issue</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box">เปลี่ยนเป็น <code>if plo.domain in (Domain.COGNITIVE, Domain.PSYCHOMOTOR):</code></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 7 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#07</span>
+            <div class="bug-info">
+              <div class="bug-title">YLO retry loop ไม่เปลี่ยน prompt — LLM ซ้ำ forbidden words ทุก retry</div>
+              <div class="bug-location"><span>src/curriculum_agent/stages/ylo_derivation.py</span> :107</div>
+            </div>
+            <span class="badge medium">Medium</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">Retry loop เรียก <code>_derive_ylos_for_plo()</code> ด้วย prompt เดิม ไม่บอก LLM ว่า word ไหนต้องหลีกเลี่ยง → output เดิมทุก attempt → PLO เหลือ 0 YLO หลัง <code>_MAX_RETRIES</code></div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box">เพิ่ม <code>avoid_words</code> param ใน prompt builder, ส่ง <code>FORBIDDEN_WORDS_TH</code> ไปบน retry calls, return <code>tuple[list[YLO], set[str]]</code> จาก derive function</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 8 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#08</span>
+            <div class="bug-info">
+              <div class="bug-title">AsyncOpenAI client สร้าง ณ import time — RuntimeError ใน pytest asyncio</div>
+              <div class="bug-location"><span>src/curriculum_agent/llm.py</span> :14</div>
+            </div>
+            <span class="badge medium">Medium</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">Module-level <code>_client = instructor.from_openai(AsyncOpenAI(...))</code> bind กับ event loop ณ import time → test ในอีก loop raise <code>RuntimeError: Event loop is closed</code></div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box">ใช้ <code>@functools.cache</code> บน <code>_get_client()</code> factory function — lazy singleton สร้างครั้งแรกที่ถูกเรียก ไม่ใช่ตอน import</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 9 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#09</span>
+            <div class="bug-info">
+              <div class="bug-title">state["metadata"] hard key access — KeyError บน partial checkpoint resume</div>
+              <div class="bug-location"><span>intake.py:12 · plo_synthesis.py:132 · ylo_derivation.py:83</span></div>
+            </div>
+            <span class="badge medium">Medium</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">3 stages ใช้ <code>state["metadata"]</code> โดยตรง — ถ้า graph resume จาก partial checkpoint ที่ metadata ไม่ถูก serialize → <code>KeyError</code> → 500 Internal Server Error</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box"><code>metadata_dict = state.get("metadata"); if not metadata_dict: raise ValueError("AgentState missing 'metadata'...")</code> ทุก stage</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BUG 10 -->
+        <div class="bug-card">
+          <div class="bug-header" onclick="toggle(this)">
+            <span class="bug-index">#10</span>
+            <div class="bug-info">
+              <div class="bug-title">validate_coverage error message แสดง year ผิดเมื่อมี bloom_level=None</div>
+              <div class="bug-location"><span>src/curriculum_agent/models.py</span> :240–249</div>
+            </div>
+            <span class="badge medium">Medium</span>
+          </div>
+          <div class="bug-body">
+            <div class="bug-field">
+              <div class="bug-field-label">ปัญหา</div>
+              <div class="bug-field-value">Filter <code>[y.bloom_level for y in sorted_ylos if y.bloom_level]</code> สร้าง <code>levels</code> list แยก แต่ error message ใช้ <code>sorted_ylos[i-1].year</code> (index ของ unfiltered list) → year ในข้อความผิด</div>
+            </div>
+            <div class="bug-field">
+              <div class="bug-field-label">Fix</div>
+              <div class="fix-box">เปลี่ยนเป็น <code>year_levels = [(y.year, y.bloom_level) for y in sorted_ylos if y.bloom_level]</code> แล้ว unpack tuple ใน loop เพื่อให้ year ถูกต้องเสมอ</div>
+            </div>
+          </div>
+        </div>
+
+      </div><!-- /bug-list -->
+    </section>
+
+    <!-- ARCHITECTURE -->
+    <section id="architecture">
+      <div class="section-header">
+        <span class="section-number">04</span>
+        <h2>Architecture Assessment</h2>
+      </div>
+
+      <div class="arch-grid">
+
+        <div class="arch-card">
+          <div class="arch-card-header">
+            <span class="arch-card-title">FastAPI Dependency Injection</span>
+            <span class="badge fixed">Fixed</span>
+          </div>
+          <div class="arch-card-body">
+            Module-level repo singletons ใน API routes bypass FastAPI DI → ไม่สามารถ inject test sessions ได้<br><br>
+            <strong style="color:var(--text)">Fix:</strong> ย้าย instantiation เข้า function, เพิ่ม <code>require_api_key</code> dependency บน write endpoints ทุก route (programs, plos, evidence)
+          </div>
+        </div>
+
+        <div class="arch-card">
+          <div class="arch-card-header">
+            <span class="arch-card-title">Authentication Layer</span>
+            <span class="badge fixed">Added</span>
+          </div>
+          <div class="arch-card-body">
+            ไม่มี auth บน write endpoints → ใครก็ trigger pipeline ได้<br><br>
+            <strong style="color:var(--text)">Fix:</strong> เพิ่ม <code>X-API-Key</code> header check ผ่าน <code>APIKeyHeader</code> + <code>settings.api_key</code>; dev mode (key=None) ผ่านอัตโนมัติ; prod ต้อง set env var
+          </div>
+        </div>
+
+        <div class="arch-card">
+          <div class="arch-card-header">
+            <span class="arch-card-title">LangGraph HITL Pattern</span>
+            <span class="badge fixed">Fixed</span>
+          </div>
+          <div class="arch-card-body">
+            LangGraph <code>interrupt()</code> returns designer payload on resume — ต้อง merge ไม่ใช่ทิ้ง<br><br>
+            <strong style="color:var(--text)">Pattern:</strong> <code>payload = interrupt(msg); return &#123;**state, **payload&#125; if isinstance(payload, dict) else state</code>
+          </div>
+        </div>
+
+        <div class="arch-card">
+          <div class="arch-card-header">
+            <span class="arch-card-title">Async Client Lifecycle</span>
+            <span class="badge fixed">Fixed</span>
+          </div>
+          <div class="arch-card-body">
+            <code>AsyncOpenAI</code> ไม่ควรสร้างที่ module level — event loop ไม่มีการรับประกัน<br><br>
+            <strong style="color:var(--text)">Pattern:</strong> <code>@functools.cache</code> บน factory function = lazy singleton ที่ปลอดภัยข้าม event loop
+          </div>
+        </div>
+
+      </div>
+
+      <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:1.25rem 1.5rem;margin-top:0.5rem">
+        <h3 style="margin-bottom:0.75rem;font-size:13px;color:var(--muted);font-family:'IBM Plex Mono',monospace;text-transform:uppercase;letter-spacing:0.08em">OBE Domain Rules — Enforcement Status</h3>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:0.75rem">
+          <div style="text-align:center;padding:0.75rem;background:var(--bg);border-radius:8px;border:1px solid var(--border)">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:0.25rem">PLO → YLO → CLO</div>
+            <div style="color:var(--green);font-size:22px">✓</div>
+            <div style="font-size:11px;color:var(--muted)">Enforced</div>
+          </div>
+          <div style="text-align:center;padding:0.75rem;background:var(--bg);border-radius:8px;border:1px solid var(--border)">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:0.25rem">Forbidden Words</div>
+            <div style="color:var(--green);font-size:22px">✓</div>
+            <div style="font-size:11px;color:var(--muted)">Pydantic validator</div>
+          </div>
+          <div style="text-align:center;padding:0.75rem;background:var(--bg);border-radius:8px;border:1px solid var(--border)">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:0.25rem">Bloom Monotonicity</div>
+            <div style="color:var(--green);font-size:22px">✓</div>
+            <div style="font-size:11px;color:var(--muted)">All 3 domains</div>
+          </div>
+          <div style="text-align:center;padding:0.75rem;background:var(--bg);border-radius:8px;border:1px solid var(--border)">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:0.25rem">Evidence Tracing</div>
+            <div style="color:var(--green);font-size:22px">✓</div>
+            <div style="font-size:11px;color:var(--muted)">cluster + evidence IDs</div>
+          </div>
+          <div style="text-align:center;padding:0.75rem;background:var(--bg);border-radius:8px;border:1px solid var(--border)">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:0.25rem">SMART Validation</div>
+            <div style="color:var(--green);font-size:22px">✓</div>
+            <div style="font-size:11px;color:var(--muted)">PLO + YLO</div>
+          </div>
+          <div style="text-align:center;padding:0.75rem;background:var(--bg);border-radius:8px;border:1px solid var(--border)">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);margin-bottom:0.25rem">HITL Every Stage</div>
+            <div style="color:var(--green);font-size:22px">✓</div>
+            <div style="font-size:11px;color:var(--muted)">Merge working</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CHECKLIST -->
+    <section id="checklist">
+      <div class="section-header">
+        <span class="section-number">05</span>
+        <h2>Best Practices Checklist</h2>
+      </div>
+
+      <div class="checklist">
+        <div class="check-item">
+          <div class="check-icon pass">✓</div>
+          <div class="check-text">
+            <span class="check-label">Type hints ครบทุก function signature</span>
+            <span class="check-note">ใช้ <code>from __future__ import annotations</code> ทุกไฟล์ + Pydantic v2 สำหรับ boundary crossing</span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">✓</div>
+          <div class="check-text">
+            <span class="check-label">Pydantic validators enforce OBE invariants</span>
+            <span class="check-note">forbidden words, source_cluster_ids, source_evidence_ids, domain/level match — ทุก rule มี test</span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">✓</div>
+          <div class="check-text">
+            <span class="check-label">Repository pattern — ไม่มี SQL กระจายใน stage code</span>
+            <span class="check-note">ทุก DB access ผ่าน <code>src/curriculum_agent/data/repositories.py</code></span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">✓</div>
+          <div class="check-text">
+            <span class="check-label">Async-first ใน API และ stage handlers</span>
+            <span class="check-note">Sync เฉพาะ pure CPU work (NLP, math)</span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">✓</div>
+          <div class="check-text">
+            <span class="check-label">No hand-parsing LLM JSON — ใช้ Instructor + Pydantic เสมอ</span>
+            <span class="check-note">ทั้ง Stage 3 (_PLODraftList) และ Stage 4 (_YLOListResponse) ผ่าน Instructor</span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">✓</div>
+          <div class="check-text">
+            <span class="check-label">Auth บน write endpoints ทั้งหมด</span>
+            <span class="check-note">POST /programs/, POST /evidence/, PUT /plos/&#123;id&#125; — ทุก route ใช้ <code>require_api_key</code></span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">✓</div>
+          <div class="check-text">
+            <span class="check-label">Lazy LLM client — ไม่ bind event loop ที่ import time</span>
+            <span class="check-note"><code>@functools.cache</code> บน <code>_get_client()</code> = pytest-safe singleton</span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon pass">✓</div>
+          <div class="check-text">
+            <span class="check-label">Safe state access ด้วย .get() + ValueError</span>
+            <span class="check-note">ทุก stage ที่อ่าน <code>metadata</code> ป้องกัน partial checkpoint resume</span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon warn">!</div>
+          <div class="check-text">
+            <span class="check-label">Integration tests ยัง mock LLM — ยังไม่ test กับ Ollama จริง</span>
+            <span class="check-note">ต้อง run integration suite กับ Docker stack ก่อน deploy ทุกครั้ง</span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon warn">!</div>
+          <div class="check-text">
+            <span class="check-label">Version column บน PLO/YLO อาจไม่ exist ใน DB — optimistic locking ไม่สมบูรณ์</span>
+            <span class="check-note">ตรวจสอบ Alembic migration ว่า <code>version</code> column ถูก create — concurrent edits อาจ lost-update</span>
+          </div>
+        </div>
+        <div class="check-item">
+          <div class="check-icon warn">!</div>
+          <div class="check-text">
+            <span class="check-label">ไม่มี rate limiting บน LLM endpoints</span>
+            <span class="check-note">ควรเพิ่ม slowapi หรือ middleware ป้องกัน Ollama overload</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <div class="report-footer">
+      <div>
+        <div class="footer-text">Curriculum Design Agent — Architecture Audit</div>
+        <div class="footer-text" style="margin-top:0.25rem">Generated 2026-05-26 · Claude Sonnet 4.6</div>
+      </div>
+      <div class="status-indicator">ALL 40 TESTS PASSING</div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+function toggle(header) {
+  const body = header.nextElementSibling;
+  body.classList.toggle('open');
+}
+
+// Highlight active nav on scroll
+const sections = document.querySelectorAll('section, .hero');
+const navItems = document.querySelectorAll('.nav-item');
+
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      navItems.forEach(n => n.classList.remove('active'));
+      const id = entry.target.id || 'overview';
+      const active = document.querySelector(`.nav-item[href="#${id}"]`);
+      if (active) active.classList.add('active');
+    }
+  });
+}, { rootMargin: '-30% 0px -60% 0px' });
+
+sections.forEach(s => observer.observe(s));
+
+// Animate stat counters
+document.querySelectorAll('.stat-pill-number').forEach(el => {
+  const target = parseInt(el.textContent);
+  let current = 0;
+  const step = Math.ceil(target / 20);
+  const timer = setInterval(() => {
+    current = Math.min(current + step, target);
+    el.textContent = current;
+    if (current >= target) clearInterval(timer);
+  }, 40);
+});
+</script>
+</body>
+</html>

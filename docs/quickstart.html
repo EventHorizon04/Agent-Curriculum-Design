@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>QUICKSTART — Curriculum Design Agent</title>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Sarabun:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:         #080c18;
+      --bg-panel:   #0d1220;
+      --border:     rgba(255,184,0,0.18);
+      --border-hi:  rgba(255,184,0,0.55);
+      --amber:      #FFB800;
+      --amber-dim:  rgba(255,184,0,0.65);
+      --cyan:       #00D4FF;
+      --cyan-dim:   rgba(0,212,255,0.55);
+      --green:      #00FF88;
+      --text:       #C8D0E0;
+      --text-dim:   #5a6880;
+      --font-d:     'Orbitron', monospace;
+      --font-m:     'Space Mono', monospace;
+      --font-b:     'Sarabun', sans-serif;
+      --step-size:  30px;
+      --indent:     calc(var(--step-size) + 1rem);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-b);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* scan lines */
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background: repeating-linear-gradient(0deg,
+        transparent, transparent 2px,
+        rgba(0,0,0,0.025) 2px, rgba(0,0,0,0.025) 4px);
+      pointer-events: none; z-index: 999;
+    }
+
+    /* grid */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      background-image:
+        linear-gradient(rgba(255,184,0,0.025) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255,184,0,0.025) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none; z-index: 0;
+    }
+
+    /* ─── Layout ─────────────────────────────── */
+    .container {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 2rem 2.5rem 4rem;
+      position: relative; z-index: 1;
+    }
+
+    /* ─── Header ─────────────────────────────── */
+    header {
+      padding: 3.5rem 0 2.25rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 3.5rem;
+    }
+
+    .mission-label {
+      font-family: var(--font-m);
+      font-size: 0.65rem;
+      color: var(--amber);
+      letter-spacing: 0.35em;
+      text-transform: uppercase;
+      margin-bottom: 1rem;
+      opacity: 0;
+      animation: slideDown 0.5s ease 0.1s forwards;
+    }
+
+    h1 {
+      font-family: var(--font-d);
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 900;
+      color: #fff;
+      letter-spacing: -0.02em;
+      line-height: 1.05;
+      opacity: 0;
+      animation: slideDown 0.5s ease 0.2s forwards;
+    }
+
+    h1 em { color: var(--amber); font-style: normal; }
+
+    .subtitle {
+      margin-top: 1rem;
+      font-size: 0.95rem;
+      color: var(--text-dim);
+      font-weight: 300;
+      line-height: 1.6;
+      max-width: 560px;
+      opacity: 0;
+      animation: slideDown 0.5s ease 0.3s forwards;
+    }
+
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.6rem;
+      margin-top: 1.5rem;
+      opacity: 0;
+      animation: slideDown 0.5s ease 0.4s forwards;
+    }
+
+    .badge {
+      font-family: var(--font-m);
+      font-size: 0.62rem;
+      letter-spacing: 0.1em;
+      padding: 0.2rem 0.55rem;
+      border: 1px solid;
+      text-transform: uppercase;
+    }
+    .b-amber { color: var(--amber); border-color: rgba(255,184,0,0.35); }
+    .b-cyan  { color: var(--cyan);  border-color: rgba(0,212,255,0.35); }
+    .b-green { color: var(--green); border-color: rgba(0,255,136,0.35); }
+
+    /* ─── Progress bar decoration ───────────── */
+    .progress-bar {
+      height: 2px;
+      background: linear-gradient(90deg, var(--amber), var(--cyan), transparent);
+      margin-bottom: 3.5rem;
+      opacity: 0;
+      animation: slideDown 0.5s ease 0.5s forwards;
+    }
+
+    /* ─── Section ────────────────────────────── */
+    .section {
+      margin-bottom: 2.75rem;
+      opacity: 0;
+      transform: translateY(18px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+    .section.visible { opacity: 1; transform: translateY(0); }
+
+    .sec-head {
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .num {
+      font-family: var(--font-d);
+      font-size: 0.6rem;
+      font-weight: 700;
+      color: var(--bg);
+      background: var(--amber);
+      width: var(--step-size);
+      height: var(--step-size);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      letter-spacing: 0.05em;
+      margin-top: 2px;
+    }
+
+    .num.alt {
+      background: transparent;
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      font-size: 0.9rem;
+    }
+
+    .sec-info { flex: 1; }
+
+    .sec-title {
+      font-family: var(--font-d);
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--amber);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      line-height: 1.4;
+    }
+
+    .sec-title.dim { color: var(--text-dim); }
+
+    .sec-sub {
+      font-size: 0.85rem;
+      color: var(--text-dim);
+      font-weight: 300;
+      margin-top: 0.3rem;
+    }
+
+    /* ─── Body content indent ────────────────── */
+    .body {
+      margin-left: var(--indent);
+    }
+
+    /* ─── Code block ─────────────────────────── */
+    .code-block {
+      background: #050810;
+      border: 1px solid rgba(255,184,0,0.12);
+      border-left: 2px solid var(--amber);
+      padding: 1rem 1.25rem;
+      margin: 0.6rem 0;
+      position: relative;
+      overflow-x: auto;
+    }
+
+    .code-block::before {
+      content: attr(data-label);
+      position: absolute;
+      top: 0; right: 0;
+      font-family: var(--font-m);
+      font-size: 0.58rem;
+      color: var(--bg);
+      background: var(--amber);
+      padding: 0.12rem 0.45rem;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .code-block code {
+      font-family: var(--font-m);
+      font-size: 0.8rem;
+      line-height: 1.75;
+      display: block;
+      white-space: pre;
+      color: #dce8ff;
+    }
+
+    .k  { color: var(--cyan); }
+    .a  { color: #a8c4ff; }
+    .f  { color: var(--amber-dim); }
+    .cm { color: var(--text-dim); font-style: italic; }
+
+    /* ─── Services table ─────────────────────── */
+    .services {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .svc {
+      display: grid;
+      grid-template-columns: 120px 90px 1fr 10px;
+      align-items: center;
+      gap: 1.25rem;
+      padding: 0.7rem 1rem;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      transition: border-color 0.15s;
+    }
+
+    .svc:hover { border-color: var(--border-hi); }
+
+    .svc-name { font-family: var(--font-m); font-size: 0.72rem; color: var(--cyan); }
+    .svc-port { font-family: var(--font-m); font-size: 0.68rem; color: var(--amber); }
+    .svc-desc { font-size: 0.82rem; color: var(--text-dim); font-weight: 300; }
+
+    .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: blink 2.4s ease-in-out infinite;
+    }
+
+    /* ─── URL cards ──────────────────────────── */
+    .url-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 0.6rem;
+    }
+
+    .url-card {
+      display: block;
+      text-decoration: none;
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      padding: 0.9rem 1.1rem;
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+
+    .url-card:hover {
+      border-color: var(--cyan-dim);
+      background: rgba(0,212,255,0.04);
+      transform: translateY(-1px);
+    }
+
+    .url-card-lbl {
+      font-family: var(--font-m);
+      font-size: 0.6rem;
+      color: var(--text-dim);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 0.35rem;
+    }
+
+    .url-card-url {
+      font-family: var(--font-m);
+      font-size: 0.78rem;
+      color: var(--cyan);
+    }
+
+    /* ─── Note ───────────────────────────────── */
+    .note {
+      background: rgba(255,184,0,0.04);
+      border: 1px solid rgba(255,184,0,0.18);
+      border-left: 3px solid var(--amber);
+      padding: 0.8rem 1.1rem;
+      margin-top: 0.75rem;
+    }
+
+    .note-lbl {
+      font-family: var(--font-m);
+      font-size: 0.6rem;
+      color: var(--amber);
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      margin-bottom: 0.3rem;
+    }
+
+    .note p {
+      font-size: 0.83rem;
+      color: var(--text-dim);
+      font-weight: 300;
+      line-height: 1.65;
+    }
+
+    /* ─── Quick-ref grid ─────────────────────── */
+    .quick-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 0.6rem;
+    }
+
+    .qcard {
+      background: var(--bg-panel);
+      border: 1px solid var(--border);
+      padding: 0.9rem 1.1rem;
+    }
+
+    .qcard-title {
+      font-family: var(--font-m);
+      font-size: 0.6rem;
+      color: var(--text-dim);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 0.6rem;
+      padding-bottom: 0.4rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .qcard code {
+      font-family: var(--font-m);
+      font-size: 0.74rem;
+      color: var(--cyan);
+      line-height: 1.9;
+      display: block;
+    }
+
+    /* ─── Divider ────────────────────────────── */
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, var(--border), transparent);
+      margin: 2.25rem 0 2.25rem var(--indent);
+    }
+
+    /* ─── Footer ─────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      margin-top: 3rem;
+      padding: 1.5rem 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+
+    .ft { font-family: var(--font-m); font-size: 0.6rem; color: var(--text-dim); letter-spacing: 0.1em; }
+
+    /* ─── Animations ─────────────────────────── */
+    @keyframes slideDown {
+      from { opacity: 0; transform: translateY(-8px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0.3; }
+    }
+
+    /* ─── Responsive ─────────────────────────── */
+    @media (max-width: 600px) {
+      .container { padding: 1.5rem 1.25rem 3rem; }
+      .svc { grid-template-columns: 100px 1fr; }
+      .svc-port, .dot { display: none; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <!-- ══ Header ══════════════════════════════ -->
+  <header>
+    <div class="mission-label">DEPLOYMENT MANUAL · คู่มือการติดตั้ง</div>
+    <h1>CURRICULUM<br><em>DESIGN AGENT</em></h1>
+    <p class="subtitle">AI Agent ช่วยออกแบบหลักสูตรอุดมศึกษาไทย ตามมาตรฐาน MHESI และหลักการ OBE — 5-stage LangGraph pipeline</p>
+    <div class="badges">
+      <span class="badge b-amber">v0.1.0 PoC</span>
+      <span class="badge b-cyan">Python 3.11+</span>
+      <span class="badge b-cyan">uv · Docker Compose</span>
+      <span class="badge b-green">40 Tests Passing</span>
+    </div>
+  </header>
+
+  <div class="progress-bar"></div>
+
+  <!-- ══ Step 1 ═══════════════════════════════ -->
+  <div class="section" id="s1">
+    <div class="sec-head">
+      <div class="num">01</div>
+      <div class="sec-info">
+        <div class="sec-title">Environment Setup</div>
+        <div class="sec-sub">คัดลอก env file และแก้ค่าตามต้องการ</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="code-block" data-label="powershell">
+        <code><span class="k">cp</span> <span class="a">.env.example</span> <span class="a">.env</span>
+
+<span class="cm"># ค่าสำคัญใน .env ที่ควรแก้</span>
+<span class="f">LIGHT_MODEL</span>=scb10x/typhoon2-8b-instruct   <span class="cm"># Typhoon2 8B — classification + SMART</span>
+<span class="f">HEAVY_MODEL</span>=qwen2.5:14b                   <span class="cm"># Qwen 14B — PLO/YLO synthesis (หรือ :32b)</span>
+<span class="cm"># API_KEY=change-me-in-production          # uncomment เมื่อ deploy จริง</span></code>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Step 2 ═══════════════════════════════ -->
+  <div class="section" id="s2">
+    <div class="sec-head">
+      <div class="num">02</div>
+      <div class="sec-info">
+        <div class="sec-title">Start Docker Services</div>
+        <div class="sec-sub">เปิด infrastructure ทั้งหมดด้วยคำสั่งเดียว</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="code-block" data-label="powershell">
+        <code><span class="k">docker</span> <span class="a">compose</span> <span class="f">up -d</span></code>
+      </div>
+      <div class="services" style="margin-top:0.75rem">
+        <div class="svc">
+          <span class="svc-name">ca-ollama</span>
+          <span class="svc-port">:11434</span>
+          <span class="svc-desc">LLM inference — Typhoon2-8B + Qwen2.5</span>
+          <div class="dot"></div>
+        </div>
+        <div class="svc">
+          <span class="svc-name">ca-qdrant</span>
+          <span class="svc-port">:6333</span>
+          <span class="svc-desc">Vector store สำหรับ skill embeddings (BGE-M3)</span>
+          <div class="dot"></div>
+        </div>
+        <div class="svc">
+          <span class="svc-name">ca-postgres</span>
+          <span class="svc-port">:5432</span>
+          <span class="svc-desc">Structured data — Programs, PLO, YLO, Evidence</span>
+          <div class="dot"></div>
+        </div>
+        <div class="svc">
+          <span class="svc-name">ca-minio</span>
+          <span class="svc-port">:9000 / :9001</span>
+          <span class="svc-desc">Object storage — raw documents + หลักสูตร files</span>
+          <div class="dot"></div>
+        </div>
+        <div class="svc">
+          <span class="svc-name">ca-api</span>
+          <span class="svc-port">:8000</span>
+          <span class="svc-desc">FastAPI backend — REST endpoints + LangGraph runner</span>
+          <div class="dot"></div>
+        </div>
+        <div class="svc">
+          <span class="svc-name">ca-ui</span>
+          <span class="svc-port">:8501</span>
+          <span class="svc-desc">Streamlit frontend — UI หลักสำหรับ curriculum designers</span>
+          <div class="dot"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Step 3 ═══════════════════════════════ -->
+  <div class="section" id="s3">
+    <div class="sec-head">
+      <div class="num">03</div>
+      <div class="sec-info">
+        <div class="sec-title">Pull LLM Models</div>
+        <div class="sec-sub">ดาวน์โหลด models เข้า Ollama — ทำครั้งแรกเท่านั้น ใช้เวลาสักครู่</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="code-block" data-label="powershell">
+        <code><span class="cm"># Light model — Typhoon2 8B (classification, SMART validation)</span>
+<span class="k">docker exec</span> <span class="a">ca-ollama</span> ollama pull <span class="f">scb10x/typhoon2-8b-instruct</span>
+
+<span class="cm"># Heavy model — เลือกตาม VRAM ที่มี</span>
+<span class="k">docker exec</span> <span class="a">ca-ollama</span> ollama pull <span class="f">qwen2.5:14b</span>    <span class="cm"># VRAM &lt; 24 GB</span>
+<span class="k">docker exec</span> <span class="a">ca-ollama</span> ollama pull <span class="f">qwen2.5:32b</span>    <span class="cm"># VRAM 24 GB+</span></code>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Step 4 ═══════════════════════════════ -->
+  <div class="section" id="s4">
+    <div class="sec-head">
+      <div class="num">04</div>
+      <div class="sec-info">
+        <div class="sec-title">Install Python Deps + Migrate DB</div>
+        <div class="sec-sub">ต้องทำก่อนเปิด API ครั้งแรก</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="code-block" data-label="powershell">
+        <code><span class="cm"># ติดตั้ง dependencies ทั้งหมด (รวม extras สำหรับ NLP)</span>
+<span class="k">uv sync</span> <span class="f">--all-extras</span>
+
+<span class="cm"># Run Alembic migrations — สร้าง tables ใน PostgreSQL</span>
+<span class="k">uv run alembic</span> <span class="a">upgrade head</span></code>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <!-- ══ Access Points ═══════════════════════ -->
+  <div class="section" id="s5">
+    <div class="sec-head">
+      <div class="num alt">→</div>
+      <div class="sec-info">
+        <div class="sec-title" style="color:var(--cyan)">Access Points</div>
+        <div class="sec-sub">เปิด browser ที่ URLs เหล่านี้หลัง services พร้อม</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="url-grid">
+        <a class="url-card" href="http://localhost:8501" target="_blank">
+          <div class="url-card-lbl">Streamlit UI</div>
+          <div class="url-card-url">localhost:8501</div>
+        </a>
+        <a class="url-card" href="http://localhost:8000/docs" target="_blank">
+          <div class="url-card-lbl">API Docs (Swagger)</div>
+          <div class="url-card-url">localhost:8000/docs</div>
+        </a>
+        <a class="url-card" href="http://localhost:9001" target="_blank">
+          <div class="url-card-lbl">MinIO Console</div>
+          <div class="url-card-url">localhost:9001</div>
+        </a>
+        <a class="url-card" href="http://localhost:6333/dashboard" target="_blank">
+          <div class="url-card-lbl">Qdrant Dashboard</div>
+          <div class="url-card-url">localhost:6333/dashboard</div>
+        </a>
+      </div>
+      <div class="note">
+        <div class="note-lbl">NOTE</div>
+        <p>
+          ถ้าใช้ Docker Compose ครบ (ขั้นตอน 1-4) API และ UI รันอยู่ใน container แล้ว ไม่ต้อง start แยก
+          — Dev mode ด้านล่างสำหรับ hot-reload ระหว่าง development เท่านั้น
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Dev Mode ════════════════════════════ -->
+  <div class="section" id="s6">
+    <div class="sec-head">
+      <div class="num alt">⚡</div>
+      <div class="sec-info">
+        <div class="sec-title dim">Dev Mode (optional)</div>
+        <div class="sec-sub">รัน API/UI local แบบ hot-reload — services อื่นยังใช้ Docker</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="code-block" data-label="terminal 1">
+        <code><span class="cm"># FastAPI — hot-reload เมื่อแก้ไข src/</span>
+<span class="k">uv run uvicorn</span> <span class="a">curriculum_agent.api.main:app</span> <span class="f">--reload</span></code>
+      </div>
+      <div class="code-block" data-label="terminal 2">
+        <code><span class="cm"># Streamlit — hot-reload เมื่อแก้ไข streamlit_app/</span>
+<span class="k">uv run streamlit run</span> <span class="a">streamlit_app/app.py</span></code>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Quick Reference ═════════════════════ -->
+  <div class="section" id="s7">
+    <div class="sec-head">
+      <div class="num alt">//</div>
+      <div class="sec-info">
+        <div class="sec-title dim">Quick Reference</div>
+        <div class="sec-sub">คำสั่งที่ใช้บ่อยระหว่าง development</div>
+      </div>
+    </div>
+    <div class="body">
+      <div class="quick-grid">
+        <div class="qcard">
+          <div class="qcard-title">Run Tests</div>
+          <code>uv run pytest</code>
+          <code>uv run pytest -k "ylo"</code>
+          <code>uv run pytest tests/unit/</code>
+        </div>
+        <div class="qcard">
+          <div class="qcard-title">Lint &amp; Type Check</div>
+          <code>uv run ruff check src/ tests/</code>
+          <code>uv run ruff format src/ tests/</code>
+          <code>uv run mypy src/</code>
+        </div>
+        <div class="qcard">
+          <div class="qcard-title">Docker Management</div>
+          <code>docker compose up -d</code>
+          <code>docker compose down</code>
+          <code>docker compose logs -f ca-api</code>
+        </div>
+        <div class="qcard">
+          <div class="qcard-title">DB Migrations</div>
+          <code>uv run alembic upgrade head</code>
+          <code>uv run alembic downgrade -1</code>
+          <code>uv run alembic history</code>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ Footer ══════════════════════════════ -->
+  <footer>
+    <span class="ft">CURRICULUM DESIGN AGENT · QUICKSTART GUIDE</span>
+    <span class="ft">MHESI COMPLIANT · OBE · PoC BUILD</span>
+  </footer>
+
+</div>
+
+<script>
+  const io = new IntersectionObserver(
+    entries => entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); }),
+    { threshold: 0.08 }
+  );
+  document.querySelectorAll('.section').forEach(s => io.observe(s));
+</script>
+</body>
+</html>
