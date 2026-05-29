@@ -16,7 +16,7 @@ AI agent ช่วย curriculum designers ออกแบบหลักสู�
 ### 1. First-time setup
 
 ```powershell
-cp .env.example .env        # แก้ LIGHT_MODEL/HEAVY_MODEL ถ้าต้องการ
+Copy-Item .env.example .env   # แก้ LIGHT_MODEL/HEAVY_MODEL ถ้าต้องการ
 uv sync --all-extras
 ```
 
@@ -26,6 +26,8 @@ uv sync --all-extras
 ollama pull scb10x/typhoon2-8b-instruct
 ollama pull qwen2.5:7b
 ```
+
+> **Note:** Make sure Ollama is running (system tray icon) before step 3. The start script will fail if Ollama is not running.
 
 ### 3. Start backend (DB + migrations + API)
 
