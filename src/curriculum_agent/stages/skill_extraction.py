@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Literal
 
@@ -10,7 +11,7 @@ from qdrant_client.models import Distance, PointStruct, VectorParams
 from sklearn.cluster import KMeans
 
 from curriculum_agent.data.qdrant import SKILL_COLLECTION, get_qdrant
-from curriculum_agent.data.repositories import ClusterRepository
+from curriculum_agent.data.repositories import ClusterRepository, SkillRepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
@@ -152,7 +153,7 @@ async def run(state: AgentState) -> AgentState:
         )
 
     skill_texts = [s.skill_name_th for s in extracted]
-    vectors = embed(skill_texts)
+    vectors = await asyncio.to_thread(embed, skill_texts)
 
     # --- Step 4: KMeans clustering ---
     n_skills = len(extracted)
@@ -222,7 +223,8 @@ async def run(state: AgentState) -> AgentState:
         )
         clusters.append(cluster)
 
-    # Persist clusters to Postgres
+    # Persist skills and clusters to Postgres
+    await SkillRepository().bulk_insert(extracted)
     repo = ClusterRepository()
     await repo.bulk_insert(clusters)
 

@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncGenerator
+
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import EvidenceRepository
 from curriculum_agent.models import StakeholderEvidence
+from curriculum_agent.stages.stakeholder_needs import classify_single, _embed_and_upsert
 
 router = APIRouter()
 _repo = EvidenceRepository()
@@ -19,3 +24,38 @@ async def list_evidence(program_id: str) -> list[StakeholderEvidence]:
 async def upload_evidence(program_id: str, evidence: StakeholderEvidence) -> StakeholderEvidence:
     await _repo.bulk_insert([evidence])
     return evidence
+
+
+@router.get("/classify-stream", dependencies=[Depends(require_api_key)])
+async def classify_evidence_stream(program_id: str) -> StreamingResponse:
+    """SSE endpoint: classify unclassified evidence items one-by-one, streaming progress."""
+
+    async def _generate() -> AsyncGenerator[str, None]:
+        repo = EvidenceRepository()
+        items = await repo.list_by_program(program_id)
+        to_classify = [e for e in items if e.classification == "unclassified"]
+        total = len(to_classify)
+
+        yield f"data: {json.dumps({'status': 'started', 'total': total})}\n\n"
+
+        newly_classified: list[StakeholderEvidence] = []
+        for i, evidence in enumerate(to_classify, 1):
+            updated = await classify_single(evidence)
+            await repo.bulk_insert([updated])
+            newly_classified.append(updated)
+            event = json.dumps({
+                "status": "progress",
+                "index": i,
+                "total": total,
+                "evidence_id": updated.evidence_id,
+                "source_name": updated.source_name,
+                "classification": updated.classification,
+            })
+            yield f"data: {event}\n\n"
+
+        if newly_classified:
+            await _embed_and_upsert(newly_classified)
+
+        yield f"data: {json.dumps({'status': 'done', 'total': total})}\n\n"
+
+    return StreamingResponse(_generate(), media_type="text/event-stream")

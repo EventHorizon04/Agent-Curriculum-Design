@@ -49,7 +49,7 @@ Write-Step "Waiting for postgres..."
 $timeout = 30
 $elapsed = 0
 while ($elapsed -lt $timeout) {
-    $result = docker exec ca-postgres pg_isready -U curriculum 2>&1
+    $result = docker exec ca-postgres pg_isready -U curriculum -d curriculum_agent 2>&1
     if ($LASTEXITCODE -eq 0) { break }
     Start-Sleep -Seconds 1
     $elapsed++

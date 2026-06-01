@@ -145,6 +145,10 @@ async def run(state: AgentState) -> AgentState:
             "run Stage 2 successfully before proceeding to PLO synthesis"
         )
 
+    cluster_evidence_map: dict[str, list[str]] = {
+        c.cluster_id: c.source_evidence_ids for c in clusters
+    }
+
     logger.info(f"Stage 3: synthesizing PLOs from {len(selected)} clusters")
 
     messages = build_plo_synthesis_prompt(metadata, selected)
@@ -154,6 +158,20 @@ async def run(state: AgentState) -> AgentState:
     plos: list[PLO] = []
     for draft in drafts:
         validated_draft, smart_check = await _ensure_smart(draft)
+
+        # Derive evidence IDs from referenced clusters when LLM omits them
+        evidence_ids = validated_draft.source_evidence_ids
+        if not evidence_ids:
+            evidence_ids = list({
+                eid
+                for cid in validated_draft.source_cluster_ids
+                for eid in cluster_evidence_map.get(cid, [])
+            })
+            logger.debug(
+                f"  PLO {validated_draft.plo_id}: derived {len(evidence_ids)} "
+                "source_evidence_ids from clusters"
+            )
+
         plos.append(
             PLO(
                 plo_id=validated_draft.plo_id or str(uuid.uuid4()),
@@ -167,7 +185,7 @@ async def run(state: AgentState) -> AgentState:
                 action_verb_th=validated_draft.action_verb_th,
                 smart_check=smart_check,
                 source_cluster_ids=validated_draft.source_cluster_ids,
-                source_evidence_ids=validated_draft.source_evidence_ids,
+                source_evidence_ids=evidence_ids,
                 rationale_th=validated_draft.rationale_th,
                 distinctive_feature_th=validated_draft.distinctive_feature_th,
                 version=1,

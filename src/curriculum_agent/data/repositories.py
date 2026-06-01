@@ -10,12 +10,14 @@ from curriculum_agent.data.orm import (
     EvidenceTable,
     PLOTable,
     ProgramTable,
+    SkillTable,
     YLOTable,
 )
 from curriculum_agent.data.postgres import AsyncSessionLocal
 from curriculum_agent.models import (
     PLO,
     YLO,
+    ExtractedSkill,
     ProgramMetadata,
     SkillCluster,
     StageCheckpoint,
@@ -86,6 +88,36 @@ class EvidenceRepository:
                 d["metadata"] = d.pop("extra_metadata")
                 out.append(StakeholderEvidence.model_validate(d))
             return out
+
+
+class SkillRepository:
+    async def bulk_insert(self, skills: list[ExtractedSkill]) -> None:
+        async with AsyncSessionLocal() as session:
+            for skill in skills:
+                data = skill.model_dump(mode="json")
+                existing = await session.get(SkillTable, skill.skill_id)
+                if existing is None:
+                    session.add(SkillTable(**data))
+                else:
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+            await session.commit()
+
+    async def list_by_program(self, program_id: str) -> list[ExtractedSkill]:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(SkillTable).where(SkillTable.program_id == program_id)
+            )
+            rows = result.scalars().all()
+            return [ExtractedSkill.model_validate(_row_to_dict(row)) for row in rows]
+
+    async def list_by_ids(self, skill_ids: list[str]) -> list[ExtractedSkill]:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(SkillTable).where(SkillTable.skill_id.in_(skill_ids))
+            )
+            rows = result.scalars().all()
+            return [ExtractedSkill.model_validate(_row_to_dict(row)) for row in rows]
 
 
 class ClusterRepository:

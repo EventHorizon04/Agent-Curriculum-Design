@@ -49,6 +49,8 @@ export default function StakeholderNeeds() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [classifying, setClassifying] = useState(false)
+  const [classifyProgress, setClassifyProgress] = useState<{ index: number; total: number; source_name: string } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const fetchEvidence = useCallback(async (pid: string) => {
@@ -116,6 +118,51 @@ export default function StakeholderNeeds() {
       raw_text_th: text,
     })
     if (fileRef.current) fileRef.current.value = ''
+  }
+
+  async function handleClassify() {
+    if (!programId || classifying) return
+    setClassifying(true)
+    setClassifyProgress(null)
+    setError('')
+    try {
+      const response = await fetch(
+        `http://localhost:8000/programs/${programId}/evidence/classify-stream`,
+        { headers: { 'Accept': 'text/event-stream' } }
+      )
+      if (!response.ok) { setError(`classify-stream error: ${response.status}`); return }
+      const reader = response.body?.getReader()
+      if (!reader) return
+      const decoder = new TextDecoder()
+      let buf = ''
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buf += decoder.decode(value, { stream: true })
+        const lines = buf.split('\n')
+        buf = lines.pop() ?? ''
+        for (const line of lines) {
+          if (!line.startsWith('data: ')) continue
+          const evt = JSON.parse(line.slice(6))
+          if (evt.status === 'progress') {
+            setClassifyProgress({ index: evt.index, total: evt.total, source_name: evt.source_name })
+            setItems(prev => prev.map(item =>
+              item.evidence_id === evt.evidence_id
+                ? { ...item, classification: evt.classification }
+                : item
+            ))
+          } else if (evt.status === 'done') {
+            setClassifyProgress(null)
+            await fetchEvidence(programId)
+          }
+        }
+      }
+    } catch {
+      setError('จำแนกหลักฐานไม่สำเร็จ — ตรวจสอบว่า backend รันอยู่')
+    } finally {
+      setClassifying(false)
+      setClassifyProgress(null)
+    }
   }
 
   function handleSetProgram() {
@@ -258,7 +305,40 @@ export default function StakeholderNeeds() {
 
       {programId && (
         <div>
-          <h2 className="text-base font-semibold text-gray-700 mb-3">หลักฐานทั้งหมด</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-semibold text-gray-700">หลักฐานทั้งหมด</h2>
+            {items.some(i => i.classification === 'unclassified') && (
+              <button
+                onClick={handleClassify}
+                disabled={classifying}
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors disabled:cursor-not-allowed"
+              >
+                {classifying ? (
+                  <>
+                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+                    </svg>
+                    กำลังจำแนก...
+                  </>
+                ) : 'จำแนกหลักฐาน'}
+              </button>
+            )}
+          </div>
+          {classifying && classifyProgress && (
+            <div className="mb-3 bg-indigo-50 border border-indigo-100 rounded-lg px-4 py-3">
+              <div className="flex justify-between text-xs text-indigo-700 mb-1.5">
+                <span>กำลังจำแนก: <strong>{classifyProgress.source_name}</strong></span>
+                <span>{classifyProgress.index}/{classifyProgress.total}</span>
+              </div>
+              <div className="h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+                  style={{ width: `${(classifyProgress.index / classifyProgress.total) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
           {loadingList ? (
             <div className="text-center text-gray-400 py-8 text-sm">กำลังโหลด...</div>
           ) : items.length === 0 ? (

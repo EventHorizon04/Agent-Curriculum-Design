@@ -33,56 +33,62 @@ async def _ensure_collection() -> None:
         )
 
 
+async def classify_single(evidence: StakeholderEvidence) -> StakeholderEvidence:
+    """Classify one evidence item via LLM. Used by both the stage and the SSE endpoint."""
+    messages = build_classify_evidence_prompt(evidence)
+    result = await complete_light(_ClassifyResult, messages)
+    return evidence.model_copy(
+        update={
+            "classification": result.classification,
+            "classification_rationale_th": result.classification_rationale_th,
+        }
+    )
+
+
+async def _embed_and_upsert(evidence_models: list[StakeholderEvidence]) -> None:
+    await _ensure_collection()
+    texts = [e.raw_text_th for e in evidence_models]
+    vectors = embed(texts)
+    client = get_qdrant()
+    points = [
+        PointStruct(
+            id=abs(hash(e.evidence_id)) % (2**63),
+            vector=vec,
+            payload={
+                "evidence_id": e.evidence_id,
+                "program_id": e.program_id,
+                "stakeholder_type": e.stakeholder_type.value,
+                "classification": e.classification,
+            },
+        )
+        for e, vec in zip(evidence_models, vectors)
+    ]
+    await client.upsert(collection_name=EVIDENCE_COLLECTION, points=points)
+
+
 async def run(state: AgentState) -> AgentState:
-    """Stage 1: classify stakeholder evidence with LLM, persist to Postgres + Qdrant."""
+    """Stage 1: classify unclassified evidence, persist to Postgres + Qdrant."""
     raw = state.get("raw_evidence", [])
-    logger.info(f"Stage 1: classifying {len(raw)} evidence items")
+    all_items = [StakeholderEvidence.model_validate(d) for d in raw]
 
-    classified_dicts: list[dict] = []
-    evidence_models: list[StakeholderEvidence] = []
+    to_classify = [e for e in all_items if e.classification == "unclassified"]
+    already_done = [e for e in all_items if e.classification != "unclassified"]
+    logger.info(
+        f"Stage 1: {len(to_classify)} to classify, {len(already_done)} already classified"
+    )
 
-    for item_dict in raw:
-        evidence = StakeholderEvidence.model_validate(item_dict)
-        messages = build_classify_evidence_prompt(evidence)
-        result = await complete_light(_ClassifyResult, messages)
+    newly_classified: list[StakeholderEvidence] = []
+    for evidence in to_classify:
+        updated = await classify_single(evidence)
+        newly_classified.append(updated)
+        logger.debug(f"  {updated.evidence_id}: {updated.source_name} → {updated.classification}")
 
-        updated = evidence.model_copy(
-            update={
-                "classification": result.classification,
-                "classification_rationale_th": result.classification_rationale_th,
-            }
-        )
-        evidence_models.append(updated)
-        classified_dicts.append(updated.model_dump(mode="json"))
-        logger.debug(
-            f"  {evidence.evidence_id}: {evidence.source_name} → {result.classification}"
-        )
+    if newly_classified:
+        repo = EvidenceRepository()
+        await repo.bulk_insert(newly_classified)
+        await _embed_and_upsert(newly_classified)
 
-    # Persist classified evidence to Postgres
-    repo = EvidenceRepository()
-    await repo.bulk_insert(evidence_models)
-
-    # Embed and upsert into Qdrant for Stage 3 retrieval
-    if evidence_models:
-        await _ensure_collection()
-        texts = [e.raw_text_th for e in evidence_models]
-        vectors = embed(texts)
-        client = get_qdrant()
-        points = [
-            PointStruct(
-                id=abs(hash(e.evidence_id)) % (2**63),
-                vector=vec,
-                payload={
-                    "evidence_id": e.evidence_id,
-                    "program_id": e.program_id,
-                    "stakeholder_type": e.stakeholder_type.value,
-                    "classification": e.classification,
-                },
-            )
-            for e, vec in zip(evidence_models, vectors)
-        ]
-        await client.upsert(collection_name=EVIDENCE_COLLECTION, points=points)
-
-    state["classified_evidence"] = classified_dicts
+    all_classified = already_done + newly_classified
+    state["classified_evidence"] = [e.model_dump(mode="json") for e in all_classified]
     state["current_stage"] = "stakeholder_needs"
     return state
