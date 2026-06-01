@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -14,9 +15,14 @@ class Settings(BaseSettings):
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin_dev"
-    light_model: str = "scb10x/typhoon2-8b-instruct"
-    heavy_model: str = "qwen2.5:14b"
+    light_model: str = "gemma4:31b-cloud"
+    heavy_model: str = "gemma4:31b-cloud"
     api_key: str | None = None
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def postgres_dsn_sync(self) -> str:
+        return self.postgres_dsn.replace("postgresql+asyncpg://", "postgresql://")
 
 
 settings = Settings()
