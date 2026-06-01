@@ -10,6 +10,7 @@ from curriculum_agent.data.orm import (
     EvidenceTable,
     PLOTable,
     ProgramTable,
+    SessionTable,
     SkillTable,
     YLOTable,
 )
@@ -19,6 +20,7 @@ from curriculum_agent.models import (
     YLO,
     ExtractedSkill,
     ProgramMetadata,
+    SessionInfo,
     SkillCluster,
     StageCheckpoint,
     StakeholderEvidence,
@@ -233,3 +235,51 @@ class CheckpointRepository:
                 )
             )
             await session.commit()
+
+
+class SessionRepository:
+    async def create(self, session: SessionInfo) -> SessionInfo:
+        async with AsyncSessionLocal() as db:
+            data = _fix_datetimes(session.model_dump(mode="json"), SessionTable)
+            db.add(SessionTable(**data))
+            await db.commit()
+        return session
+
+    async def get(self, session_id: str) -> SessionInfo | None:
+        async with AsyncSessionLocal() as db:
+            row = await db.get(SessionTable, session_id)
+            if row is None:
+                return None
+            return SessionInfo.model_validate(_row_to_dict(row))
+
+    async def list_by_program(self, program_id: str) -> list[SessionInfo]:
+        async with AsyncSessionLocal() as db:
+            result = await db.execute(
+                select(SessionTable)
+                .where(SessionTable.program_id == program_id)
+                .order_by(SessionTable.created_at.desc())
+            )
+            rows = result.scalars().all()
+            return [SessionInfo.model_validate(_row_to_dict(row)) for row in rows]
+
+    async def set_status(self, session_id: str, status: str) -> None:
+        async with AsyncSessionLocal() as db:
+            row = await db.get(SessionTable, session_id)
+            if row is None:
+                return
+            row.status = status
+            row.updated_at = datetime.utcnow()
+            await db.commit()
+
+    async def set_suspended(
+        self, session_id: str, stage: str, message: str
+    ) -> None:
+        async with AsyncSessionLocal() as db:
+            row = await db.get(SessionTable, session_id)
+            if row is None:
+                return
+            row.status = "suspended"
+            row.current_stage = stage
+            row.suspended_message = message
+            row.updated_at = datetime.utcnow()
+            await db.commit()

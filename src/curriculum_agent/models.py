@@ -283,3 +283,16 @@ class StageCheckpoint(BaseModel):
     status: Literal["pending", "approved", "needs_revision", "rejected"] = "pending"
     designer_notes_th: str | None = None
     edits: dict = Field(default_factory=dict)
+
+
+# ----------------------- Session info ----------------------------
+
+class SessionInfo(BaseModel):
+    session_id: str
+    program_id: str
+    thread_id: str
+    status: Literal["running", "suspended", "completed", "rejected", "failed"]
+    current_stage: str | None = None
+    suspended_message: str | None = None
+    created_at: datetime
+    updated_at: datetime

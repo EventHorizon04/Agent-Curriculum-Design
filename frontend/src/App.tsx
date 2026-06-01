@@ -5,6 +5,7 @@ import StakeholderNeeds from './pages/StakeholderNeeds'
 import SkillExtraction from './pages/SkillExtraction'
 import PloSynthesis from './pages/PloSynthesis'
 import YloDerivation from './pages/YloDerivation'
+import Pipeline from './pages/Pipeline'
 
 export default function App() {
   return (
@@ -16,6 +17,7 @@ export default function App() {
           <Route path="skill-extraction" element={<SkillExtraction />} />
           <Route path="plo-synthesis" element={<PloSynthesis />} />
           <Route path="ylo-derivation" element={<YloDerivation />} />
+          <Route path="pipeline" element={<Pipeline />} />
         </Route>
       </Routes>
     </BrowserRouter>
