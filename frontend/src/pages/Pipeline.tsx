@@ -1,0 +1,278 @@
+import { useEffect, useRef, useState } from 'react'
+
+const API = 'http://localhost:8000'
+
+type SessionStatus = 'running' | 'suspended' | 'completed' | 'rejected' | 'failed'
+
+interface Session {
+  session_id: string
+  program_id: string
+  thread_id: string
+  status: SessionStatus
+  current_stage: string | null
+  suspended_message: string | null
+  created_at: string
+  updated_at: string
+}
+
+const STAGE_ORDER = [
+  { key: 'intake', label: 'Intake' },
+  { key: 'stakeholder_needs', label: 'Stakeholder' },
+  { key: 'skill_extraction', label: 'Skills' },
+  { key: 'plo_synthesis', label: 'PLOs' },
+  { key: 'ylo_derivation', label: 'YLOs' },
+]
+
+const STAGE_PATHS: Record<string, string> = {
+  intake: '/',
+  stakeholder_needs: '/stakeholder-needs',
+  skill_extraction: '/skill-extraction',
+  plo_synthesis: '/plo-synthesis',
+  ylo_derivation: '/ylo-derivation',
+}
+
+const STATUS_COLOR: Record<SessionStatus, string> = {
+  running: '#2563eb',
+  suspended: '#d97706',
+  completed: '#16a34a',
+  rejected: '#dc2626',
+  failed: '#9333ea',
+}
+
+function stageIcon(
+  stageKey: string,
+  session: Session,
+): { icon: string; color: string; clickable: boolean } {
+  const currentIdx = STAGE_ORDER.findIndex((s) => s.key === session.current_stage)
+  const thisIdx = STAGE_ORDER.findIndex((s) => s.key === stageKey)
+
+  if (session.status === 'rejected' && stageKey === session.current_stage)
+    return { icon: '✗', color: '#dc2626', clickable: false }
+  if (stageKey === session.current_stage && session.status === 'suspended')
+    return { icon: '⏸', color: '#d97706', clickable: false }
+  if (stageKey === session.current_stage && session.status === 'running')
+    return { icon: '▶', color: '#2563eb', clickable: false }
+  if (session.status === 'completed' || thisIdx < currentIdx)
+    return { icon: '✓', color: '#16a34a', clickable: true }
+  return { icon: '·', color: '#9ca3af', clickable: false }
+}
+
+function SessionCard({
+  session,
+  programId,
+  onAction,
+}: {
+  session: Session
+  programId: string
+  onAction: () => void
+}) {
+  const [loading, setLoading] = useState(false)
+
+  async function doAction(action: 'approve' | 'reject') {
+    setLoading(true)
+    await fetch(`${API}/programs/${programId}/sessions/${session.session_id}/${action}`, {
+      method: 'POST',
+    })
+    setLoading(false)
+    onAction()
+  }
+
+  return (
+    <div
+      style={{
+        border: '1px solid #e5e7eb',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        background: '#fff',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>
+            Session {session.session_id.slice(0, 8)}
+          </span>
+          <span style={{ marginLeft: 8, fontSize: 12, color: '#6b7280' }}>
+            {new Date(session.created_at).toLocaleString('th-TH')}
+          </span>
+        </div>
+        <span
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            color: STATUS_COLOR[session.status],
+            background: STATUS_COLOR[session.status] + '18',
+            borderRadius: 6,
+            padding: '2px 8px',
+          }}
+        >
+          {session.status.toUpperCase()}
+        </span>
+      </div>
+
+      {session.suspended_message && session.status === 'suspended' && (
+        <p style={{ margin: '8px 0 4px', fontSize: 12, color: '#92400e' }}>
+          ⏸ {session.suspended_message}
+        </p>
+      )}
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 10 }}>
+        {STAGE_ORDER.map((stage, i) => {
+          const { icon, color, clickable } = stageIcon(stage.key, session)
+          return [
+            <span
+              key={stage.key}
+              title={stage.label}
+              style={{
+                fontSize: 13,
+                color,
+                fontWeight: 600,
+                cursor: clickable ? 'pointer' : 'default',
+                textDecoration: clickable ? 'underline' : 'none',
+              }}
+              onClick={() => {
+                if (clickable) window.location.href = STAGE_PATHS[stage.key]
+              }}
+            >
+              {icon} {stage.label}
+            </span>,
+            i < STAGE_ORDER.length - 1 && (
+              <span key={`arrow-${stage.key}`} style={{ color: '#d1d5db' }}>
+                →
+              </span>
+            ),
+          ]
+        })}
+      </div>
+
+      {session.status === 'suspended' && (
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button
+            onClick={() => doAction('approve')}
+            disabled={loading}
+            style={{
+              padding: '6px 16px',
+              background: '#16a34a',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: 13,
+            }}
+          >
+            Approve
+          </button>
+          <button
+            onClick={() => doAction('reject')}
+            disabled={loading}
+            style={{
+              padding: '6px 16px',
+              background: '#dc2626',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: 13,
+            }}
+          >
+            Reject
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function Pipeline() {
+  const programId = localStorage.getItem('programId') ?? ''
+  const [sessions, setSessions] = useState<Session[]>([])
+  const [starting, setStarting] = useState(false)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  async function fetchSessions() {
+    if (!programId) return
+    const res = await fetch(`${API}/programs/${programId}/sessions`)
+    if (res.ok) setSessions(await res.json())
+  }
+
+  function startPolling() {
+    if (pollRef.current) clearInterval(pollRef.current)
+    pollRef.current = setInterval(async () => {
+      await fetchSessions()
+      setSessions((prev) => {
+        const hasRunning = prev.some((s) => s.status === 'running')
+        if (!hasRunning && pollRef.current) {
+          clearInterval(pollRef.current)
+          pollRef.current = null
+        }
+        return prev
+      })
+    }, 2000)
+  }
+
+  useEffect(() => {
+    fetchSessions()
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [programId])
+
+  async function handleNewRun() {
+    if (!programId) return alert('กรุณา intake โปรแกรมก่อน')
+    setStarting(true)
+    const res = await fetch(`${API}/programs/${programId}/sessions`, { method: 'POST' })
+    if (res.ok) {
+      await fetchSessions()
+      startPolling()
+    }
+    setStarting(false)
+  }
+
+  function handleAction() {
+    fetchSessions()
+    startPolling()
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 700 }}>Pipeline Runs</h2>
+        <button
+          onClick={handleNewRun}
+          disabled={starting || !programId}
+          style={{
+            padding: '8px 18px',
+            background: '#2563eb',
+            color: '#fff',
+            border: 'none',
+            borderRadius: 8,
+            cursor: 'pointer',
+            fontWeight: 600,
+            fontSize: 13,
+          }}
+        >
+          {starting ? 'Starting…' : '+ New Run'}
+        </button>
+      </div>
+
+      {!programId && (
+        <p style={{ color: '#dc2626', fontSize: 13 }}>ยังไม่มี program — ไปที่ Intake ก่อน</p>
+      )}
+
+      {sessions.length === 0 && programId && (
+        <p style={{ color: '#6b7280', fontSize: 13 }}>ยังไม่มี session — กด + New Run</p>
+      )}
+
+      {sessions.map((s) => (
+        <SessionCard
+          key={s.session_id}
+          session={s}
+          programId={programId}
+          onAction={handleAction}
+        />
+      ))}
+    </div>
+  )
+}
