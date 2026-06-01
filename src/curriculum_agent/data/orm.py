@@ -130,3 +130,16 @@ class CheckpointTable(Base):
     status: Mapped[str] = mapped_column(String(20), default="pending")
     designer_notes_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     edits: Mapped[dict] = mapped_column(JSONB, default=dict)
+
+
+class SessionTable(Base):
+    __tablename__ = "sessions"
+
+    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
+    thread_id: Mapped[str] = mapped_column(String, unique=True)
+    status: Mapped[str] = mapped_column(String(20), default="running")
+    current_stage: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    suspended_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
