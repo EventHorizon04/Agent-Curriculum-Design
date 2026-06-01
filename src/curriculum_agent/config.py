@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +18,22 @@ class Settings(BaseSettings):
     light_model: str = "scb10x/typhoon2-8b-instruct"
     heavy_model: str = "qwen2.5:14b"
     api_key: str | None = None
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def postgres_dsn_sync(self) -> str:
+        """psycopg3-compatible DSN (no +asyncpg driver suffix)."""
+        return self.postgres_dsn.replace("postgresql+asyncpg://", "postgresql://")
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def postgres_dsn_langgraph(self) -> str:
+        """psycopg3 DSN with search_path=langgraph to keep LangGraph checkpoint
+        tables isolated from the application-level 'checkpoints' table."""
+        import urllib.parse
+
+        options = urllib.parse.quote("-c search_path=langgraph")
+        return f"{self.postgres_dsn_sync}?options={options}"
 
 
 settings = Settings()

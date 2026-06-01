@@ -1,20 +1,19 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import ProgramRepository
-from curriculum_agent.graph import build_graph
 from curriculum_agent.models import ProgramMetadata
 
 router = APIRouter()
 
 
 @router.post("/", response_model=ProgramMetadata, dependencies=[Depends(require_api_key)])
-async def create_program(metadata: ProgramMetadata) -> ProgramMetadata:
+async def create_program(metadata: ProgramMetadata, request: Request) -> ProgramMetadata:
     repo = ProgramRepository()
     await repo.upsert(metadata)
-    graph = build_graph()
+    graph = request.app.state.graph
     await graph.ainvoke(
         {"program_id": metadata.program_id, "metadata": metadata.model_dump(mode="json")},
         config={"configurable": {"thread_id": metadata.program_id}},
