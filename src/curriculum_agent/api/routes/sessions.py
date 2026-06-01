@@ -21,6 +21,13 @@ _STAGE_ORDER = [
     "ylo_derivation",
 ]
 
+_NODE_TO_STAGE: dict[str, str] = {
+    "review_evidence": "stakeholder_needs",
+    "review_clusters": "skill_extraction",
+    "review_plos_node": "plo_synthesis",
+    "review_ylo": "ylo_derivation",
+}
+
 
 async def _run_graph(graph, config: dict, input_, session_id: str) -> None:
     """Run (or resume) the graph in a BackgroundTask.
@@ -38,7 +45,8 @@ async def _run_graph(graph, config: dict, input_, session_id: str) -> None:
                 for intr in task.interrupts:
                     msg = str(intr.value)
                     break
-            stage = snap.next[0] if snap.next else "unknown"
+            raw_node = snap.next[0] if snap.next else "unknown"
+            stage = _NODE_TO_STAGE.get(raw_node, raw_node)
             await repo.set_suspended(session_id, stage, msg)
         else:
             await repo.set_status(session_id, "completed")
@@ -124,4 +132,6 @@ async def reject_session(program_id: str, session_id: str) -> SessionInfo:
         raise HTTPException(status_code=409, detail=f"Session is '{session.status}', not suspended")
 
     await repo.set_status(session_id, "rejected")
+    # The LangGraph checkpoint thread remains suspended in the checkpointer.
+    # A rejected session is terminal — start a new session (new thread_id) to retry.
     return await repo.get(session_id)
