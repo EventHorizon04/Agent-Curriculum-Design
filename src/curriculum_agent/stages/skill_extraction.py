@@ -58,7 +58,9 @@ class _ClusterNameResult(BaseModel):
 _EXTRACT_SYSTEM = (
     "คุณเป็นผู้เชี่ยวชาญวิเคราะห์ทักษะจากข้อความ\n"
     "จากข้อความ evidence จงระบุทักษะที่ตลาดแรงงานต้องการ\n"
-    "ตอบเป็น JSON object: { skills: [ { skill_name_th, skill_name_en, "
+    "ตอบเป็น JSON object: { skills: [ { "
+    "skill_name_th: ชื่อทักษะภาษาไทย, "
+    "skill_name_en: ชื่อทักษะภาษาอังกฤษมาตรฐาน (เช่น 'Python', 'Data Analysis', 'Communication') ห้ามเว้นว่าง, "
     "skill_type (knowledge|psychomotor|affective|mixed), "
     "is_subject_specific, confidence } ] }\n"
     "สกัดไม่เกิน 8 ทักษะต่อข้อความ เน้นทักษะที่วัดได้จริง"
