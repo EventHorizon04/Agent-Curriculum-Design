@@ -8,6 +8,7 @@ from curriculum_agent.data.orm import (
     CheckpointTable,
     ClusterTable,
     EvidenceTable,
+    LLMCacheTable,
     PLOTable,
     ProgramTable,
     SessionTable,
@@ -283,3 +284,31 @@ class SessionRepository:
             row.suspended_message = message
             row.updated_at = datetime.utcnow()
             await db.commit()
+
+
+class LLMCacheRepository:
+    async def get(self, evidence_hash: str) -> tuple[str, str] | None:
+        """Return (model, result_json) for the given hash, or None on miss."""
+        async with AsyncSessionLocal() as session:
+            row = await session.get(LLMCacheTable, evidence_hash)
+            if row is None:
+                return None
+            return (row.model, row.result_json)
+
+    async def set(self, evidence_hash: str, model: str, result_json: str) -> None:
+        async with AsyncSessionLocal() as session:
+            existing = await session.get(LLMCacheTable, evidence_hash)
+            if existing is None:
+                session.add(
+                    LLMCacheTable(
+                        evidence_hash=evidence_hash,
+                        model=model,
+                        result_json=result_json,
+                        created_at=datetime.utcnow(),
+                    )
+                )
+            else:
+                existing.model = model
+                existing.result_json = result_json
+                existing.created_at = datetime.utcnow()
+            await session.commit()
