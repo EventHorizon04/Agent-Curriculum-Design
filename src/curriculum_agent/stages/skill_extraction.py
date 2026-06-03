@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import uuid
 from typing import Literal
 
@@ -10,11 +11,13 @@ from pydantic import BaseModel, Field
 from qdrant_client.models import Distance, PointStruct, VectorParams
 from sklearn.cluster import KMeans
 
-import hashlib
-
 from curriculum_agent.config import settings
 from curriculum_agent.data.qdrant import SKILL_COLLECTION, get_qdrant
-from curriculum_agent.data.repositories import ClusterRepository, LLMCacheRepository, SkillRepository
+from curriculum_agent.data.repositories import (
+    ClusterRepository,
+    LLMCacheRepository,
+    SkillRepository,
+)
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
@@ -131,6 +134,15 @@ async def run(state: AgentState) -> AgentState:
     for eid, text in evidence_texts.items():
         kw_pairs = extract_keywords(text, top_n=5)
         for kw, score in kw_pairs:
+            # Find stakeholder type for this evidence
+            stk_type = next(
+                (
+                    d["stakeholder_type"]
+                    for d in classified
+                    if d.get("evidence_id") == eid
+                ),
+                "employer",
+            )
             raw_skills.append({
                 "skill_name_th": kw,
                 "skill_name_en": None,
@@ -138,10 +150,7 @@ async def run(state: AgentState) -> AgentState:
                 "is_subject_specific": True,
                 "confidence": float(score),
                 "evidence_id": eid,
-                "stakeholder_type": next(
-                    (d["stakeholder_type"] for d in [item_dict for item_dict in classified if item_dict.get("evidence_id") == eid]),
-                    "employer",
-                ),
+                "stakeholder_type": stk_type,
                 "extraction_method": "keybert",
             })
 
@@ -177,8 +186,9 @@ async def run(state: AgentState) -> AgentState:
     n_skills = len(extracted)
     n_clusters = max(1, min(n_skills, max(4, min(12, n_skills // 3))))
     matrix = np.array(vectors, dtype=np.float32)
-    
-    # TODO: consider HDBSCAN or other density-based clustering to avoid forcing all skills into clusters
+
+    # TODO: consider HDBSCAN or density-based clustering
+    # to avoid forcing all skills into clusters
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init="auto")
     labels = kmeans.fit_predict(matrix)
 
@@ -226,6 +236,12 @@ async def run(state: AgentState) -> AgentState:
             source_eids, stk_coverage, total_evidence_count
         )
 
+        # Filter stakeholder coverage to valid enum values
+        filtered_coverage = {
+            StakeholderType(k): v
+            for k, v in stk_coverage.items()
+            if k in StakeholderType._value2member_map_
+        }
         cluster = SkillCluster(
             cluster_id=str(uuid.uuid4()),
             program_id=program_id,
@@ -236,7 +252,7 @@ async def run(state: AgentState) -> AgentState:
             is_subject_specific=naming.is_subject_specific,
             member_skill_ids=[s.skill_id for s in member_skills],
             source_evidence_ids=source_eids,
-            stakeholder_coverage={StakeholderType(k): v for k, v in stk_coverage.items() if k in StakeholderType._value2member_map_},
+            stakeholder_coverage=filtered_coverage,
             demand_score=demand,
             is_common_need=demand > 0.4,
             sample_quotes_th=naming.sample_quotes_th[:5],
