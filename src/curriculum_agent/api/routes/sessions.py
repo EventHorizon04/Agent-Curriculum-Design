@@ -80,7 +80,10 @@ async def create_session(
 
     graph = request.app.state.graph
     config = {"configurable": {"thread_id": thread_id}}
-    initial_state: AgentState = {"program_id": program_id}
+    initial_state: AgentState = {
+        "program_id": program_id,
+        "metadata": program.model_dump(mode="json"),
+    }
     background_tasks.add_task(_run_graph, graph, config, initial_state, session_id)
     return session
 
