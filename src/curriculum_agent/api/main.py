@@ -23,7 +23,6 @@ if sys.platform == "win32":
 async def lifespan(app: FastAPI):
     logger.info("Starting up — initialising Postgres checkpointer")
 
-    # Ensure the langgraph schema exists (isolates LG tables from app checkpoints table)
     async with await psycopg.AsyncConnection.connect(
         settings.postgres_dsn_sync, autocommit=True
     ) as conn:
@@ -31,9 +30,20 @@ async def lifespan(app: FastAPI):
         logger.info("Ensured 'langgraph' schema exists")
 
     async with AsyncPostgresSaver.from_conn_string(settings.postgres_dsn_langgraph) as saver:
-        await saver.setup()  # idempotently creates LangGraph checkpoint tables
+        await saver.setup()
         app.state.graph = build_graph(checkpointer=saver)
         logger.info("Graph compiled with AsyncPostgresSaver")
+
+        from curriculum_agent.llm import warmup_models
+        from curriculum_agent.nlp.embedding import get_model
+
+        async def _warmup_bge() -> None:
+            await asyncio.to_thread(get_model)
+            logger.info("BGE-M3 embedding model loaded into RAM")
+
+        await asyncio.gather(_warmup_bge(), warmup_models(), return_exceptions=True)
+        logger.info("Model pre-warm complete")
+
         yield
 
     logger.info("Shutting down")
