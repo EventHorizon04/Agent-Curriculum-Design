@@ -10,8 +10,11 @@ from pydantic import BaseModel, Field
 from qdrant_client.models import Distance, PointStruct, VectorParams
 from sklearn.cluster import KMeans
 
+import hashlib
+
+from curriculum_agent.config import settings
 from curriculum_agent.data.qdrant import SKILL_COLLECTION, get_qdrant
-from curriculum_agent.data.repositories import ClusterRepository, SkillRepository
+from curriculum_agent.data.repositories import ClusterRepository, LLMCacheRepository, SkillRepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
@@ -86,28 +89,43 @@ async def run(state: AgentState) -> AgentState:
     program_id = state.get("program_id", "unknown")
     logger.info(f"Stage 2: skill_extraction from {len(classified)} evidence items")
 
-    # --- Step 1: LLM skill extraction per evidence item ---
-    raw_skills: list[dict] = []  # {skill_name_th, evidence_id, stakeholder_type, ...}
+    # --- Step 1: LLM skill extraction per evidence item (cache-first) ---
+    raw_skills: list[dict] = []
     evidence_texts: dict[str, str] = {}
+    _cache = LLMCacheRepository()
 
     for item_dict in classified:
         evidence = StakeholderEvidence.model_validate(item_dict)
         evidence_texts[evidence.evidence_id] = evidence.raw_text_th
 
-        messages = [
-            {"role": "system", "content": _EXTRACT_SYSTEM},
-            {"role": "user", "content": evidence.raw_text_th[:1200]},
-        ]
-        try:
-            result = await complete_light(_ExtractedSkillsResponse, messages)
+        text_slice = evidence.raw_text_th[:1200]
+        cache_key = hashlib.sha256(
+            f"{text_slice}\x00{settings.light_model}".encode()
+        ).hexdigest()
+
+        result: _ExtractedSkillsResponse | None = None
+        cached = await _cache.get(cache_key)
+        if cached is not None and cached[0] == settings.light_model:
+            result = _ExtractedSkillsResponse.model_validate_json(cached[1])
+            logger.debug(f"Cache hit for evidence {evidence.evidence_id}")
+        else:
+            messages = [
+                {"role": "system", "content": _EXTRACT_SYSTEM},
+                {"role": "user", "content": text_slice},
+            ]
+            try:
+                result = await complete_light(_ExtractedSkillsResponse, messages)
+                await _cache.set(cache_key, settings.light_model, result.model_dump_json())
+            except Exception as exc:
+                logger.warning(f"LLM skill extraction failed for {evidence.evidence_id}: {exc}")
+
+        if result is not None:
             for sk in result.skills:
                 raw_skills.append({
                     **sk.model_dump(mode="json"),
                     "evidence_id": evidence.evidence_id,
                     "stakeholder_type": evidence.stakeholder_type.value,
                 })
-        except Exception as exc:
-            logger.warning(f"LLM skill extraction failed for {evidence.evidence_id}: {exc}")
 
     # --- Step 2: KeyBERT backup signal ---
     for eid, text in evidence_texts.items():
@@ -157,8 +175,10 @@ async def run(state: AgentState) -> AgentState:
 
     # --- Step 4: KMeans clustering ---
     n_skills = len(extracted)
-    n_clusters = max(4, min(12, n_skills // 3))
+    n_clusters = max(1, min(n_skills, max(4, min(12, n_skills // 3))))
     matrix = np.array(vectors, dtype=np.float32)
+    
+    # TODO: consider HDBSCAN or other density-based clustering to avoid forcing all skills into clusters
     kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init="auto")
     labels = kmeans.fit_predict(matrix)
 
