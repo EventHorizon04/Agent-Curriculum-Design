@@ -103,3 +103,5 @@ async def test_cache_hit_skips_extraction_llm_call():
     assert _ExtractedSkillsResponse not in llm_call_response_models
     # Skills came from cache and ended up in state
     assert len(result_state["extracted_skills"]) > 0
+    # Cache set should NOT be called on a hit
+    mock_cache_repo.set.assert_not_called()

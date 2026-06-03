@@ -41,7 +41,10 @@ async def lifespan(app: FastAPI):
             await asyncio.to_thread(get_model)
             logger.info("BGE-M3 embedding model loaded into RAM")
 
-        await asyncio.gather(_warmup_bge(), warmup_models(), return_exceptions=True)
+        warmup_results = await asyncio.gather(_warmup_bge(), warmup_models(), return_exceptions=True)
+        for _r in warmup_results:
+            if isinstance(_r, BaseException):
+                logger.warning(f"Startup warm-up failed: {_r}")
         logger.info("Model pre-warm complete")
 
         yield
