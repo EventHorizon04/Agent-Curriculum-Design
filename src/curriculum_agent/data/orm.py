@@ -148,6 +148,7 @@ class SessionTable(Base):
 class LLMCacheTable(Base):
     __tablename__ = "llm_extraction_cache"
 
+    # SHA-256(text_slice + "\x00" + model_name) — model name is baked into the hash
     evidence_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
     model: Mapped[str] = mapped_column(String(128))
     result_json: Mapped[str] = mapped_column(Text)
