@@ -198,9 +198,9 @@ function ClusterTracePanel({ programId, clusterId }: { programId: string; cluste
                   <div key={s.skill_id} className="flex items-start gap-2 bg-white rounded-lg px-3 py-2 border border-gray-100">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-xs font-medium text-gray-800">{s.skill_name_th}</span>
-                        {s.skill_name_en && (
-                          <span className="text-xs text-gray-400 italic">{s.skill_name_en}</span>
+                        <span className="text-xs font-medium text-gray-800">{s.skill_name_en ?? s.skill_name_th}</span>
+                        {s.skill_name_en && s.skill_name_en !== s.skill_name_th && (
+                          <span className="text-xs text-gray-400 italic">{s.skill_name_th}</span>
                         )}
                       </div>
                       {srcEvidence && (
