@@ -310,5 +310,4 @@ class LLMCacheRepository:
             else:
                 existing.model = model
                 existing.result_json = result_json
-                existing.created_at = datetime.utcnow()
             await session.commit()
