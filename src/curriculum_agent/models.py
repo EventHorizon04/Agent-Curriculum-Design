@@ -161,6 +161,9 @@ class PLO(BaseModel):
     rationale_th: str
     distinctive_feature_th: str | None = None
     version: int = 1
+    classification: Literal["generic", "specific"] | None = None
+    classification_method: Literal["skill_type", "llm", "manual"] | None = None
+    classification_rationale_th: str | None = None
 
     @model_validator(mode="after")
     def check_no_forbidden_words(self) -> PLO:
