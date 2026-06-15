@@ -283,9 +283,8 @@ function ReportMatrix({ plos, clusters }: { plos: PLO[]; clusters: SkillCluster[
         <thead>
           <tr className="bg-gray-50">
             <th className="sticky left-0 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200">
-              PLO
+              PLO / Class
             </th>
-            <th className="px-3 py-2 font-semibold text-gray-600 border-b border-gray-200">Class</th>
             {clusters.map(c => (
               <th
                 key={c.cluster_id}
@@ -300,11 +299,11 @@ function ReportMatrix({ plos, clusters }: { plos: PLO[]; clusters: SkillCluster[
         <tbody>
           {plos.map(p => (
             <tr key={p.plo_id} className="hover:bg-gray-50">
-              <td className="sticky left-0 bg-white hover:bg-gray-50 px-3 py-2 font-mono text-xs text-gray-600 border-b border-gray-100 whitespace-nowrap">
-                {p.plo_id}
-              </td>
-              <td className="px-3 py-2 border-b border-gray-100 text-center">
-                <ClassBadge value={effectiveClass(p)} />
+              <td className="sticky left-0 bg-white hover:bg-gray-50 px-3 py-2 border-b border-gray-100 whitespace-nowrap">
+                <div className="flex items-center gap-1.5">
+                  <span className="font-mono text-xs text-gray-600">{p.plo_id}</span>
+                  <ClassBadge value={effectiveClass(p)} />
+                </div>
               </td>
               {clusters.map(c => (
                 <td key={c.cluster_id} className="px-3 py-2 border-b border-gray-100 text-center">

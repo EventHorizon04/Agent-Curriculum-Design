@@ -28,6 +28,9 @@ interface PLO {
   rationale_th: string
   distinctive_feature_th: string | null
   version: number
+  classification: 'generic' | 'specific' | null
+  classification_method: 'skill_type' | 'llm' | 'manual' | null
+  classification_rationale_th: string | null
 }
 
 interface SkillCluster {
