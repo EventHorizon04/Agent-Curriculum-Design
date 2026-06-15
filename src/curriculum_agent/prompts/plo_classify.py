@@ -5,7 +5,7 @@ def build_plo_classify_prompt(
     statement_th: str,
     domain: str,
     cluster_summaries: list[str],
-) -> list[dict]:
+) -> list[dict[str, str]]:
     """Light-model prompt to classify a PLO as generic vs specific.
 
     cluster_summaries: each ≤200-token line describing one source cluster.

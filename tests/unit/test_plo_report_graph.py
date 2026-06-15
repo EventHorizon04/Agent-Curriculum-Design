@@ -7,7 +7,10 @@ from curriculum_agent.graph import AgentState, build_graph, review_plo_report
 
 def test_review_plo_report_merges_payload():
     edited = [{"plo_id": "PLO1", "classification": "generic"}]
-    state: AgentState = {"program_id": "t", "plos": [{"plo_id": "PLO1", "classification": "specific"}]}
+    state: AgentState = {
+        "program_id": "t",
+        "plos": [{"plo_id": "PLO1", "classification": "specific"}],
+    }
     with patch("curriculum_agent.graph.interrupt", return_value={"plos": edited}):
         result = review_plo_report(state)
     assert result["plos"] == edited

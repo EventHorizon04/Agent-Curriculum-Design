@@ -99,7 +99,7 @@ async def update_plo(program_id: str, plo_id: str, plo: PLO) -> PLO:
     if match is None:
         raise HTTPException(status_code=404, detail="PLO not found")
 
-    update_fields: dict = {"version": match.version + 1, "program_id": program_id}
+    update_fields: dict[str, object] = {"version": match.version + 1, "program_id": program_id}
     if plo.classification is not None:
         # Human edit is the source of truth: mark manual and force the flag to match.
         update_fields["classification_method"] = "manual"
