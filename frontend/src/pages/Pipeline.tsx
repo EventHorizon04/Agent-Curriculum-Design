@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useProgram } from '../hooks/useProgram'
 
 const API = 'http://localhost:8000'
 
@@ -186,7 +187,7 @@ function SessionCard({
 }
 
 export default function Pipeline() {
-  const programId = localStorage.getItem('programId') ?? ''
+  const { programId } = useProgram()
   const [sessions, setSessions] = useState<Session[]>([])
   const [starting, setStarting] = useState(false)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
