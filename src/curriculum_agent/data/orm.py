@@ -98,6 +98,9 @@ class PLOTable(Base):
     rationale_th: Mapped[str] = mapped_column(Text)
     distinctive_feature_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
+    classification: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    classification_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    classification_rationale_th: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class YLOTable(Base):
