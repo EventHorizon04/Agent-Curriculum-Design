@@ -11,6 +11,9 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Always run from the repo root so alembic.ini, docker-compose.yml, pyproject.toml are found.
+Set-Location "$PSScriptRoot\.."
+
 function Write-Step { param([string]$msg) Write-Host ">> $msg" -ForegroundColor Cyan }
 function Write-Ok   { param([string]$msg) Write-Host "   OK: $msg" -ForegroundColor Green }
 function Write-Fail { param([string]$msg) Write-Host "   FAIL: $msg" -ForegroundColor Red; exit 1 }
@@ -18,7 +21,7 @@ function Write-Fail { param([string]$msg) Write-Host "   FAIL: $msg" -Foreground
 # --- 1. Check Python >= 3.11 ---
 Write-Step "Checking Python version..."
 try {
-    $pyVer = & uv run python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>&1
+    $pyVer = & uv run python -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"
     $parts = $pyVer -split '\.'
     if ([int]$parts[0] -lt 3 -or ([int]$parts[0] -eq 3 -and [int]$parts[1] -lt 11)) {
         Write-Fail "Python 3.11+ required. Got $pyVer"
