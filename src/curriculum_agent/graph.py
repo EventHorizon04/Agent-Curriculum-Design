@@ -78,6 +78,11 @@ async def stage_4_ylo_derivation(state: AgentState) -> AgentState:
     return await run(state)
 
 
+async def stage_5_plo_report(state: AgentState) -> AgentState:
+    from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
+    return await run(state)
+
+
 # -------------------- Human-in-the-loop nodes --------------------
 
 def review_stakeholder_needs(state: AgentState) -> AgentState:
@@ -108,6 +113,13 @@ def review_ylo_matrix(state: AgentState) -> AgentState:
     return state
 
 
+def review_plo_report(state: AgentState) -> AgentState:
+    payload = interrupt("Stage 5 complete — review/edit PLO generic-specific classification")
+    if isinstance(payload, dict):
+        return {**state, **payload}
+    return state
+
+
 # --------------------------- Build graph -------------------------
 
 def build_graph(checkpointer=None):
@@ -120,8 +132,8 @@ def build_graph(checkpointer=None):
     g.add_node("review_clusters", review_skill_clusters)
     g.add_node("plo_synthesis", stage_3_plo_synthesis)
     g.add_node("review_plos_node", review_plos)
-    g.add_node("ylo_derivation", stage_4_ylo_derivation)
-    g.add_node("review_ylo", review_ylo_matrix)
+    g.add_node("plo_report", stage_5_plo_report)
+    g.add_node("review_plo_report", review_plo_report)
 
     g.set_entry_point("intake")
     g.add_edge("intake", "stakeholder_needs")
@@ -130,8 +142,8 @@ def build_graph(checkpointer=None):
     g.add_edge("skill_extraction", "review_clusters")
     g.add_edge("review_clusters", "plo_synthesis")
     g.add_edge("plo_synthesis", "review_plos_node")
-    g.add_edge("review_plos_node", "ylo_derivation")
-    g.add_edge("ylo_derivation", "review_ylo")
-    g.add_edge("review_ylo", END)
+    g.add_edge("review_plos_node", "plo_report")
+    g.add_edge("plo_report", "review_plo_report")
+    g.add_edge("review_plo_report", END)
 
     return g.compile(checkpointer=checkpointer)
