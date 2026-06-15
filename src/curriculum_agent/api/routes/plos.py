@@ -73,12 +73,37 @@ async def run_plo_synthesis(program_id: str) -> list[PLO]:
     return [PLO.model_validate(p) for p in result_state.get("plos", [])]
 
 
+@router.post("/report/run", response_model=list[PLO])
+async def run_plo_report(program_id: str) -> list[PLO]:
+    from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
+
+    plos = await _repo.list_by_program(program_id)
+    if not plos:
+        raise HTTPException(
+            status_code=422,
+            detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
+        )
+
+    state: AgentState = {
+        "program_id": program_id,
+        "plos": [p.model_dump(mode="json") for p in plos],
+    }
+    result_state = await run(state)
+    return [PLO.model_validate(p) for p in result_state.get("plos", [])]
+
+
 @router.put("/{plo_id}", response_model=PLO, dependencies=[Depends(require_api_key)])
 async def update_plo(program_id: str, plo_id: str, plo: PLO) -> PLO:
     existing = await _repo.list_by_program(program_id)
     match = next((p for p in existing if p.plo_id == plo_id), None)
     if match is None:
         raise HTTPException(status_code=404, detail="PLO not found")
-    updated = plo.model_copy(update={"version": match.version + 1, "program_id": program_id})
+
+    update_fields: dict = {"version": match.version + 1, "program_id": program_id}
+    if plo.classification is not None:
+        # Human edit is the source of truth: mark manual and force the flag to match.
+        update_fields["classification_method"] = "manual"
+        update_fields["is_subject_specific"] = plo.classification == "specific"
+    updated = plo.model_copy(update=update_fields)
     await _repo.bulk_insert([updated])
     return updated
