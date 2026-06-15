@@ -14,10 +14,10 @@ from curriculum_agent.models import (
     BloomLevel,
     Domain,
     KrathwohlLevel,
-    SMARTCheck,
+    ProgramMetadata,
     SkillCluster,
+    SMARTCheck,
 )
-from curriculum_agent.models import ProgramMetadata
 from curriculum_agent.prompts.smart_validator import build_smart_validate_prompt
 from curriculum_agent.prompts.stage_3_plo import build_plo_synthesis_prompt
 
@@ -159,7 +159,8 @@ async def run(state: AgentState) -> AgentState:
     for draft in drafts:
         validated_draft, smart_check = await _ensure_smart(draft)
 
-        # Derive evidence IDs from referenced clusters when LLM omits them
+        # Derive evidence IDs from referenced clusters when LLM omits them.
+        # Fallback chain: draft field → referenced clusters → all clusters.
         evidence_ids = validated_draft.source_evidence_ids
         if not evidence_ids:
             evidence_ids = list({
@@ -169,7 +170,19 @@ async def run(state: AgentState) -> AgentState:
             })
             logger.debug(
                 f"  PLO {validated_draft.plo_id}: derived {len(evidence_ids)} "
-                "source_evidence_ids from clusters"
+                "source_evidence_ids from referenced clusters"
+            )
+        if not evidence_ids:
+            # Referenced clusters have no evidence; collect from all clusters in program.
+            evidence_ids = list({eid for c in clusters for eid in c.source_evidence_ids})
+            logger.warning(
+                f"  PLO {validated_draft.plo_id}: source clusters carry no evidence IDs — "
+                f"fell back to all-cluster pool ({len(evidence_ids)} IDs)"
+            )
+        if not evidence_ids:
+            raise ValueError(
+                f"PLO {validated_draft.plo_id}: cannot trace to any evidence — "
+                "run stakeholder needs + skill extraction before PLO synthesis"
             )
 
         plos.append(
