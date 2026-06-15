@@ -5,7 +5,7 @@ const stages = [
   { path: '/stakeholder-needs', label: 'Stage 2: Stakeholder Needs' },
   { path: '/skill-extraction', label: 'Stage 3: Skill Extraction' },
   { path: '/plo-synthesis', label: 'Stage 4: PLO Synthesis' },
-  { path: '/ylo-derivation', label: 'Stage 5: YLO Derivation' },
+  { path: '/plo-report', label: 'Stage 5: PLO Report' },
   { path: '/pipeline', label: '🔁 Pipeline' },
 ]
 

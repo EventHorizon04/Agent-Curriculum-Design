@@ -182,10 +182,10 @@ export default function PloSynthesis() {
               </button>
             </div>
             <Link
-              to="/ylo-derivation"
+              to="/plo-report"
               className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors"
             >
-              ดำเนินการต่อ → YLO Derivation
+              ดำเนินการต่อ → PLO Report
             </Link>
           </div>
           <div className="space-y-4">
