@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
     Domain,
-    SMARTCheck,
     SkillCluster,
     SkillType,
+    SMARTCheck,
 )
 
 _SMART = SMARTCheck(specific=True, measurable=True, achievable=True, relevant=True, timely=True)
@@ -136,8 +138,5 @@ async def test_raises_when_no_plos():
     p1, p2, p3 = _patch_ctx([], light)
     state = {"program_id": "prog-1", "plos": []}
     with p1, p2, p3:
-        try:
+        with pytest.raises(ValueError):
             await run(state)
-            assert False, "expected ValueError"
-        except ValueError:
-            pass
