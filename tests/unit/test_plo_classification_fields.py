@@ -41,6 +41,7 @@ def test_classification_fields_accept_valid_values():
     )
     assert plo.classification == "generic"
     assert plo.classification_method == "llm"
+    assert plo.classification_rationale_th == "เป็นทักษะที่ถ่ายโอนข้ามสาขาได้"
 
 
 def test_classification_rejects_invalid_literal():
