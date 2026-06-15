@@ -21,7 +21,7 @@ const STAGE_ORDER = [
   { key: 'stakeholder_needs', label: 'Stakeholder' },
   { key: 'skill_extraction', label: 'Skills' },
   { key: 'plo_synthesis', label: 'PLOs' },
-  { key: 'ylo_derivation', label: 'YLOs' },
+  { key: 'plo_report', label: 'PLO Report' },
 ]
 
 const STAGE_PATHS: Record<string, string> = {
@@ -29,7 +29,7 @@ const STAGE_PATHS: Record<string, string> = {
   stakeholder_needs: '/stakeholder-needs',
   skill_extraction: '/skill-extraction',
   plo_synthesis: '/plo-synthesis',
-  ylo_derivation: '/ylo-derivation',
+  plo_report: '/plo-report',
 }
 
 const STATUS_COLOR: Record<SessionStatus, string> = {
