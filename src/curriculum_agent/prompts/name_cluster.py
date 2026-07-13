@@ -17,10 +17,7 @@ def build_name_cluster_prompt(skill_keywords: list[str], sample_evidence: list[s
     keywords_str = ", ".join(skill_keywords[:30])
     evidence_str = "\n".join(f"- {q[:200]}" for q in sample_evidence[:5])
 
-    user = (
-        f"คีย์เวิร์ดในกลุ่มนี้: {keywords_str}\n\n"
-        f"ตัวอย่างข้อความ evidence:\n{evidence_str}"
-    )
+    user = f"คีย์เวิร์ดในกลุ่มนี้: {keywords_str}\n\nตัวอย่างข้อความ evidence:\n{evidence_str}"
 
     return [
         {"role": "system", "content": system},

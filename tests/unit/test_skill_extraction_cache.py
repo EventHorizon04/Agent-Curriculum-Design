@@ -97,8 +97,8 @@ async def test_cache_hit_skips_extraction_llm_call():
 
     from curriculum_agent.stages.skill_extraction import _ExtractedSkillsResponse
 
-    # Cache was consulted
-    mock_cache_repo.get.assert_called_once()
+    # Cache was consulted with the text+classification+model key
+    mock_cache_repo.get.assert_called_once_with(cache_key)
     # Extraction LLM was NOT called (only cluster naming goes through complete_light)
     assert _ExtractedSkillsResponse not in llm_call_response_models
     # Skills came from cache and ended up in state

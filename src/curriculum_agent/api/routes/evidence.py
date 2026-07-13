@@ -9,7 +9,7 @@ from fastapi.responses import StreamingResponse
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import EvidenceRepository
 from curriculum_agent.models import StakeholderEvidence
-from curriculum_agent.stages.stakeholder_needs import classify_single, _embed_and_upsert
+from curriculum_agent.stages.stakeholder_needs import _embed_and_upsert, classify_single
 
 router = APIRouter()
 _repo = EvidenceRepository()
@@ -43,14 +43,16 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
             updated = await classify_single(evidence)
             await repo.bulk_insert([updated])
             newly_classified.append(updated)
-            event = json.dumps({
-                "status": "progress",
-                "index": i,
-                "total": total,
-                "evidence_id": updated.evidence_id,
-                "source_name": updated.source_name,
-                "classification": updated.classification,
-            })
+            event = json.dumps(
+                {
+                    "status": "progress",
+                    "index": i,
+                    "total": total,
+                    "evidence_id": updated.evidence_id,
+                    "source_name": updated.source_name,
+                    "classification": updated.classification,
+                }
+            )
             yield f"data: {event}\n\n"
 
         if newly_classified:

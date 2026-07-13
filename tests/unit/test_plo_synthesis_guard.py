@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from curriculum_agent.stages.plo_synthesis import run
 from curriculum_agent.graph import AgentState
+from curriculum_agent.stages.plo_synthesis import run
 
 _METADATA = {
     "program_id": "test",

@@ -35,6 +35,7 @@ _MAX_PLOS = 10
 
 class _PLODraft(BaseModel):
     """Intermediate schema for LLM output before SMART check is added."""
+
     plo_id: str
     statement_th: str
     statement_en: str | None = None
@@ -92,7 +93,7 @@ class _SmartOutcome(BaseModel):
     soft_flags: list[str]
 
 
-def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[dict]:
+def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[dict[str, str]]:
     hints = "\n".join(f"- {CRITERION_FIX_HINTS_TH[c]}" for c in violated)
     return [
         {
@@ -170,8 +171,11 @@ async def _ensure_smart(
         notes_th=notes,
     )
     return _SmartOutcome(
-        draft=draft, smart_check=smart, retry_count=retries,
-        escalated=escalated, soft_flags=soft_flags,
+        draft=draft,
+        smart_check=smart,
+        retry_count=retries,
+        escalated=escalated,
+        soft_flags=soft_flags,
     )
 
 
@@ -218,11 +222,13 @@ async def run(state: AgentState) -> AgentState:
         # Fallback chain: draft field → referenced clusters → all clusters.
         evidence_ids = validated_draft.source_evidence_ids
         if not evidence_ids:
-            evidence_ids = list({
-                eid
-                for cid in validated_draft.source_cluster_ids
-                for eid in cluster_evidence_map.get(cid, [])
-            })
+            evidence_ids = list(
+                {
+                    eid
+                    for cid in validated_draft.source_cluster_ids
+                    for eid in cluster_evidence_map.get(cid, [])
+                }
+            )
             logger.debug(
                 f"  PLO {validated_draft.plo_id}: derived {len(evidence_ids)} "
                 "source_evidence_ids from referenced clusters"
@@ -279,15 +285,19 @@ async def run(state: AgentState) -> AgentState:
                 outcome = await _ensure_smart(draft, known_cluster_ids, metadata)
 
                 # Evidence fallback chain, scoped to optional clusters.
-                evidence_ids = outcome.draft.source_evidence_ids or list({
-                    eid
-                    for cid in outcome.draft.source_cluster_ids
-                    for eid in cluster_evidence_map.get(cid, [])
-                }) or list({eid for c in optional_clusters for eid in c.source_evidence_ids})
-                if not evidence_ids:
-                    logger.warning(
-                        f"optional PLO {outcome.draft.plo_id}: no evidence — skipped"
+                evidence_ids = (
+                    outcome.draft.source_evidence_ids
+                    or list(
+                        {
+                            eid
+                            for cid in outcome.draft.source_cluster_ids
+                            for eid in cluster_evidence_map.get(cid, [])
+                        }
                     )
+                    or list({eid for c in optional_clusters for eid in c.source_evidence_ids})
+                )
+                if not evidence_ids:
+                    logger.warning(f"optional PLO {outcome.draft.plo_id}: no evidence — skipped")
                     continue
 
                 plos.append(

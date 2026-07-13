@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 from datetime import datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-
 # ----------------------------- Enums -----------------------------
 
-class StakeholderType(str, Enum):
+
+class StakeholderType(StrEnum):
     EMPLOYER = "employer"
     ALUMNI = "alumni"
     PROFESSIONAL_COUNCIL = "professional_council"
@@ -20,7 +20,7 @@ class StakeholderType(str, Enum):
     PEER_PROGRAM = "peer_program"
 
 
-class BloomLevel(str, Enum):
+class BloomLevel(StrEnum):
     REMEMBER = "remember"
     UNDERSTAND = "understand"
     APPLY = "apply"
@@ -29,7 +29,7 @@ class BloomLevel(str, Enum):
     CREATE = "create"
 
 
-class KrathwohlLevel(str, Enum):
+class KrathwohlLevel(StrEnum):
     RECEIVING = "receiving"
     RESPONDING = "responding"
     VALUING = "valuing"
@@ -37,14 +37,14 @@ class KrathwohlLevel(str, Enum):
     CHARACTERIZATION = "characterization"
 
 
-class SkillType(str, Enum):
+class SkillType(StrEnum):
     KNOWLEDGE = "knowledge"
     PSYCHOMOTOR = "psychomotor"
     AFFECTIVE = "affective"
     MIXED = "mixed"
 
 
-class Domain(str, Enum):
+class Domain(StrEnum):
     COGNITIVE = "cognitive"
     PSYCHOMOTOR = "psychomotor"
     AFFECTIVE = "affective"
@@ -55,16 +55,24 @@ FORBIDDEN_WORDS_TH = {"รู้", "จำ", "เข้าใจ", "ซาบซ
 
 # Bloom levels in order, used for monotonicity check
 BLOOM_ORDER = [
-    BloomLevel.REMEMBER, BloomLevel.UNDERSTAND, BloomLevel.APPLY,
-    BloomLevel.ANALYZE, BloomLevel.EVALUATE, BloomLevel.CREATE,
+    BloomLevel.REMEMBER,
+    BloomLevel.UNDERSTAND,
+    BloomLevel.APPLY,
+    BloomLevel.ANALYZE,
+    BloomLevel.EVALUATE,
+    BloomLevel.CREATE,
 ]
 KRATHWOHL_ORDER = [
-    KrathwohlLevel.RECEIVING, KrathwohlLevel.RESPONDING, KrathwohlLevel.VALUING,
-    KrathwohlLevel.ORGANIZATION, KrathwohlLevel.CHARACTERIZATION,
+    KrathwohlLevel.RECEIVING,
+    KrathwohlLevel.RESPONDING,
+    KrathwohlLevel.VALUING,
+    KrathwohlLevel.ORGANIZATION,
+    KrathwohlLevel.CHARACTERIZATION,
 ]
 
 
 # --------------------------- Stage 0 -----------------------------
+
 
 class ProgramMetadata(BaseModel):
     program_id: str
@@ -86,6 +94,7 @@ class ProgramMetadata(BaseModel):
 
 # --------------------------- Stage 1 -----------------------------
 
+
 class StakeholderEvidence(BaseModel):
     evidence_id: str
     program_id: str
@@ -101,6 +110,7 @@ class StakeholderEvidence(BaseModel):
 
 
 # --------------------------- Stage 2 -----------------------------
+
 
 class ExtractedSkill(BaseModel):
     skill_id: str
@@ -135,6 +145,7 @@ class SkillCluster(BaseModel):
 
 
 # --------------------------- Stage 3 -----------------------------
+
 
 class SMARTCheck(BaseModel):
     specific: bool
@@ -193,7 +204,8 @@ class PLO(BaseModel):
             )
         if not self.source_evidence_ids:
             raise ValueError(
-                f"PLO {self.plo_id} has empty source_evidence_ids — every PLO must trace to evidence."
+                f"PLO {self.plo_id} has empty source_evidence_ids — "
+                "every PLO must trace to evidence."
             )
         return self
 
@@ -210,13 +222,11 @@ class PLO(BaseModel):
 
 # ----------------------- Stage checkpoint ------------------------
 
+
 class StageCheckpoint(BaseModel):
     checkpoint_id: str
     program_id: str
-    stage: Literal[
-        "intake", "stakeholder_needs", "skill_extraction",
-        "plo_synthesis", "plo_report"
-    ]
+    stage: Literal["intake", "stakeholder_needs", "skill_extraction", "plo_synthesis", "plo_report"]
     artifacts: dict
     created_at: datetime = Field(default_factory=datetime.utcnow)
     reviewed_by: str | None = None
@@ -227,6 +237,7 @@ class StageCheckpoint(BaseModel):
 
 
 # ----------------------- Session info ----------------------------
+
 
 class SessionInfo(BaseModel):
     session_id: str

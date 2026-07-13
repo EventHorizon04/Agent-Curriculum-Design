@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from curriculum_agent.models import ProgramMetadata, SkillCluster
 from curriculum_agent.prompts.stage_3_plo import build_plo_synthesis_prompt
 from curriculum_agent.stages import plo_synthesis as ps
-from curriculum_agent.models import ProgramMetadata, SkillCluster
 
 
 def test_plo_count_bounds():
@@ -17,7 +17,9 @@ def test_draft_list_enforces_bounds():
     assert metadata["MaxLen"].max_length == 10
 
 
-def test_synthesis_prompt_asks_for_6_to_10(sample_metadata: ProgramMetadata, sample_clusters: list[SkillCluster]):
+def test_synthesis_prompt_asks_for_6_to_10(
+    sample_metadata: ProgramMetadata, sample_clusters: list[SkillCluster]
+):
     msgs = build_plo_synthesis_prompt(sample_metadata, sample_clusters)
     assert "6-10" in msgs[0]["content"]
     assert "4-6" not in msgs[0]["content"] + msgs[1]["content"]

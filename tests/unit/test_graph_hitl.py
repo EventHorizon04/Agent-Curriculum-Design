@@ -1,8 +1,9 @@
 # tests/unit/test_graph_hitl.py
 from __future__ import annotations
+
 from unittest.mock import patch
-from curriculum_agent.graph import review_stakeholder_needs
-from curriculum_agent.graph import AgentState
+
+from curriculum_agent.graph import AgentState, review_stakeholder_needs
 
 
 def test_review_merges_designer_edits() -> None:
@@ -13,7 +14,9 @@ def test_review_merges_designer_edits() -> None:
         "classified_evidence": [{"evidence_id": "E1", "classification": "unclassified"}],
     }
 
-    with patch("curriculum_agent.graph.interrupt", return_value={"classified_evidence": edited_evidence}):
+    with patch(
+        "curriculum_agent.graph.interrupt", return_value={"classified_evidence": edited_evidence}
+    ):
         result = review_stakeholder_needs(initial_state)
 
     assert result["classified_evidence"] == edited_evidence

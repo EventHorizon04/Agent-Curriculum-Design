@@ -33,6 +33,7 @@ def _row_to_dict(row) -> dict:
 def _fix_datetimes(data: dict, table_cls: type) -> dict:
     """Parse ISO datetime strings to datetime objects for DateTime ORM columns."""
     from sqlalchemy import DateTime as _DT
+
     for col in table_cls.__table__.columns:
         if isinstance(col.type, _DT) and col.name in data:
             val = data[col.name]
@@ -240,9 +241,7 @@ class SessionRepository:
             row.updated_at = datetime.utcnow()
             await db.commit()
 
-    async def set_suspended(
-        self, session_id: str, stage: str, message: str
-    ) -> None:
+    async def set_suspended(self, session_id: str, stage: str, message: str) -> None:
         async with AsyncSessionLocal() as db:
             row = await db.get(SessionTable, session_id)
             if row is None:

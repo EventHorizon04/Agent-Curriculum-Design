@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 
 from curriculum_agent.models import FORBIDDEN_WORDS_TH
 
 
-class HardCriterion(str, Enum):
+class HardCriterion(StrEnum):
     S_VERB = "S_verb"
     M_FORBIDDEN = "M_forbidden"
     R_EVIDENCE = "R_evidence"
@@ -13,8 +13,7 @@ class HardCriterion(str, Enum):
 
 CRITERION_FIX_HINTS_TH: dict[HardCriterion, str] = {
     HardCriterion.S_VERB: (
-        "Specific ไม่ผ่าน: action_verb_th ต้องปรากฏใน statement_th "
-        "และเป็นกริยา Bloom เพียงตัวเดียวที่ชัดเจน"
+        "Specific ไม่ผ่าน: action_verb_th ต้องปรากฏใน statement_th และเป็นกริยา Bloom เพียงตัวเดียวที่ชัดเจน"
     ),
     HardCriterion.M_FORBIDDEN: (
         "Measurable ไม่ผ่าน: ห้ามใช้คำ รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก "

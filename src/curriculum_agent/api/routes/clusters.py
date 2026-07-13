@@ -5,9 +5,18 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from curriculum_agent.data.repositories import ClusterRepository, EvidenceRepository, SkillRepository
+from curriculum_agent.data.repositories import (
+    ClusterRepository,
+    EvidenceRepository,
+    SkillRepository,
+)
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import ExtractedSkill, SkillCluster, StakeholderEvidence, StakeholderType
+from curriculum_agent.models import (
+    ExtractedSkill,
+    SkillCluster,
+    StakeholderEvidence,
+    StakeholderType,
+)
 
 router = APIRouter()
 _repo = ClusterRepository()
@@ -18,11 +27,11 @@ _MAX_STAKEHOLDER_TYPES = len(StakeholderType)
 class DemandSignal(BaseModel):
     total_program_evidence: int
     unique_evidence_count: int
-    freq_score: float           # unique_evidence / total  (weight 0.6)
+    freq_score: float  # unique_evidence / total  (weight 0.6)
     stakeholder_type_count: int
     max_stakeholder_types: int  # = len(StakeholderType)
-    breadth_score: float        # types_covered / max      (weight 0.4)
-    demand_score: float         # freq*0.6 + breadth*0.4
+    breadth_score: float  # types_covered / max      (weight 0.4)
+    demand_score: float  # freq*0.6 + breadth*0.4
     stakeholder_breakdown: dict[str, int]  # type → evidence count
 
 
@@ -67,8 +76,10 @@ async def get_cluster_trace(program_id: str, cluster_id: str) -> ClusterTrace:
         max_stakeholder_types=_MAX_STAKEHOLDER_TYPES,
         breadth_score=round(breadth, 4),
         demand_score=round(min(freq * 0.6 + breadth * 0.4, 1.0), 4),
-        stakeholder_breakdown={k.value if hasattr(k, "value") else k: v
-                               for k, v in cluster.stakeholder_coverage.items()},
+        stakeholder_breakdown={
+            k.value if hasattr(k, "value") else k: v
+            for k, v in cluster.stakeholder_coverage.items()
+        },
     )
 
     return ClusterTrace(

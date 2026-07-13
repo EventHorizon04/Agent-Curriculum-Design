@@ -61,7 +61,7 @@ async def _embed_and_upsert(evidence_models: list[StakeholderEvidence]) -> None:
                 "classification": e.classification,
             },
         )
-        for e, vec in zip(evidence_models, vectors)
+        for e, vec in zip(evidence_models, vectors, strict=True)
     ]
     await client.upsert(collection_name=EVIDENCE_COLLECTION, points=points)
 
@@ -73,9 +73,7 @@ async def run(state: AgentState) -> AgentState:
 
     to_classify = [e for e in all_items if e.classification == "unclassified"]
     already_done = [e for e in all_items if e.classification != "unclassified"]
-    logger.info(
-        f"Stage 1: {len(to_classify)} to classify, {len(already_done)} already classified"
-    )
+    logger.info(f"Stage 1: {len(to_classify)} to classify, {len(already_done)} already classified")
 
     newly_classified: list[StakeholderEvidence] = []
     for evidence in to_classify:

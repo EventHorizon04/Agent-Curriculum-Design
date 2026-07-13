@@ -6,13 +6,10 @@ import pytest
 
 from curriculum_agent.graph import AgentState, build_graph
 from curriculum_agent.models import (
-    Domain,
     BloomLevel,
-    KrathwohlLevel,
+    Domain,
     ProgramMetadata,
     SMARTCheck,
-    SkillCluster,
-    SkillType,
     StakeholderEvidence,
     StakeholderType,
 )
@@ -60,6 +57,7 @@ _PLO_DRAFTS = _PLODraftList(
     ]
 )
 
+
 @pytest.fixture
 def initial_state(program_metadata: ProgramMetadata) -> AgentState:
     evidence = StakeholderEvidence(
@@ -82,6 +80,7 @@ async def test_full_graph_runs_and_stops_at_interrupt(
 ) -> None:
     """Graph should process Stage 0+1 then stop at review_evidence interrupt."""
     from langgraph.checkpoint.memory import MemorySaver
+
     graph = build_graph(checkpointer=MemorySaver())
 
     with (

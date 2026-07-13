@@ -9,5 +9,4 @@ class BaseScraper(ABC):
     source_name: str
 
     @abstractmethod
-    async def scrape(self, query: str, max_results: int = 100) -> list[StakeholderEvidence]:
-        ...
+    async def scrape(self, query: str, max_results: int = 100) -> list[StakeholderEvidence]: ...

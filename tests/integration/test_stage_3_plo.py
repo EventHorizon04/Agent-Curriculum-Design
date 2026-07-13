@@ -5,17 +5,14 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from curriculum_agent.models import (
-    Domain,
     BloomLevel,
+    Domain,
     ProgramMetadata,
     SkillCluster,
-    SkillType,
 )
 from curriculum_agent.stages.plo_synthesis import _PLODraft, _PLODraftList, _SmartSoftJudge, run
 
-_SOFT_OK = _SmartSoftJudge(
-    specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-)
+_SOFT_OK = _SmartSoftJudge(specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True)
 
 _SAMPLE_DRAFTS = _PLODraftList(
     plos=[
@@ -89,6 +86,7 @@ async def test_stage_3_no_forbidden_words(state: dict) -> None:
         result = await run(state)
 
     from curriculum_agent.models import FORBIDDEN_WORDS_TH
+
     for plo_dict in result["plos"]:
         stmt = plo_dict["statement_th"]
         for word in FORBIDDEN_WORDS_TH:
@@ -116,7 +114,9 @@ async def test_stage_3_source_cluster_ids_non_empty(state: dict) -> None:
         result = await run(state)
 
     for plo_dict in result["plos"]:
-        assert plo_dict["source_cluster_ids"], f"PLO {plo_dict['plo_id']} has empty source_cluster_ids"
+        assert plo_dict["source_cluster_ids"], (
+            f"PLO {plo_dict['plo_id']} has empty source_cluster_ids"
+        )
 
 
 @pytest.mark.anyio

@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -29,7 +28,9 @@ app.state.graph = MagicMock()
 
 
 def _mock_repos(sess_repo_mock):
-    return patch("curriculum_agent.api.routes.sessions.SessionRepository", return_value=sess_repo_mock)
+    return patch(
+        "curriculum_agent.api.routes.sessions.SessionRepository", return_value=sess_repo_mock
+    )
 
 
 def test_get_session_returns_session_info():

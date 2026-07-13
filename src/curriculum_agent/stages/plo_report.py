@@ -28,13 +28,9 @@ def _cluster_summary(c: SkillCluster) -> str:
     return f"{name} (skill_type={c.skill_type.value}, {spec})"
 
 
-async def _classify_one(
-    plo: PLO, clusters_by_id: dict[str, SkillCluster]
-) -> tuple[str, str, str]:
+async def _classify_one(plo: PLO, clusters_by_id: dict[str, SkillCluster]) -> tuple[str, str, str]:
     """Return (classification, method, rationale_th) for a single PLO."""
-    resolved = [
-        clusters_by_id[cid] for cid in plo.source_cluster_ids if cid in clusters_by_id
-    ]
+    resolved = [clusters_by_id[cid] for cid in plo.source_cluster_ids if cid in clusters_by_id]
 
     if resolved:
         n_specific = sum(1 for c in resolved if c.is_subject_specific)

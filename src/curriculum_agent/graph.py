@@ -23,8 +23,8 @@ from typing import Literal, TypedDict
 from langgraph.graph import END, StateGraph
 from langgraph.types import interrupt
 
-
 # ----------------------------- State -----------------------------
+
 
 class AgentState(TypedDict, total=False):
     program_id: str
@@ -50,32 +50,39 @@ class AgentState(TypedDict, total=False):
 
 # --------------------------- Stage nodes -------------------------
 
+
 async def stage_0_intake(state: AgentState) -> AgentState:
     from curriculum_agent.stages.intake import run  # noqa: PLC0415
+
     return await run(state)
 
 
 async def stage_1_stakeholder_needs(state: AgentState) -> AgentState:
     from curriculum_agent.stages.stakeholder_needs import run  # noqa: PLC0415
+
     return await run(state)
 
 
 async def stage_2_skill_extraction(state: AgentState) -> AgentState:
     from curriculum_agent.stages.skill_extraction import run  # noqa: PLC0415
+
     return await run(state)
 
 
 async def stage_3_plo_synthesis(state: AgentState) -> AgentState:
     from curriculum_agent.stages.plo_synthesis import run  # noqa: PLC0415
+
     return await run(state)
 
 
 async def stage_5_plo_report(state: AgentState) -> AgentState:
     from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
+
     return await run(state)
 
 
 # -------------------- Human-in-the-loop nodes --------------------
+
 
 def review_stakeholder_needs(state: AgentState) -> AgentState:
     payload = interrupt("Stage 1 complete — review classified evidence before clustering")
@@ -106,6 +113,7 @@ def review_plo_report(state: AgentState) -> AgentState:
 
 
 # --------------------------- Build graph -------------------------
+
 
 def build_graph(checkpointer=None):
     g = StateGraph(AgentState)

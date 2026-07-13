@@ -24,6 +24,7 @@ VALID_PROGRAM = {
 def test_create_program_requires_api_key_when_configured(monkeypatch) -> None:
     """POST /programs/ returns 401 without X-API-Key when api_key is set."""
     import curriculum_agent.config as cfg
+
     monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
 
     resp = client.post("/programs/", json=VALID_PROGRAM)
@@ -43,8 +44,10 @@ def test_create_program_passes_with_valid_api_key(monkeypatch) -> None:
     mock_graph.ainvoke = AsyncMock(return_value={})
 
     # The route reads request.app.state.graph; patch it directly.
-    with patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls, \
-         patch.object(_app.state, "graph", mock_graph, create=True):
+    with (
+        patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
+        patch.object(_app.state, "graph", mock_graph, create=True),
+    ):
         mock_repo = AsyncMock()
         mock_repo.upsert = AsyncMock()
         mock_repo_cls.return_value = mock_repo

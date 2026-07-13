@@ -8,10 +8,16 @@ from curriculum_agent.prompts.stage_3_plo import build_optional_plo_prompt
 
 def _cluster(cid: str, optional: bool) -> SkillCluster:
     return SkillCluster(
-        cluster_id=cid, program_id="p1", canonical_name_th=f"กลุ่ม {cid}",
-        description_th="คำอธิบาย", skill_type=SkillType.KNOWLEDGE,
-        is_subject_specific=True, member_skill_ids=["s1"],
-        source_evidence_ids=["e1"], demand_score=0.6, is_optional=optional,
+        cluster_id=cid,
+        program_id="p1",
+        canonical_name_th=f"กลุ่ม {cid}",
+        description_th="คำอธิบาย",
+        skill_type=SkillType.KNOWLEDGE,
+        is_subject_specific=True,
+        member_skill_ids=["s1"],
+        source_evidence_ids=["e1"],
+        demand_score=0.6,
+        is_optional=optional,
     )
 
 
@@ -38,9 +44,7 @@ from curriculum_agent.stages.plo_synthesis import (  # noqa: E402
     run,
 )
 
-_SOFT_OK = _SmartSoftJudge(
-    specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-)
+_SOFT_OK = _SmartSoftJudge(specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True)
 
 
 def _core_draft(i: int) -> _PLODraft:
@@ -81,7 +85,9 @@ def _clusters_core_plus_optional() -> list[dict]:
     return [c.model_dump(mode="json") for c in clusters]
 
 
-async def test_run_optional_pass_produces_one_optional_plo(program_metadata: ProgramMetadata) -> None:
+async def test_run_optional_pass_produces_one_optional_plo(
+    program_metadata: ProgramMetadata,
+) -> None:
     state = {
         "program_id": program_metadata.program_id,
         "metadata": program_metadata.model_dump(mode="json"),

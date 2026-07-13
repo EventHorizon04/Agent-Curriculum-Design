@@ -3,20 +3,19 @@ from __future__ import annotations
 import pytest
 
 from curriculum_agent.models import (
-    BLOOM_ORDER,
-    Domain,
     PLO,
     BloomLevel,
+    Domain,
     ProgramMetadata,
-    SMARTCheck,
     SkillCluster,
     SkillType,
-    StakeholderType,
+    SMARTCheck,
 )
 
-
 SMART_PASS = SMARTCheck(specific=True, measurable=True, achievable=True, relevant=True, timely=True)
-SMART_FAIL = SMARTCheck(specific=True, measurable=False, achievable=True, relevant=True, timely=True)
+SMART_FAIL = SMARTCheck(
+    specific=True, measurable=False, achievable=True, relevant=True, timely=True
+)
 
 
 @pytest.fixture

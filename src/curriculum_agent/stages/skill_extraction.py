@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 from loguru import logger
@@ -71,7 +71,8 @@ _EXTRACT_SYSTEM = (
     "จากข้อความ evidence จงระบุทักษะที่ตลาดแรงงานต้องการ\n"
     "ตอบเป็น JSON object: { skills: [ { "
     "skill_name_th: ชื่อทักษะภาษาไทย, "
-    "skill_name_en: ชื่อทักษะภาษาอังกฤษมาตรฐาน (เช่น 'Python', 'Data Analysis', 'Communication') ห้ามเว้นว่าง, "
+    "skill_name_en: ชื่อทักษะภาษาอังกฤษมาตรฐาน "
+    "(เช่น 'Python', 'Data Analysis', 'Communication') ห้ามเว้นว่าง, "
     "skill_type (knowledge|psychomotor|affective|mixed), "
     "is_subject_specific, confidence } ] }\n"
     "สกัดไม่เกิน 8 ทักษะต่อข้อความ เน้นทักษะที่วัดได้จริง"
@@ -94,7 +95,7 @@ _WEIGHTED_CLASSES = {"requirement", "need", "unclassified"}
 
 def _compute_demand_score(
     source_evidence_ids: list[str],
-    stakeholder_coverage: dict,
+    stakeholder_coverage: dict[str, int],
     total_req_need_evidence: int,
     classification_by_evidence: dict[str, str],
 ) -> tuple[float, bool, dict[str, int]]:
@@ -127,7 +128,7 @@ async def run(state: AgentState) -> AgentState:
     logger.info(f"Stage 2: skill_extraction from {len(classified)} evidence items")
 
     # --- Step 1: LLM skill extraction per evidence item (cache-first) ---
-    raw_skills: list[dict] = []
+    raw_skills: list[dict[str, Any]] = []
     evidence_texts: dict[str, str] = {}
     _cache = LLMCacheRepository()
 
@@ -159,11 +160,13 @@ async def run(state: AgentState) -> AgentState:
 
         if result is not None:
             for sk in result.skills:
-                raw_skills.append({
-                    **sk.model_dump(mode="json"),
-                    "evidence_id": evidence.evidence_id,
-                    "stakeholder_type": evidence.stakeholder_type.value,
-                })
+                raw_skills.append(
+                    {
+                        **sk.model_dump(mode="json"),
+                        "evidence_id": evidence.evidence_id,
+                        "stakeholder_type": evidence.stakeholder_type.value,
+                    }
+                )
 
     # --- Step 2: KeyBERT backup signal ---
     for eid, text in evidence_texts.items():
@@ -171,23 +174,21 @@ async def run(state: AgentState) -> AgentState:
         for kw, score in kw_pairs:
             # Find stakeholder type for this evidence
             stk_type = next(
-                (
-                    d["stakeholder_type"]
-                    for d in classified
-                    if d.get("evidence_id") == eid
-                ),
+                (d["stakeholder_type"] for d in classified if d.get("evidence_id") == eid),
                 "employer",
             )
-            raw_skills.append({
-                "skill_name_th": kw,
-                "skill_name_en": None,
-                "skill_type": "knowledge",
-                "is_subject_specific": True,
-                "confidence": float(score),
-                "evidence_id": eid,
-                "stakeholder_type": stk_type,
-                "extraction_method": "keybert",
-            })
+            raw_skills.append(
+                {
+                    "skill_name_th": kw,
+                    "skill_name_en": None,
+                    "skill_type": "knowledge",
+                    "is_subject_specific": True,
+                    "confidence": float(score),
+                    "evidence_id": eid,
+                    "stakeholder_type": stk_type,
+                    "extraction_method": "keybert",
+                }
+            )
 
     if not raw_skills:
         logger.warning("Stage 2: no skills extracted — returning empty clusters")
@@ -229,12 +230,12 @@ async def run(state: AgentState) -> AgentState:
 
     # --- Step 5 & 6: Name clusters via LLM and compute demand_score ---
     clusters: list[SkillCluster] = []
-    classification_by_evidence = {
-        d.get("evidence_id"): d.get("classification", "unclassified") for d in classified
+    classification_by_evidence: dict[str, str] = {
+        str(d["evidence_id"]): str(d.get("classification", "unclassified"))
+        for d in classified
+        if d.get("evidence_id")
     }
-    total_req_need = sum(
-        1 for c in classification_by_evidence.values() if c in _WEIGHTED_CLASSES
-    )
+    total_req_need = sum(1 for c in classification_by_evidence.values() if c in _WEIGHTED_CLASSES)
 
     for cluster_idx in range(n_clusters):
         member_indices = [i for i, lbl in enumerate(labels) if lbl == cluster_idx]
@@ -251,10 +252,7 @@ async def run(state: AgentState) -> AgentState:
                 stype = item_dict.get("stakeholder_type", "employer")
                 stk_coverage[stype] = stk_coverage.get(stype, 0) + 1
 
-        sample_texts = [
-            evidence_texts.get(eid, "")
-            for eid in source_eids[:3]
-        ]
+        sample_texts = [evidence_texts.get(eid, "") for eid in source_eids[:3]]
         kw_list = [s.skill_name_th for s in member_skills]
 
         try:

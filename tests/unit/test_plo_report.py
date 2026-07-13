@@ -137,6 +137,5 @@ async def test_raises_when_no_plos():
     light = AsyncMock()
     p1, p2, p3 = _patch_ctx([], light)
     state = {"program_id": "prog-1", "plos": []}
-    with p1, p2, p3:
-        with pytest.raises(ValueError):
-            await run(state)
+    with p1, p2, p3, pytest.raises(ValueError):
+        await run(state)

@@ -6,18 +6,33 @@ from curriculum_agent.models import ProgramMetadata
 from curriculum_agent.stages import plo_synthesis as ps
 
 META = ProgramMetadata(
-    program_id="p1", name_th="วท.บ.", name_en="BSc", field="CS",
-    degree_level="bachelor", duration_years=4, faculty="วิทยาศาสตร์",
-    university="ม.ทดสอบ", vision_th="ผลิตบัณฑิตคุณภาพ", program_objectives_th=["obj"],
+    program_id="p1",
+    name_th="วท.บ.",
+    name_en="BSc",
+    field="CS",
+    degree_level="bachelor",
+    duration_years=4,
+    faculty="วิทยาศาสตร์",
+    university="ม.ทดสอบ",
+    vision_th="ผลิตบัณฑิตคุณภาพ",
+    program_objectives_th=["obj"],
 )
 
-_SOFT_OK = ps._SmartSoftJudge(specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True)
+_SOFT_OK = ps._SmartSoftJudge(
+    specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
+)
 
 
-def _draft(statement: str, verb: str = "วิเคราะห์", clusters: list[str] | None = None) -> ps._PLODraft:
+def _draft(
+    statement: str, verb: str = "วิเคราะห์", clusters: list[str] | None = None
+) -> ps._PLODraft:
     return ps._PLODraft(
-        plo_id="PLO1", statement_th=statement, domain="cognitive", bloom_level="analyze",
-        action_verb_th=verb, source_cluster_ids=clusters if clusters is not None else ["c1"],
+        plo_id="PLO1",
+        statement_th=statement,
+        domain="cognitive",
+        bloom_level="analyze",
+        action_verb_th=verb,
+        source_cluster_ids=clusters if clusters is not None else ["c1"],
         rationale_th="เหตุผล",
     )
 
@@ -51,7 +66,12 @@ async def test_hard_fail_retries_with_criterion_and_escalates():
 
 
 async def test_soft_fail_flags_without_blocking():
-    judge = ps._SmartSoftJudge(specific_object_ok=True, achievable_ok=False, relevant_alignment_ok=False, notes_th="ระดับสูงไป")
+    judge = ps._SmartSoftJudge(
+        specific_object_ok=True,
+        achievable_ok=False,
+        relevant_alignment_ok=False,
+        notes_th="ระดับสูงไป",
+    )
     with patch.object(ps, "complete_light", AsyncMock(return_value=judge)):
         out = await ps._ensure_smart(_draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META)
     assert out.escalated is False

@@ -18,10 +18,6 @@ def build_smart_soft_judge_prompt(
         },
         {
             "role": "user",
-            "content": (
-                f"PLO: {statement_th}\n"
-                f"ระดับปริญญา: {degree_level}\n"
-                f"วิสัยทัศน์: {vision_th}"
-            ),
+            "content": (f"PLO: {statement_th}\nระดับปริญญา: {degree_level}\nวิสัยทัศน์: {vision_th}"),
         },
     ]
