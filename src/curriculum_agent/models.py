@@ -128,6 +128,10 @@ class SkillCluster(BaseModel):
     demand_score: float = Field(ge=0, le=1)
     is_common_need: bool = False
     sample_quotes_th: list[str] = Field(default_factory=list, max_length=5)
+    bloom_level: BloomLevel | None = None
+    krathwohl_level: KrathwohlLevel | None = None
+    is_optional: bool = False
+    classification_coverage: dict[str, int] = Field(default_factory=dict)
 
 
 # --------------------------- Stage 3 -----------------------------
@@ -164,9 +168,15 @@ class PLO(BaseModel):
     classification: Literal["generic", "specific"] | None = None
     classification_method: Literal["skill_type", "llm", "manual"] | None = None
     classification_rationale_th: str | None = None
+    smart_retry_count: int = 0
+    smart_escalated: bool = False
+    soft_flags: list[str] = Field(default_factory=list)
+    is_optional: bool = False
 
     @model_validator(mode="after")
     def check_no_forbidden_words(self) -> PLO:
+        if self.smart_escalated:
+            return self  # kept for human review; SMART gate already failed it loudly
         for word in FORBIDDEN_WORDS_TH:
             if word in self.statement_th:
                 raise ValueError(
