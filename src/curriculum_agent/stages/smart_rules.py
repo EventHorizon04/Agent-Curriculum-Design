@@ -21,8 +21,8 @@ CRITERION_FIX_HINTS_TH: dict[HardCriterion, str] = {
         "ให้แทนด้วยกริยาที่สังเกตได้ เช่น อธิบาย วิเคราะห์ ออกแบบ"
     ),
     HardCriterion.R_EVIDENCE: (
-        "Relevant ไม่ผ่าน: source_cluster_ids ต้องอ้างอิง cluster ที่มีอยู่จริง "
-        "อย่างน้อย 1 รายการ"
+        "Relevant ไม่ผ่าน: source_cluster_ids ทุกรายการต้องอ้างอิง cluster ที่มีอยู่จริง "
+        "(ห้ามมี id ที่ไม่รู้จักแม้แต่รายการเดียว) และต้องมีอย่างน้อย 1 รายการ"
     ),
 }
 
