@@ -122,3 +122,16 @@ def test_escalated_plo_may_carry_forbidden_word() -> None:
         rationale_th="เหตุผล", smart_escalated=True,
     )
     assert plo.smart_escalated is True
+
+
+def test_escalated_plo_still_requires_evidence() -> None:
+    with pytest.raises(ValidationError, match="no source clusters"):
+        PLO(
+            plo_id="PLO9", program_id="p1",
+            statement_th="เข้าใจหลักการวิเคราะห์ข้อมูล",
+            domain=Domain.COGNITIVE, bloom_level=BloomLevel.ANALYZE,
+            is_subject_specific=True, action_verb_th="วิเคราะห์",
+            smart_check=SMARTCheck(specific=True, measurable=False, achievable=True, relevant=True, timely=True),
+            source_cluster_ids=[], source_evidence_ids=[],
+            rationale_th="เหตุผล", smart_escalated=True,
+        )
