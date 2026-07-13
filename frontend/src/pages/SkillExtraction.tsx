@@ -17,6 +17,10 @@ interface SkillCluster {
   demand_score: number
   is_common_need: boolean
   sample_quotes_th: string[]
+  bloom_level: string | null
+  krathwohl_level: string | null
+  is_optional: boolean
+  classification_coverage: Record<string, number>
 }
 
 interface EvidenceItem {
@@ -283,6 +287,23 @@ const SKILL_TYPE_COLOR: Record<string, string> = {
   mixed: 'bg-orange-100 text-orange-800',
 }
 
+const BLOOM_ORDER = ['remember', 'understand', 'apply', 'analyze', 'evaluate', 'create'] as const
+const BLOOM_TH: Record<string, string> = {
+  remember: 'จำได้ (Remember)', understand: 'เข้าใจ (Understand)', apply: 'ประยุกต์ (Apply)',
+  analyze: 'วิเคราะห์ (Analyze)', evaluate: 'ประเมิน (Evaluate)', create: 'สร้างสรรค์ (Create)',
+}
+
+function groupByBloom(clusters: SkillCluster[]): [string, SkillCluster[]][] {
+  const groups = new Map<string, SkillCluster[]>()
+  for (const level of BLOOM_ORDER) groups.set(level, [])
+  groups.set('untagged', [])
+  for (const c of clusters) {
+    const key = c.bloom_level && BLOOM_ORDER.includes(c.bloom_level as never) ? c.bloom_level : 'untagged'
+    groups.get(key)!.push(c)
+  }
+  return [...groups.entries()].filter(([, v]) => v.length > 0)
+}
+
 export default function SkillExtraction() {
   const { programId } = useProgram()
   const [clusters, setClusters] = useState<SkillCluster[]>([])
@@ -382,9 +403,19 @@ export default function SkillExtraction() {
               ดำเนินการต่อ → PLO Synthesis
             </Link>
           </div>
-          <div className="space-y-4">
-            {clusters.map(c => (
-              <ClusterCard key={c.cluster_id} cluster={c} programId={programId} />
+          <div className="space-y-6">
+            {groupByBloom(clusters).map(([level, group]) => (
+              <div key={level}>
+                <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
+                  {BLOOM_TH[level] ?? 'ยังไม่จัดระดับ'}
+                  <span className="ml-2 text-gray-400 font-normal normal-case">({group.length})</span>
+                </h2>
+                <div className="space-y-4">
+                  {group.map(c => (
+                    <ClusterCard key={c.cluster_id} cluster={c} programId={programId} />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </>
@@ -417,10 +448,16 @@ function ClusterCard({ cluster: c, programId }: { cluster: SkillCluster; program
                 common need
               </span>
             )}
-            {c.is_subject_specific && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-medium">
-                subject-specific
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${c.is_subject_specific ? 'bg-indigo-100 text-indigo-800' : 'bg-emerald-100 text-emerald-800'}`}>
+              {c.is_subject_specific ? 'เฉพาะสาขา' : 'ทักษะทั่วไป'}
+            </span>
+            {c.is_optional && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
+                เสริม (want)
               </span>
+            )}
+            {c.krathwohl_level && (
+              <span className="text-xs text-gray-400">Krathwohl: {c.krathwohl_level}</span>
             )}
           </div>
           <p className="text-gray-600 text-sm">{c.description_th}</p>
