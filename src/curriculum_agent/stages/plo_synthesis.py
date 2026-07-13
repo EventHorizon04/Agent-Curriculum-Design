@@ -9,7 +9,6 @@ from curriculum_agent.data.repositories import PLORepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_heavy, complete_light
 from curriculum_agent.models import (
-    FORBIDDEN_WORDS_TH,
     PLO,
     BloomLevel,
     Domain,
@@ -18,8 +17,13 @@ from curriculum_agent.models import (
     SkillCluster,
     SMARTCheck,
 )
-from curriculum_agent.prompts.smart_validator import build_smart_validate_prompt
+from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
 from curriculum_agent.prompts.stage_3_plo import build_plo_synthesis_prompt
+from curriculum_agent.stages.smart_rules import (
+    CRITERION_FIX_HINTS_TH,
+    HardCriterion,
+    hard_failures,
+)
 
 _MAX_RETRIES = 3
 _MIN_PLOS = 4
@@ -42,13 +46,6 @@ class _PLODraft(BaseModel):
     distinctive_feature_th: str | None = None
 
     @model_validator(mode="after")
-    def _check_forbidden(self) -> _PLODraft:
-        for word in FORBIDDEN_WORDS_TH:
-            if word in self.statement_th:
-                raise ValueError(f"forbidden word '{word}' — use an observable Bloom verb")
-        return self
-
-    @model_validator(mode="after")
     def _check_clusters(self) -> _PLODraft:
         if not self.source_cluster_ids:
             raise ValueError("source_cluster_ids must not be empty")
@@ -69,60 +66,106 @@ class _PLODraftList(BaseModel):
     plos: list[_PLODraft] = Field(min_length=_MIN_PLOS, max_length=_MAX_PLOS)
 
 
-def _build_fix_prompt(draft: _PLODraft, smart_notes: str) -> list[dict]:
+class _SingleDraftResponse(BaseModel):
+    plo: _PLODraft
+
+
+class _SmartSoftJudge(BaseModel):
+    specific_object_ok: bool
+    achievable_ok: bool
+    relevant_alignment_ok: bool
+    notes_th: str | None = None
+
+
+class _SmartOutcome(BaseModel):
+    draft: _PLODraft
+    smart_check: SMARTCheck
+    retry_count: int
+    escalated: bool
+    soft_flags: list[str]
+
+
+def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[dict]:
+    hints = "\n".join(f"- {CRITERION_FIX_HINTS_TH[c]}" for c in violated)
     return [
         {
             "role": "system",
             "content": (
-                "คุณเป็นผู้เชี่ยวชาญ OBE ปรับปรุง PLO ที่ไม่ผ่าน SMART ให้ผ่าน "
-                "โดยยังคงสาระสำคัญเดิมไว้ ตอบเป็น JSON object ที่มี field เหมือน PLO เดิม"
+                "คุณเป็นผู้เชี่ยวชาญ OBE ปรับปรุง PLO ที่ไม่ผ่านเกณฑ์ SMART ข้อที่ระบุ "
+                "โดยคงสาระสำคัญเดิม ตอบเป็น JSON object field เหมือน PLO เดิม"
             ),
         },
         {
             "role": "user",
             "content": (
-                f"PLO ไม่ผ่าน SMART:\n{draft.statement_th}\n\n"
-                f"เหตุผล: {smart_notes or 'ไม่ระบุ'}\n\n"
+                f"PLO เดิม:\n{draft.statement_th}\n\n"
+                f"เกณฑ์ที่ไม่ผ่าน:\n{hints}\n\n"
                 f"Domain: {draft.domain.value}, action_verb_th: {draft.action_verb_th}\n"
-                "กรุณาเขียน PLO ใหม่ให้ Specific, Measurable, Achievable, Relevant, Timely"
+                "เขียน PLO ใหม่ให้ผ่านเกณฑ์ข้างต้นทุกข้อ"
             ),
         },
     ]
 
 
-class _SingleDraftResponse(BaseModel):
-    plo: _PLODraft
-
-
-async def _validate_smart(statement_th: str) -> SMARTCheck:
-    return await complete_light(SMARTCheck, build_smart_validate_prompt(statement_th))
-
-
-async def _ensure_smart(draft: _PLODraft) -> tuple[_PLODraft, SMARTCheck]:
-    """Return (draft, smart_check), retrying up to _MAX_RETRIES if SMART fails."""
-    smart = await _validate_smart(draft.statement_th)
-    if smart.passed:
-        return draft, smart
-
-    for attempt in range(_MAX_RETRIES):
-        logger.debug(f"  SMART retry {attempt + 1} for PLO {draft.plo_id}")
+async def _ensure_smart(
+    draft: _PLODraft, known_cluster_ids: set[str], metadata: ProgramMetadata
+) -> _SmartOutcome:
+    """Hard fails → per-PLO retry (max _MAX_RETRIES) naming the criterion; soft fails → flags."""
+    fails = hard_failures(
+        draft.statement_th, draft.action_verb_th, draft.source_cluster_ids, known_cluster_ids
+    )
+    retries = 0
+    while fails and retries < _MAX_RETRIES:
+        retries += 1
+        logger.debug(f"  SMART retry {retries} for PLO {draft.plo_id}: {[f.value for f in fails]}")
         try:
-            fix_resp = await complete_heavy(
-                _SingleDraftResponse,
-                _build_fix_prompt(draft, smart.notes_th or ""),
-                max_retries=2,
+            fix = await complete_heavy(
+                _SingleDraftResponse, _build_fix_prompt(draft, fails), max_retries=2
             )
-            new_draft = fix_resp.plo
-            new_smart = await _validate_smart(new_draft.statement_th)
-            if new_smart.passed:
-                return new_draft, new_smart
-            smart = new_smart
-            draft = new_draft
+            draft = fix.plo
         except Exception as exc:
-            logger.warning(f"  SMART fix attempt {attempt + 1} failed: {exc}")
+            logger.warning(f"  SMART fix attempt {retries} failed: {exc}")
+        fails = hard_failures(
+            draft.statement_th, draft.action_verb_th, draft.source_cluster_ids, known_cluster_ids
+        )
 
-    logger.warning(f"  PLO {draft.plo_id} could not pass SMART after {_MAX_RETRIES} retries")
-    return draft, smart
+    escalated = bool(fails)
+    if escalated:
+        logger.warning(
+            f"  PLO {draft.plo_id} escalated after {retries} retries: {[f.value for f in fails]}"
+        )
+
+    soft_flags: list[str] = []
+    notes: str | None = None
+    try:
+        judge = await complete_light(
+            _SmartSoftJudge,
+            build_smart_soft_judge_prompt(
+                draft.statement_th, metadata.vision_th, metadata.degree_level
+            ),
+        )
+        notes = judge.notes_th
+        if not judge.specific_object_ok:
+            soft_flags.append("S_object")
+        if not judge.achievable_ok:
+            soft_flags.append("A_level")
+        if not judge.relevant_alignment_ok:
+            soft_flags.append("R_alignment")
+    except Exception as exc:
+        logger.warning(f"  Soft judge failed for PLO {draft.plo_id}: {exc}")
+
+    smart = SMARTCheck(
+        specific=HardCriterion.S_VERB not in fails,
+        measurable=HardCriterion.M_FORBIDDEN not in fails,
+        achievable=True,
+        relevant=HardCriterion.R_EVIDENCE not in fails,
+        timely=True,
+        notes_th=notes,
+    )
+    return _SmartOutcome(
+        draft=draft, smart_check=smart, retry_count=retries,
+        escalated=escalated, soft_flags=soft_flags,
+    )
 
 
 async def run(state: AgentState) -> AgentState:
@@ -148,6 +191,7 @@ async def run(state: AgentState) -> AgentState:
     cluster_evidence_map: dict[str, list[str]] = {
         c.cluster_id: c.source_evidence_ids for c in clusters
     }
+    known_cluster_ids = {c.cluster_id for c in clusters}
 
     logger.info(f"Stage 3: synthesizing PLOs from {len(selected)} clusters")
 
@@ -157,7 +201,8 @@ async def run(state: AgentState) -> AgentState:
 
     plos: list[PLO] = []
     for draft in drafts:
-        validated_draft, smart_check = await _ensure_smart(draft)
+        outcome = await _ensure_smart(draft, known_cluster_ids, metadata)
+        validated_draft, smart_check = outcome.draft, outcome.smart_check
 
         # Derive evidence IDs from referenced clusters when LLM omits them.
         # Fallback chain: draft field → referenced clusters → all clusters.
@@ -202,11 +247,16 @@ async def run(state: AgentState) -> AgentState:
                 rationale_th=validated_draft.rationale_th,
                 distinctive_feature_th=validated_draft.distinctive_feature_th,
                 version=1,
+                smart_retry_count=outcome.retry_count,
+                smart_escalated=outcome.escalated,
+                soft_flags=outcome.soft_flags,
             )
         )
 
     if len(plos) < _MIN_PLOS:
-        logger.warning(f"Stage 3: only {len(plos)} PLOs generated (expected {_MIN_PLOS}-{_MAX_PLOS})")
+        logger.warning(
+            f"Stage 3: only {len(plos)} PLOs generated (expected {_MIN_PLOS}-{_MAX_PLOS})"
+        )
 
     await PLORepository().bulk_insert(plos)
 

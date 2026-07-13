@@ -1,23 +1,27 @@
 from __future__ import annotations
 
 
-def build_smart_validate_prompt(statement_th: str, context_th: str = "") -> list[dict]:
-    """Run on LIGHT model as a separate validation pass after PLO generation."""
+def build_smart_soft_judge_prompt(
+    statement_th: str, vision_th: str, degree_level: str
+) -> list[dict]:
+    """Light-model soft checks: S object quality, A level plausibility, R vision alignment."""
     return [
         {
             "role": "system",
             "content": (
-                "คุณเป็นผู้ตรวจสอบ SMART criteria สำหรับ PLO ในหลักสูตรระดับอุดมศึกษา "
-                "ประเมินว่าข้อความผลลัพธ์การเรียนรู้นี้ผ่านเกณฑ์ SMART หรือไม่ "
-                "(Specific, Measurable, Achievable, Relevant, Timely) "
-                "พร้อมเหตุผลสั้น ๆ เป็นภาษาไทยสำหรับรายการที่ไม่ผ่าน"
+                "คุณเป็นผู้ตรวจสอบคุณภาพ PLO ประเมิน 3 ข้อ ตอบเป็น JSON:\n"
+                "specific_object_ok: กรรมของกริยาเจาะจง (ไม่ใช่คำกว้างเช่น 'ความรู้' 'ทักษะที่จำเป็น')\n"
+                "achievable_ok: ระดับ Bloom เหมาะกับระดับปริญญา\n"
+                "relevant_alignment_ok: สอดคล้องกับวิสัยทัศน์หลักสูตร\n"
+                "notes_th: เหตุผลสั้นๆ สำหรับข้อที่ไม่ผ่าน"
             ),
         },
         {
             "role": "user",
             "content": (
-                f"ข้อความ PLO:\n{statement_th}"
-                + (f"\n\nบริบทเพิ่มเติม: {context_th}" if context_th else "")
+                f"PLO: {statement_th}\n"
+                f"ระดับปริญญา: {degree_level}\n"
+                f"วิสัยทัศน์: {vision_th}"
             ),
         },
     ]
