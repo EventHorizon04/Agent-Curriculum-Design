@@ -127,6 +127,33 @@ In `PLO` (after `classification_rationale_th`):
     is_optional: bool = False
 ```
 
+Also amend `PLO.check_no_forbidden_words`: an escalated PLO is allowed to carry forbidden words (it exists precisely so a human can fix it) — this exemption is part of the validator, not a bypass:
+
+```python
+    @model_validator(mode="after")
+    def check_no_forbidden_words(self) -> PLO:
+        if self.smart_escalated:
+            return self  # kept for human review; SMART gate already failed it loudly
+        for word in FORBIDDEN_WORDS_TH:
+            ...
+```
+
+Add to the Step 1 tests:
+
+```python
+def test_escalated_plo_may_carry_forbidden_word():
+    plo = PLO(
+        plo_id="PLO9", program_id="p1",
+        statement_th="เข้าใจหลักการวิเคราะห์ข้อมูล",  # forbidden word, but escalated
+        domain=Domain.COGNITIVE, bloom_level=BloomLevel.ANALYZE,
+        is_subject_specific=True, action_verb_th="วิเคราะห์",
+        smart_check=SMARTCheck(specific=True, measurable=False, achievable=True, relevant=True, timely=True),
+        source_cluster_ids=["c1"], source_evidence_ids=["e1"],
+        rationale_th="เหตุผล", smart_escalated=True,
+    )
+    assert plo.smart_escalated is True
+```
+
 - [ ] **Step 4: Run** — `uv run pytest tests/unit/test_models.py -v` → PASS
 
 - [ ] **Step 5: Commit** — `git add -A && git commit -m "feat: add SMART bookkeeping + optional/Bloom fields to PLO and SkillCluster models"`
@@ -806,7 +833,7 @@ Update `run()`: build `known_cluster_ids = {c.cluster_id for c in clusters}` bef
 
 and add to the `PLO(...)` constructor: `smart_retry_count=outcome.retry_count, smart_escalated=outcome.escalated, soft_flags=outcome.soft_flags,`. Delete the now-unused `_validate_smart` and old `build_smart_validate_prompt` import (keep the prompt fn in the file for API reuse if referenced elsewhere — check with grep; if unreferenced, delete it).
 
-Note: `_PLODraft._check_forbidden` currently raises on forbidden words, which would block Instructor from ever returning a draft that `hard_failures` should catch — **remove the `_check_forbidden` validator from `_PLODraft`** (keep it on `PLO`; escalated PLOs that still contain forbidden words must skip `PLO` model validation — construct with `PLO.model_construct(...)` for escalated-with-forbidden-word cases and log loudly).
+Note: `_PLODraft._check_forbidden` currently raises on forbidden words, which would block Instructor from ever returning a draft that `hard_failures` should catch — **remove the `_check_forbidden` validator from `_PLODraft`**. Escalated PLOs pass `PLO` model validation normally because `check_no_forbidden_words` exempts `smart_escalated=True` (added in Task 2) — never use `model_construct`.
 
 - [ ] **Step 5: Run** — `uv run pytest tests/unit/test_smart_retry_loop.py tests/unit/test_smart_check.py -v` → PASS (rewrite any old `_ensure_smart`-signature assertions in `test_smart_check.py` to the new `_SmartOutcome` API)
 
