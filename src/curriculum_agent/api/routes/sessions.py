@@ -18,14 +18,14 @@ _STAGE_ORDER = [
     "stakeholder_needs",
     "skill_extraction",
     "plo_synthesis",
-    "ylo_derivation",
+    "plo_report",
 ]
 
 _NODE_TO_STAGE: dict[str, str] = {
     "review_evidence": "stakeholder_needs",
     "review_clusters": "skill_extraction",
     "review_plos_node": "plo_synthesis",
-    "review_ylo": "ylo_derivation",
+    "review_plo_report": "plo_report",
 }
 
 

@@ -13,19 +13,16 @@ from curriculum_agent.data.orm import (
     ProgramTable,
     SessionTable,
     SkillTable,
-    YLOTable,
 )
 from curriculum_agent.data.postgres import AsyncSessionLocal
 from curriculum_agent.models import (
     PLO,
-    YLO,
     ExtractedSkill,
     ProgramMetadata,
     SessionInfo,
     SkillCluster,
     StageCheckpoint,
     StakeholderEvidence,
-    YLOMatrix,
 )
 
 
@@ -165,35 +162,6 @@ class PLORepository:
             )
             rows = result.scalars().all()
             return [PLO.model_validate(_row_to_dict(row)) for row in rows]
-
-
-class YLORepository:
-    async def save_matrix(self, matrix: YLOMatrix) -> None:
-        plo_repo = PLORepository()
-        await plo_repo.bulk_insert(matrix.plos)
-        async with AsyncSessionLocal() as session:
-            for ylo in matrix.ylos:
-                data = ylo.model_dump(mode="json")
-                existing = await session.get(YLOTable, ylo.ylo_id)
-                if existing is None:
-                    session.add(YLOTable(**data))
-                else:
-                    for k, v in data.items():
-                        setattr(existing, k, v)
-            await session.commit()
-
-    async def get_matrix(self, program_id: str) -> YLOMatrix | None:
-        plo_repo = PLORepository()
-        plos = await plo_repo.list_by_program(program_id)
-        if not plos:
-            return None
-        async with AsyncSessionLocal() as session:
-            result = await session.execute(
-                select(YLOTable).where(YLOTable.program_id == program_id)
-            )
-            ylo_rows = result.scalars().all()
-            ylos = [YLO.model_validate(_row_to_dict(row)) for row in ylo_rows]
-        return YLOMatrix(program_id=program_id, plos=plos, ylos=ylos)
 
 
 class CheckpointRepository:

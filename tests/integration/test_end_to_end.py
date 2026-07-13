@@ -15,10 +15,8 @@ from curriculum_agent.models import (
     SkillType,
     StakeholderEvidence,
     StakeholderType,
-    YLOMatrix,
 )
 from curriculum_agent.stages.plo_synthesis import _PLODraft, _PLODraftList
-from curriculum_agent.stages.ylo_derivation import _YLODraft, _YLOListResponse
 
 _SMART_PASS = SMARTCheck(
     specific=True, measurable=True, achievable=True, relevant=True, timely=True
@@ -61,28 +59,6 @@ _PLO_DRAFTS = _PLODraftList(
         for i in range(1, 5)
     ]
 )
-
-_YLO_RESP = _YLOListResponse(
-    ylos=[
-        _YLODraft(
-            ylo_id=f"YLO-PLO-{plo}-Y{yr}",
-            year=yr,
-            statement_th=f"ปฏิบัติทักษะด้านซอฟต์แวร์ปีที่ {yr} ได้",
-            bloom_level=[BloomLevel.REMEMBER, BloomLevel.APPLY, BloomLevel.ANALYZE, BloomLevel.CREATE][yr - 1],
-            action_verb_th="ปฏิบัติ",
-            rationale_th=f"เหตุผลปีที่ {yr}",
-        )
-        for plo in range(1, 5)
-        for yr in range(1, 5)
-    ]
-)
-
-
-def _heavy_side_effect(*args, **kwargs):
-    if "ylos" in str(args):
-        return _YLO_RESP
-    return _PLO_DRAFTS
-
 
 @pytest.fixture
 def initial_state(program_metadata: ProgramMetadata) -> AgentState:
@@ -141,37 +117,3 @@ async def test_full_graph_runs_and_stops_at_interrupt(
         )
         assert "__interrupt__" in result, "Graph should have stopped at review_evidence interrupt"
         assert len(result["__interrupt__"]) > 0, "Interrupt list should be non-empty"
-
-
-@pytest.mark.anyio
-async def test_ylo_matrix_passes_coverage(program_metadata: ProgramMetadata) -> None:
-    """Verify that a complete YLOMatrix built from stage outputs passes validate_coverage()."""
-    from curriculum_agent.models import PLO, YLO, YLOMatrix
-
-    plos = [PLO.model_validate(d.model_dump(mode="json") | {"program_id": "cs-test", "smart_check": _SMART_PASS.model_dump()})
-            for d in _PLO_DRAFTS.plos]
-    ylos = []
-    for yr in range(1, 5):
-        for plo in plos:
-            ylos.append(
-                YLO(
-                    ylo_id=f"YLO-{plo.plo_id}-Y{yr}",
-                    program_id="cs-test",
-                    parent_plo_id=plo.plo_id,
-                    year=yr,
-                    statement_th=f"ปฏิบัติงานด้านซอฟต์แวร์ปีที่ {yr} ได้อย่างถูกต้อง",
-                    bloom_level=[
-                        BloomLevel.REMEMBER,
-                        BloomLevel.APPLY,
-                        BloomLevel.ANALYZE,
-                        BloomLevel.CREATE,
-                    ][yr - 1],
-                    action_verb_th="ปฏิบัติ",
-                    smart_check=_SMART_PASS,
-                    rationale_th="เหตุผลทดสอบ",
-                )
-            )
-
-    matrix = YLOMatrix(program_id="cs-test", plos=plos, ylos=ylos)
-    issues = matrix.validate_coverage()
-    assert issues == [], f"Coverage issues: {issues}"

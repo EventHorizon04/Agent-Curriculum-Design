@@ -50,7 +50,7 @@ class Domain(str, Enum):
     AFFECTIVE = "affective"
 
 
-# Words forbidden in PLO/YLO statements (Thai). Cause SMART measurable to fail.
+# Words forbidden in PLO statements (Thai). Cause SMART measurable to fail.
 FORBIDDEN_WORDS_TH = {"รู้", "จำ", "เข้าใจ", "ซาบซึ้ง", "ตระหนัก", "ศรัทธา", "รัก"}
 
 # Bloom levels in order, used for monotonicity check
@@ -198,78 +198,6 @@ class PLO(BaseModel):
         return self
 
 
-# --------------------------- Stage 4 -----------------------------
-
-class YLO(BaseModel):
-    ylo_id: str
-    program_id: str
-    parent_plo_id: str
-    year: int = Field(ge=1, le=8)
-    statement_th: str
-    statement_en: str | None = None
-    bloom_level: BloomLevel | None = None
-    krathwohl_level: KrathwohlLevel | None = None
-    action_verb_th: str
-    smart_check: SMARTCheck
-    rationale_th: str
-    version: int = 1
-
-    @model_validator(mode="after")
-    def check_no_forbidden_words(self) -> YLO:
-        for word in FORBIDDEN_WORDS_TH:
-            if word in self.statement_th:
-                raise ValueError(f"YLO {self.ylo_id} contains forbidden word '{word}'")
-        return self
-
-
-class YLOMatrix(BaseModel):
-    program_id: str
-    plos: list[PLO]
-    ylos: list[YLO]
-
-    def validate_coverage(self) -> list[str]:
-        """Return list of issues. Empty list = matrix is valid."""
-        issues: list[str] = []
-        plo_ids = {p.plo_id for p in self.plos}
-
-        for ylo in self.ylos:
-            if ylo.parent_plo_id not in plo_ids:
-                issues.append(f"{ylo.ylo_id} references unknown PLO {ylo.parent_plo_id}")
-
-        for plo in self.plos:
-            ylos_for_plo = [y for y in self.ylos if y.parent_plo_id == plo.plo_id]
-            if not ylos_for_plo:
-                issues.append(f"{plo.plo_id} has no YLO in any year")
-                continue
-
-            if plo.domain in (Domain.COGNITIVE, Domain.PSYCHOMOTOR):
-                sorted_ylos = sorted(ylos_for_plo, key=lambda y: y.year)
-                year_levels = [(y.year, y.bloom_level) for y in sorted_ylos if y.bloom_level]
-                for i in range(1, len(year_levels)):
-                    prev_year, prev_level = year_levels[i - 1]
-                    curr_year, curr_level = year_levels[i]
-                    if BLOOM_ORDER.index(curr_level) < BLOOM_ORDER.index(prev_level):
-                        issues.append(
-                            f"{plo.plo_id} Bloom decreases between year "
-                            f"{prev_year} ({prev_level.value}) and "
-                            f"year {curr_year} ({curr_level.value})"
-                        )
-
-            elif plo.domain == Domain.AFFECTIVE:
-                sorted_ylos = sorted(ylos_for_plo, key=lambda y: y.year)
-                year_levels = [(y.year, y.krathwohl_level) for y in sorted_ylos if y.krathwohl_level]
-                for i in range(1, len(year_levels)):
-                    prev_year, prev_level = year_levels[i - 1]
-                    curr_year, curr_level = year_levels[i]
-                    if KRATHWOHL_ORDER.index(curr_level) < KRATHWOHL_ORDER.index(prev_level):
-                        issues.append(
-                            f"{plo.plo_id} Krathwohl decreases between year "
-                            f"{prev_year} and year {curr_year}"
-                        )
-
-        return issues
-
-
 # ----------------------- Stage checkpoint ------------------------
 
 class StageCheckpoint(BaseModel):
@@ -277,7 +205,7 @@ class StageCheckpoint(BaseModel):
     program_id: str
     stage: Literal[
         "intake", "stakeholder_needs", "skill_extraction",
-        "plo_synthesis", "ylo_derivation"
+        "plo_synthesis", "plo_report"
     ]
     artifacts: dict
     created_at: datetime = Field(default_factory=datetime.utcnow)

@@ -43,9 +43,6 @@ class AgentState(TypedDict, total=False):
     # Stage 3
     plos: list[dict]
 
-    # Stage 4
-    ylo_matrix: dict
-
     current_stage: str
     checkpoint_status: Literal["pending", "approved", "needs_revision"]
     designer_notes: str
@@ -73,11 +70,6 @@ async def stage_3_plo_synthesis(state: AgentState) -> AgentState:
     return await run(state)
 
 
-async def stage_4_ylo_derivation(state: AgentState) -> AgentState:
-    from curriculum_agent.stages.ylo_derivation import run  # noqa: PLC0415
-    return await run(state)
-
-
 async def stage_5_plo_report(state: AgentState) -> AgentState:
     from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
     return await run(state)
@@ -100,14 +92,7 @@ def review_skill_clusters(state: AgentState) -> AgentState:
 
 
 def review_plos(state: AgentState) -> AgentState:
-    payload = interrupt("Stage 3 complete — review/edit PLOs before YLO derivation")
-    if isinstance(payload, dict):
-        return {**state, **payload}
-    return state
-
-
-def review_ylo_matrix(state: AgentState) -> AgentState:
-    payload = interrupt("Stage 4 complete — final review of PLO/YLO matrix")
+    payload = interrupt("Stage 3 complete — review/edit PLOs before PLO report")
     if isinstance(payload, dict):
         return {**state, **payload}
     return state

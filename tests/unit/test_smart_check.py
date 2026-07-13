@@ -14,11 +14,3 @@ def test_smart_fails_when_any_false() -> None:
         kwargs[field] = False
         check = SMARTCheck(**kwargs)
         assert check.passed is False, f"Expected False when {field}=False"
-
-
-def test_ylo_smart_pass_constant_removed() -> None:
-    """_SMART_PASS constant must not exist in ylo_derivation module."""
-    from curriculum_agent.stages import ylo_derivation
-    assert not hasattr(ylo_derivation, "_SMART_PASS"), (
-        "_SMART_PASS constant must be removed; each YLO must call complete_light() for SMART validation"
-    )

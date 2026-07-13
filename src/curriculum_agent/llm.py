@@ -56,7 +56,7 @@ async def complete_heavy(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """Qwen 2.5 14B/32B — used for PLO synthesis and YLO derivation."""
+    """Qwen 2.5 14B/32B — used for PLO synthesis."""
     return await _get_client().chat.completions.create(
         model=settings.heavy_model,
         response_model=response_model,

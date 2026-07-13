@@ -24,13 +24,3 @@ async def test_plo_synthesis_raises_valueerror_not_keyerror_on_missing_metadata(
     state: AgentState = {"program_id": "test", "skill_clusters": [{"cluster_id": "C1", "program_id": "test", "canonical_name_th": "test", "description_th": "test", "skill_type": "knowledge", "is_subject_specific": True, "member_skill_ids": ["S1"], "source_evidence_ids": ["E1"], "demand_score": 0.9, "is_common_need": True}]}
     with pytest.raises(ValueError, match="metadata"):
         await plo_synthesis.run(state)
-
-
-@pytest.mark.asyncio
-async def test_ylo_derivation_raises_valueerror_not_keyerror_on_missing_metadata() -> None:
-    """ylo_derivation.run() must raise ValueError (not KeyError) when metadata is missing."""
-    from curriculum_agent.stages import ylo_derivation
-
-    state: AgentState = {"program_id": "test", "plos": []}
-    with pytest.raises(ValueError, match="metadata"):
-        await ylo_derivation.run(state)

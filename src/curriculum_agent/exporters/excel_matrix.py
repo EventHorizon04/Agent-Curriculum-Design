@@ -4,19 +4,12 @@ import io
 
 import pandas as pd
 
-from curriculum_agent.models import YLOMatrix
+from curriculum_agent.models import PLO
 
 
-def export_matrix_xlsx(matrix: YLOMatrix) -> bytes:
-    """Export PLO × Year matrix as Excel workbook bytes."""
-    rows = []
-    for plo in matrix.plos:
-        row: dict = {"PLO": plo.plo_id, "ผลลัพธ์การเรียนรู้": plo.statement_th}
-        ylos_for_plo = {y.year: y for y in matrix.ylos if y.parent_plo_id == plo.plo_id}
-        for year in range(1, 9):
-            ylo = ylos_for_plo.get(year)
-            row[f"ปีที่ {year}"] = ylo.statement_th if ylo else ""
-        rows.append(row)
+def export_matrix_xlsx(plos: list[PLO]) -> bytes:
+    """Export PLO list as Excel workbook bytes."""
+    rows = [{"PLO": plo.plo_id, "ผลลัพธ์การเรียนรู้": plo.statement_th} for plo in plos]
 
     df = pd.DataFrame(rows)
     buf = io.BytesIO()

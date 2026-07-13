@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from loguru import logger
 
-from curriculum_agent.api.routes import clusters, evidence, plos, programs, sessions, ylos
+from curriculum_agent.api.routes import clusters, evidence, plos, programs, sessions
 from curriculum_agent.config import settings
 from curriculum_agent.graph import build_graph
 
@@ -66,7 +66,6 @@ app.include_router(programs.router, prefix="/programs", tags=["programs"])
 app.include_router(evidence.router, prefix="/programs/{program_id}/evidence", tags=["evidence"])
 app.include_router(clusters.router, prefix="/programs/{program_id}/clusters", tags=["clusters"])
 app.include_router(plos.router, prefix="/programs/{program_id}/plos", tags=["plos"])
-app.include_router(ylos.router, prefix="/programs/{program_id}/ylos", tags=["ylos"])
 app.include_router(sessions.router, prefix="/programs/{program_id}/sessions", tags=["sessions"])
 
 

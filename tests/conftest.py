@@ -12,8 +12,6 @@ from curriculum_agent.models import (
     SkillCluster,
     SkillType,
     StakeholderType,
-    YLO,
-    YLOMatrix,
 )
 
 
