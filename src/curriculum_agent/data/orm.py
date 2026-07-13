@@ -78,6 +78,10 @@ class ClusterTable(Base):
     demand_score: Mapped[float] = mapped_column(Float)
     is_common_need: Mapped[bool] = mapped_column(Boolean, default=False)
     sample_quotes_th: Mapped[list] = mapped_column(JSONB, default=list)
+    bloom_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    krathwohl_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    classification_coverage: Mapped[dict] = mapped_column(JSONB, default=dict)
 
 
 class PLOTable(Base):
@@ -101,23 +105,10 @@ class PLOTable(Base):
     classification: Mapped[str | None] = mapped_column(String(20), nullable=True)
     classification_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
     classification_rationale_th: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-
-class YLOTable(Base):
-    __tablename__ = "ylos"
-
-    ylo_id: Mapped[str] = mapped_column(String, primary_key=True)
-    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
-    parent_plo_id: Mapped[str] = mapped_column(String, ForeignKey("plos.plo_id"))
-    year: Mapped[int] = mapped_column(Integer)
-    statement_th: Mapped[str] = mapped_column(Text)
-    statement_en: Mapped[str | None] = mapped_column(Text, nullable=True)
-    bloom_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    krathwohl_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    action_verb_th: Mapped[str] = mapped_column(Text)
-    smart_check: Mapped[dict] = mapped_column(JSONB)
-    rationale_th: Mapped[str] = mapped_column(Text)
-    version: Mapped[int] = mapped_column(Integer, default=1)
+    smart_retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    smart_escalated: Mapped[bool] = mapped_column(Boolean, default=False)
+    soft_flags: Mapped[list] = mapped_column(JSONB, default=list)
+    is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class CheckpointTable(Base):
