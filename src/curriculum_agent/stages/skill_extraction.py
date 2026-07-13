@@ -29,6 +29,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.nlp.embedding import embed
 from curriculum_agent.nlp.extraction import extract_keywords
+from curriculum_agent.prompts.classify_cluster_bloom import build_cluster_bloom_prompt
 from curriculum_agent.prompts.name_cluster import build_name_cluster_prompt
 
 _EMBED_DIM = 1024
@@ -53,6 +54,16 @@ class _ClusterNameResult(BaseModel):
     skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
     is_subject_specific: bool
     sample_quotes_th: list[str] = Field(default_factory=list)
+
+
+class _ClusterBloomResult(BaseModel):
+    bloom_level: (
+        Literal["remember", "understand", "apply", "analyze", "evaluate", "create"] | None
+    ) = None
+    krathwohl_level: (
+        Literal["receiving", "responding", "valuing", "organization", "characterization"] | None
+    ) = None
+    is_subject_specific: bool
 
 
 _EXTRACT_SYSTEM = (
@@ -261,6 +272,24 @@ async def run(state: AgentState) -> AgentState:
                 is_subject_specific=True,
             )
 
+        bloom_level: str | None = None
+        krathwohl_level: str | None = None
+        is_specific = naming.is_subject_specific
+        try:
+            tag = await complete_light(
+                _ClusterBloomResult,
+                build_cluster_bloom_prompt(
+                    naming.canonical_name_th, naming.description_th, kw_list, naming.skill_type
+                ),
+            )
+            if naming.skill_type == "affective":
+                krathwohl_level = tag.krathwohl_level
+            else:
+                bloom_level = tag.bloom_level
+            is_specific = tag.is_subject_specific
+        except Exception as exc:
+            logger.warning(f"Cluster {cluster_idx} Bloom tagging failed: {exc}")
+
         demand, is_optional, cls_coverage = _compute_demand_score(
             source_eids, stk_coverage, total_req_need, classification_by_evidence
         )
@@ -278,7 +307,7 @@ async def run(state: AgentState) -> AgentState:
             canonical_name_en=naming.canonical_name_en,
             description_th=naming.description_th,
             skill_type=SkillType(naming.skill_type),
-            is_subject_specific=naming.is_subject_specific,
+            is_subject_specific=is_specific,
             member_skill_ids=[s.skill_id for s in member_skills],
             source_evidence_ids=source_eids,
             stakeholder_coverage=filtered_coverage,
@@ -287,6 +316,8 @@ async def run(state: AgentState) -> AgentState:
             is_optional=is_optional,
             classification_coverage=cls_coverage,
             sample_quotes_th=naming.sample_quotes_th[:5],
+            bloom_level=bloom_level,
+            krathwohl_level=krathwohl_level,
         )
         clusters.append(cluster)
 
