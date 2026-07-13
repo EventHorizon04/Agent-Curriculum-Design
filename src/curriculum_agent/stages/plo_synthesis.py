@@ -18,7 +18,10 @@ from curriculum_agent.models import (
     SMARTCheck,
 )
 from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
-from curriculum_agent.prompts.stage_3_plo import build_plo_synthesis_prompt
+from curriculum_agent.prompts.stage_3_plo import (
+    build_optional_plo_prompt,
+    build_plo_synthesis_prompt,
+)
 from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
@@ -64,6 +67,10 @@ class _PLODraft(BaseModel):
 
 class _PLODraftList(BaseModel):
     plos: list[_PLODraft] = Field(min_length=_MIN_PLOS, max_length=_MAX_PLOS)
+
+
+class _OptionalDraftList(BaseModel):
+    plos: list[_PLODraft] = Field(min_length=1, max_length=4)
 
 
 class _SingleDraftResponse(BaseModel):
@@ -178,9 +185,12 @@ async def run(state: AgentState) -> AgentState:
     metadata = ProgramMetadata.model_validate(metadata_dict)
 
     clusters = [SkillCluster.model_validate(d) for d in clusters_dicts]
-    selected = [c for c in clusters if c.is_common_need]
+    optional_clusters = [c for c in clusters if c.is_optional]
+    core_clusters = [c for c in clusters if not c.is_optional]
+
+    selected = [c for c in core_clusters if c.is_common_need]
     if len(selected) < _MIN_PLOS:
-        selected = sorted(clusters, key=lambda c: c.demand_score, reverse=True)[:12]
+        selected = sorted(core_clusters, key=lambda c: c.demand_score, reverse=True)[:12]
 
     if not selected:
         raise ValueError(
@@ -257,6 +267,54 @@ async def run(state: AgentState) -> AgentState:
         logger.warning(
             f"Stage 3: only {len(plos)} PLOs generated (expected {_MIN_PLOS}-{_MAX_PLOS})"
         )
+
+    if optional_clusters:
+        try:
+            logger.info(
+                f"Stage 3: synthesizing optional PLOs from {len(optional_clusters)} want-clusters"
+            )
+            opt_msgs = build_optional_plo_prompt(metadata, optional_clusters)
+            opt_list = await complete_heavy(_OptionalDraftList, opt_msgs, max_retries=2)
+            for draft in opt_list.plos:
+                outcome = await _ensure_smart(draft, known_cluster_ids, metadata)
+
+                # Evidence fallback chain, scoped to optional clusters.
+                evidence_ids = outcome.draft.source_evidence_ids or list({
+                    eid
+                    for cid in outcome.draft.source_cluster_ids
+                    for eid in cluster_evidence_map.get(cid, [])
+                }) or list({eid for c in optional_clusters for eid in c.source_evidence_ids})
+                if not evidence_ids:
+                    logger.warning(
+                        f"optional PLO {outcome.draft.plo_id}: no evidence — skipped"
+                    )
+                    continue
+
+                plos.append(
+                    PLO(
+                        plo_id=outcome.draft.plo_id or f"OPT-{uuid.uuid4().hex[:6]}",
+                        program_id=program_id,
+                        statement_th=outcome.draft.statement_th,
+                        statement_en=outcome.draft.statement_en,
+                        domain=outcome.draft.domain,
+                        bloom_level=outcome.draft.bloom_level,
+                        krathwohl_level=outcome.draft.krathwohl_level,
+                        is_subject_specific=outcome.draft.is_subject_specific,
+                        action_verb_th=outcome.draft.action_verb_th,
+                        smart_check=outcome.smart_check,
+                        source_cluster_ids=outcome.draft.source_cluster_ids,
+                        source_evidence_ids=evidence_ids,
+                        rationale_th=outcome.draft.rationale_th,
+                        distinctive_feature_th=outcome.draft.distinctive_feature_th,
+                        version=1,
+                        smart_retry_count=outcome.retry_count,
+                        smart_escalated=outcome.escalated,
+                        soft_flags=outcome.soft_flags,
+                        is_optional=True,
+                    )
+                )
+        except Exception as exc:
+            logger.warning(f"Optional PLO pass failed (non-blocking): {exc}")
 
     await PLORepository().bulk_insert(plos)
 
