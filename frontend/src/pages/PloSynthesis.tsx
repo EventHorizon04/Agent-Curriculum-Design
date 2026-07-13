@@ -31,6 +31,10 @@ interface PLO {
   classification: 'generic' | 'specific' | null
   classification_method: 'skill_type' | 'llm' | 'manual' | null
   classification_rationale_th: string | null
+  smart_retry_count: number
+  smart_escalated: boolean
+  soft_flags: string[]
+  is_optional: boolean
 }
 
 interface SkillCluster {
@@ -81,6 +85,12 @@ const BLOOM_LABEL: Record<string, string> = {
 }
 
 const SMART_KEYS: (keyof SMARTCheck)[] = ['specific', 'measurable', 'achievable', 'relevant', 'timely']
+
+const SOFT_FLAG_TH: Record<string, string> = {
+  S_object: 'กรรมของกริยากว้างเกินไป',
+  A_level: 'ระดับ Bloom อาจสูง/ต่ำเกินไป',
+  R_alignment: 'อาจไม่สอดคล้องวิสัยทัศน์',
+}
 
 export default function PloSynthesis() {
   const { programId } = useProgram()
@@ -356,7 +366,26 @@ function PLOCard({
             }`}>
               SMART {smartPassed ? '✓' : '✗'}
             </span>
+            {p.is_optional && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+                เสริม
+              </span>
+            )}
+            {p.smart_escalated && (
+              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                ไม่ผ่าน SMART หลัง retry {p.smart_retry_count} ครั้ง — ต้องแก้ด้วยมือ
+              </span>
+            )}
           </div>
+          {p.soft_flags?.length > 0 && (
+            <div className="mt-1 mb-2 flex flex-wrap gap-1">
+              {p.soft_flags.map(f => (
+                <span key={f} className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
+                  {SOFT_FLAG_TH[f] ?? f}
+                </span>
+              ))}
+            </div>
+          )}
 
           {editing ? (
             <EditForm

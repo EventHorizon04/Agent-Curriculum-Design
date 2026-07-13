@@ -31,6 +31,10 @@ interface PLO {
   classification: 'generic' | 'specific' | null
   classification_method: 'skill_type' | 'llm' | 'manual' | null
   classification_rationale_th: string | null
+  smart_retry_count: number
+  smart_escalated: boolean
+  soft_flags: string[]
+  is_optional: boolean
 }
 
 interface SkillCluster {
@@ -124,10 +128,12 @@ export default function PloReport() {
     )
   }
 
-  const generic = plos.filter(p => effectiveClass(p) === 'generic')
-  const specific = plos.filter(p => effectiveClass(p) === 'specific')
+  const mainPlos = plos.filter(p => !p.is_optional)
+  const optionalPlos = plos.filter(p => p.is_optional)
+  const generic = mainPlos.filter(p => effectiveClass(p) === 'generic')
+  const specific = mainPlos.filter(p => effectiveClass(p) === 'specific')
   const referencedClusters = clusters.filter(c =>
-    plos.some(p => p.source_cluster_ids.includes(c.cluster_id))
+    mainPlos.some(p => p.source_cluster_ids.includes(c.cluster_id))
   )
 
   return (
@@ -195,7 +201,45 @@ export default function PloReport() {
               <ReportGroup title="Specific Skills" plos={specific} onFlip={flip} />
             </div>
           ) : (
-            <ReportMatrix plos={plos} clusters={referencedClusters} />
+            <ReportMatrix plos={mainPlos} clusters={referencedClusters} />
+          )}
+
+          {optionalPlos.length > 0 && (
+            <div className="mt-8 border border-amber-200 rounded-xl p-5 bg-amber-50/40">
+              <h2 className="text-sm font-semibold text-amber-800 uppercase tracking-wide mb-1">
+                PLO เสริม (จากความต้องการประเภท want)
+              </h2>
+              <p className="text-xs text-amber-700 mb-4">
+                รายการเหล่านี้ไม่นับใน PLO หลัก 6-10 ข้อ — เลือกใช้ได้ตามดุลยพินิจของหลักสูตร
+              </p>
+              <div className="space-y-3">
+                {optionalPlos.map(p => (
+                  <div key={p.plo_id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                    <div className="flex items-start gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded">{p.plo_id}</span>
+                          <ClassBadge value={effectiveClass(p)} />
+                          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+                            เสริม
+                          </span>
+                        </div>
+                        <p className="text-gray-900 font-medium leading-relaxed">{p.statement_th}</p>
+                        {p.rationale_th && (
+                          <p className="text-gray-500 text-sm mt-1 italic">{p.rationale_th}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => flip(p)}
+                        className="shrink-0 text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 text-gray-600"
+                      >
+                        → {effectiveClass(p) === 'specific' ? 'generic' : 'specific'}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           <div className="mt-8 text-sm text-gray-500 border-t border-gray-100 pt-4">
