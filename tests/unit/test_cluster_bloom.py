@@ -29,8 +29,7 @@ def test_bloom_result_model_cognitive_gets_bloom():
     assert r.krathwohl_level is None
 
 
-async def test_full_stage_tags_clusters_with_bloom_level():
-    """Stage run() wires the tagging call through and stamps bloom_level on clusters."""
+def _build_initial_state():
     from curriculum_agent.graph import AgentState
 
     evidence_dict = {
@@ -50,6 +49,14 @@ async def test_full_stage_tags_clusters_with_bloom_level():
         "extracted_skills": [],
         "skill_clusters": [],
     }
+    return state
+
+
+async def _run_stage_with_mocked_llm(naming_result, bloom_effect):
+    """Drive skill_extraction.run() end-to-end with complete_light dispatched by
+    response-model class. `bloom_effect` may be a _ClusterBloomResult instance
+    (returned) or an Exception instance (raised) for the tagging call."""
+    state = _build_initial_state()
 
     extraction_result = se._ExtractedSkillsResponse(
         skills=[
@@ -62,14 +69,6 @@ async def test_full_stage_tags_clusters_with_bloom_level():
             )
         ]
     )
-    naming_result = se._ClusterNameResult(
-        canonical_name_th="ทักษะ Python",
-        canonical_name_en="Python Skills",
-        description_th="ทักษะด้าน Python",
-        skill_type="knowledge",
-        is_subject_specific=True,
-    )
-    bloom_result = se._ClusterBloomResult(bloom_level="analyze", is_subject_specific=True)
 
     async def dispatch_complete_light(response_model, messages, **kwargs):
         if response_model is se._ExtractedSkillsResponse:
@@ -77,7 +76,9 @@ async def test_full_stage_tags_clusters_with_bloom_level():
         if response_model is se._ClusterNameResult:
             return naming_result
         if response_model is se._ClusterBloomResult:
-            return bloom_result
+            if isinstance(bloom_effect, Exception):
+                raise bloom_effect
+            return bloom_effect
         raise AssertionError(f"unexpected response_model {response_model}")
 
     mock_cache_repo = AsyncMock()
@@ -119,8 +120,64 @@ async def test_full_stage_tags_clusters_with_bloom_level():
             return_value=AsyncMock(bulk_insert=AsyncMock()),
         ),
     ):
-        result_state = await se.run(state)
+        return await se.run(state)
+
+
+async def test_full_stage_tags_clusters_with_bloom_level():
+    """Stage run() wires the tagging call through and stamps bloom_level on clusters."""
+    naming_result = se._ClusterNameResult(
+        canonical_name_th="ทักษะ Python",
+        canonical_name_en="Python Skills",
+        description_th="ทักษะด้าน Python",
+        skill_type="knowledge",
+        is_subject_specific=True,
+    )
+    bloom_result = se._ClusterBloomResult(bloom_level="analyze", is_subject_specific=True)
+
+    result_state = await _run_stage_with_mocked_llm(naming_result, bloom_result)
 
     assert len(result_state["skill_clusters"]) > 0
     for cluster in result_state["skill_clusters"]:
         assert cluster["bloom_level"] == "analyze"
+
+
+async def test_tagging_failure_leaves_cluster_untagged():
+    """If the tagging call raises, the cluster falls back to untagged with naming's
+    is_subject_specific value, instead of crashing the stage."""
+    naming_result = se._ClusterNameResult(
+        canonical_name_th="ทักษะ Python",
+        canonical_name_en="Python Skills",
+        description_th="ทักษะด้าน Python",
+        skill_type="knowledge",
+        is_subject_specific=True,
+    )
+
+    result_state = await _run_stage_with_mocked_llm(
+        naming_result, Exception("tagging LLM call failed")
+    )
+
+    assert len(result_state["skill_clusters"]) > 0
+    cluster = result_state["skill_clusters"][0]
+    assert cluster["bloom_level"] is None
+    assert cluster["krathwohl_level"] is None
+    assert cluster["is_subject_specific"] is True
+
+
+async def test_affective_cluster_gets_krathwohl_level():
+    """Affective clusters get krathwohl_level tagged instead of bloom_level."""
+    naming_result = se._ClusterNameResult(
+        canonical_name_th="ทักษะ Python",
+        canonical_name_en="Python Skills",
+        description_th="ทักษะด้าน Python",
+        skill_type="affective",
+        is_subject_specific=True,
+    )
+    bloom_result = se._ClusterBloomResult(krathwohl_level="valuing", is_subject_specific=False)
+
+    result_state = await _run_stage_with_mocked_llm(naming_result, bloom_result)
+
+    assert len(result_state["skill_clusters"]) > 0
+    cluster = result_state["skill_clusters"][0]
+    assert cluster["krathwohl_level"] == "valuing"
+    assert cluster["bloom_level"] is None
+    assert cluster["is_subject_specific"] is False
