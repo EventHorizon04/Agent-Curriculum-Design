@@ -78,14 +78,35 @@ async def _ensure_skill_collection() -> None:
         )
 
 
+_WEIGHTED_CLASSES = {"requirement", "need", "unclassified"}
+
+
 def _compute_demand_score(
     source_evidence_ids: list[str],
     stakeholder_coverage: dict,
-    total_evidence: int,
-) -> float:
-    freq = len(set(source_evidence_ids)) / max(total_evidence, 1)
+    total_req_need_evidence: int,
+    classification_by_evidence: dict[str, str],
+) -> tuple[float, bool, dict[str, int]]:
+    """Score from requirement+need evidence only; want evidence carries zero weight.
+
+    Returns (demand_score, is_optional, classification_coverage).
+    """
+    coverage: dict[str, int] = {}
+    weighted = 0
+    want = 0
+    for eid in set(source_evidence_ids):
+        cls = classification_by_evidence.get(eid, "unclassified")
+        coverage[cls] = coverage.get(cls, 0) + 1
+        if cls in _WEIGHTED_CLASSES:
+            weighted += 1
+        elif cls == "want":
+            want += 1
+
+    freq = weighted / max(total_req_need_evidence, 1)
     breadth = len(stakeholder_coverage) / max(len(StakeholderType), 1)
-    return round(min(freq * 0.6 + breadth * 0.4, 1.0), 4)
+    score = round(min(freq * 0.6 + breadth * 0.4, 1.0), 4)
+    is_optional = want > weighted
+    return score, is_optional, coverage
 
 
 async def run(state: AgentState) -> AgentState:
@@ -105,7 +126,7 @@ async def run(state: AgentState) -> AgentState:
 
         text_slice = evidence.raw_text_th[:1200]
         cache_key = hashlib.sha256(
-            f"{text_slice}\x00{settings.light_model}".encode()
+            f"{text_slice}\x00{evidence.classification}\x00{settings.light_model}".encode()
         ).hexdigest()
 
         result: _ExtractedSkillsResponse | None = None
@@ -114,9 +135,10 @@ async def run(state: AgentState) -> AgentState:
             result = _ExtractedSkillsResponse.model_validate_json(cached[1])
             logger.debug(f"Cache hit for evidence {evidence.evidence_id}")
         else:
+            evidence_context = f"[ประเภทหลักฐาน: {evidence.classification}]\n{text_slice}"
             messages = [
                 {"role": "system", "content": _EXTRACT_SYSTEM},
-                {"role": "user", "content": text_slice},
+                {"role": "user", "content": evidence_context},
             ]
             try:
                 result = await complete_light(_ExtractedSkillsResponse, messages)
@@ -196,7 +218,12 @@ async def run(state: AgentState) -> AgentState:
 
     # --- Step 5 & 6: Name clusters via LLM and compute demand_score ---
     clusters: list[SkillCluster] = []
-    total_evidence_count = len(classified)
+    classification_by_evidence = {
+        d.get("evidence_id"): d.get("classification", "unclassified") for d in classified
+    }
+    total_req_need = sum(
+        1 for c in classification_by_evidence.values() if c in _WEIGHTED_CLASSES
+    )
 
     for cluster_idx in range(n_clusters):
         member_indices = [i for i, lbl in enumerate(labels) if lbl == cluster_idx]
@@ -234,8 +261,8 @@ async def run(state: AgentState) -> AgentState:
                 is_subject_specific=True,
             )
 
-        demand = _compute_demand_score(
-            source_eids, stk_coverage, total_evidence_count
+        demand, is_optional, cls_coverage = _compute_demand_score(
+            source_eids, stk_coverage, total_req_need, classification_by_evidence
         )
 
         # Filter stakeholder coverage to valid enum values
@@ -256,7 +283,9 @@ async def run(state: AgentState) -> AgentState:
             source_evidence_ids=source_eids,
             stakeholder_coverage=filtered_coverage,
             demand_score=demand,
-            is_common_need=demand > 0.4,
+            is_common_need=demand > 0.4 and not is_optional,
+            is_optional=is_optional,
+            classification_coverage=cls_coverage,
             sample_quotes_th=naming.sample_quotes_th[:5],
         )
         clusters.append(cluster)

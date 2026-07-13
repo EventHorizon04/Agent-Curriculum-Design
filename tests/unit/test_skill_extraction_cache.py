@@ -14,7 +14,7 @@ async def test_cache_hit_skips_extraction_llm_call():
     text = "ต้องการผู้เชี่ยวชาญด้าน Python และ Machine Learning"
     text_slice = text[:1200]
     cache_key = hashlib.sha256(
-        f"{text_slice}\x00{settings.light_model}".encode()
+        f"{text_slice}\x00need\x00{settings.light_model}".encode()
     ).hexdigest()
 
     cached_json = (
