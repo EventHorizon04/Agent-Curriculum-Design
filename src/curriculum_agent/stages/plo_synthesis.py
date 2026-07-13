@@ -26,8 +26,8 @@ from curriculum_agent.stages.smart_rules import (
 )
 
 _MAX_RETRIES = 3
-_MIN_PLOS = 4
-_MAX_PLOS = 6
+_MIN_PLOS = 6
+_MAX_PLOS = 10
 
 
 class _PLODraft(BaseModel):
@@ -180,7 +180,7 @@ async def run(state: AgentState) -> AgentState:
     clusters = [SkillCluster.model_validate(d) for d in clusters_dicts]
     selected = [c for c in clusters if c.is_common_need]
     if len(selected) < _MIN_PLOS:
-        selected = sorted(clusters, key=lambda c: c.demand_score, reverse=True)[:8]
+        selected = sorted(clusters, key=lambda c: c.demand_score, reverse=True)[:12]
 
     if not selected:
         raise ValueError(

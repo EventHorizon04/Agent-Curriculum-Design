@@ -56,7 +56,7 @@ _PLO_DRAFTS = _PLODraftList(
             source_evidence_ids=["E1"],
             rationale_th=f"สาเหตุที่ {i}",
         )
-        for i in range(1, 5)
+        for i in range(1, 7)
     ]
 )
 

@@ -17,7 +17,7 @@ def build_plo_synthesis_prompt(
             "role": "system",
             "content": (
                 "คุณเป็นผู้เชี่ยวชาญด้านการออกแบบหลักสูตรตามแนว OBE (Outcome-Based Education) "
-                "สร้าง PLO (Program Learning Outcomes) จำนวน 4-6 รายการ "
+                "สร้าง PLO (Program Learning Outcomes) จำนวน 6-10 รายการ "
                 "แต่ละ PLO ต้องมีกริยาแสดงพฤติกรรม Bloom ที่วัดได้ ไม่ใช้คำต้องห้าม "
                 "(รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก) และผ่าน SMART"
             ),
@@ -31,7 +31,7 @@ def build_plo_synthesis_prompt(
                 f"- มหาวิทยาลัย: {metadata.university} / คณะ: {metadata.faculty}\n"
                 f"- วิสัยทัศน์: {metadata.vision_th}\n\n"
                 f"Skill clusters (สรุปจากหลักฐานผู้มีส่วนได้ส่วนเสีย):\n{cluster_summary}\n\n"
-                "สังเคราะห์ PLO 4-6 รายการ พร้อม plo_id, statement_th, domain, bloom_level/krathwohl_level, "
+                "สังเคราะห์ PLO 6-10 รายการ พร้อม plo_id, statement_th, domain, bloom_level/krathwohl_level, "
                 "action_verb_th, source_cluster_ids, และ rationale_th"
             ),
         },

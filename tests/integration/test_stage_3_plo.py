@@ -30,7 +30,7 @@ _SAMPLE_DRAFTS = _PLODraftList(
             source_evidence_ids=["E1"],
             rationale_th=f"ทักษะที่นายจ้างต้องการลำดับที่ {i}",
         )
-        for i in range(1, 5)
+        for i in range(1, 7)
     ]
 )
 
@@ -65,7 +65,7 @@ async def test_stage_3_produces_plos(state: dict) -> None:
         result = await run(state)
 
     plos = result["plos"]
-    assert 4 <= len(plos) <= 6, f"Expected 4-6 PLOs, got {len(plos)}"
+    assert 6 <= len(plos) <= 10, f"Expected 6-10 PLOs, got {len(plos)}"
 
 
 @pytest.mark.anyio
