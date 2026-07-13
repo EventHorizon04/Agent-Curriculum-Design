@@ -7,12 +7,13 @@ description: Use when working on any component of this curriculum design agent �
 
 ## What this project builds
 
-An AI agent helping Thai higher-education curriculum designers produce programs meeting MHESI standards and OBE principles. 4-stage pipeline, human-in-the-loop at every boundary:
+An AI agent helping Thai higher-education curriculum designers produce programs meeting MHESI standards and OBE principles. 5-stage pipeline, human-in-the-loop at every boundary:
 
 1. **Intake** — program metadata (field, degree level, duration, vision, professional council)
-2. **Stakeholder needs** — collect evidence from job postings, professional standards, alumni feedback, มคอ.1
-3. **Skill extraction** — EDA, keyword extraction, topic modeling, embedding clustering; distinguish *needs* from *wants*
-4. **PLO synthesis** — convert skill clusters into 4–6 SMART PLOs using Bloom verbs
+2. **Stakeholder needs** — collect evidence from job postings, professional standards, alumni feedback, มคอ.1; classify each item need/requirement/want
+3. **Skill extraction** — EDA, keyword extraction, embedding clustering, Bloom-level tagging; want-heavy clusters marked optional
+4. **PLO synthesis** — convert core skill clusters into 6–10 SMART PLOs using Bloom verbs, plus an optional non-blocking pass producing 1–4 supplementary PLOs from want-based clusters
+5. **PLO report** — classify PLOs generic vs specific for designer review and export
 
 **The agent's scope ends at PLO.** OBE chain is PLO → YLO → CLO, but YLO/CLO are faculty work. If asked to generate YLOs or CLOs, surface the scope boundary before complying.
 
@@ -28,7 +29,7 @@ Don't rely on memory of these rules — read the file before generating PLO cont
 
 Agents without this skill reliably make these mistakes. Check every learning-outcome output against:
 
-1. **Exactly 6–10 PLOs.**
+1. **Exactly 6–10 main PLOs.** Optional PLOs synthesized from want-based clusters (`is_optional=True`, ids prefixed `OPT`) are exempt from this count.
 2. **One Bloom action verb per outcome statement.** "ออกแบบและพัฒนา" or "อธิบายและประยุกต์ใช้" = two verbs = reject. Two verbs allowed only at adjacent Bloom levels, and prefer one.
 3. **Every PLO carries evidence.** `source_cluster_ids` / `source_evidence_ids` non-empty. A PLO drafted "from general knowledge" without stakeholder evidence is a fabrication that fails accreditation — don't produce one, even as a placeholder.
 4. **Forbidden words** in any outcome statement: รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. Replace with observable verbs (เข้าใจ → อธิบาย/วิเคราะห์).

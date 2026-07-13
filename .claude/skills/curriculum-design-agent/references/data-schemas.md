@@ -103,12 +103,21 @@ class SkillCluster(BaseModel):
     member_skill_ids: list[str]  # ExtractedSkill IDs in this cluster
     source_evidence_ids: list[str]  # all evidence behind this cluster
     stakeholder_coverage: dict[StakeholderType, int]  # which groups mentioned it, how often
-    demand_score: float = Field(ge=0, le=1)  # weighted frequency × recency × stakeholder breadth
+    demand_score: float = Field(ge=0, le=1)  # weighted frequency × stakeholder breadth
     is_common_need: bool = False  # appears in multiple stakeholder groups → likely PLO
     sample_quotes_th: list[str] = []  # 2-3 illustrative excerpts
+    bloom_level: BloomLevel | None = None  # tagged by light model (cognitive/psychomotor/mixed/knowledge)
+    krathwohl_level: KrathwohlLevel | None = None  # tagged for affective clusters
+    is_optional: bool = False  # majority-want cluster → supplementary, not core
+    classification_coverage: dict[str, int] = {}  # evidence count per classification, e.g. {"need": 3, "want": 1}
 ```
 
-`demand_score` is the data-science output that the agent uses to decide which clusters are PLO-worthy. Tune the weighting in Stage 3 config.
+`demand_score` is the data-science output that the agent uses to decide which clusters are PLO-worthy. The weighting rule (implemented in `_compute_demand_score` in `stages/skill_extraction.py`):
+
+- Only **requirement + need** evidence carries weight (unclassified counts as need); **want evidence contributes zero**.
+- `score = min(freq * 0.6 + breadth * 0.4, 1.0)` where `freq` = weighted-evidence count / total requirement+need evidence, `breadth` = stakeholder-group coverage ratio.
+- A cluster whose want-evidence count exceeds its requirement+need count gets `is_optional=True` — it feeds the optional PLO pass, not the main 6–10 set.
+- `classification_coverage` records the per-classification evidence counts for checkpoint display.
 
 ## Stage 4: PLO
 
@@ -152,14 +161,18 @@ class PLO(BaseModel):
     source_evidence_ids: list[str]  # rolled up from clusters
     rationale_th: str  # why this PLO exists, for designer review
     version: int = 1
+    smart_retry_count: int = 0  # SMART hard-fail fix attempts consumed (max 3)
+    smart_escalated: bool = False  # still hard-failing after retries → human repair
+    soft_flags: list[str] = []  # non-blocking review flags: "S_object", "A_level", "R_alignment"
+    is_optional: bool = False  # supplementary PLO from want-clusters, exempt from 6-10 count
 ```
 
 Validation rules for PLO (enforce in code):
-- `statement_th` must not contain forbidden words (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก) — see `obe-principles.md`
+- `statement_th` must not contain forbidden words (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก) — see `obe-principles.md`. Exception: a PLO with `smart_escalated=True` may carry them — it exists precisely so a human can repair it, and the SMART gate already failed it loudly.
 - Exactly one of `bloom_level` / `krathwohl_level` must be set, depending on domain
 - `source_cluster_ids` must be non-empty (no PLO without evidence)
 - `smart_check` all five fields must be `True` to mark the PLO ready
-- Hard vs soft failure handling: S / M / R-evidence failures trigger the automated SMART retry loop; A / R-alignment failures only flag for human review. Implement per the SMART validation checklist in `obe-principles.md`.
+- Hard vs soft failure handling: S-verb / M-forbidden / R-evidence failures (pure code, `stages/smart_rules.py`) trigger the automated SMART retry loop (max 3, criterion named in the retry prompt; unfixed → `smart_escalated=True`). S-object / A-level / R-alignment concerns come from one light-model judge call and land in `soft_flags` without blocking. Implement per the SMART validation checklist in `obe-principles.md`.
 
 ## Cross-stage: human-in-the-loop checkpoint
 
@@ -168,7 +181,7 @@ class StageCheckpoint(BaseModel):
     """Saved at every stage boundary for human review."""
     checkpoint_id: str
     program_id: str
-    stage: Literal["intake", "stakeholder_needs", "skill_extraction", "plo_synthesis"]
+    stage: Literal["intake", "stakeholder_needs", "skill_extraction", "plo_synthesis", "plo_report"]
     artifacts: dict  # serialized output of the stage
     created_at: datetime
     reviewed_by: str | None = None

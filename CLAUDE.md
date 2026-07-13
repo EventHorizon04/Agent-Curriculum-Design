@@ -4,59 +4,66 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Curriculum Design Agent
 
-AI agent that helps Thai higher-education curriculum designers produce programs meeting MHESI (กระทรวงอุดมศึกษา) standards and Outcome-Based Education (OBE) principles. The agent runs a 5-stage pipeline (intake → stakeholder needs → data-science skill extraction → PLO synthesis → YLO derivation) with human-in-the-loop review at every stage boundary. It stops at YLO and hands off to faculty for course-level outcomes.
+AI agent that helps Thai higher-education curriculum designers produce programs meeting MHESI (กระทรวงอุดมศึกษา) standards and Outcome-Based Education (OBE) principles. The agent runs a 5-stage pipeline (intake → stakeholder needs → skill extraction → PLO synthesis → PLO report) with human-in-the-loop review at every stage boundary. **The agent's scope ends at PLO** — YLO and CLO derivation are faculty work and the code for them has been removed.
 
-**Current state:** Proof-of-concept implemented. All modules under `src/`, Docker services, Streamlit UI, FastAPI backend, test suite, migrations, and exporters are scaffolded and in place. The codebase matches the design below — read existing code before adding new files.
+**Current state:** Proof-of-concept implemented. All modules under `src/`, Docker DB services, React UI, FastAPI backend, test suite, migrations, and exporters are in place. The codebase matches the design below — read existing code before adding new files.
 
 ## Skill
 
-The `curriculum-design-agent` skill (`.skill` file in the repo root) is the canonical source for OBE rules, prompt templates, data schemas, and architectural decisions. **When working on PLO/YLO/OBE content, prompts, or schemas, defer to that skill.** This CLAUDE.md is the project-local operating manual — paths, commands, conventions. The skill is the domain manual.
+The `curriculum-design-agent` skill (`.claude/skills/curriculum-design-agent/`) is the canonical source for OBE rules, prompt templates, data schemas, and architectural decisions. **When working on PLO/OBE content, prompts, or schemas, defer to that skill.** This CLAUDE.md is the project-local operating manual — paths, commands, conventions. The skill is the domain manual.
 
 ## Stack
 
 - **Language:** Python 3.11+, dependency management via `uv`
 - **Agent:** LangGraph (state machine with `interrupt` for HITL)
-- **LLM:** Ollama serving Typhoon 2 8B (light) + Qwen 2.5 32B (heavy). Dual-model pattern — see `src/curriculum_agent/llm.py`
+- **LLM:** Ollama running **natively on the host** (no Ollama container) serving Typhoon 2 8B (light) + Qwen 2.5 7B/14B (heavy). Dual-model pattern — see `src/curriculum_agent/llm.py`
 - **Structured output:** Instructor + Pydantic v2 (no hand-parsing JSON). The `openai` package is a dependency because Instructor uses OpenAI-compatible API to talk to Ollama — not for the OpenAI cloud service.
 - **Thai NLP:** PyThaiNLP for tokenization, BGE-M3 for embeddings
-- **Skill extraction:** KeyBERT + BERTopic + scikit-learn
+- **Skill extraction:** KeyBERT + scikit-learn
 - **Vector store:** Qdrant
-- **Storage:** PostgreSQL (structured), MinIO (raw files), DuckDB (analytics)
-- **API/UI:** FastAPI backend, Streamlit frontend
-- **Deployment:** Docker Compose for PoC
+- **Storage:** PostgreSQL (structured), MinIO (raw files)
+- **API/UI:** FastAPI backend, React 19 + Vite + TypeScript + Tailwind frontend in `frontend/`
+- **Deployment:** Hybrid for the PoC — postgres/qdrant/minio/pgadmin in Docker Compose, Ollama and the API/UI run natively
 
 ## Running it
 
-```bash
+```powershell
 # First-time setup
 cp .env.example .env        # edit LIGHT_MODEL / HEAVY_MODEL if needed
-docker compose up -d
 
-# Pull models on first start
-docker exec ca-ollama ollama pull scb10x/typhoon2-8b-instruct
-docker exec ca-ollama ollama pull qwen2.5:14b   # or :32b if 24GB+ VRAM
+# Pull models (Ollama runs natively on the host)
+ollama pull scb10x/typhoon2-8b-instruct
+ollama pull qwen2.5:7b      # or :14b if VRAM >= 8GB
 
 # Install dev dependencies
 uv sync --all-extras
 
-# Run DB migrations (required before first API start)
-uv run alembic upgrade head
+# Start everything: Docker DB services + Alembic migrations + uvicorn
+.\scripts\start-dev.ps1
 
+# React UI (separate terminal) — http://localhost:5173
+cd frontend; npm run dev
+
+# Stop services
+.\scripts\stop-dev.ps1
+```
+
+```bash
 # Run tests (asyncio_mode = "auto" — no @pytest.mark.asyncio needed)
 uv run pytest                              # all tests
 uv run pytest tests/unit/test_models.py    # validators only
-uv run pytest -k "ylo"                     # YLO-related tests
+uv run pytest -k "plo"                     # PLO-related tests
 
 # Lint & format
 uv run ruff check src/ tests/
 uv run ruff format src/ tests/
 uv run mypy src/
 
-# Run API locally (against Docker services)
-uv run uvicorn curriculum_agent.api.main:app --reload
+# Frontend lint & build
+cd frontend && npm run lint && npm run build
 
-# Run UI locally (against Docker services)
-uv run streamlit run streamlit_app/app.py
+# Run API manually (against Docker services) if not using start-dev.ps1
+uv run uvicorn curriculum_agent.api.main:app --reload
 ```
 
 ## Seed data
@@ -68,13 +75,6 @@ The `Data/` directory holds real-world inputs used during Stage 2 (stakeholder n
 - `Data/linkedin_offers2026-04-30.csv` — scraped LinkedIn job postings (April 2026 snapshot) for skill-frequency analysis
 
 These files feed the NLP pipeline; do not reformat them without checking scraper/parser compatibility.
-
-## Architecture diagrams
-
-- `docs/diagrams/curriculum_agent_architecture_poc.svg` — component diagram of the PoC (services, data flows, LLM routing)
-- `docs/diagrams/curriculum_design_agent_workflow.svg` — stage-by-stage workflow with HITL checkpoints
-
-Read these before touching `graph.py` or the stage handlers.
 
 ## Code conventions
 
@@ -91,53 +91,55 @@ Read these before touching `graph.py` or the stage handlers.
 
 These are project decisions. If a request conflicts with one, surface the conflict before complying.
 
-1. **PLO → YLO → CLO. Never PLO → CLO directly.** The agent stops at YLO. CLO is faculty work.
-2. **Every PLO/YLO must trace to evidence.** `source_cluster_ids` and `source_evidence_ids` are non-empty. Pydantic validators enforce this; do not weaken them.
-3. **Forbidden words in PLO/YLO statements:** รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. The Pydantic model rejects these — do not bypass.
+1. **The agent stops at PLO.** OBE chain is PLO → YLO → CLO, but YLO/CLO are faculty work. Never add YLO/CLO generation back.
+2. **Every PLO must trace to evidence.** `source_cluster_ids` and `source_evidence_ids` are non-empty. Pydantic validators enforce this; do not weaken them.
+3. **Forbidden words in PLO statements:** รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. The Pydantic model rejects these (exception: a PLO with `smart_escalated=True` is kept for human repair) — do not bypass.
 4. **One Bloom action verb per outcome.** Two verbs allowed only if at adjacent levels.
-5. **Bloom level monotonically non-decreasing across years for the same PLO.** `YLOMatrix.validate_coverage()` enforces this.
-6. **Human-in-the-loop at every stage boundary.** Stages never auto-chain into the next without checkpoint approval.
-7. **Open-source LLM by default.** Paid APIs (Claude, GPT-4o) are config-switchable for synthesis stages but never hardcoded.
+5. **SMART gate on every synthesized PLO.** Hard criteria (S verb-in-statement, M no-forbidden-word, R evidence-resolves) drive an automated retry loop (max 3, criterion named in the retry prompt) — an unfixed PLO is marked `smart_escalated` for human repair, never silently dropped. Soft criteria (S object quality, A level plausibility, R vision alignment) become `soft_flags` for human review and never block.
+6. **6–10 main PLOs per program.** Optional PLOs synthesized from want-based clusters (`is_optional=True`) are exempt from this count.
+7. **Human-in-the-loop at every stage boundary.** Stages never auto-chain into the next without checkpoint approval.
+8. **Open-source LLM by default.** Paid APIs (Claude, GPT-4o) are config-switchable for synthesis stages but never hardcoded.
 
 ## Project layout
 
 ```
 src/curriculum_agent/
-  models.py            ← Pydantic schemas (PLO, YLO, SkillCluster, etc.)
+  models.py            ← Pydantic schemas (PLO, SkillCluster, etc.)
   graph.py             ← LangGraph state machine, HITL interrupts
   llm.py               ← Ollama client, dual-model routing
   config.py            ← pydantic-settings, reads .env
   prompts/             ← one file per LLM prompt, typed builder fns
-  stages/              ← intake, stakeholder_needs, skill_extraction, plo_synthesis, ylo_derivation
+  stages/              ← intake, stakeholder_needs, skill_extraction,
+                          plo_synthesis, plo_report (+ smart_rules)
   data/                ← repositories, postgres, qdrant, minio_store
-  nlp/                 ← thai_tokenizer, embedding, extraction (KeyBERT/BERTopic)
+  nlp/                 ← embedding, extraction (KeyBERT)
   scrapers/            ← per-site job scrapers
   parsers/             ← document parsers (Tika, มคอ.1)
   exporters/           ← CHECO, มคอ.2, Excel matrix
   api/                 ← FastAPI routes
-streamlit_app/         ← UI pages (one per stage)
+frontend/              ← React UI (one page per stage + Pipeline)
+scripts/               ← start-dev.ps1 / stop-dev.ps1
 tests/unit/            ← validators, schema, pure functions
 tests/integration/     ← LLM mocked, full stages
 ```
 
 ## Where to find things
 
-- **OBE rules / Bloom verbs / SMART criteria** → curriculum-design-agent skill `references/obe-principles.md`
+- **OBE rules / Bloom verbs / SMART criteria (hard/soft rubric)** → skill `references/obe-principles.md`
 - **Prompt templates for any stage** → skill `references/prompts.md`, then mirrored in `src/curriculum_agent/prompts/`
 - **Data schema decisions** → skill `references/data-schemas.md`, implemented in `src/curriculum_agent/models.py`
-- **Tech stack rationale & alternatives** → skill `references/tech-stack.md`
-- **Phase plan / what to build next** → skill `references/development-phases.md`
+- **SMART hard checks (pure code)** → `src/curriculum_agent/stages/smart_rules.py`
 - **Service config** → `docker-compose.yml`, `.env.example`
 - **DB schema** → managed by Alembic in `migrations/`. Never edit DB by hand.
 
 ## Common pitfalls
 
-- **Don't skip the SMART validator after Stage 3 generation.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. The validator is the safety net — a separate prompt run on a smaller model.
-- **Don't pass full evidence text into Stage 3 prompts.** Summarize each cluster in ≤200 tokens. Full evidence stays in Postgres/Qdrant for drill-down, not in the synthesis prompt.
-- **Don't ask the model for "as many PLOs as needed."** Always 4–6. More leads to overlap.
+- **Don't bypass the SMART retry loop after synthesis.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. Hard checks are pure code (`smart_rules.py`); the soft judge is a separate light-model prompt. Escalated PLOs must stay visible in the UI.
+- **Don't pass full evidence text into synthesis prompts.** Summarize each cluster in ≤200 tokens. Full evidence stays in Postgres/Qdrant for drill-down, not in the synthesis prompt.
+- **Don't ask the model for "as many PLOs as needed."** Always 6–10 main PLOs; 1–4 optional PLOs from want-clusters in a separate non-blocking pass.
 - **Test Pydantic validators before integration tests.** They're the cheapest, most important guardrail. If a validator is wrong, every downstream test is suspect.
-- **Don't `git push` model files.** Ollama models live in the Docker volume. `.env` files with API keys are gitignored — keep it that way.
-- **Don't refactor the OBE flow to "save a stage."** Skipping YLO and going straight from PLO to CLO is the single most common bad idea. It breaks CHECO compliance.
+- **Don't `git push` model files.** Ollama models live on the host. `.env` files with API keys are gitignored — keep it that way.
+- **Don't refactor the OBE flow to "save a stage."** Re-adding YLO/CLO generation, or collapsing plo_synthesis and plo_report, breaks the scope decision and CHECO compliance.
 
 ## When in doubt
 
