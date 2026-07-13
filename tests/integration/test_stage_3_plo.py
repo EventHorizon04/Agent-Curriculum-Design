@@ -8,14 +8,13 @@ from curriculum_agent.models import (
     Domain,
     BloomLevel,
     ProgramMetadata,
-    SMARTCheck,
     SkillCluster,
     SkillType,
 )
-from curriculum_agent.stages.plo_synthesis import _PLODraft, _PLODraftList, run
+from curriculum_agent.stages.plo_synthesis import _PLODraft, _PLODraftList, _SmartSoftJudge, run
 
-_SMART_PASS = SMARTCheck(
-    specific=True, measurable=True, achievable=True, relevant=True, timely=True
+_SOFT_OK = _SmartSoftJudge(
+    specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
 )
 
 _SAMPLE_DRAFTS = _PLODraftList(
@@ -56,7 +55,7 @@ async def test_stage_3_produces_plos(state: dict) -> None:
         patch(
             "curriculum_agent.stages.plo_synthesis.complete_light",
             new_callable=AsyncMock,
-            return_value=_SMART_PASS,
+            return_value=_SOFT_OK,
         ),
         patch(
             "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
@@ -80,7 +79,7 @@ async def test_stage_3_no_forbidden_words(state: dict) -> None:
         patch(
             "curriculum_agent.stages.plo_synthesis.complete_light",
             new_callable=AsyncMock,
-            return_value=_SMART_PASS,
+            return_value=_SOFT_OK,
         ),
         patch(
             "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
@@ -107,7 +106,7 @@ async def test_stage_3_source_cluster_ids_non_empty(state: dict) -> None:
         patch(
             "curriculum_agent.stages.plo_synthesis.complete_light",
             new_callable=AsyncMock,
-            return_value=_SMART_PASS,
+            return_value=_SOFT_OK,
         ),
         patch(
             "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
@@ -122,21 +121,29 @@ async def test_stage_3_source_cluster_ids_non_empty(state: dict) -> None:
 
 @pytest.mark.anyio
 async def test_stage_3_smart_validator_called(state: dict) -> None:
-    smart_mock = AsyncMock(return_value=_SMART_PASS)
+    soft_judge_mock = AsyncMock(return_value=_SOFT_OK)
     with (
         patch(
             "curriculum_agent.stages.plo_synthesis.complete_heavy",
             new_callable=AsyncMock,
             return_value=_SAMPLE_DRAFTS,
         ),
-        patch("curriculum_agent.stages.plo_synthesis.complete_light", smart_mock),
+        patch("curriculum_agent.stages.plo_synthesis.complete_light", soft_judge_mock),
         patch(
             "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
             new_callable=AsyncMock,
         ),
     ):
-        await run(state)
+        result = await run(state)
 
-    assert smart_mock.call_count >= len(_SAMPLE_DRAFTS.plos), (
-        "SMART validator should be called at least once per PLO"
+    assert soft_judge_mock.call_count >= len(_SAMPLE_DRAFTS.plos), (
+        "soft judge should be called at least once per PLO"
     )
+    # Verify the judge result was consumed by checking soft_flags and escalation
+    for plo_dict in result["plos"]:
+        assert plo_dict["soft_flags"] == [], (
+            f"PLO {plo_dict['plo_id']} should have no soft flags when judge passes"
+        )
+        assert plo_dict["smart_escalated"] is False, (
+            f"PLO {plo_dict['plo_id']} should not be escalated when hard checks pass"
+        )
