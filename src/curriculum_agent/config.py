@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin_dev"
-    light_model: str = "gemma4:31b-cloud"
-    heavy_model: str = "gemma4:31b-cloud"
+    light_model: str = "scb10x/typhoon2-8b-instruct"
+    heavy_model: str = "qwen2.5:7b"
     api_key: str | None = None
 
     @computed_field  # type: ignore[misc]

@@ -75,10 +75,10 @@ uv run mypy src/
 
 ## Architecture
 
-5-stage LangGraph pipeline พร้อม HITL checkpoint ทุก stage:
+5-stage LangGraph pipeline พร้อม HITL checkpoint ทุก stage. Scope จบที่ PLO — YLO/CLO เป็นงานของคณะ:
 
 ```
-intake → stakeholder_needs → skill_extraction → plo_synthesis → ylo_derivation
+intake → stakeholder_needs → skill_extraction → plo_synthesis → plo_report
 ```
 
 อ่าน `docs/diagrams/` สำหรับ component diagram และ workflow diagram
