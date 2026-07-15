@@ -121,6 +121,12 @@ class ProgramCreateRequest(BaseModel):
 class ProgramMetadata(ProgramCreateRequest):
     program_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Entity model deserializes persisted rows verbatim, including legacy rows
+    # backfilled by migration a845ef6ab4f6 with ""/[]; input-time non-empty
+    # enforcement lives on ProgramCreateRequest only.
+    mission_th: str
+    philosophy_th: str
+    program_goals_th: list[str]
 
 
 # --------------------------- Stage 1 -----------------------------

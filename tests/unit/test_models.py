@@ -242,3 +242,17 @@ def test_empty_program_goals_rejected() -> None:
     kwargs["program_goals_th"] = []
     with pytest.raises(ValidationError):
         ProgramCreateRequest(**kwargs)
+
+
+def test_program_metadata_accepts_legacy_backfilled_row() -> None:
+    """Regression guard: rows backfilled by migration a845ef6ab4f6 with
+    ""/[] for mission_th/philosophy_th/program_goals_th must still
+    deserialize via ProgramMetadata (e.g. ProgramRepository.get())."""
+    kwargs = _valid_create_kwargs()
+    kwargs["mission_th"] = ""
+    kwargs["philosophy_th"] = ""
+    kwargs["program_goals_th"] = []
+    meta = ProgramMetadata(program_id="cs-legacy", **kwargs)
+    assert meta.mission_th == ""
+    assert meta.philosophy_th == ""
+    assert meta.program_goals_th == []
