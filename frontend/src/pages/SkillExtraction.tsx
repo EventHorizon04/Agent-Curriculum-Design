@@ -18,6 +18,7 @@ interface SkillCluster {
   is_common_need: boolean
   sample_quotes_th: string[]
   bloom_level: string | null
+  psychomotor_level: string | null
   krathwohl_level: string | null
   is_optional: boolean
   classification_coverage: Record<string, number>
@@ -288,17 +289,22 @@ const SKILL_TYPE_COLOR: Record<string, string> = {
 }
 
 const BLOOM_ORDER = ['remember', 'understand', 'apply', 'analyze', 'evaluate', 'create'] as const
-const BLOOM_TH: Record<string, string> = {
+const PSYCHOMOTOR_ORDER = ['imitate', 'manipulate', 'precise', 'articulate', 'naturalize'] as const
+const LEVEL_ORDER = [...BLOOM_ORDER, ...PSYCHOMOTOR_ORDER] as readonly string[]
+const LEVEL_TH: Record<string, string> = {
   remember: 'จำได้ (Remember)', understand: 'เข้าใจ (Understand)', apply: 'ประยุกต์ (Apply)',
   analyze: 'วิเคราะห์ (Analyze)', evaluate: 'ประเมิน (Evaluate)', create: 'สร้างสรรค์ (Create)',
+  imitate: 'ทำตามแบบ (Imitate)', manipulate: 'ทำตามคำสั่ง (Manipulate)', precise: 'ทำได้แม่นยำ (Precise)',
+  articulate: 'ทำได้ต่อเนื่อง (Articulate)', naturalize: 'ทำได้เป็นธรรมชาติ (Naturalize)',
 }
 
 function groupByBloom(clusters: SkillCluster[]): [string, SkillCluster[]][] {
   const groups = new Map<string, SkillCluster[]>()
-  for (const level of BLOOM_ORDER) groups.set(level, [])
+  for (const level of LEVEL_ORDER) groups.set(level, [])
   groups.set('untagged', [])
   for (const c of clusters) {
-    const key = c.bloom_level && BLOOM_ORDER.includes(c.bloom_level as never) ? c.bloom_level : 'untagged'
+    const level = c.bloom_level ?? c.psychomotor_level
+    const key = level && LEVEL_ORDER.includes(level) ? level : 'untagged'
     groups.get(key)!.push(c)
   }
   return [...groups.entries()].filter(([, v]) => v.length > 0)
@@ -407,7 +413,7 @@ export default function SkillExtraction() {
             {groupByBloom(clusters).map(([level, group]) => (
               <div key={level}>
                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wide mb-3">
-                  {BLOOM_TH[level] ?? 'ยังไม่จัดระดับ'}
+                  {LEVEL_TH[level] ?? 'ยังไม่จัดระดับ'}
                   <span className="ml-2 text-gray-400 font-normal normal-case">({group.length})</span>
                 </h2>
                 <div className="space-y-4">

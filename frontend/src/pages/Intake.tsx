@@ -10,7 +10,6 @@ const DEGREE_OPTIONS = [
 ]
 
 interface FormState {
-  program_id: string
   name_th: string
   name_en: string
   field: string
@@ -19,13 +18,19 @@ interface FormState {
   faculty: string
   university: string
   vision_th: string
+  mission_th: string
+  philosophy_th: string
+  institutional_identity_th: string
   objectives_raw: string
+  goals_raw: string
 }
 
 const INITIAL: FormState = {
-  program_id: '', name_th: '', name_en: '', field: '',
+  name_th: '', name_en: '', field: '',
   degree_level: 'bachelor', duration_years: 4,
-  faculty: '', university: '', vision_th: '', objectives_raw: '',
+  faculty: '', university: '', vision_th: '',
+  mission_th: '', philosophy_th: '', institutional_identity_th: '',
+  objectives_raw: '', goals_raw: '',
 }
 
 export default function Intake() {
@@ -49,8 +54,9 @@ export default function Intake() {
     setSuccess('')
 
     const required: (keyof FormState)[] = [
-      'program_id', 'name_th', 'name_en', 'field',
-      'faculty', 'university', 'vision_th', 'objectives_raw',
+      'name_th', 'name_en', 'field',
+      'faculty', 'university', 'vision_th',
+      'mission_th', 'philosophy_th', 'objectives_raw', 'goals_raw',
     ]
     if (required.some(k => !String(form[k]).trim())) {
       setError('กรุณากรอกข้อมูลที่มีเครื่องหมาย * ให้ครบถ้วน')
@@ -62,10 +68,14 @@ export default function Intake() {
       .map(l => l.trim())
       .filter(Boolean)
 
+    const goals = form.goals_raw
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean)
+
     setLoading(true)
     try {
-      await api.post('/programs/', {
-        program_id: form.program_id,
+      const resp = await api.post('/programs/', {
         name_th: form.name_th,
         name_en: form.name_en,
         field: form.field,
@@ -74,10 +84,15 @@ export default function Intake() {
         faculty: form.faculty,
         university: form.university,
         vision_th: form.vision_th,
+        mission_th: form.mission_th,
+        philosophy_th: form.philosophy_th,
+        institutional_identity_th: form.institutional_identity_th || null,
         program_objectives_th: objectives,
+        program_goals_th: goals,
       })
-      setProgramId(form.program_id)
-      setSuccess(`บันทึกหลักสูตร "${form.program_id}" สำเร็จ`)
+      const newId = resp.data.program_id
+      setProgramId(newId)
+      setSuccess(`บันทึกหลักสูตร "${form.name_th}" สำเร็จ (รหัส: ${newId})`)
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status: number; data: unknown } }
       if (axiosErr.response) {
@@ -124,14 +139,11 @@ export default function Intake() {
 
       <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5">
         <div className="grid grid-cols-2 gap-4">
-          <Field label="รหัสหลักสูตร *" name="program_id" value={form.program_id} onChange={handleChange} placeholder="cs-2025" />
-          <Field label="สาขาวิชา *" name="field" value={form.field} onChange={handleChange} placeholder="Computer Science" />
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
           <Field label="ชื่อหลักสูตร (ภาษาไทย) *" name="name_th" value={form.name_th} onChange={handleChange} />
           <Field label="ชื่อหลักสูตร (ภาษาอังกฤษ) *" name="name_en" value={form.name_en} onChange={handleChange} />
         </div>
+
+        <Field label="สาขาวิชา *" name="field" value={form.field} onChange={handleChange} placeholder="Computer Science" />
 
         <div className="grid grid-cols-3 gap-4">
           <div>
@@ -176,6 +188,42 @@ export default function Intake() {
           <textarea
             name="objectives_raw" rows={4} value={form.objectives_raw} onChange={handleChange}
             placeholder={"1. ผลิตบัณฑิตที่มีความรู้...\n2. พัฒนาทักษะด้าน..."}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">พันธกิจหลักสูตร (ภาษาไทย) *</label>
+          <textarea
+            name="mission_th" rows={3} value={form.mission_th} onChange={handleChange}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">ปรัชญาหลักสูตร (ภาษาไทย) *</label>
+          <textarea
+            name="philosophy_th" rows={3} value={form.philosophy_th} onChange={handleChange}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">เอกลักษณ์สถาบัน (ภาษาไทย)</label>
+          <textarea
+            name="institutional_identity_th" rows={3} value={form.institutional_identity_th} onChange={handleChange}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            เป้าหมายหลักสูตร *{' '}
+            <span className="text-gray-400 font-normal">(แต่ละรายการ 1 บรรทัด)</span>
+          </label>
+          <textarea
+            name="goals_raw" rows={4} value={form.goals_raw} onChange={handleChange}
+            placeholder={"1. ผลิตบัณฑิตที่ตอบสนองความต้องการ...\n2. ส่งเสริมการเรียนรู้ตลอดชีวิต..."}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           />
         </div>

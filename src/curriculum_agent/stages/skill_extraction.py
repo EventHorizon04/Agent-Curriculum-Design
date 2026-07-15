@@ -60,6 +60,9 @@ class _ClusterBloomResult(BaseModel):
     bloom_level: (
         Literal["remember", "understand", "apply", "analyze", "evaluate", "create"] | None
     ) = None
+    psychomotor_level: (
+        Literal["imitate", "manipulate", "precise", "articulate", "naturalize"] | None
+    ) = None
     krathwohl_level: (
         Literal["receiving", "responding", "valuing", "organization", "characterization"] | None
     ) = None
@@ -271,6 +274,7 @@ async def run(state: AgentState) -> AgentState:
             )
 
         bloom_level: str | None = None
+        psychomotor_level: str | None = None
         krathwohl_level: str | None = None
         is_specific = naming.is_subject_specific
         try:
@@ -282,6 +286,8 @@ async def run(state: AgentState) -> AgentState:
             )
             if naming.skill_type == "affective":
                 krathwohl_level = tag.krathwohl_level
+            elif naming.skill_type == "psychomotor":
+                psychomotor_level = tag.psychomotor_level
             else:
                 bloom_level = tag.bloom_level
             is_specific = tag.is_subject_specific
@@ -315,6 +321,7 @@ async def run(state: AgentState) -> AgentState:
             classification_coverage=cls_coverage,
             sample_quotes_th=naming.sample_quotes_th[:5],
             bloom_level=bloom_level,
+            psychomotor_level=psychomotor_level,
             krathwohl_level=krathwohl_level,
         )
         clusters.append(cluster)

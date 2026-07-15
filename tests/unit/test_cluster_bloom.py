@@ -29,6 +29,13 @@ def test_bloom_result_model_cognitive_gets_bloom():
     assert r.krathwohl_level is None
 
 
+def test_bloom_result_model_psychomotor_gets_psychomotor():
+    r = se._ClusterBloomResult(psychomotor_level="precise", is_subject_specific=True)
+    assert r.psychomotor_level == "precise"
+    assert r.bloom_level is None
+    assert r.krathwohl_level is None
+
+
 def _build_initial_state():
     from curriculum_agent.graph import AgentState
 
@@ -161,6 +168,26 @@ async def test_tagging_failure_leaves_cluster_untagged():
     assert cluster["bloom_level"] is None
     assert cluster["krathwohl_level"] is None
     assert cluster["is_subject_specific"] is True
+
+
+async def test_psychomotor_cluster_gets_psychomotor_level():
+    """Psychomotor clusters get psychomotor_level tagged instead of bloom_level."""
+    naming_result = se._ClusterNameResult(
+        canonical_name_th="ทักษะการใช้เครื่องมือวัด",
+        canonical_name_en="Instrumentation Skills",
+        description_th="ทักษะปฏิบัติการใช้เครื่องมือวัด",
+        skill_type="psychomotor",
+        is_subject_specific=True,
+    )
+    bloom_result = se._ClusterBloomResult(psychomotor_level="precise", is_subject_specific=True)
+
+    result_state = await _run_stage_with_mocked_llm(naming_result, bloom_result)
+
+    assert len(result_state["skill_clusters"]) > 0
+    cluster = result_state["skill_clusters"][0]
+    assert cluster["psychomotor_level"] == "precise"
+    assert cluster["bloom_level"] is None
+    assert cluster["krathwohl_level"] is None
 
 
 async def test_affective_cluster_gets_krathwohl_level():

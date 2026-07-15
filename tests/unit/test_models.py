@@ -8,6 +8,9 @@ from curriculum_agent.models import (
     BloomLevel,
     Domain,
     KrathwohlLevel,
+    ProgramCreateRequest,
+    ProgramMetadata,
+    PsychomotorLevel,
     SkillCluster,
     SkillType,
     SMARTCheck,
@@ -85,6 +88,31 @@ def test_affective_plo_accepts_krathwohl() -> None:
     assert plo.domain == Domain.AFFECTIVE
 
 
+def test_psychomotor_plo_requires_psychomotor_level() -> None:
+    with pytest.raises(ValidationError, match="missing psychomotor_level"):
+        PLO(**make_plo(domain=Domain.PSYCHOMOTOR, bloom_level=None))
+
+
+def test_psychomotor_plo_rejects_bloom_only() -> None:
+    # bloom_level does not substitute for the psychomotor scale
+    with pytest.raises(ValidationError, match="missing psychomotor_level"):
+        PLO(**make_plo(domain=Domain.PSYCHOMOTOR, bloom_level=BloomLevel.APPLY))
+
+
+def test_psychomotor_plo_accepts_psychomotor_level() -> None:
+    plo = PLO(
+        **make_plo(
+            domain=Domain.PSYCHOMOTOR,
+            bloom_level=None,
+            psychomotor_level=PsychomotorLevel.PRECISE,
+            statement_th="สาธิตการใช้เครื่องมือวัดทางไฟฟ้าได้อย่างถูกต้อง",
+            action_verb_th="สาธิต",
+        )
+    )
+    assert plo.domain == Domain.PSYCHOMOTOR
+    assert plo.psychomotor_level == PsychomotorLevel.PRECISE
+
+
 # ---- new fields (Task 2) ---------------------------------------------------
 
 
@@ -101,6 +129,7 @@ def test_skill_cluster_new_field_defaults() -> None:
         demand_score=0.5,
     )
     assert c.bloom_level is None
+    assert c.psychomotor_level is None
     assert c.krathwohl_level is None
     assert c.is_optional is False
     assert c.classification_coverage == {}
@@ -166,3 +195,64 @@ def test_escalated_plo_still_requires_evidence() -> None:
             rationale_th="เหตุผล",
             smart_escalated=True,
         )
+
+
+# ---- ProgramCreateRequest / ProgramMetadata split (Task 1) -------------
+
+
+def _valid_create_kwargs() -> dict:
+    return {
+        "name_th": "วิทยาการคอมพิวเตอร์",
+        "name_en": "Computer Science",
+        "field": "Computer Science",
+        "degree_level": "bachelor",
+        "duration_years": 4,
+        "faculty": "วิศวกรรมศาสตร์",
+        "university": "มหาวิทยาลัยทดสอบ",
+        "vision_th": "วิสัยทัศน์",
+        "mission_th": "พันธกิจ",
+        "philosophy_th": "ปรัชญา",
+        "program_goals_th": ["เป้าหมายที่ 1"],
+        "program_objectives_th": ["วัตถุประสงค์ที่ 1"],
+    }
+
+
+def test_program_create_request_valid() -> None:
+    req = ProgramCreateRequest(**_valid_create_kwargs())
+    assert req.mission_th == "พันธกิจ"
+    assert req.institutional_identity_th is None
+
+
+def test_program_metadata_inherits_and_adds_program_id() -> None:
+    meta = ProgramMetadata(program_id="cs-1", **_valid_create_kwargs())
+    assert meta.program_id == "cs-1"
+    assert meta.philosophy_th == "ปรัชญา"
+
+
+@pytest.mark.parametrize("empty_field", ["mission_th", "philosophy_th"])
+def test_empty_required_text_rejected(empty_field: str) -> None:
+    kwargs = _valid_create_kwargs()
+    kwargs[empty_field] = ""
+    with pytest.raises(ValidationError):
+        ProgramCreateRequest(**kwargs)
+
+
+def test_empty_program_goals_rejected() -> None:
+    kwargs = _valid_create_kwargs()
+    kwargs["program_goals_th"] = []
+    with pytest.raises(ValidationError):
+        ProgramCreateRequest(**kwargs)
+
+
+def test_program_metadata_accepts_legacy_backfilled_row() -> None:
+    """Regression guard: rows backfilled by migration a845ef6ab4f6 with
+    ""/[] for mission_th/philosophy_th/program_goals_th must still
+    deserialize via ProgramMetadata (e.g. ProgramRepository.get())."""
+    kwargs = _valid_create_kwargs()
+    kwargs["mission_th"] = ""
+    kwargs["philosophy_th"] = ""
+    kwargs["program_goals_th"] = []
+    meta = ProgramMetadata(program_id="cs-legacy", **kwargs)
+    assert meta.mission_th == ""
+    assert meta.philosophy_th == ""
+    assert meta.program_goals_th == []

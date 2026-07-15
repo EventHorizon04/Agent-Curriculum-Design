@@ -61,6 +61,11 @@ class ProgramRepository:
                 return None
             return ProgramMetadata.model_validate(_row_to_dict(row))
 
+    async def exists(self, program_id: str) -> bool:
+        async with AsyncSessionLocal() as session:
+            row = await session.get(ProgramTable, program_id)
+            return row is not None
+
 
 class EvidenceRepository:
     async def bulk_insert(self, items: list[StakeholderEvidence]) -> None:
