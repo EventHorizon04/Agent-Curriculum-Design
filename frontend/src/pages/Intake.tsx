@@ -21,6 +21,7 @@ interface FormState {
   mission_th: string
   philosophy_th: string
   institutional_identity_th: string
+  student_identity_th: string
   objectives_raw: string
   goals_raw: string
 }
@@ -30,7 +31,22 @@ const INITIAL: FormState = {
   degree_level: 'bachelor', duration_years: 4,
   faculty: '', university: '', vision_th: '',
   mission_th: '', philosophy_th: '', institutional_identity_th: '',
+  student_identity_th: '',
   objectives_raw: '', goals_raw: '',
+}
+
+interface ExtractedMetadata {
+  vision_th: string | null
+  mission_th: string | null
+  institutional_identity_th: string | null
+  student_identity_th: string | null
+}
+
+const FIELD_LABELS: Record<keyof ExtractedMetadata, string> = {
+  vision_th: 'วิสัยทัศน์',
+  mission_th: 'พันธกิจ',
+  institutional_identity_th: 'เอกลักษณ์สถาบัน',
+  student_identity_th: 'อัตลักษณ์บัณฑิต',
 }
 
 export default function Intake() {
@@ -40,6 +56,52 @@ export default function Intake() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [entryMode, setEntryMode] = useState<'manual' | 'upload'>('manual')
+  const [docFile, setDocFile] = useState<File | null>(null)
+  const [extracting, setExtracting] = useState(false)
+  const [extractMessage, setExtractMessage] = useState('')
+
+  async function handleExtract() {
+    if (!docFile) {
+      setExtractMessage('กรุณาเลือกไฟล์ก่อน')
+      return
+    }
+    setExtracting(true)
+    setExtractMessage('')
+    try {
+      const fd = new FormData()
+      fd.append('file', docFile)
+      const resp = await api.post<ExtractedMetadata>('/programs/extract-metadata', fd)
+      const data = resp.data
+      // Compute the merge OUTSIDE the state updater — React StrictMode runs
+      // updaters twice, which would duplicate side effects like filled.push.
+      const filled: string[] = []
+      const updates: Partial<FormState> = {}
+      ;(Object.keys(FIELD_LABELS) as (keyof ExtractedMetadata)[]).forEach(key => {
+        const value = data[key]
+        if (value && !form[key].trim()) {
+          updates[key] = value
+          filled.push(FIELD_LABELS[key])
+        }
+      })
+      if (filled.length > 0) {
+        setForm(prev => ({ ...prev, ...updates }))
+      }
+      setExtractMessage(
+        filled.length > 0
+          ? `เติมข้อมูลแล้ว ${filled.length} รายการ (${filled.join(', ')})`
+          : 'ไม่พบข้อมูลในเอกสาร'
+      )
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { status: number; data?: { detail?: string } } }
+      setExtractMessage(
+        axiosErr.response?.data?.detail ??
+          'สกัดข้อมูลไม่สำเร็จ — ตรวจสอบว่า backend รันอยู่'
+      )
+    } finally {
+      setExtracting(false)
+    }
+  }
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -87,6 +149,7 @@ export default function Intake() {
         mission_th: form.mission_th,
         philosophy_th: form.philosophy_th,
         institutional_identity_th: form.institutional_identity_th || null,
+        student_identity_th: form.student_identity_th || null,
         program_objectives_th: objectives,
         program_goals_th: goals,
       })
@@ -172,6 +235,64 @@ export default function Intake() {
 
         <Field label="คณะ *" name="faculty" value={form.faculty} onChange={handleChange} />
 
+        <div className="border-t border-gray-100 pt-5">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            ข้อมูลวิสัยทัศน์ / พันธกิจ / เอกลักษณ์
+          </label>
+          <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm mb-3">
+            <button
+              type="button"
+              onClick={() => setEntryMode('manual')}
+              className={`px-4 py-1.5 transition-colors ${
+                entryMode === 'manual'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              กรอกข้อมูลเอง
+            </button>
+            <button
+              type="button"
+              onClick={() => setEntryMode('upload')}
+              className={`px-4 py-1.5 transition-colors ${
+                entryMode === 'upload'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              อัปโหลดเอกสารมหาวิทยาลัย
+            </button>
+          </div>
+
+          {entryMode === 'upload' && (
+            <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 space-y-3">
+              <p className="text-xs text-gray-600">
+                อัปโหลดเอกสาร (มคอ.2 เดิม, ธรรมนูญ, SAR ฯลฯ) ระบบจะสกัดวิสัยทัศน์ พันธกิจ
+                เอกลักษณ์สถาบัน และอัตลักษณ์บัณฑิตมาเติมในช่องที่ยังว่างให้อัตโนมัติ
+              </p>
+              <div className="flex items-center gap-3">
+                <input
+                  type="file"
+                  accept=".pdf,.docx,.doc,.txt"
+                  onChange={e => setDocFile(e.target.files?.[0] ?? null)}
+                  className="text-sm text-gray-600 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-white file:text-blue-600 file:text-sm file:cursor-pointer"
+                />
+                <button
+                  type="button"
+                  onClick={handleExtract}
+                  disabled={extracting || !docFile}
+                  className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium rounded-lg px-4 py-1.5 transition-colors cursor-pointer disabled:cursor-not-allowed shrink-0"
+                >
+                  {extracting ? 'กำลังสกัดข้อมูล…' : 'สกัดข้อมูล'}
+                </button>
+              </div>
+              {extractMessage && (
+                <p className="text-xs text-blue-700">{extractMessage}</p>
+              )}
+            </div>
+          )}
+        </div>
+
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">วิสัยทัศน์หลักสูตร (ภาษาไทย) *</label>
           <textarea
@@ -212,6 +333,14 @@ export default function Intake() {
           <label className="block text-sm font-medium text-gray-700 mb-1">เอกลักษณ์สถาบัน (ภาษาไทย)</label>
           <textarea
             name="institutional_identity_th" rows={3} value={form.institutional_identity_th} onChange={handleChange}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">อัตลักษณ์บัณฑิต (ภาษาไทย)</label>
+          <textarea
+            name="student_identity_th" rows={3} value={form.student_identity_th} onChange={handleChange}
             className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
           />
         </div>
