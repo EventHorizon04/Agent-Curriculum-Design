@@ -91,6 +91,16 @@ Run in this order; on any hard-fail, send the PLO back to the LLM with the speci
 
 Hard-fails trigger the automatic retry loop (bounded — max 3 attempts before escalating to human review). Soft-fails surface as warnings in the human-in-the-loop checkpoint UI, not block the pipeline.
 
+## Bloom's Taxonomy — three learning domains
+
+Bloom's Taxonomy spans three domains, each with its own level scale. Tag every outcome with the scale matching its domain:
+
+| Domain | Focus | Scale (low → high) |
+|--------|-------|--------------------|
+| Cognitive | Knowledge / Thinking | Remember → Understand → Apply → Analyze → Evaluate → Create |
+| Psychomotor | Skill / Doing | Imitate → Manipulate → Precise → Articulate → Naturalize (Dave) |
+| Affective | Attitude / Feeling | Receiving → Responding → Valuing → Organization → Characterization (Krathwohl) |
+
 ## Bloom Taxonomy — cognitive domain action verbs
 
 Use ONE action verb per outcome. If two are needed, they must be in adjacent levels (e.g. apply + analyze) — but prefer one.
@@ -121,6 +131,18 @@ These words CANNOT be observed or measured. Reject any PLO that uses them:
 - **รัก** (love)
 
 If translating from English: "have knowledge of" → use "explain"; "understand" → "describe" or "interpret"; "appreciate" → "demonstrate" or "exhibit through behavior."
+
+## Psychomotor domain (Dave) — for skill/doing PLOs
+
+When a PLO targets a physical or hands-on skill (lab technique, instrument operation, craft, clinical procedure), use Dave's psychomotor progression instead of the cognitive scale:
+
+1. **Imitate** — copies an observed action under supervision (ทำตามแบบ)
+2. **Manipulate** — performs from instructions or memory without a model (ทำตามคำสั่ง)
+3. **Precise** — executes accurately and consistently without guidance (ทำได้แม่นยำ)
+4. **Articulate** — combines and adapts skills into coherent sequences in new situations (ทำได้ต่อเนื่อง)
+5. **Naturalize** — performs automatically, with mastery, as second nature (ทำได้เป็นธรรมชาติ)
+
+Bachelor-level psychomotor PLOs typically sit at Precise / Articulate. Example verbs: สาธิต, ปฏิบัติ, ประกอบ, ปรับแต่ง, ควบคุมเครื่องมือ.
 
 ## Affective domain (Krathwohl) — for attitude/values PLOs
 

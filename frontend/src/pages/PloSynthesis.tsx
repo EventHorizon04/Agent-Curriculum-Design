@@ -19,6 +19,7 @@ interface PLO {
   statement_en: string | null
   domain: string
   bloom_level: string | null
+  psychomotor_level: string | null
   krathwohl_level: string | null
   is_subject_specific: boolean
   action_verb_th: string
@@ -82,6 +83,11 @@ const BLOOM_LABEL: Record<string, string> = {
   analyze: 'Analyze',
   evaluate: 'Evaluate',
   create: 'Create',
+  imitate: 'Imitate',
+  manipulate: 'Manipulate',
+  precise: 'Precise',
+  articulate: 'Articulate',
+  naturalize: 'Naturalize',
 }
 
 const SMART_KEYS: (keyof SMARTCheck)[] = ['specific', 'measurable', 'achievable', 'relevant', 'timely']
@@ -351,9 +357,12 @@ function PLOCard({
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${DOMAIN_COLOR[p.domain] ?? 'bg-gray-100 text-gray-700'}`}>
               {DOMAIN_LABEL[p.domain] ?? p.domain}
             </span>
-            {(p.bloom_level || p.krathwohl_level) && (
+            {(p.bloom_level || p.psychomotor_level || p.krathwohl_level) && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">
-                {p.bloom_level ? BLOOM_LABEL[p.bloom_level] ?? p.bloom_level : p.krathwohl_level}
+                {(() => {
+                  const level = p.bloom_level ?? p.psychomotor_level
+                  return level ? BLOOM_LABEL[level] ?? level : p.krathwohl_level
+                })()}
               </span>
             )}
             {p.is_subject_specific && (

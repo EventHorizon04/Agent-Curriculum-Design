@@ -32,7 +32,8 @@ def build_plo_synthesis_prompt(
                 f"- วิสัยทัศน์: {metadata.vision_th}\n\n"
                 f"Skill clusters (สรุปจากหลักฐานผู้มีส่วนได้ส่วนเสีย):\n{cluster_summary}\n\n"
                 "สังเคราะห์ PLO 6-10 รายการ พร้อม plo_id, statement_th, domain, "
-                "bloom_level/krathwohl_level, "
+                "ระดับตาม domain (cognitive → bloom_level, psychomotor → psychomotor_level, "
+                "affective → krathwohl_level), "
                 "action_verb_th, source_cluster_ids, และ rationale_th"
             ),
         },
@@ -62,8 +63,9 @@ def build_optional_plo_prompt(
                 f"สาขาวิชา: {metadata.field} ระดับ {metadata.degree_level}\n"
                 f"Want-based skill clusters:\n{cluster_summary}\n\n"
                 "สังเคราะห์ PLO เสริม 1-4 รายการ พร้อม plo_id (นำหน้าด้วย OPT), statement_th, "
-                "domain, bloom_level/krathwohl_level, action_verb_th, source_cluster_ids, "
-                "rationale_th"
+                "domain, ระดับตาม domain (cognitive → bloom_level, "
+                "psychomotor → psychomotor_level, affective → krathwohl_level), "
+                "action_verb_th, source_cluster_ids, rationale_th"
             ),
         },
     ]

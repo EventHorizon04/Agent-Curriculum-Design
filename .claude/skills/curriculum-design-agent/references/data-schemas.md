@@ -106,7 +106,8 @@ class SkillCluster(BaseModel):
     demand_score: float = Field(ge=0, le=1)  # weighted frequency × stakeholder breadth
     is_common_need: bool = False  # appears in multiple stakeholder groups → likely PLO
     sample_quotes_th: list[str] = []  # 2-3 illustrative excerpts
-    bloom_level: BloomLevel | None = None  # tagged by light model (cognitive/psychomotor/mixed/knowledge)
+    bloom_level: BloomLevel | None = None  # tagged by light model (knowledge/mixed clusters)
+    psychomotor_level: PsychomotorLevel | None = None  # tagged for psychomotor clusters
     krathwohl_level: KrathwohlLevel | None = None  # tagged for affective clusters
     is_optional: bool = False  # majority-want cluster → supplementary, not core
     classification_coverage: dict[str, int] = {}  # evidence count per classification, e.g. {"need": 3, "want": 1}
@@ -122,6 +123,11 @@ class SkillCluster(BaseModel):
 ## Stage 4: PLO
 
 ```python
+# Bloom's Taxonomy — one level scale per learning domain:
+#   Cognitive (Knowledge/Thinking) → BloomLevel
+#   Psychomotor (Skill/Doing)      → PsychomotorLevel (Dave)
+#   Affective (Attitude/Feeling)   → KrathwohlLevel
+
 class BloomLevel(str, Enum):
     REMEMBER = "remember"
     UNDERSTAND = "understand"
@@ -129,6 +135,13 @@ class BloomLevel(str, Enum):
     ANALYZE = "analyze"
     EVALUATE = "evaluate"
     CREATE = "create"
+
+class PsychomotorLevel(str, Enum):
+    IMITATE = "imitate"
+    MANIPULATE = "manipulate"
+    PRECISE = "precise"
+    ARTICULATE = "articulate"
+    NATURALIZE = "naturalize"
 
 class KrathwohlLevel(str, Enum):
     RECEIVING = "receiving"
@@ -153,6 +166,7 @@ class PLO(BaseModel):
     statement_en: str | None = None
     domain: Literal["cognitive", "psychomotor", "affective"]
     bloom_level: BloomLevel | None = None  # for cognitive
+    psychomotor_level: PsychomotorLevel | None = None  # for psychomotor
     krathwohl_level: KrathwohlLevel | None = None  # for affective
     is_subject_specific: bool
     action_verb_th: str  # the single Bloom verb extracted
@@ -169,7 +183,7 @@ class PLO(BaseModel):
 
 Validation rules for PLO (enforce in code):
 - `statement_th` must not contain forbidden words (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก) — see `obe-principles.md`. Exception: a PLO with `smart_escalated=True` may carry them — it exists precisely so a human can repair it, and the SMART gate already failed it loudly.
-- Exactly one of `bloom_level` / `krathwohl_level` must be set, depending on domain
+- The level field matching `domain` must be set: cognitive → `bloom_level`, psychomotor → `psychomotor_level`, affective → `krathwohl_level`
 - `source_cluster_ids` must be non-empty (no PLO without evidence)
 - `smart_check` all five fields must be `True` to mark the PLO ready
 - Hard vs soft failure handling: S-verb / M-forbidden / R-evidence failures (pure code, `stages/smart_rules.py`) trigger the automated SMART retry loop (max 3, criterion named in the retry prompt; unfixed → `smart_escalated=True`). S-object / A-level / R-alignment concerns come from one light-model judge call and land in `soft_flags` without blocking. Implement per the SMART validation checklist in `obe-principles.md`.

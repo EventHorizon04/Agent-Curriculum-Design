@@ -19,6 +19,7 @@ interface PLO {
   statement_en: string | null
   domain: string
   bloom_level: string | null
+  psychomotor_level: string | null
   krathwohl_level: string | null
   is_subject_specific: boolean
   action_verb_th: string

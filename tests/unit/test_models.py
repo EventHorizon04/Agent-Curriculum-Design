@@ -8,6 +8,7 @@ from curriculum_agent.models import (
     BloomLevel,
     Domain,
     KrathwohlLevel,
+    PsychomotorLevel,
     SkillCluster,
     SkillType,
     SMARTCheck,
@@ -85,6 +86,31 @@ def test_affective_plo_accepts_krathwohl() -> None:
     assert plo.domain == Domain.AFFECTIVE
 
 
+def test_psychomotor_plo_requires_psychomotor_level() -> None:
+    with pytest.raises(ValidationError, match="missing psychomotor_level"):
+        PLO(**make_plo(domain=Domain.PSYCHOMOTOR, bloom_level=None))
+
+
+def test_psychomotor_plo_rejects_bloom_only() -> None:
+    # bloom_level does not substitute for the psychomotor scale
+    with pytest.raises(ValidationError, match="missing psychomotor_level"):
+        PLO(**make_plo(domain=Domain.PSYCHOMOTOR, bloom_level=BloomLevel.APPLY))
+
+
+def test_psychomotor_plo_accepts_psychomotor_level() -> None:
+    plo = PLO(
+        **make_plo(
+            domain=Domain.PSYCHOMOTOR,
+            bloom_level=None,
+            psychomotor_level=PsychomotorLevel.PRECISE,
+            statement_th="สาธิตการใช้เครื่องมือวัดทางไฟฟ้าได้อย่างถูกต้อง",
+            action_verb_th="สาธิต",
+        )
+    )
+    assert plo.domain == Domain.PSYCHOMOTOR
+    assert plo.psychomotor_level == PsychomotorLevel.PRECISE
+
+
 # ---- new fields (Task 2) ---------------------------------------------------
 
 
@@ -101,6 +127,7 @@ def test_skill_cluster_new_field_defaults() -> None:
         demand_score=0.5,
     )
     assert c.bloom_level is None
+    assert c.psychomotor_level is None
     assert c.krathwohl_level is None
     assert c.is_optional is False
     assert c.classification_coverage == {}

@@ -14,6 +14,7 @@ from curriculum_agent.models import (
     Domain,
     KrathwohlLevel,
     ProgramMetadata,
+    PsychomotorLevel,
     SkillCluster,
     SMARTCheck,
 )
@@ -41,6 +42,7 @@ class _PLODraft(BaseModel):
     statement_en: str | None = None
     domain: Domain
     bloom_level: BloomLevel | None = None
+    psychomotor_level: PsychomotorLevel | None = None
     krathwohl_level: KrathwohlLevel | None = None
     is_subject_specific: bool = True
     action_verb_th: str
@@ -60,9 +62,12 @@ class _PLODraft(BaseModel):
         if self.domain == Domain.AFFECTIVE:
             if self.krathwohl_level is None:
                 raise ValueError("affective domain requires krathwohl_level")
+        elif self.domain == Domain.PSYCHOMOTOR:
+            if self.psychomotor_level is None:
+                raise ValueError("psychomotor domain requires psychomotor_level")
         else:
             if self.bloom_level is None:
-                raise ValueError(f"{self.domain} domain requires bloom_level")
+                raise ValueError("cognitive domain requires bloom_level")
         return self
 
 
@@ -254,6 +259,7 @@ async def run(state: AgentState) -> AgentState:
                 statement_en=validated_draft.statement_en,
                 domain=validated_draft.domain,
                 bloom_level=validated_draft.bloom_level,
+                psychomotor_level=validated_draft.psychomotor_level,
                 krathwohl_level=validated_draft.krathwohl_level,
                 is_subject_specific=validated_draft.is_subject_specific,
                 action_verb_th=validated_draft.action_verb_th,
@@ -308,6 +314,7 @@ async def run(state: AgentState) -> AgentState:
                         statement_en=outcome.draft.statement_en,
                         domain=outcome.draft.domain,
                         bloom_level=outcome.draft.bloom_level,
+                        psychomotor_level=outcome.draft.psychomotor_level,
                         krathwohl_level=outcome.draft.krathwohl_level,
                         is_subject_specific=outcome.draft.is_subject_specific,
                         action_verb_th=outcome.draft.action_verb_th,

@@ -20,7 +20,14 @@ class StakeholderType(StrEnum):
     PEER_PROGRAM = "peer_program"
 
 
+# Bloom's Taxonomy spans three learning domains, each with its own level scale:
+#   Cognitive (Knowledge/Thinking)  -> BloomLevel
+#   Psychomotor (Skill/Doing)       -> PsychomotorLevel (Dave's taxonomy)
+#   Affective (Attitude/Feeling)    -> KrathwohlLevel
+
+
 class BloomLevel(StrEnum):
+    # Cognitive domain levels, in order of increasing complexity
     REMEMBER = "remember"
     UNDERSTAND = "understand"
     APPLY = "apply"
@@ -29,7 +36,17 @@ class BloomLevel(StrEnum):
     CREATE = "create"
 
 
+class PsychomotorLevel(StrEnum):
+    # Psychomotor domain levels (Dave), in order of increasing mastery
+    IMITATE = "imitate"
+    MANIPULATE = "manipulate"
+    PRECISE = "precise"
+    ARTICULATE = "articulate"
+    NATURALIZE = "naturalize"
+
+
 class KrathwohlLevel(StrEnum):
+    # Affective domain levels (Krathwohl), in order of increasing internalization
     RECEIVING = "receiving"
     RESPONDING = "responding"
     VALUING = "valuing"
@@ -61,6 +78,13 @@ BLOOM_ORDER = [
     BloomLevel.ANALYZE,
     BloomLevel.EVALUATE,
     BloomLevel.CREATE,
+]
+PSYCHOMOTOR_ORDER = [
+    PsychomotorLevel.IMITATE,
+    PsychomotorLevel.MANIPULATE,
+    PsychomotorLevel.PRECISE,
+    PsychomotorLevel.ARTICULATE,
+    PsychomotorLevel.NATURALIZE,
 ]
 KRATHWOHL_ORDER = [
     KrathwohlLevel.RECEIVING,
@@ -139,6 +163,7 @@ class SkillCluster(BaseModel):
     is_common_need: bool = False
     sample_quotes_th: list[str] = Field(default_factory=list, max_length=5)
     bloom_level: BloomLevel | None = None
+    psychomotor_level: PsychomotorLevel | None = None
     krathwohl_level: KrathwohlLevel | None = None
     is_optional: bool = False
     classification_coverage: dict[str, int] = Field(default_factory=dict)
@@ -167,6 +192,7 @@ class PLO(BaseModel):
     statement_en: str | None = None
     domain: Domain
     bloom_level: BloomLevel | None = None
+    psychomotor_level: PsychomotorLevel | None = None
     krathwohl_level: KrathwohlLevel | None = None
     is_subject_specific: bool
     action_verb_th: str
@@ -214,9 +240,12 @@ class PLO(BaseModel):
         if self.domain == Domain.AFFECTIVE:
             if self.krathwohl_level is None:
                 raise ValueError(f"PLO {self.plo_id} is affective but missing krathwohl_level")
+        elif self.domain == Domain.PSYCHOMOTOR:
+            if self.psychomotor_level is None:
+                raise ValueError(f"PLO {self.plo_id} is psychomotor but missing psychomotor_level")
         else:
             if self.bloom_level is None:
-                raise ValueError(f"PLO {self.plo_id} is {self.domain} but missing bloom_level")
+                raise ValueError(f"PLO {self.plo_id} is cognitive but missing bloom_level")
         return self
 
 

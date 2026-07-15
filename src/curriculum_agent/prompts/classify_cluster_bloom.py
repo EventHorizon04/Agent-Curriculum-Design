@@ -12,9 +12,14 @@ def build_cluster_bloom_prompt(
             "role": "system",
             "content": (
                 "คุณเป็นผู้เชี่ยวชาญ OBE จัดระดับกลุ่มทักษะตาม Bloom's Taxonomy "
-                "(remember|understand|apply|analyze|evaluate|create) "
-                "หรือ Krathwohl (receiving|responding|valuing|organization|characterization) "
-                "สำหรับกลุ่ม affective เท่านั้น "
+                "โดยเลือก scale ตามประเภทของกลุ่มทักษะ:\n"
+                "- knowledge/mixed (Cognitive: Knowledge/Thinking) → bloom_level "
+                "(remember|understand|apply|analyze|evaluate|create)\n"
+                "- psychomotor (Psychomotor: Skill/Doing) → psychomotor_level "
+                "(imitate|manipulate|precise|articulate|naturalize)\n"
+                "- affective (Affective: Attitude/Feeling) → krathwohl_level "
+                "(receiving|responding|valuing|organization|characterization)\n"
+                "ระบุ level เฉพาะ scale ที่ตรงกับประเภท ช่องอื่นให้เป็น null "
                 "และยืนยันว่าเป็นทักษะเฉพาะสาขา (specific) หรือทักษะทั่วไป (generic) "
                 "ตอบเป็น JSON ตาม schema"
             ),
