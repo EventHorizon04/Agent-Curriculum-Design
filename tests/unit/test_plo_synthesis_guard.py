@@ -16,6 +16,9 @@ _METADATA = {
     "faculty": "Engineering",
     "university": "Test University",
     "vision_th": "ผลิตบัณฑิต",
+    "mission_th": "พันธกิจของหลักสูตร",
+    "philosophy_th": "ปรัชญาของหลักสูตร",
+    "program_goals_th": ["เป้าหมายหลักสูตรที่ 1"],
     "program_objectives_th": ["objective 1"],
 }
 

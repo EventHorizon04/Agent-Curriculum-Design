@@ -8,6 +8,8 @@ from curriculum_agent.models import (
     BloomLevel,
     Domain,
     KrathwohlLevel,
+    ProgramCreateRequest,
+    ProgramMetadata,
     PsychomotorLevel,
     SkillCluster,
     SkillType,
@@ -193,3 +195,50 @@ def test_escalated_plo_still_requires_evidence() -> None:
             rationale_th="เหตุผล",
             smart_escalated=True,
         )
+
+
+# ---- ProgramCreateRequest / ProgramMetadata split (Task 1) -------------
+
+
+def _valid_create_kwargs() -> dict:
+    return {
+        "name_th": "วิทยาการคอมพิวเตอร์",
+        "name_en": "Computer Science",
+        "field": "Computer Science",
+        "degree_level": "bachelor",
+        "duration_years": 4,
+        "faculty": "วิศวกรรมศาสตร์",
+        "university": "มหาวิทยาลัยทดสอบ",
+        "vision_th": "วิสัยทัศน์",
+        "mission_th": "พันธกิจ",
+        "philosophy_th": "ปรัชญา",
+        "program_goals_th": ["เป้าหมายที่ 1"],
+        "program_objectives_th": ["วัตถุประสงค์ที่ 1"],
+    }
+
+
+def test_program_create_request_valid() -> None:
+    req = ProgramCreateRequest(**_valid_create_kwargs())
+    assert req.mission_th == "พันธกิจ"
+    assert req.institutional_identity_th is None
+
+
+def test_program_metadata_inherits_and_adds_program_id() -> None:
+    meta = ProgramMetadata(program_id="cs-1", **_valid_create_kwargs())
+    assert meta.program_id == "cs-1"
+    assert meta.philosophy_th == "ปรัชญา"
+
+
+@pytest.mark.parametrize("empty_field", ["mission_th", "philosophy_th"])
+def test_empty_required_text_rejected(empty_field: str) -> None:
+    kwargs = _valid_create_kwargs()
+    kwargs[empty_field] = ""
+    with pytest.raises(ValidationError):
+        ProgramCreateRequest(**kwargs)
+
+
+def test_empty_program_goals_rejected() -> None:
+    kwargs = _valid_create_kwargs()
+    kwargs["program_goals_th"] = []
+    with pytest.raises(ValidationError):
+        ProgramCreateRequest(**kwargs)

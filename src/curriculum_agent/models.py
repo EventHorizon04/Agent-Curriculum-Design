@@ -98,8 +98,7 @@ KRATHWOHL_ORDER = [
 # --------------------------- Stage 0 -----------------------------
 
 
-class ProgramMetadata(BaseModel):
-    program_id: str
+class ProgramCreateRequest(BaseModel):
     name_th: str
     name_en: str
     field: str
@@ -108,11 +107,19 @@ class ProgramMetadata(BaseModel):
     faculty: str
     university: str
     vision_th: str
+    mission_th: str = Field(min_length=1)
+    philosophy_th: str = Field(min_length=1)
+    institutional_identity_th: str | None = None
     student_identity_th: str | None = None
     professional_council: str | None = None
     accreditation_body: str | None = None
     subject_benchmark_ref: str | None = None
     program_objectives_th: list[str]
+    program_goals_th: list[str] = Field(min_length=1)
+
+
+class ProgramMetadata(ProgramCreateRequest):
+    program_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 

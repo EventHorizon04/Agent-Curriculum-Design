@@ -15,6 +15,9 @@ META = ProgramMetadata(
     faculty="วิทยาศาสตร์",
     university="ม.ทดสอบ",
     vision_th="ผลิตบัณฑิตคุณภาพ",
+    mission_th="พันธกิจของหลักสูตร",
+    philosophy_th="ปรัชญาของหลักสูตร",
+    program_goals_th=["เป้าหมายหลักสูตรที่ 1"],
     program_objectives_th=["obj"],
 )
 
