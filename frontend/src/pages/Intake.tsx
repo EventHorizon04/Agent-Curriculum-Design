@@ -142,6 +142,9 @@ export default function Intake() {
         field: form.field,
       })
       setIscedResult(resp.data)
+      // A fresh suggestion card replaces the old one — clear any previously
+      // applied code so the badge can't silently disagree with what's shown.
+      setIscedCode('')
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } }
       setIscedError(
