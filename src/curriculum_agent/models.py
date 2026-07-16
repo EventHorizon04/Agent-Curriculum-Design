@@ -6,6 +6,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from curriculum_agent.data.isced import get_detailed_field
+
 # ----------------------------- Enums -----------------------------
 
 
@@ -102,6 +104,7 @@ class ProgramCreateRequest(BaseModel):
     name_th: str
     name_en: str
     field: str
+    isced_code: str | None = None
     degree_level: Literal["bachelor", "master", "doctoral"]
     duration_years: int = Field(ge=1, le=8)
     faculty: str
@@ -116,6 +119,12 @@ class ProgramCreateRequest(BaseModel):
     subject_benchmark_ref: str | None = None
     program_objectives_th: list[str]
     program_goals_th: list[str] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _validate_isced_code(self) -> ProgramCreateRequest:
+        if self.isced_code is not None and get_detailed_field(self.isced_code) is None:
+            raise ValueError(f"isced_code '{self.isced_code}' ไม่อยู่ใน ISCED-F 2013 taxonomy")
+        return self
 
 
 class ProgramMetadata(ProgramCreateRequest):
@@ -140,6 +149,19 @@ class ExtractedMetadata(BaseModel):
     mission_th: str | None = None
     institutional_identity_th: str | None = None
     student_identity_th: str | None = None
+
+
+class SuggestedName(BaseModel):
+    name_th: str
+    name_en: str
+
+
+class IscedSuggestion(BaseModel):
+    isced_code: str
+    field_name_en: str
+    field_name_th: str
+    rationale_th: str
+    suggested_names: list[SuggestedName] = Field(min_length=1, max_length=3)
 
 
 # --------------------------- Stage 1 -----------------------------
