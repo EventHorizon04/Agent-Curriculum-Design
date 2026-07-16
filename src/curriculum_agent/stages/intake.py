@@ -4,7 +4,9 @@ from loguru import logger
 
 from curriculum_agent.data.repositories import EvidenceRepository, ProgramRepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import ProgramMetadata
+from curriculum_agent.llm import complete_light
+from curriculum_agent.models import ExtractedMetadata, ProgramMetadata
+from curriculum_agent.prompts.extract_metadata import build_extract_metadata_prompt
 
 
 async def run(state: AgentState) -> AgentState:
@@ -25,3 +27,15 @@ async def run(state: AgentState) -> AgentState:
     state["raw_evidence"] = [e.model_dump(mode="json") for e in evidence_items]
     state["current_stage"] = "intake"
     return state
+
+
+DOC_TEXT_LIMIT = 8_000  # chars of parsed document text fed to the light model
+
+
+async def extract_metadata_from_text(text: str) -> ExtractedMetadata:
+    """Extract university vision/mission/identity from parsed document text.
+
+    Stateless helper for the intake prefill endpoint — no DB access.
+    """
+    messages = build_extract_metadata_prompt(text[:DOC_TEXT_LIMIT])
+    return await complete_light(ExtractedMetadata, messages)

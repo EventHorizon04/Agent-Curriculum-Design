@@ -129,6 +129,19 @@ class ProgramMetadata(ProgramCreateRequest):
     program_goals_th: list[str]
 
 
+class ExtractedMetadata(BaseModel):
+    """LLM-extracted university metadata from an uploaded document.
+
+    Every field is None when the document does not state it — the
+    extraction prompt forbids fabrication.
+    """
+
+    vision_th: str | None = None
+    mission_th: str | None = None
+    institutional_identity_th: str | None = None
+    student_identity_th: str | None = None
+
+
 # --------------------------- Stage 1 -----------------------------
 
 
