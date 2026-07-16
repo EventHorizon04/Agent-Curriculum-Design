@@ -51,6 +51,10 @@ export default function StakeholderNeeds() {
   const [success, setSuccess] = useState('')
   const [classifying, setClassifying] = useState(false)
   const [classifyProgress, setClassifyProgress] = useState<{ index: number; total: number; source_name: string } | null>(null)
+  const [pendingFile, setPendingFile] = useState<File | null>(null)
+  const [fileError, setFileError] = useState('')
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
+  const confirmRevertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const fetchEvidence = useCallback(async (pid: string) => {
@@ -105,19 +109,57 @@ export default function StakeholderNeeds() {
     setRawText('')
   }
 
-  async function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
+  function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (!file || !programId) return
-    const text = await file.text()
-    if (!text.trim()) { setError('ไฟล์ว่างเปล่า'); return }
+    setPendingFile(file ?? null)
+    setFileError('')
+  }
+
+  function handleCancelFile() {
+    setPendingFile(null)
+    setFileError('')
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  async function handleConfirmUpload() {
+    if (!pendingFile || !programId) return
+    const text = await pendingFile.text()
+    if (!text.trim()) { setFileError('ไฟล์ว่างเปล่า'); return }
     await postEvidence({
       evidence_id: crypto.randomUUID(),
       program_id: programId,
       stakeholder_type: stakeholderType,
-      source_name: file.name,
+      source_name: pendingFile.name,
       raw_text_th: text,
     })
+    setPendingFile(null)
     if (fileRef.current) fileRef.current.value = ''
+  }
+
+  function handleDeleteClick(evidenceId: string) {
+    if (confirmingDeleteId === evidenceId) {
+      if (confirmRevertTimer.current) clearTimeout(confirmRevertTimer.current)
+      setConfirmingDeleteId(null)
+      handleDelete(evidenceId)
+      return
+    }
+    if (confirmRevertTimer.current) clearTimeout(confirmRevertTimer.current)
+    setConfirmingDeleteId(evidenceId)
+    confirmRevertTimer.current = setTimeout(() => setConfirmingDeleteId(null), 3000)
+  }
+
+  async function handleDelete(evidenceId: string) {
+    if (!programId) return
+    setError('')
+    setSuccess('')
+    try {
+      await api.delete(`/programs/${programId}/evidence/${evidenceId}`)
+      setItems(prev => prev.filter(item => item.evidence_id !== evidenceId))
+      setSuccess('ลบหลักฐานสำเร็จ')
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      setError(axiosErr.response?.data?.detail ?? 'ลบหลักฐานไม่สำเร็จ')
+    }
   }
 
   async function handleClassify() {
@@ -283,21 +325,44 @@ export default function StakeholderNeeds() {
 
               <div className="h-4 w-px bg-gray-200" />
 
-              <label className="flex items-center gap-2 text-sm text-gray-500 hover:text-blue-600 cursor-pointer transition-colors group">
-                <svg
-                  className="w-4 h-4 group-hover:text-blue-600"
-                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-                    d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                </svg>
-                อัปโหลดเอกสาร
-                <span className="text-xs text-gray-400">(.txt, .md, .csv)</span>
-                <input
-                  ref={fileRef} type="file" accept=".txt,.md,.csv"
-                  onChange={handleFileUpload} className="hidden"
-                />
-              </label>
+              {!pendingFile ? (
+                <label className="flex items-center gap-2 text-sm text-gray-500 hover:text-blue-600 cursor-pointer transition-colors group">
+                  <svg
+                    className="w-4 h-4 group-hover:text-blue-600"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
+                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  อัปโหลดเอกสาร
+                  <span className="text-xs text-gray-400">(.txt, .md, .csv)</span>
+                  <input
+                    ref={fileRef} type="file" accept=".txt,.md,.csv"
+                    onChange={handleFileSelect} className="hidden"
+                  />
+                </label>
+              ) : (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-600 truncate max-w-[200px]">
+                      📄 {pendingFile.name}
+                    </span>
+                    <button
+                      type="button" onClick={handleCancelFile}
+                      className="text-xs text-gray-500 hover:text-gray-700 underline cursor-pointer"
+                    >
+                      ยกเลิก
+                    </button>
+                    <button
+                      type="button" onClick={handleConfirmUpload} disabled={submitting}
+                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-medium px-3 py-1 rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed"
+                    >
+                      {submitting ? 'กำลังอัปโหลด...' : 'อัปโหลด'}
+                    </button>
+                  </div>
+                  {fileError && <p className="text-xs text-red-600">{fileError}</p>}
+                </div>
+              )}
             </div>
           </form>
         </div>
@@ -361,9 +426,22 @@ export default function StakeholderNeeds() {
                         <span className="text-gray-300">—</span>
                         <span className="text-gray-600 text-sm truncate">{item.source_name}</span>
                       </div>
-                      <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full shrink-0 ml-3 ${cs.cls}`}>
-                        {cs.label}
-                      </span>
+                      <div className="flex items-center gap-2 shrink-0 ml-3">
+                        <button
+                          type="button"
+                          onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteClick(item.evidence_id) }}
+                          className={`text-xs font-medium px-2 py-0.5 rounded-full transition-colors cursor-pointer ${
+                            confirmingDeleteId === item.evidence_id
+                              ? 'bg-red-600 text-white hover:bg-red-700'
+                              : 'text-red-400 hover:bg-red-50 hover:text-red-600'
+                          }`}
+                        >
+                          {confirmingDeleteId === item.evidence_id ? 'ยืนยันลบ?' : 'ลบ'}
+                        </button>
+                        <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${cs.cls}`}>
+                          {cs.label}
+                        </span>
+                      </div>
                     </summary>
                     <div className="px-4 pb-4 pt-2 border-t border-gray-50">
                       <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{item.raw_text_th}</p>
