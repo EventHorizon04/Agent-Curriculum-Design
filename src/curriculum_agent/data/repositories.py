@@ -95,8 +95,10 @@ class EvidenceRepository:
                 out.append(StakeholderEvidence.model_validate(d))
             return out
 
-    async def delete(self, evidence_id: str) -> bool:
-        """Delete one evidence row. Returns False if it didn't exist.
+    async def delete(self, program_id: str, evidence_id: str) -> bool:
+        """Delete one evidence row scoped to its program. Returns False if it
+        doesn't exist OR belongs to a different program_id (same 404 either way
+        — don't leak whether the id exists under another program).
 
         Propagates sqlalchemy.exc.IntegrityError unchanged if a skill's
         source_evidence_id FK still references this row — the route maps
@@ -106,7 +108,7 @@ class EvidenceRepository:
         """
         async with AsyncSessionLocal() as session:
             row = await session.get(EvidenceTable, evidence_id)
-            if row is None:
+            if row is None or row.program_id != program_id:
                 return False
             await session.delete(row)
             await session.commit()

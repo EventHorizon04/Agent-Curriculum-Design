@@ -67,7 +67,7 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
 @router.delete("/{evidence_id}", status_code=204, dependencies=[Depends(require_api_key)])
 async def delete_evidence(program_id: str, evidence_id: str) -> None:
     try:
-        deleted = await _repo.delete(evidence_id)
+        deleted = await _repo.delete(program_id, evidence_id)
     except IntegrityError as exc:
         raise HTTPException(
             status_code=409,
