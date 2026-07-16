@@ -66,6 +66,12 @@ async def extract_metadata(file: UploadFile) -> ExtractedMetadata:
     if suffix not in _ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=422, detail="รองรับเฉพาะไฟล์ PDF, DOCX, TXT")
 
+    # Reject oversize uploads BEFORE buffering the body into memory, using the
+    # size Starlette's multipart parser already tracked. Belt-and-braces: still
+    # re-check len(content) below in case `file.size` is absent.
+    if file.size and file.size > _MAX_FILE_BYTES:
+        raise HTTPException(status_code=413, detail="ไฟล์ต้องไม่เกิน 10 MB")
+
     content = await file.read()
     if len(content) > _MAX_FILE_BYTES:
         raise HTTPException(status_code=413, detail="ไฟล์ต้องไม่เกิน 10 MB")
@@ -95,7 +101,10 @@ async def extract_metadata(file: UploadFile) -> ExtractedMetadata:
             ) from exc
     finally:
         if tmp_path:
-            os.unlink(tmp_path)
+            try:
+                os.unlink(tmp_path)
+            except OSError as exc:
+                logger.warning(f"Temp file cleanup failed ({tmp_path}): {exc}")
 
 
 @router.get("/{program_id}", response_model=ProgramMetadata)

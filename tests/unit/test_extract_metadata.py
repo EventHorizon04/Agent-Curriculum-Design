@@ -112,6 +112,14 @@ def test_extract_route_rejects_oversize_file() -> None:
     assert resp.status_code == 413
 
 
+def test_extract_route_rejects_oversize_file_via_preread_gate(monkeypatch) -> None:
+    """Lower the limit so a small (2 KB) upload trips the pre-read `file.size`
+    gate, proving the gate fires without needing a 10 MB+ payload."""
+    monkeypatch.setattr("curriculum_agent.api.routes.programs._MAX_FILE_BYTES", 1024)
+    resp = _post_file(content=b"x" * 2048)
+    assert resp.status_code == 413
+
+
 def test_extract_route_rejects_empty_parse_result() -> None:
     with patch(
         "curriculum_agent.parsers.tika_parser.parse_file",
