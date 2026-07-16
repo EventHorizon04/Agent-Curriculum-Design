@@ -61,6 +61,14 @@ export default function Intake() {
   const [extracting, setExtracting] = useState(false)
   const [extractMessage, setExtractMessage] = useState('')
 
+  function switchMode(mode: 'manual' | 'upload') {
+    setEntryMode(mode)
+    setExtractMessage('')
+    if (mode === 'manual') {
+      setDocFile(null)
+    }
+  }
+
   async function handleExtract() {
     if (!docFile) {
       setExtractMessage('กรุณาเลือกไฟล์ก่อน')
@@ -242,7 +250,7 @@ export default function Intake() {
           <div className="inline-flex rounded-lg border border-gray-200 overflow-hidden text-sm mb-3">
             <button
               type="button"
-              onClick={() => setEntryMode('manual')}
+              onClick={() => switchMode('manual')}
               className={`px-4 py-1.5 transition-colors ${
                 entryMode === 'manual'
                   ? 'bg-blue-600 text-white'
@@ -253,7 +261,7 @@ export default function Intake() {
             </button>
             <button
               type="button"
-              onClick={() => setEntryMode('upload')}
+              onClick={() => switchMode('upload')}
               className={`px-4 py-1.5 transition-colors ${
                 entryMode === 'upload'
                   ? 'bg-blue-600 text-white'
