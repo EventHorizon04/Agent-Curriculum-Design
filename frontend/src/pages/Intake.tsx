@@ -49,6 +49,19 @@ const FIELD_LABELS: Record<keyof ExtractedMetadata, string> = {
   student_identity_th: 'อัตลักษณ์บัณฑิต',
 }
 
+interface SuggestedProgramName {
+  name_th: string
+  name_en: string
+}
+
+interface IscedSuggestion {
+  isced_code: string
+  field_name_en: string
+  field_name_th: string
+  rationale_th: string
+  suggested_names: SuggestedProgramName[]
+}
+
 export default function Intake() {
   const navigate = useNavigate()
   const { programId, setProgramId } = useProgram()
@@ -60,6 +73,10 @@ export default function Intake() {
   const [docFile, setDocFile] = useState<File | null>(null)
   const [extracting, setExtracting] = useState(false)
   const [extractMessage, setExtractMessage] = useState('')
+  const [iscedResult, setIscedResult] = useState<IscedSuggestion | null>(null)
+  const [iscedCode, setIscedCode] = useState('')
+  const [iscedLoading, setIscedLoading] = useState(false)
+  const [iscedError, setIscedError] = useState('')
 
   function switchMode(mode: 'manual' | 'upload') {
     setEntryMode(mode)
@@ -111,6 +128,40 @@ export default function Intake() {
     }
   }
 
+  async function handleSuggestIsced() {
+    if (!form.name_th.trim() || !form.name_en.trim() || !form.field.trim()) {
+      setIscedError('กรุณากรอกชื่อหลักสูตร (ไทย/อังกฤษ) และสาขาวิชาก่อน')
+      return
+    }
+    setIscedLoading(true)
+    setIscedError('')
+    try {
+      const resp = await api.post<IscedSuggestion>('/programs/suggest-isced', {
+        name_th: form.name_th,
+        name_en: form.name_en,
+        field: form.field,
+      })
+      setIscedResult(resp.data)
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      setIscedError(
+        axiosErr.response?.data?.detail ?? 'จำแนก ISCED ไม่สำเร็จ — ตรวจสอบว่า backend รันอยู่'
+      )
+    } finally {
+      setIscedLoading(false)
+    }
+  }
+
+  function useIscedSuggestion(name: SuggestedProgramName) {
+    if (!iscedResult) return
+    setForm(prev => ({ ...prev, name_th: name.name_th, name_en: name.name_en }))
+    setIscedCode(iscedResult.isced_code)
+  }
+
+  function clearIscedCode() {
+    setIscedCode('')
+  }
+
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) {
@@ -149,6 +200,7 @@ export default function Intake() {
         name_th: form.name_th,
         name_en: form.name_en,
         field: form.field,
+        isced_code: iscedCode || null,
         degree_level: form.degree_level,
         duration_years: Number(form.duration_years),
         faculty: form.faculty,
@@ -213,6 +265,58 @@ export default function Intake() {
           <Field label="ชื่อหลักสูตร (ภาษาไทย) *" name="name_th" value={form.name_th} onChange={handleChange} />
           <Field label="ชื่อหลักสูตร (ภาษาอังกฤษ) *" name="name_en" value={form.name_en} onChange={handleChange} />
         </div>
+
+        <div className="flex items-center gap-3 -mt-1">
+          <button
+            type="button"
+            onClick={handleSuggestIsced}
+            disabled={iscedLoading}
+            className="text-sm text-blue-600 hover:text-blue-800 underline disabled:text-gray-400 disabled:no-underline cursor-pointer disabled:cursor-not-allowed"
+          >
+            {iscedLoading ? 'กำลังตรวจสอบ...' : 'ตรวจสอบ ISCED / แนะนำชื่อ'}
+          </button>
+          {iscedCode && (
+            <span className="inline-flex items-center gap-1 bg-green-50 border border-green-200 text-green-700 text-xs font-medium px-2 py-0.5 rounded-full">
+              ISCED: {iscedCode}
+              <button type="button" onClick={clearIscedCode} className="hover:text-green-900 cursor-pointer">
+                ×
+              </button>
+            </span>
+          )}
+        </div>
+
+        {iscedError && (
+          <p className="text-xs text-red-600 -mt-2">{iscedError}</p>
+        )}
+
+        {iscedResult && (
+          <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 space-y-3 -mt-2">
+            <div>
+              <p className="text-sm font-medium text-gray-800">
+                {iscedResult.isced_code} — {iscedResult.field_name_th} ({iscedResult.field_name_en})
+              </p>
+              <p className="text-xs text-gray-600 mt-1">{iscedResult.rationale_th}</p>
+            </div>
+            <div className="space-y-2">
+              {iscedResult.suggested_names.map((name, i) => (
+                <div key={i} className="flex items-center justify-between bg-white rounded-lg border border-gray-200 px-3 py-2">
+                  <div className="text-sm">
+                    <p className="text-gray-800">{name.name_th}</p>
+                    <p className="text-gray-500 text-xs">{name.name_en}</p>
+                  </div>
+                  <button
+                    type="button"
+                    // eslint-disable-next-line react-hooks/rules-of-hooks -- not a hook; name mirrors backend model naming
+                    onClick={() => useIscedSuggestion(name)}
+                    className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg px-3 py-1.5 transition-colors cursor-pointer shrink-0"
+                  >
+                    ใช้ชื่อนี้
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <Field label="สาขาวิชา *" name="field" value={form.field} onChange={handleChange} placeholder="Computer Science" />
 
