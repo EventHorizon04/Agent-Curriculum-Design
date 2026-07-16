@@ -152,7 +152,7 @@ export default function Intake() {
     }
   }
 
-  function useIscedSuggestion(name: SuggestedProgramName) {
+  function applyIscedSuggestion(name: SuggestedProgramName) {
     if (!iscedResult) return
     setForm(prev => ({ ...prev, name_th: name.name_th, name_en: name.name_en }))
     setIscedCode(iscedResult.isced_code)
@@ -306,8 +306,7 @@ export default function Intake() {
                   </div>
                   <button
                     type="button"
-                    // eslint-disable-next-line react-hooks/rules-of-hooks -- not a hook; name mirrors backend model naming
-                    onClick={() => useIscedSuggestion(name)}
+                    onClick={() => applyIscedSuggestion(name)}
                     className="text-xs bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg px-3 py-1.5 transition-colors cursor-pointer shrink-0"
                   >
                     ใช้ชื่อนี้
