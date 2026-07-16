@@ -1,6 +1,8 @@
 # tests/unit/test_isced.py
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from pydantic import ValidationError
 
@@ -12,6 +14,8 @@ from curriculum_agent.data.isced import (
     get_detailed_field,
 )
 from curriculum_agent.models import IscedSuggestion, ProgramCreateRequest, SuggestedName
+from curriculum_agent.prompts.suggest_isced import build_suggest_isced_prompt
+from curriculum_agent.stages.intake import suggest_isced
 
 # --- taxonomy integrity ---
 
@@ -135,3 +139,83 @@ def test_isced_suggestion_rejects_more_than_3_names() -> None:
             rationale_th="เหตุผล",
             suggested_names=names,
         )
+
+
+# --- prompt builder ---
+
+
+def test_prompt_contains_closed_list_instruction() -> None:
+    messages = build_suggest_isced_prompt(
+        "วิทยาการคอมพิวเตอร์", "Computer Science", "Computer Science"
+    )
+    system = messages[0]["content"]
+    assert "เท่านั้น" in system
+    assert "0613" in system  # sample detailed code must be present in the embedded list
+
+
+def test_prompt_user_message_contains_program_info() -> None:
+    messages = build_suggest_isced_prompt(
+        "วิทยาการคอมพิวเตอร์", "Computer Science", "Computer Science"
+    )
+    user = messages[1]["content"]
+    assert "วิทยาการคอมพิวเตอร์" in user
+    assert "Computer Science" in user
+
+
+def test_prompt_retry_mentions_invalid_code() -> None:
+    messages = build_suggest_isced_prompt(
+        "วิทยาการคอมพิวเตอร์", "Computer Science", "Computer Science", retry_invalid_code="9999"
+    )
+    system = messages[0]["content"]
+    assert "9999" in system
+
+
+# --- suggest_isced service helper ---
+
+
+def _make_suggestion(code: str) -> IscedSuggestion:
+    return IscedSuggestion(
+        isced_code=code,
+        field_name_en="WRONG NAME FROM LLM",  # helper must overwrite with taxonomy value
+        field_name_th="ชื่อผิดจาก LLM",
+        rationale_th="เหตุผล",
+        suggested_names=[
+            SuggestedName(
+                name_th="หลักสูตรวิทยาศาสตรบัณฑิต", name_en="Bachelor of Science Program"
+            )
+        ],
+    )
+
+
+async def test_suggest_isced_valid_code_overwrites_field_names_from_taxonomy() -> None:
+    with patch(
+        "curriculum_agent.stages.intake.complete_light",
+        new=AsyncMock(return_value=_make_suggestion("0613")),
+    ) as mock_llm:
+        result = await suggest_isced("วิทยาการคอมพิวเตอร์", "Computer Science", "Computer Science")
+    assert result.isced_code == "0613"
+    assert result.field_name_en == "Software and applications development and analysis"
+    assert result.field_name_th == "การพัฒนาและวิเคราะห์ซอฟต์แวร์และแอปพลิเคชัน"
+    mock_llm.assert_awaited_once()
+
+
+async def test_suggest_isced_retries_once_on_invalid_code_then_succeeds() -> None:
+    with patch(
+        "curriculum_agent.stages.intake.complete_light",
+        new=AsyncMock(side_effect=[_make_suggestion("9999"), _make_suggestion("0613")]),
+    ) as mock_llm:
+        result = await suggest_isced("วิทยาการคอมพิวเตอร์", "Computer Science", "Computer Science")
+    assert result.isced_code == "0613"
+    assert mock_llm.await_count == 2
+
+
+async def test_suggest_isced_raises_after_second_invalid_code() -> None:
+    with (
+        patch(
+            "curriculum_agent.stages.intake.complete_light",
+            new=AsyncMock(side_effect=[_make_suggestion("9999"), _make_suggestion("8888")]),
+        ) as mock_llm,
+        pytest.raises(ValueError, match="8888"),
+    ):
+        await suggest_isced("วิทยาการคอมพิวเตอร์", "Computer Science", "Computer Science")
+    assert mock_llm.await_count == 2
