@@ -3,8 +3,9 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncGenerator
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import EvidenceRepository
@@ -61,3 +62,16 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
         yield f"data: {json.dumps({'status': 'done', 'total': total})}\n\n"
 
     return StreamingResponse(_generate(), media_type="text/event-stream")
+
+
+@router.delete("/{evidence_id}", status_code=204, dependencies=[Depends(require_api_key)])
+async def delete_evidence(program_id: str, evidence_id: str) -> None:
+    try:
+        deleted = await _repo.delete(evidence_id)
+    except IntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="ลบไม่ได้ — หลักฐานนี้ถูกใช้ในการสกัดทักษะแล้ว",
+        ) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="ไม่พบหลักฐานนี้")
