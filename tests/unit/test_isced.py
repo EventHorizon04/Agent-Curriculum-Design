@@ -4,8 +4,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from curriculum_agent.api.main import app
 from curriculum_agent.data.isced import (
     BROAD_FIELDS,
     DETAILED_FIELDS,
@@ -219,3 +221,47 @@ async def test_suggest_isced_raises_after_second_invalid_code() -> None:
     ):
         await suggest_isced("วิทยาการคอมพิวเตอร์", "Computer Science", "Computer Science")
     assert mock_llm.await_count == 2
+
+
+# --- route POST /programs/suggest-isced ---
+
+client = TestClient(app)
+
+_VALID_BODY = {
+    "name_th": "วิทยาการคอมพิวเตอร์",
+    "name_en": "Computer Science",
+    "field": "Computer Science",
+}
+
+
+def test_suggest_isced_route_success() -> None:
+    expected = _make_suggestion("0613")
+    with patch(
+        "curriculum_agent.api.routes.programs.suggest_isced",
+        new=AsyncMock(return_value=expected),
+    ):
+        resp = client.post("/programs/suggest-isced", json=_VALID_BODY)
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.json()}"
+    assert resp.json()["isced_code"] == "0613"
+
+
+def test_suggest_isced_route_missing_field_returns_422() -> None:
+    resp = client.post("/programs/suggest-isced", json={"name_th": "x", "name_en": "y"})
+    assert resp.status_code == 422
+
+
+def test_suggest_isced_route_helper_error_returns_502() -> None:
+    with patch(
+        "curriculum_agent.api.routes.programs.suggest_isced",
+        new=AsyncMock(side_effect=ValueError("bad code")),
+    ):
+        resp = client.post("/programs/suggest-isced", json=_VALID_BODY)
+    assert resp.status_code == 502
+
+
+def test_suggest_isced_route_requires_api_key_when_configured(monkeypatch) -> None:
+    import curriculum_agent.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    resp = client.post("/programs/suggest-isced", json=_VALID_BODY)
+    assert resp.status_code == 401
