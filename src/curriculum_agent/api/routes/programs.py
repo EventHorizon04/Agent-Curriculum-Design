@@ -7,11 +7,17 @@ import tempfile
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import ProgramRepository
-from curriculum_agent.models import ExtractedMetadata, ProgramCreateRequest, ProgramMetadata
-from curriculum_agent.stages.intake import extract_metadata_from_text
+from curriculum_agent.models import (
+    ExtractedMetadata,
+    IscedSuggestion,
+    ProgramCreateRequest,
+    ProgramMetadata,
+)
+from curriculum_agent.stages.intake import extract_metadata_from_text, suggest_isced
 
 router = APIRouter()
 
@@ -105,6 +111,29 @@ async def extract_metadata(file: UploadFile) -> ExtractedMetadata:
                 os.unlink(tmp_path)
             except OSError as exc:
                 logger.warning(f"Temp file cleanup failed ({tmp_path}): {exc}")
+
+
+class SuggestIscedRequest(BaseModel):
+    name_th: str = Field(min_length=1)
+    name_en: str = Field(min_length=1)
+    field: str = Field(min_length=1)
+
+
+@router.post(
+    "/suggest-isced",
+    response_model=IscedSuggestion,
+    dependencies=[Depends(require_api_key)],
+)
+async def suggest_isced_route(req: SuggestIscedRequest) -> IscedSuggestion:
+    """Classify into ISCED-F 2013 + suggest standard program names.
+
+    Stateless: no program_id involved, nothing persisted.
+    """
+    try:
+        return await suggest_isced(req.name_th, req.name_en, req.field)
+    except Exception as exc:
+        logger.error(f"ISCED suggestion failed: {exc}")
+        raise HTTPException(status_code=502, detail="จำแนก ISCED ไม่สำเร็จ กรุณาลองใหม่") from exc
 
 
 @router.get("/{program_id}", response_model=ProgramMetadata)

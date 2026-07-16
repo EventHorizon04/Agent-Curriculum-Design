@@ -18,6 +18,7 @@ class ProgramTable(Base):
     name_th: Mapped[str] = mapped_column(Text)
     name_en: Mapped[str] = mapped_column(Text)
     field: Mapped[str] = mapped_column(Text)
+    isced_code: Mapped[str | None] = mapped_column(String(10), nullable=True)
     degree_level: Mapped[str] = mapped_column(String(20))
     duration_years: Mapped[int] = mapped_column(Integer)
     faculty: Mapped[str] = mapped_column(Text)
