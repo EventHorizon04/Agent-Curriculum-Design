@@ -15,7 +15,12 @@ from curriculum_agent.data.isced import (
     all_detailed_fields,
     get_detailed_field,
 )
-from curriculum_agent.models import IscedSuggestion, ProgramCreateRequest, SuggestedName
+from curriculum_agent.models import (
+    IscedSuggestion,
+    ProgramCreateRequest,
+    ProgramMetadata,
+    SuggestedName,
+)
 from curriculum_agent.prompts.suggest_isced import build_suggest_isced_prompt
 from curriculum_agent.stages.intake import suggest_isced
 
@@ -106,6 +111,23 @@ def test_isced_code_valid_code_accepted() -> None:
 
 
 def test_isced_code_invalid_code_rejected() -> None:
+    kwargs = _valid_program_kwargs()
+    kwargs["isced_code"] = "9999"
+    with pytest.raises(ValidationError):
+        ProgramCreateRequest(**kwargs)
+
+
+def test_program_metadata_accepts_isced_code_not_in_taxonomy() -> None:
+    """Simulates a row whose isced_code was valid at write time but the
+    taxonomy has since dropped/renamed that code — must still deserialize."""
+    kwargs = _valid_program_kwargs()
+    kwargs["isced_code"] = "9999"  # not in taxonomy
+    meta = ProgramMetadata(program_id="cs-legacy", **kwargs)
+    assert meta.isced_code == "9999"
+
+
+def test_program_create_request_still_rejects_isced_code_not_in_taxonomy() -> None:
+    """Confirm the override on ProgramMetadata did NOT weaken the input boundary."""
     kwargs = _valid_program_kwargs()
     kwargs["isced_code"] = "9999"
     with pytest.raises(ValidationError):

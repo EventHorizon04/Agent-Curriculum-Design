@@ -137,6 +137,13 @@ class ProgramMetadata(ProgramCreateRequest):
     philosophy_th: str
     program_goals_th: list[str]
 
+    # Entity model deserializes persisted rows verbatim, including any future
+    # legacy code no longer in the taxonomy; input-time membership enforcement
+    # lives on ProgramCreateRequest only (same boundary rule as F1's mission_th).
+    @model_validator(mode="after")
+    def _validate_isced_code(self) -> ProgramMetadata:
+        return self
+
 
 class ExtractedMetadata(BaseModel):
     """LLM-extracted university metadata from an uploaded document.
