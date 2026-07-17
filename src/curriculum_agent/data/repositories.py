@@ -95,6 +95,25 @@ class EvidenceRepository:
                 out.append(StakeholderEvidence.model_validate(d))
             return out
 
+    async def delete(self, program_id: str, evidence_id: str) -> bool:
+        """Delete one evidence row scoped to its program. Returns False if it
+        doesn't exist OR belongs to a different program_id (same 404 either way
+        — don't leak whether the id exists under another program).
+
+        Propagates sqlalchemy.exc.IntegrityError unchanged if a skill's
+        source_evidence_id FK still references this row — the route maps
+        that to a 409 for the caller. Confirmed empirically: SQLAlchemy
+        async + asyncpg raises IntegrityError (wrapping asyncpg's
+        ForeignKeyViolationError) on this exact constraint.
+        """
+        async with AsyncSessionLocal() as session:
+            row = await session.get(EvidenceTable, evidence_id)
+            if row is None or row.program_id != program_id:
+                return False
+            await session.delete(row)
+            await session.commit()
+            return True
+
 
 class SkillRepository:
     async def bulk_insert(self, skills: list[ExtractedSkill]) -> None:
