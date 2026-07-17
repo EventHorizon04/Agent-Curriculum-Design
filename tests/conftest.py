@@ -1,5 +1,18 @@
 from __future__ import annotations
 
+import sys
+
+if sys.platform == "win32":
+    # Block `import magic` (python-magic) on Windows. Under Git Bash the PATH
+    # contains C:\Program Files\Git\usr\bin, so python-magic's loader picks up
+    # msys-magic-1.dll — an MSYS2 build whose runtime is incompatible with
+    # native CPython. Loading it segfaults or hangs the whole pytest process.
+    # Forcing ImportError instead makes unstructured take its extension-based
+    # fallback (LIBMAGIC_AVAILABLE = False), which is deterministic across
+    # shells. Remove this once a native libmagic (e.g. python-magic-bin) is a
+    # project dependency.
+    sys.modules["magic"] = None  # type: ignore[assignment]
+
 import pytest
 
 from curriculum_agent.models import (
