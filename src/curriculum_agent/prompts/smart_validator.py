@@ -3,7 +3,7 @@ from __future__ import annotations
 
 def build_smart_soft_judge_prompt(
     statement_th: str, vision_th: str, degree_level: str
-) -> list[dict]:
+) -> list[dict[str, str]]:
     """Light-model soft checks: S object quality, A level plausibility, R vision alignment."""
     return [
         {

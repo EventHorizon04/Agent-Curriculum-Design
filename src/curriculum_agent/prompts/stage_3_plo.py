@@ -6,7 +6,7 @@ from curriculum_agent.models import ProgramMetadata, SkillCluster
 def build_plo_synthesis_prompt(
     metadata: ProgramMetadata,
     clusters: list[SkillCluster],
-) -> list[dict]:
+) -> list[dict[str, str]]:
     cluster_summary = "\n".join(
         f"- [{c.cluster_id}] {c.canonical_name_th}: {c.description_th} "
         f"(demand={c.demand_score:.2f}, evidence={len(c.source_evidence_ids)})"
@@ -43,7 +43,7 @@ def build_plo_synthesis_prompt(
 def build_optional_plo_prompt(
     metadata: ProgramMetadata,
     clusters: list[SkillCluster],
-) -> list[dict]:
+) -> list[dict[str, str]]:
     cluster_summary = "\n".join(
         f"- [{c.cluster_id}] {c.canonical_name_th}: {c.description_th}" for c in clusters
     )

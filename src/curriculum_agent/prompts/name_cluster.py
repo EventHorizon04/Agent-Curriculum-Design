@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 
-def build_name_cluster_prompt(skill_keywords: list[str], sample_evidence: list[str]) -> list[dict]:
+def build_name_cluster_prompt(
+    skill_keywords: list[str], sample_evidence: list[str]
+) -> list[dict[str, str]]:
     system = (
         "คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ทักษะแรงงานในตลาด\n"
         "จากกลุ่มคีย์เวิร์ดทักษะที่ให้มา จงตั้งชื่อและอธิบาย skill cluster นี้\n\n"

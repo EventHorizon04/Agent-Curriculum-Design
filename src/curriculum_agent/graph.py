@@ -18,10 +18,11 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 from langgraph.graph import END, StateGraph
-from langgraph.types import interrupt
+from langgraph.graph.state import CompiledStateGraph
+from langgraph.types import Checkpointer, interrupt
 
 # ----------------------------- State -----------------------------
 
@@ -30,18 +31,18 @@ class AgentState(TypedDict, total=False):
     program_id: str
 
     # Stage 0
-    metadata: dict
+    metadata: dict[str, Any]
 
     # Stage 1
-    raw_evidence: list[dict]
-    classified_evidence: list[dict]
+    raw_evidence: list[dict[str, Any]]
+    classified_evidence: list[dict[str, Any]]
 
     # Stage 2
-    extracted_skills: list[dict]
-    skill_clusters: list[dict]
+    extracted_skills: list[dict[str, Any]]
+    skill_clusters: list[dict[str, Any]]
 
     # Stage 3
-    plos: list[dict]
+    plos: list[dict[str, Any]]
 
     current_stage: str
     checkpoint_status: Literal["pending", "approved", "needs_revision"]
@@ -115,7 +116,9 @@ def review_plo_report(state: AgentState) -> AgentState:
 # --------------------------- Build graph -------------------------
 
 
-def build_graph(checkpointer=None):
+def build_graph(
+    checkpointer: Checkpointer = None,
+) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     g = StateGraph(AgentState)
 
     g.add_node("intake", stage_0_intake)

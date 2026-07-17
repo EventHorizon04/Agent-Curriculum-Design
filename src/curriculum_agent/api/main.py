@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import psycopg
@@ -20,7 +21,7 @@ if sys.platform == "win32":
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("Starting up — initialising Postgres checkpointer")
 
     async with await psycopg.AsyncConnection.connect(
@@ -72,5 +73,5 @@ app.include_router(sessions.router, prefix="/programs/{program_id}/sessions", ta
 
 
 @app.get("/health")
-async def health() -> dict:
+async def health() -> dict[str, str]:
     return {"status": "ok"}
