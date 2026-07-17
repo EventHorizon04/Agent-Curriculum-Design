@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from langchain_core.runnables import RunnableConfig
+from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from loguru import logger
 
@@ -29,7 +32,12 @@ _NODE_TO_STAGE: dict[str, str] = {
 }
 
 
-async def _run_graph(graph, config: dict, input_, session_id: str) -> None:
+async def _run_graph(
+    graph: CompiledStateGraph[AgentState, None, AgentState, AgentState],
+    config: RunnableConfig,
+    input_: AgentState | Command[Any],
+    session_id: str,
+) -> None:
     """Run (or resume) the graph in a BackgroundTask.
 
     Opens its own DB session — never shares the request-scoped session.
@@ -79,7 +87,7 @@ async def create_session(
     await SessionRepository().create(session)
 
     graph = request.app.state.graph
-    config = {"configurable": {"thread_id": thread_id}}
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
     initial_state: AgentState = {
         "program_id": program_id,
         "metadata": program.model_dump(mode="json"),
@@ -117,10 +125,13 @@ async def approve_session(
 
     await repo.set_status(session_id, "running")
     session = await repo.get(session_id)
+    if session is None:
+        # Session vanished between the status update and the re-read.
+        raise HTTPException(status_code=404, detail="Session not found")
 
     graph = request.app.state.graph
-    config = {"configurable": {"thread_id": session.thread_id}}
-    cmd = Command(resume={"checkpoint_status": "approved"})
+    config: RunnableConfig = {"configurable": {"thread_id": session.thread_id}}
+    cmd: Command[Any] = Command(resume={"checkpoint_status": "approved"})
     background_tasks.add_task(_run_graph, graph, config, cmd, session_id)
     return session
 
@@ -137,4 +148,8 @@ async def reject_session(program_id: str, session_id: str) -> SessionInfo:
     await repo.set_status(session_id, "rejected")
     # The LangGraph checkpoint thread remains suspended in the checkpointer.
     # A rejected session is terminal — start a new session (new thread_id) to retry.
-    return await repo.get(session_id)
+    updated = await repo.get(session_id)
+    if updated is None:
+        # Session vanished between the status update and the re-read.
+        raise HTTPException(status_code=404, detail="Session not found")
+    return updated

@@ -21,13 +21,13 @@ class Settings(BaseSettings):
     heavy_model: str = "qwen2.5:7b"
     api_key: str | None = None
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def postgres_dsn_sync(self) -> str:
         """psycopg3-compatible DSN (no +asyncpg driver suffix)."""
         return self.postgres_dsn.replace("postgresql+asyncpg://", "postgresql://")
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def postgres_dsn_langgraph(self) -> str:
         """psycopg3 DSN with search_path=langgraph to keep LangGraph checkpoint

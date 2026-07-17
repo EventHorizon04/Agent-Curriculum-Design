@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -185,7 +185,7 @@ class StakeholderEvidence(BaseModel):
     collected_at: datetime = Field(default_factory=datetime.utcnow)
     classification: Literal["need", "requirement", "want", "unclassified"] = "unclassified"
     classification_rationale_th: str | None = None
-    metadata: dict = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 # --------------------------- Stage 2 -----------------------------
@@ -311,13 +311,13 @@ class StageCheckpoint(BaseModel):
     checkpoint_id: str
     program_id: str
     stage: Literal["intake", "stakeholder_needs", "skill_extraction", "plo_synthesis", "plo_report"]
-    artifacts: dict
+    artifacts: dict[str, Any]
     created_at: datetime = Field(default_factory=datetime.utcnow)
     reviewed_by: str | None = None
     reviewed_at: datetime | None = None
     status: Literal["pending", "approved", "needs_revision", "rejected"] = "pending"
     designer_notes_th: str | None = None
-    edits: dict = Field(default_factory=dict)
+    edits: dict[str, Any] = Field(default_factory=dict)
 
 
 # ----------------------- Session info ----------------------------

@@ -6,7 +6,7 @@ def build_cluster_bloom_prompt(
     description_th: str,
     skill_names: list[str],
     skill_type: str,
-) -> list[dict]:
+) -> list[dict[str, str]]:
     return [
         {
             "role": "system",

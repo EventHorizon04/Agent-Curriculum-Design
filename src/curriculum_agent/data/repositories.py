@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select, update
 
 from curriculum_agent.data.orm import (
+    Base,
     CheckpointTable,
     ClusterTable,
     EvidenceTable,
@@ -26,11 +28,11 @@ from curriculum_agent.models import (
 )
 
 
-def _row_to_dict(row) -> dict:
+def _row_to_dict(row: Base) -> dict[str, Any]:
     return {c.key: getattr(row, c.key) for c in row.__table__.columns}
 
 
-def _fix_datetimes(data: dict, table_cls: type) -> dict:
+def _fix_datetimes(data: dict[str, Any], table_cls: type[Base]) -> dict[str, Any]:
     """Parse ISO datetime strings to datetime objects for DateTime ORM columns."""
     from sqlalchemy import DateTime as _DT
 

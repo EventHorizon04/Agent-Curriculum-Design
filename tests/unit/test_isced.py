@@ -204,9 +204,7 @@ def _make_suggestion(code: str) -> IscedSuggestion:
         field_name_th="ชื่อผิดจาก LLM",
         rationale_th="เหตุผล",
         suggested_names=[
-            SuggestedName(
-                name_th="หลักสูตรวิทยาศาสตรบัณฑิต", name_en="Bachelor of Science Program"
-            )
+            SuggestedName(name_th="หลักสูตรวิทยาศาสตรบัณฑิต", name_en="Bachelor of Science Program")
         ],
     )
 

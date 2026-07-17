@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-def build_extract_metadata_prompt(doc_text: str) -> list[dict]:
+def build_extract_metadata_prompt(doc_text: str) -> list[dict[str, str]]:
     system = (
         "คุณเป็นผู้ช่วยสกัดข้อมูลจากเอกสารของมหาวิทยาลัยไทย\n"
         "จงอ่านเนื้อหาเอกสารแล้วสกัดข้อมูล 4 รายการต่อไปนี้ (ถ้ามี):\n"

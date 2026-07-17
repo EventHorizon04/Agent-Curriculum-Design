@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import functools
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import instructor
 from loguru import logger
 from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
 from curriculum_agent.config import settings
@@ -45,7 +46,9 @@ async def complete_light(
     return await _get_client().chat.completions.create(
         model=settings.light_model,
         response_model=response_model,
-        messages=messages,
+        # Prompt builders emit OpenAI-shaped role/content dicts; cast to the SDK's
+        # message param type instead of restructuring at runtime.
+        messages=cast(list[ChatCompletionMessageParam], messages),
         extra_body={"keep_alive": -1},
         **kwargs,
     )
@@ -60,7 +63,8 @@ async def complete_heavy(
     return await _get_client().chat.completions.create(
         model=settings.heavy_model,
         response_model=response_model,
-        messages=messages,
+        # Same OpenAI-shaped messages cast as complete_light above.
+        messages=cast(list[ChatCompletionMessageParam], messages),
         extra_body={"keep_alive": -1},
         **kwargs,
     )

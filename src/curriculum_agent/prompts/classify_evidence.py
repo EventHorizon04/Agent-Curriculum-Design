@@ -3,7 +3,7 @@ from __future__ import annotations
 from curriculum_agent.models import StakeholderEvidence
 
 
-def build_classify_evidence_prompt(evidence: StakeholderEvidence) -> list[dict]:
+def build_classify_evidence_prompt(evidence: StakeholderEvidence) -> list[dict[str, str]]:
     system = (
         "คุณเป็นผู้เชี่ยวชาญด้านการออกแบบหลักสูตร OBE ตามมาตรฐาน MHESI\n"
         "จงจัดประเภทข้อมูลความต้องการจากผู้มีส่วนได้ส่วนเสียออกเป็น 1 ประเภท:\n"

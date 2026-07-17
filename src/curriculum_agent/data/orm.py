@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -26,13 +27,13 @@ class ProgramTable(Base):
     vision_th: Mapped[str] = mapped_column(Text)
     mission_th: Mapped[str] = mapped_column(Text)
     philosophy_th: Mapped[str] = mapped_column(Text)
-    program_goals_th: Mapped[list] = mapped_column(JSONB)
+    program_goals_th: Mapped[list[str]] = mapped_column(JSONB)
     institutional_identity_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     student_identity_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     professional_council: Mapped[str | None] = mapped_column(Text, nullable=True)
     accreditation_body: Mapped[str | None] = mapped_column(Text, nullable=True)
     subject_benchmark_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
-    program_objectives_th: Mapped[list] = mapped_column(JSONB)
+    program_objectives_th: Mapped[list[str]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
@@ -50,7 +51,7 @@ class EvidenceTable(Base):
     classification: Mapped[str] = mapped_column(String(20), default="unclassified")
     classification_rationale_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 'metadata' is a SQLAlchemy reserved attribute name — stored as extra_metadata
-    extra_metadata: Mapped[dict] = mapped_column(JSONB, default=dict)
+    extra_metadata: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class SkillTable(Base):
@@ -77,17 +78,17 @@ class ClusterTable(Base):
     description_th: Mapped[str] = mapped_column(Text)
     skill_type: Mapped[str] = mapped_column(String(20))
     is_subject_specific: Mapped[bool] = mapped_column(Boolean)
-    member_skill_ids: Mapped[list] = mapped_column(JSONB)
-    source_evidence_ids: Mapped[list] = mapped_column(JSONB)
-    stakeholder_coverage: Mapped[dict] = mapped_column(JSONB, default=dict)
+    member_skill_ids: Mapped[list[str]] = mapped_column(JSONB)
+    source_evidence_ids: Mapped[list[str]] = mapped_column(JSONB)
+    stakeholder_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
     demand_score: Mapped[float] = mapped_column(Float)
     is_common_need: Mapped[bool] = mapped_column(Boolean, default=False)
-    sample_quotes_th: Mapped[list] = mapped_column(JSONB, default=list)
+    sample_quotes_th: Mapped[list[str]] = mapped_column(JSONB, default=list)
     bloom_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     psychomotor_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     krathwohl_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
-    classification_coverage: Mapped[dict] = mapped_column(JSONB, default=dict)
+    classification_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
 
 
 class PLOTable(Base):
@@ -103,9 +104,10 @@ class PLOTable(Base):
     krathwohl_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_subject_specific: Mapped[bool] = mapped_column(Boolean)
     action_verb_th: Mapped[str] = mapped_column(Text)
-    smart_check: Mapped[dict] = mapped_column(JSONB)
-    source_cluster_ids: Mapped[list] = mapped_column(JSONB)
-    source_evidence_ids: Mapped[list] = mapped_column(JSONB, default=list)
+    # Serialized SMARTCheck model — bool criteria plus optional notes string
+    smart_check: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    source_cluster_ids: Mapped[list[str]] = mapped_column(JSONB)
+    source_evidence_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
     rationale_th: Mapped[str] = mapped_column(Text)
     distinctive_feature_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     version: Mapped[int] = mapped_column(Integer, default=1)
@@ -114,7 +116,7 @@ class PLOTable(Base):
     classification_rationale_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     smart_retry_count: Mapped[int] = mapped_column(Integer, default=0)
     smart_escalated: Mapped[bool] = mapped_column(Boolean, default=False)
-    soft_flags: Mapped[list] = mapped_column(JSONB, default=list)
+    soft_flags: Mapped[list[str]] = mapped_column(JSONB, default=list)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
@@ -124,13 +126,13 @@ class CheckpointTable(Base):
     checkpoint_id: Mapped[str] = mapped_column(String, primary_key=True)
     program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
     stage: Mapped[str] = mapped_column(String(30))
-    artifacts: Mapped[dict] = mapped_column(JSONB)
+    artifacts: Mapped[dict[str, Any]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime)
     reviewed_by: Mapped[str | None] = mapped_column(Text, nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="pending")
     designer_notes_th: Mapped[str | None] = mapped_column(Text, nullable=True)
-    edits: Mapped[dict] = mapped_column(JSONB, default=dict)
+    edits: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict)
 
 
 class SessionTable(Base):
