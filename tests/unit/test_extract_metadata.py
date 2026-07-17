@@ -3,12 +3,22 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
+from curriculum_agent.api.deps import RateLimiter
 from curriculum_agent.api.main import app
 from curriculum_agent.models import ExtractedMetadata
 from curriculum_agent.prompts.extract_metadata import build_extract_metadata_prompt
 from curriculum_agent.stages.intake import DOC_TEXT_LIMIT, extract_metadata_from_text
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit(monkeypatch):
+    import curriculum_agent.api.deps as deps
+
+    monkeypatch.setattr(deps, "llm_rate_limiter", RateLimiter(limit=1_000_000))
+
 
 # --- ExtractedMetadata model ---
 

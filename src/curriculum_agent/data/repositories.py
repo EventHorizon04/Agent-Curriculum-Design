@@ -56,6 +56,18 @@ class ProgramRepository:
                     setattr(row, k, v)
             await session.commit()
 
+    async def insert(self, metadata: ProgramMetadata) -> None:
+        """Plain INSERT — raises IntegrityError if program_id already exists.
+
+        Used by the create route so the database arbitrates concurrent id
+        generation. upsert() remains for stage handlers updating an existing
+        program.
+        """
+        async with AsyncSessionLocal() as session:
+            data = _fix_datetimes(metadata.model_dump(mode="json"), ProgramTable)
+            session.add(ProgramTable(**data))
+            await session.commit()
+
     async def get(self, program_id: str) -> ProgramMetadata | None:
         async with AsyncSessionLocal() as session:
             row = await session.get(ProgramTable, program_id)

@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from curriculum_agent.api.deps import RateLimiter
 from curriculum_agent.api.main import app
 from curriculum_agent.data.isced import (
     BROAD_FIELDS,
@@ -23,6 +24,14 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.suggest_isced import build_suggest_isced_prompt
 from curriculum_agent.stages.intake import suggest_isced
+
+
+@pytest.fixture(autouse=True)
+def _no_rate_limit(monkeypatch):
+    import curriculum_agent.api.deps as deps
+
+    monkeypatch.setattr(deps, "llm_rate_limiter", RateLimiter(limit=1_000_000))
+
 
 # --- taxonomy integrity ---
 
