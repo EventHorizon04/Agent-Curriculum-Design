@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     light_model: str = "scb10x/typhoon2-8b-instruct"
     heavy_model: str = "qwen2.5:7b"
     api_key: str | None = None
+    llm_rate_limit_per_minute: int = 5
 
     @computed_field  # type: ignore[prop-decorator]
     @property

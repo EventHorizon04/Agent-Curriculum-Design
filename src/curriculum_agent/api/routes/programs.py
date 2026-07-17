@@ -10,7 +10,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
-from curriculum_agent.api.deps import require_api_key
+from curriculum_agent.api.deps import enforce_llm_rate_limit, require_api_key
 from curriculum_agent.data.repositories import ProgramRepository
 from curriculum_agent.models import (
     ExtractedMetadata,
@@ -74,7 +74,7 @@ async def create_program(req: ProgramCreateRequest, request: Request) -> Program
 @router.post(
     "/extract-metadata",
     response_model=ExtractedMetadata,
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_llm_rate_limit)],
 )
 async def extract_metadata(file: UploadFile) -> ExtractedMetadata:
     """Parse an uploaded university document and LLM-extract intake prefill fields.
@@ -136,7 +136,7 @@ class SuggestIscedRequest(BaseModel):
 @router.post(
     "/suggest-isced",
     response_model=IscedSuggestion,
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_llm_rate_limit)],
 )
 async def suggest_isced_route(req: SuggestIscedRequest) -> IscedSuggestion:
     """Classify into ISCED-F 2013 + suggest standard program names.
