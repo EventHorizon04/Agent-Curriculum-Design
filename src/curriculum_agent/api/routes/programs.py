@@ -8,6 +8,7 @@ import tempfile
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
 from loguru import logger
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import ProgramRepository
@@ -24,6 +25,7 @@ router = APIRouter()
 _ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
 _MAX_FILE_BYTES = 10 * 1024 * 1024
 _MIN_TEXT_CHARS = 50
+_MAX_ID_ATTEMPTS = 5
 
 
 def _slugify(text: str) -> str:
@@ -46,9 +48,21 @@ async def _generate_program_id(name_en: str, repo: ProgramRepository) -> str:
 @router.post("/", response_model=ProgramMetadata, dependencies=[Depends(require_api_key)])
 async def create_program(req: ProgramCreateRequest, request: Request) -> ProgramMetadata:
     repo = ProgramRepository()
-    program_id = await _generate_program_id(req.name_en, repo)
-    metadata = ProgramMetadata(program_id=program_id, **req.model_dump())
-    await repo.upsert(metadata)
+    metadata: ProgramMetadata | None = None
+    for _ in range(_MAX_ID_ATTEMPTS):
+        program_id = await _generate_program_id(req.name_en, repo)
+        candidate = ProgramMetadata(program_id=program_id, **req.model_dump())
+        try:
+            await repo.insert(candidate)
+        except IntegrityError:
+            # Lost a concurrent-create race; the next _generate_program_id
+            # call sees the winner's row and picks the next suffix.
+            logger.warning(f"program_id '{program_id}' taken concurrently, retrying")
+            continue
+        metadata = candidate
+        break
+    if metadata is None:
+        raise HTTPException(status_code=409, detail="สร้างรหัสหลักสูตรไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
     graph = request.app.state.graph
     await graph.ainvoke(
         {"program_id": metadata.program_id, "metadata": metadata.model_dump(mode="json")},

@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.main import app
 from curriculum_agent.api.routes.programs import _slugify
@@ -60,7 +61,7 @@ def test_create_program_generates_slug_id(monkeypatch) -> None:
         patch.object(_app.state, "graph", mock_graph, create=True),
     ):
         mock_repo = AsyncMock()
-        mock_repo.upsert = AsyncMock()
+        mock_repo.insert = AsyncMock()
         mock_repo.exists = AsyncMock(return_value=False)
         mock_repo_cls.return_value = mock_repo
 
@@ -87,7 +88,7 @@ def test_create_program_collision_appends_suffix(monkeypatch) -> None:
         patch.object(_app.state, "graph", mock_graph, create=True),
     ):
         mock_repo = AsyncMock()
-        mock_repo.upsert = AsyncMock()
+        mock_repo.insert = AsyncMock()
         # "computer-science" taken, "computer-science-2" free
         mock_repo.exists = AsyncMock(side_effect=[True, False])
         mock_repo_cls.return_value = mock_repo
@@ -99,3 +100,68 @@ def test_create_program_collision_appends_suffix(monkeypatch) -> None:
         )
     assert resp.status_code == 200, f"got {resp.status_code}: {resp.json()}"
     assert resp.json()["program_id"] == "computer-science-2"
+
+
+def test_create_program_insert_conflict_retries_with_suffix(monkeypatch) -> None:
+    """Concurrent-insert race: exists() said free, but INSERT hits a duplicate
+    PK. The route must regenerate (now seeing the winner row) and succeed."""
+    import curriculum_agent.config as cfg
+    from curriculum_agent.api.main import app as _app
+
+    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    with (
+        patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
+        patch.object(_app.state, "graph", mock_graph, create=True),
+    ):
+        mock_repo = AsyncMock()
+        # attempt 1: exists("computer-science") -> False, insert -> conflict
+        # attempt 2: exists("computer-science") -> True (winner visible),
+        #            exists("computer-science-2") -> False, insert -> ok
+        mock_repo.exists = AsyncMock(side_effect=[False, True, False])
+        mock_repo.insert = AsyncMock(
+            side_effect=[IntegrityError("stmt", {}, Exception("duplicate key")), None]
+        )
+        mock_repo_cls.return_value = mock_repo
+
+        resp = client.post(
+            "/programs/",
+            json=VALID_PROGRAM,
+            headers={"X-API-Key": "secret-key"},
+        )
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.json()}"
+    assert resp.json()["program_id"] == "computer-science-2"
+    assert mock_repo.insert.await_count == 2
+
+
+def test_create_program_returns_409_when_attempts_exhausted(monkeypatch) -> None:
+    import curriculum_agent.config as cfg
+    from curriculum_agent.api.main import app as _app
+
+    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    with (
+        patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
+        patch.object(_app.state, "graph", mock_graph, create=True),
+    ):
+        mock_repo = AsyncMock()
+        mock_repo.exists = AsyncMock(return_value=False)
+        mock_repo.insert = AsyncMock(
+            side_effect=IntegrityError("stmt", {}, Exception("duplicate key"))
+        )
+        mock_repo_cls.return_value = mock_repo
+
+        resp = client.post(
+            "/programs/",
+            json=VALID_PROGRAM,
+            headers={"X-API-Key": "secret-key"},
+        )
+    assert resp.status_code == 409, f"got {resp.status_code}: {resp.json()}"
+    assert mock_repo.insert.await_count == 5
+    mock_graph.ainvoke.assert_not_awaited()
