@@ -83,10 +83,16 @@ async def test_full_graph_runs_and_stops_at_interrupt(
 
     graph = build_graph(checkpointer=MemorySaver())
 
+    evidence_models = [StakeholderEvidence.model_validate(e) for e in initial_state["raw_evidence"]]
+
     with (
         patch(
             "curriculum_agent.stages.intake.ProgramRepository.upsert",
             new_callable=AsyncMock,
+        ),
+        patch(
+            "curriculum_agent.stages.intake.EvidenceRepository.list_by_program",
+            new=AsyncMock(return_value=evidence_models),
         ),
         patch(
             "curriculum_agent.stages.stakeholder_needs.complete_light",
