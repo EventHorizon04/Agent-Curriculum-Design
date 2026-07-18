@@ -66,6 +66,13 @@ def test_validate_assignments_missing_index_becomes_singleton():
     assert len(result) == 3
 
 
+def test_validate_assignments_drops_within_cluster_duplicate_indices():
+    names = ["a", "b"]
+    clusters = [("g1", [0, 0])]
+    # the second 0 is a duplicate within the same cluster's own index list
+    assert validate_assignments(clusters, names) == [("g1", [0]), ("b", [1])]
+
+
 def test_validate_assignments_empty_group_dropped():
     names = ["a"]
     clusters = [("empty", []), ("g1", [0])]

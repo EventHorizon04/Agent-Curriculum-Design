@@ -37,12 +37,16 @@ def dedupe_names(names: list[str]) -> tuple[list[str], list[list[int]]]:
     """
     by_norm: dict[str, list[int]] = {}
     display: dict[str, str] = {}
+    skipped = 0
     for i, raw in enumerate(names):
         norm = normalize_name(raw)
         if not norm:
+            skipped += 1
             continue
         by_norm.setdefault(norm, []).append(i)
         display.setdefault(norm, raw.strip())
+    if skipped:
+        logger.warning(f"dedupe_names: skipped {skipped} blank/whitespace-only name(s)")
     ordered = sorted(by_norm)
     return [display[k] for k in ordered], [by_norm[k] for k in ordered]
 
@@ -66,13 +70,15 @@ def validate_assignments(
     duplicates = 0
     cleaned: list[tuple[str, list[int]]] = []
     for label, indices in clusters:
-        keep = [i for i in indices if 0 <= i < n and i not in seen]
+        keep: list[int] = []
         for i in indices:
             if not (0 <= i < n):
                 out_of_range += 1
             elif i in seen:
                 duplicates += 1
-        seen.update(keep)
+            else:
+                seen.add(i)
+                keep.append(i)
         if keep:
             cleaned.append((label, keep))
     missing = [i for i in range(n) if i not in seen]

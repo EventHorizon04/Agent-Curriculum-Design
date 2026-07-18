@@ -5,7 +5,7 @@ import uuid
 from typing import Any, Literal
 
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
@@ -33,6 +33,14 @@ class _SkillItem(BaseModel):
     skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
     is_subject_specific: bool
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
+
+    @field_validator("skill_name_th", mode="before")
+    @classmethod
+    def _strip_skill_name_th(cls, v: object) -> object:
+        """Strip surrounding whitespace before min_length is checked, so a
+        whitespace-only name fails validation (Instructor will reask) instead
+        of silently passing as a non-empty string."""
+        return v.strip() if isinstance(v, str) else v
 
 
 class _ExtractedSkillsResponse(BaseModel):
