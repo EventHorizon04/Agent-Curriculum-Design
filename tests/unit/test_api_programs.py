@@ -45,6 +45,7 @@ def test_create_program_requires_api_key_when_configured(monkeypatch) -> None:
     monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
     resp = client.post("/programs/", json=VALID_PROGRAM)
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.json()}"
+    assert resp.json()["detail"] == "API key ไม่ถูกต้องหรือไม่ได้ระบุ"
 
 
 def test_create_program_generates_slug_id(monkeypatch) -> None:
