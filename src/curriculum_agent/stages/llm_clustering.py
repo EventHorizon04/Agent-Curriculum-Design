@@ -32,12 +32,15 @@ def dedupe_names(names: list[str]) -> tuple[list[str], list[list[int]]]:
     Returns (unique_names, groups). unique_names is sorted by normalized form
     so prompts and cache keys are deterministic regardless of input order;
     groups[i] lists the indices in `names` that normalize to unique_names[i].
-    The first-seen raw spelling (trimmed) is kept as the display name.
+    The first-seen raw spelling (trimmed) is kept as the display name. Names
+    that normalize to an empty string (blank/whitespace-only) are skipped.
     """
     by_norm: dict[str, list[int]] = {}
     display: dict[str, str] = {}
     for i, raw in enumerate(names):
         norm = normalize_name(raw)
+        if not norm:
+            continue
         by_norm.setdefault(norm, []).append(i)
         display.setdefault(norm, raw.strip())
     ordered = sorted(by_norm)
@@ -59,18 +62,26 @@ def validate_assignments(
     """
     n = len(names)
     seen: set[int] = set()
-    dropped = 0
+    out_of_range = 0
+    duplicates = 0
     cleaned: list[tuple[str, list[int]]] = []
     for label, indices in clusters:
         keep = [i for i in indices if 0 <= i < n and i not in seen]
-        dropped += len(indices) - len(keep)
+        for i in indices:
+            if not (0 <= i < n):
+                out_of_range += 1
+            elif i in seen:
+                duplicates += 1
         seen.update(keep)
         if keep:
             cleaned.append((label, keep))
     missing = [i for i in range(n) if i not in seen]
     cleaned.extend((names[i], [i]) for i in missing)
-    if dropped:
-        logger.warning(f"LLM clustering: dropped {dropped} invalid/duplicate indices")
+    if out_of_range or duplicates:
+        logger.warning(
+            f"LLM clustering: dropped {out_of_range} out-of-range and "
+            f"{duplicates} duplicate indices"
+        )
     if missing:
         logger.warning(f"LLM clustering: {len(missing)} skills unassigned — added as singletons")
     return cleaned
@@ -131,6 +142,8 @@ async def cluster_skill_names(names: list[str]) -> list[list[int]]:
         return [[0]]
 
     cache = LLMCacheRepository()
+    # Order- and spelling-sensitive: callers should pass a deterministic
+    # ordering (dedupe_names' sorted, first-seen-spelling output).
     cache_key = hashlib.sha256("\x00".join([*names, settings.heavy_model]).encode()).hexdigest()
     cached = await cache.get(cache_key)
     if cached is not None and cached[0] == settings.heavy_model:

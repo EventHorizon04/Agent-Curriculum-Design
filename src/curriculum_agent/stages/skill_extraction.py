@@ -28,7 +28,7 @@ from curriculum_agent.stages.llm_clustering import cluster_skill_names, dedupe_n
 
 
 class _SkillItem(BaseModel):
-    skill_name_th: str
+    skill_name_th: str = Field(min_length=1)
     skill_name_en: str | None = None
     skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
     is_subject_specific: bool

@@ -39,11 +39,9 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
 
         yield f"data: {json.dumps({'status': 'started', 'total': total})}\n\n"
 
-        newly_classified: list[StakeholderEvidence] = []
         for i, evidence in enumerate(to_classify, 1):
             updated = await classify_single(evidence)
             await repo.bulk_insert([updated])
-            newly_classified.append(updated)
             event = json.dumps(
                 {
                     "status": "progress",

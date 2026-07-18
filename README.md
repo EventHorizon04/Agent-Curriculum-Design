@@ -51,7 +51,6 @@ npm run dev
 | API | http://localhost:8000 |
 | API docs (Swagger) | http://localhost:8000/docs |
 | MinIO console | http://localhost:9001 (minioadmin / minioadmin_dev) |
-| Qdrant dashboard | http://localhost:6333/dashboard |
 
 ## Stop
 

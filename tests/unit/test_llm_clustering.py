@@ -32,6 +32,10 @@ def test_dedupe_names_empty():
     assert dedupe_names([]) == ([], [])
 
 
+def test_dedupe_names_skips_blank_names():
+    assert dedupe_names(["Python", "   ", ""]) == (["Python"], [[0]])
+
+
 def test_split_batches_splits_at_size():
     items = [str(i) for i in range(250)]
     batches = split_batches(items, size=100)
