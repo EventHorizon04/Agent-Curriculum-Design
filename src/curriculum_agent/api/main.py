@@ -36,18 +36,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Graph compiled with AsyncPostgresSaver")
 
         from curriculum_agent.llm import warmup_models
-        from curriculum_agent.nlp.embedding import get_model
 
-        async def _warmup_bge() -> None:
-            await asyncio.to_thread(get_model)
-            logger.info("BGE-M3 embedding model loaded into RAM")
-
-        warmup_results = await asyncio.gather(
-            _warmup_bge(), warmup_models(), return_exceptions=True
-        )
-        for _r in warmup_results:
-            if isinstance(_r, BaseException):
-                logger.warning(f"Startup warm-up failed: {_r}")
+        try:
+            await warmup_models()
+        except Exception as exc:
+            logger.warning(f"Startup warm-up failed: {exc}")
         logger.info("Model pre-warm complete")
 
         yield

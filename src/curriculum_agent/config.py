@@ -10,7 +10,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     ollama_base_url: str = "http://localhost:11434"
-    qdrant_url: str = "http://localhost:6333"
     postgres_dsn: str = (
         "postgresql+asyncpg://curriculum:curriculum_dev@localhost:5432/curriculum_agent"
     )
