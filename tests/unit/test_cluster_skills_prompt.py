@@ -22,7 +22,11 @@ def test_cluster_prompt_numbers_every_skill():
 
 def test_merge_prompt_numbers_every_label():
     msgs = build_merge_clusters_prompt(["โปรแกรมมิ่ง", "Programming", "สื่อสาร"])
+    assert len(msgs) == 2
+    assert msgs[0]["role"] == "system"
     user = msgs[1]["content"]
     assert "0: โปรแกรมมิ่ง" in user
     assert "2: สื่อสาร" in user
-    assert "groups" in msgs[0]["content"]
+    system = msgs[0]["content"]
+    assert "groups" in system
+    assert "ห้ามใช้ index ที่ไม่มีในรายการ" in system
