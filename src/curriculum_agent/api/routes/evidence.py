@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import EvidenceRepository
 from curriculum_agent.models import StakeholderEvidence
-from curriculum_agent.stages.stakeholder_needs import _embed_and_upsert, classify_single
+from curriculum_agent.stages.stakeholder_needs import classify_single
 
 router = APIRouter()
 _repo = EvidenceRepository()
@@ -55,9 +55,6 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
                 }
             )
             yield f"data: {event}\n\n"
-
-        if newly_classified:
-            await _embed_and_upsert(newly_classified)
 
         yield f"data: {json.dumps({'status': 'done', 'total': total})}\n\n"
 

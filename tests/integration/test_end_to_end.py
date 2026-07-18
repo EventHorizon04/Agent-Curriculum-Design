@@ -103,18 +103,6 @@ async def test_full_graph_runs_and_stops_at_interrupt(
             "curriculum_agent.stages.stakeholder_needs.EvidenceRepository.bulk_insert",
             new_callable=AsyncMock,
         ),
-        patch(
-            "curriculum_agent.stages.stakeholder_needs._ensure_collection",
-            new_callable=AsyncMock,
-        ),
-        patch(
-            "curriculum_agent.stages.stakeholder_needs.embed",
-            return_value=[[0.1] * 1024],
-        ),
-        patch(
-            "curriculum_agent.stages.stakeholder_needs.get_qdrant",
-            return_value=AsyncMock(upsert=AsyncMock()),
-        ),
     ):
         result = await graph.ainvoke(
             initial_state,
