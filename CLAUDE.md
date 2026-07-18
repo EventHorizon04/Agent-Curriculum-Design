@@ -72,7 +72,7 @@ The `Data/` directory holds real-world inputs used during Stage 2 (stakeholder n
 - `Data/Skills.xlsx` — structured skill taxonomy aligned with the occupation data
 - `Data/linkedin_offers2026-04-30.csv` — scraped LinkedIn job postings (April 2026 snapshot) for skill-frequency analysis
 
-These files feed the NLP pipeline; do not reformat them without checking scraper/parser compatibility.
+These files feed the extraction pipeline; do not reformat them without checking scraper/parser compatibility.
 
 ## Code conventions
 
@@ -132,7 +132,7 @@ tests/integration/     ← LLM mocked, full stages
 ## Common pitfalls
 
 - **Don't bypass the SMART retry loop after synthesis.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. Hard checks are pure code (`smart_rules.py`); the soft judge is a separate light-model prompt. Escalated PLOs must stay visible in the UI.
-- **Don't pass full evidence text into synthesis prompts.** Summarize each cluster in ≤200 tokens. Full evidence stays in Postgres/Qdrant for drill-down, not in the synthesis prompt.
+- **Don't pass full evidence text into synthesis prompts.** Summarize each cluster in ≤200 tokens. Full evidence stays in Postgres for drill-down, not in the synthesis prompt.
 - **Don't ask the model for "as many PLOs as needed."** Always 6–10 main PLOs; 1–4 optional PLOs from want-clusters in a separate non-blocking pass.
 - **Test Pydantic validators before integration tests.** They're the cheapest, most important guardrail. If a validator is wrong, every downstream test is suspect.
 - **Don't `git push` model files.** Ollama models live on the host. `.env` files with API keys are gitignored — keep it that way.

@@ -72,9 +72,7 @@ def validate_assignments(
     if dropped:
         logger.warning(f"LLM clustering: dropped {dropped} invalid/duplicate indices")
     if missing:
-        logger.warning(
-            f"LLM clustering: {len(missing)} skills unassigned — added as singletons"
-        )
+        logger.warning(f"LLM clustering: {len(missing)} skills unassigned — added as singletons")
     return cleaned
 
 
@@ -98,9 +96,7 @@ async def _cluster_pass(names: list[str]) -> list[tuple[str, list[int]]]:
         build_cluster_skills_prompt(names),
         temperature=0,
     )
-    return validate_assignments(
-        [(c.label_th, c.member_indices) for c in result.clusters], names
-    )
+    return validate_assignments([(c.label_th, c.member_indices) for c in result.clusters], names)
 
 
 async def _cluster_map_reduce(names: list[str]) -> list[list[int]]:
@@ -119,9 +115,7 @@ async def _cluster_map_reduce(names: list[str]) -> list[list[int]]:
         temperature=0,
     )
     merged = validate_assignments([("", g) for g in merge.groups], labels)
-    return [
-        sorted(i for ci in group for i in labelled[ci][1]) for _, group in merged
-    ]
+    return [sorted(i for ci in group for i in labelled[ci][1]) for _, group in merged]
 
 
 async def cluster_skill_names(names: list[str]) -> list[list[int]]:
@@ -137,9 +131,7 @@ async def cluster_skill_names(names: list[str]) -> list[list[int]]:
         return [[0]]
 
     cache = LLMCacheRepository()
-    cache_key = hashlib.sha256(
-        "\x00".join([*names, settings.heavy_model]).encode()
-    ).hexdigest()
+    cache_key = hashlib.sha256("\x00".join([*names, settings.heavy_model]).encode()).hexdigest()
     cached = await cache.get(cache_key)
     if cached is not None and cached[0] == settings.heavy_model:
         return [[int(i) for i in g] for g in json.loads(cached[1])]
