@@ -1,6 +1,13 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
+from curriculum_agent.config import settings
 from curriculum_agent.stages.llm_clustering import (
+    ClusterAssignment,
+    ClusterAssignmentsResponse,
+    MergeGroupsResponse,
+    cluster_skill_names,
     dedupe_names,
     normalize_name,
     split_batches,
@@ -59,3 +66,97 @@ def test_validate_assignments_empty_group_dropped():
     names = ["a"]
     clusters = [("empty", []), ("g1", [0])]
     assert validate_assignments(clusters, names) == [("g1", [0])]
+
+
+def _mock_cache(hit: str | None = None) -> AsyncMock:
+    repo = AsyncMock()
+    repo.get = AsyncMock(
+        return_value=(settings.heavy_model, hit) if hit is not None else None
+    )
+    repo.set = AsyncMock()
+    return repo
+
+
+async def test_cluster_skill_names_empty_and_singleton_short_circuit():
+    with patch(
+        "curriculum_agent.stages.llm_clustering.complete_heavy", new=AsyncMock()
+    ) as llm:
+        assert await cluster_skill_names([]) == []
+        assert await cluster_skill_names(["Python"]) == [[0]]
+    llm.assert_not_called()
+
+
+async def test_single_pass_clusters_validates_and_caches():
+    resp = ClusterAssignmentsResponse(
+        clusters=[
+            ClusterAssignment(label_th="โปรแกรมมิ่ง", member_indices=[0, 1]),
+            ClusterAssignment(label_th="สื่อสาร", member_indices=[2, 99]),  # 99 hallucinated
+        ]
+    )
+    cache = _mock_cache()
+    with (
+        patch(
+            "curriculum_agent.stages.llm_clustering.complete_heavy",
+            new=AsyncMock(return_value=resp),
+        ) as llm,
+        patch(
+            "curriculum_agent.stages.llm_clustering.LLMCacheRepository",
+            return_value=cache,
+        ),
+    ):
+        groups = await cluster_skill_names(["Python", "SQL", "การสื่อสาร"])
+
+    assert groups == [[0, 1], [2]]
+    assert llm.call_args.kwargs.get("temperature") == 0
+    cache.set.assert_called_once()
+
+
+async def test_cache_hit_skips_llm():
+    cache = _mock_cache(hit="[[0, 2], [1]]")
+    with (
+        patch(
+            "curriculum_agent.stages.llm_clustering.complete_heavy", new=AsyncMock()
+        ) as llm,
+        patch(
+            "curriculum_agent.stages.llm_clustering.LLMCacheRepository",
+            return_value=cache,
+        ),
+    ):
+        groups = await cluster_skill_names(["a", "b", "c"])
+    assert groups == [[0, 2], [1]]
+    llm.assert_not_called()
+    cache.set.assert_not_called()
+
+
+async def test_map_reduce_path_batches_then_merges():
+    names = [f"skill-{i}" for i in range(160)]  # > SINGLE_PASS_MAX → 2 batches (100+60)
+    batch_sizes = iter([100, 60])
+
+    async def dispatch(response_model, messages, **kwargs):
+        if response_model is ClusterAssignmentsResponse:
+            size = next(batch_sizes)
+            return ClusterAssignmentsResponse(
+                clusters=[
+                    ClusterAssignment(label_th="กลุ่ม", member_indices=list(range(size)))
+                ]
+            )
+        if response_model is MergeGroupsResponse:
+            return MergeGroupsResponse(groups=[[0, 1]])
+        raise AssertionError(f"unexpected response_model {response_model}")
+
+    cache = _mock_cache()
+    with (
+        patch(
+            "curriculum_agent.stages.llm_clustering.complete_heavy",
+            new=AsyncMock(side_effect=dispatch),
+        ) as llm,
+        patch(
+            "curriculum_agent.stages.llm_clustering.LLMCacheRepository",
+            return_value=cache,
+        ),
+    ):
+        groups = await cluster_skill_names(names)
+
+    assert llm.call_count == 3  # 2 batch passes + 1 merge
+    assert groups == [sorted(range(160))]
+    cache.set.assert_called_once()
