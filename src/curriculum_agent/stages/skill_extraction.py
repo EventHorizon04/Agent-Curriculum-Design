@@ -159,7 +159,7 @@ async def run(state: AgentState) -> AgentState:
         state["current_stage"] = "skill_extraction"
         return state
 
-    # --- Step 3: Build ExtractedSkill objects and embed ---
+    # --- Step 2: Build ExtractedSkill objects ---
     extracted: list[ExtractedSkill] = []
     for s in raw_skills:
         skill_id = str(uuid.uuid4())
@@ -185,7 +185,7 @@ async def run(state: AgentState) -> AgentState:
         sorted({orig for u in group for orig in name_groups[u]}) for group in unique_clusters
     ]
 
-    # --- Step 5 & 6: Name clusters via LLM and compute demand_score ---
+    # --- Step 4 & 5: Name clusters via LLM and compute demand_score ---
     clusters: list[SkillCluster] = []
     classification_by_evidence: dict[str, str] = {
         str(d["evidence_id"]): str(d.get("classification", "unclassified"))
