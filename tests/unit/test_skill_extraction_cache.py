@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from curriculum_agent.config import settings
 
@@ -58,11 +58,6 @@ async def test_cache_hit_skips_extraction_llm_call():
         llm_call_response_models.append(response_model)
         return cluster_name
 
-    mock_qdrant = MagicMock()
-    mock_qdrant.get_collections = AsyncMock(return_value=MagicMock(collections=[]))
-    mock_qdrant.create_collection = AsyncMock()
-    mock_qdrant.upsert = AsyncMock()
-
     with (
         patch(
             "curriculum_agent.stages.skill_extraction.LLMCacheRepository",
@@ -73,16 +68,8 @@ async def test_cache_hit_skips_extraction_llm_call():
             side_effect=mock_complete_light,
         ),
         patch(
-            "curriculum_agent.stages.skill_extraction.extract_keywords",
-            return_value=[],
-        ),
-        patch(
-            "curriculum_agent.stages.skill_extraction.embed",
-            return_value=[[0.0] * 1024],
-        ),
-        patch(
-            "curriculum_agent.stages.skill_extraction.get_qdrant",
-            return_value=mock_qdrant,
+            "curriculum_agent.stages.skill_extraction.cluster_skill_names",
+            new=AsyncMock(return_value=[[0]]),
         ),
         patch(
             "curriculum_agent.stages.skill_extraction.SkillRepository",
