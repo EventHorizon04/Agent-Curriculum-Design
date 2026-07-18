@@ -18,12 +18,10 @@ The `curriculum-design-agent` skill (`.claude/skills/curriculum-design-agent/`) 
 - **Agent:** LangGraph (state machine with `interrupt` for HITL)
 - **LLM:** Ollama running **natively on the host** (no Ollama container) serving Typhoon 2 8B (light) + Qwen 2.5 7B/14B (heavy). Dual-model pattern — see `src/curriculum_agent/llm.py`
 - **Structured output:** Instructor + Pydantic v2 (no hand-parsing JSON). The `openai` package is a dependency because Instructor uses OpenAI-compatible API to talk to Ollama — not for the OpenAI cloud service.
-- **Thai NLP:** PyThaiNLP for tokenization, BGE-M3 for embeddings
-- **Skill extraction:** KeyBERT + scikit-learn
-- **Vector store:** Qdrant
+- **Clustering:** LLM-based (heavy model) — no embeddings/KeyBERT/Qdrant on this branch; see docs/superpowers/specs/2026-07-18-llm-only-pipeline-design.md
 - **Storage:** PostgreSQL (structured), MinIO (raw files)
 - **API/UI:** FastAPI backend, React 19 + Vite + TypeScript + Tailwind frontend in `frontend/`
-- **Deployment:** Hybrid for the PoC — postgres/qdrant/minio/pgadmin in Docker Compose, Ollama and the API/UI run natively
+- **Deployment:** Hybrid for the PoC — postgres/minio/pgadmin in Docker Compose, Ollama and the API/UI run natively
 
 ## Running it
 
@@ -110,9 +108,8 @@ src/curriculum_agent/
   config.py            ← pydantic-settings, reads .env
   prompts/             ← one file per LLM prompt, typed builder fns
   stages/              ← intake, stakeholder_needs, skill_extraction,
-                          plo_synthesis, plo_report (+ smart_rules)
-  data/                ← repositories, postgres, qdrant, minio_store
-  nlp/                 ← embedding, extraction (KeyBERT)
+                          llm_clustering, plo_synthesis, plo_report (+ smart_rules)
+  data/                ← repositories, postgres, minio_store
   scrapers/            ← per-site job scrapers
   parsers/             ← document parsers (Tika, มคอ.1)
   exporters/           ← CHECO, มคอ.2, Excel matrix
