@@ -17,6 +17,7 @@ from curriculum_agent.models import (
     IscedSuggestion,
     ProgramCreateRequest,
     ProgramMetadata,
+    ProgramSummary,
 )
 from curriculum_agent.stages.intake import extract_metadata_from_text, suggest_isced
 
@@ -148,6 +149,13 @@ async def suggest_isced_route(req: SuggestIscedRequest) -> IscedSuggestion:
     except Exception as exc:
         logger.error(f"ISCED suggestion failed: {exc}")
         raise HTTPException(status_code=502, detail="จำแนก ISCED ไม่สำเร็จ กรุณาลองใหม่") from exc
+
+
+@router.get("/", response_model=list[ProgramSummary])
+async def list_programs() -> list[ProgramSummary]:
+    """Program history: all programs with their latest pipeline state."""
+    repo = ProgramRepository()
+    return await repo.list_all()
 
 
 @router.get("/{program_id}", response_model=ProgramMetadata)
