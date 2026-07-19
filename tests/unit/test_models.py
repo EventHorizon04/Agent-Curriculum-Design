@@ -256,3 +256,40 @@ def test_program_metadata_accepts_legacy_backfilled_row() -> None:
     assert meta.mission_th == ""
     assert meta.philosophy_th == ""
     assert meta.program_goals_th == []
+
+
+# ---- ProgramSummary (Task 1: program history) ---------------------------
+
+
+def test_program_summary_minimal() -> None:
+    from datetime import datetime
+
+    from curriculum_agent.models import ProgramSummary
+
+    s = ProgramSummary(
+        program_id="computer-science",
+        name_th="วิทยาการคอมพิวเตอร์",
+        name_en="Computer Science",
+        degree_level="bachelor",
+        created_at=datetime(2026, 7, 1, 9, 0, 0),
+    )
+    assert s.current_stage is None
+    assert s.session_status is None
+
+
+def test_program_summary_with_session_fields() -> None:
+    from datetime import datetime
+
+    from curriculum_agent.models import ProgramSummary
+
+    s = ProgramSummary(
+        program_id="computer-science",
+        name_th="วิทยาการคอมพิวเตอร์",
+        name_en="Computer Science",
+        degree_level="bachelor",
+        created_at=datetime(2026, 7, 1, 9, 0, 0),
+        current_stage="skill_extraction",
+        session_status="suspended",
+    )
+    assert s.current_stage == "skill_extraction"
+    assert s.session_status == "suspended"

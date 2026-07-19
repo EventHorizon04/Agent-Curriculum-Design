@@ -145,6 +145,21 @@ class ProgramMetadata(ProgramCreateRequest):
         return self
 
 
+class ProgramSummary(BaseModel):
+    """List-page row: program metadata + latest-session state.
+
+    current_stage/session_status are None when the program has no session yet.
+    """
+
+    program_id: str
+    name_th: str
+    name_en: str
+    degree_level: str
+    created_at: datetime
+    current_stage: str | None = None
+    session_status: str | None = None
+
+
 class ExtractedMetadata(BaseModel):
     """LLM-extracted university metadata from an uploaded document.
 
