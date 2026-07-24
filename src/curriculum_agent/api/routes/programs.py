@@ -165,3 +165,11 @@ async def get_program(program_id: str) -> ProgramMetadata:
     if result is None:
         raise HTTPException(status_code=404, detail="Program not found")
     return result
+
+
+@router.delete("/{program_id}", status_code=204, dependencies=[Depends(require_api_key)])
+async def delete_program(program_id: str) -> None:
+    repo = ProgramRepository()
+    deleted = await repo.delete_cascade(program_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
