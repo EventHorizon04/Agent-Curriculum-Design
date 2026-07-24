@@ -1,5 +1,6 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import StageLayout from './components/StageLayout'
+import Programs from './pages/Programs'
 import Intake from './pages/Intake'
 import StakeholderNeeds from './pages/StakeholderNeeds'
 import SkillExtraction from './pages/SkillExtraction'
@@ -12,7 +13,8 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<StageLayout />}>
-          <Route index element={<Intake />} />
+          <Route index element={<Programs />} />
+          <Route path="intake" element={<Intake />} />
           <Route path="stakeholder-needs" element={<StakeholderNeeds />} />
           <Route path="skill-extraction" element={<SkillExtraction />} />
           <Route path="plo-synthesis" element={<PloSynthesis />} />

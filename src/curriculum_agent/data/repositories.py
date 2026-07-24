@@ -21,6 +21,7 @@ from curriculum_agent.models import (
     PLO,
     ExtractedSkill,
     ProgramMetadata,
+    ProgramSummary,
     SessionInfo,
     SkillCluster,
     StageCheckpoint,
@@ -79,6 +80,43 @@ class ProgramRepository:
         async with AsyncSessionLocal() as session:
             row = await session.get(ProgramTable, program_id)
             return row is not None
+
+    async def list_all(self) -> list[ProgramSummary]:
+        """All programs (created_at DESC), each with its latest session state."""
+        async with AsyncSessionLocal() as session:
+            prog_rows = (
+                (
+                    await session.execute(
+                        select(ProgramTable).order_by(ProgramTable.created_at.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            sess_rows = (await session.execute(select(SessionTable))).scalars().all()
+
+        latest: dict[str, SessionTable] = {}
+        for s in sess_rows:
+            cur = latest.get(s.program_id)
+            if cur is None or s.created_at > cur.created_at:
+                latest[s.program_id] = s
+
+        return [
+            ProgramSummary(
+                program_id=p.program_id,
+                name_th=p.name_th,
+                name_en=p.name_en,
+                degree_level=p.degree_level,
+                created_at=p.created_at,
+                current_stage=(
+                    latest[p.program_id].current_stage if p.program_id in latest else None
+                ),
+                session_status=(
+                    latest[p.program_id].status if p.program_id in latest else None
+                ),
+            )
+            for p in prog_rows
+        ]
 
 
 class EvidenceRepository:

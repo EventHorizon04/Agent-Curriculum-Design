@@ -1,7 +1,8 @@
 import { NavLink, Outlet } from 'react-router-dom'
 
 const stages = [
-  { path: '/', label: 'Stage 1: Intake' },
+  { path: '/', label: '📋 หลักสูตรทั้งหมด' },
+  { path: '/intake', label: 'Stage 1: Intake' },
   { path: '/stakeholder-needs', label: 'Stage 2: Stakeholder Needs' },
   { path: '/skill-extraction', label: 'Stage 3: Skill Extraction' },
   { path: '/plo-synthesis', label: 'Stage 4: PLO Synthesis' },

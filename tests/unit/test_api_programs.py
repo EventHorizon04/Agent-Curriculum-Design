@@ -166,3 +166,48 @@ def test_create_program_returns_409_when_attempts_exhausted(monkeypatch) -> None
     assert resp.status_code == 409, f"got {resp.status_code}: {resp.json()}"
     assert mock_repo.insert.await_count == 5
     mock_graph.ainvoke.assert_not_awaited()
+
+
+def test_list_programs_empty() -> None:
+    with patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls:
+        mock_repo = AsyncMock()
+        mock_repo.list_all = AsyncMock(return_value=[])
+        mock_repo_cls.return_value = mock_repo
+        resp = client.get("/programs/")
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.json()}"
+    assert resp.json() == []
+
+
+def test_list_programs_returns_summaries_without_api_key() -> None:
+    from datetime import datetime
+
+    from curriculum_agent.models import ProgramSummary
+
+    summaries = [
+        ProgramSummary(
+            program_id="computer-science",
+            name_th="วิทยาการคอมพิวเตอร์",
+            name_en="Computer Science",
+            degree_level="bachelor",
+            created_at=datetime(2026, 7, 2, 9, 0, 0),
+            current_stage="plo_synthesis",
+            session_status="suspended",
+        ),
+        ProgramSummary(
+            program_id="data-science",
+            name_th="วิทยาการข้อมูล",
+            name_en="Data Science",
+            degree_level="master",
+            created_at=datetime(2026, 7, 1, 9, 0, 0),
+        ),
+    ]
+    with patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls:
+        mock_repo = AsyncMock()
+        mock_repo.list_all = AsyncMock(return_value=summaries)
+        mock_repo_cls.return_value = mock_repo
+        resp = client.get("/programs/")
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.json()}"
+    body = resp.json()
+    assert [p["program_id"] for p in body] == ["computer-science", "data-science"]
+    assert body[0]["current_stage"] == "plo_synthesis"
+    assert body[1]["current_stage"] is None
