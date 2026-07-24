@@ -107,3 +107,61 @@ async def test_list_all_preserves_program_order() -> None:
     ):
         result = await repo.list_all()
     assert [p.program_id for p in result] == ["newer", "older"]
+
+
+async def test_delete_cascade_deletes_tables_in_fk_safe_order() -> None:
+    """skills must be deleted before evidence: SkillTable.source_evidence_id
+    is a FK into EvidenceTable. Everything else has no cross-dependency."""
+    repo = ProgramRepository()
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(7)])
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx
+    ):
+        result = await repo.delete_cascade("cs")
+
+    assert result is True
+    executed_sql = [str(c.args[0]) for c in mock_session.execute.call_args_list]
+    assert executed_sql[0].startswith("DELETE FROM skills")
+    assert executed_sql[1].startswith("DELETE FROM clusters")
+    assert executed_sql[2].startswith("DELETE FROM plos")
+    assert executed_sql[3].startswith("DELETE FROM checkpoints")
+    assert executed_sql[4].startswith("DELETE FROM sessions")
+    assert executed_sql[5].startswith("DELETE FROM evidence")
+    assert executed_sql[6].startswith("DELETE FROM programs")
+
+
+async def test_delete_cascade_returns_false_when_program_missing() -> None:
+    repo = ProgramRepository()
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=0) for _ in range(7)])
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx
+    ):
+        result = await repo.delete_cascade("missing")
+
+    assert result is False
+
+
+async def test_delete_cascade_commits_once() -> None:
+    repo = ProgramRepository()
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(7)])
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+    with patch(
+        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx
+    ):
+        await repo.delete_cascade("cs")
+
+    mock_session.commit.assert_awaited_once()
