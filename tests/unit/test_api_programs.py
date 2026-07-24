@@ -211,3 +211,31 @@ def test_list_programs_returns_summaries_without_api_key() -> None:
     assert [p["program_id"] for p in body] == ["computer-science", "data-science"]
     assert body[0]["current_stage"] == "plo_synthesis"
     assert body[1]["current_stage"] is None
+
+
+def test_delete_program_success() -> None:
+    with patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls:
+        mock_repo = AsyncMock()
+        mock_repo.delete_cascade = AsyncMock(return_value=True)
+        mock_repo_cls.return_value = mock_repo
+        resp = client.delete("/programs/computer-science")
+    assert resp.status_code == 204, f"got {resp.status_code}"
+
+
+def test_delete_program_not_found() -> None:
+    with patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls:
+        mock_repo = AsyncMock()
+        mock_repo.delete_cascade = AsyncMock(return_value=False)
+        mock_repo_cls.return_value = mock_repo
+        resp = client.delete("/programs/missing-program")
+    assert resp.status_code == 404, f"got {resp.status_code}: {resp.json()}"
+    assert resp.json()["detail"] == "ไม่พบหลักสูตรนี้"
+
+
+def test_delete_program_requires_api_key_when_configured(monkeypatch) -> None:
+    import curriculum_agent.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    resp = client.delete("/programs/computer-science")
+    assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.json()}"
+    assert resp.json()["detail"] == "API key ไม่ถูกต้องหรือไม่ได้ระบุ"

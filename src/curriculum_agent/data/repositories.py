@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import select, update
+from sqlalchemy import CursorResult, delete, select, update
 
 from curriculum_agent.data.orm import (
     Base,
@@ -117,6 +117,37 @@ class ProgramRepository:
             )
             for p in prog_rows
         ]
+
+    async def delete_cascade(self, program_id: str) -> bool:
+        """Hard-delete a program and everything under it, in one transaction.
+
+        Deletes skills before evidence because SkillTable.source_evidence_id
+        is a FK into EvidenceTable. Returns False (no-op) if program_id
+        doesn't exist — the six prior deletes affect zero rows either way.
+        """
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(SkillTable).where(SkillTable.program_id == program_id))
+            await session.execute(
+                delete(ClusterTable).where(ClusterTable.program_id == program_id)
+            )
+            await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
+            await session.execute(
+                delete(CheckpointTable).where(CheckpointTable.program_id == program_id)
+            )
+            await session.execute(
+                delete(SessionTable).where(SessionTable.program_id == program_id)
+            )
+            await session.execute(
+                delete(EvidenceTable).where(EvidenceTable.program_id == program_id)
+            )
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(ProgramTable).where(ProgramTable.program_id == program_id)
+                ),
+            )
+            await session.commit()
+            return result.rowcount > 0
 
 
 class EvidenceRepository:

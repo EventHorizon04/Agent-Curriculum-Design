@@ -77,6 +77,20 @@ export default function Programs() {
     navigate(stageRoute(p.current_stage))
   }
 
+  const handleDelete = async (e: React.MouseEvent, p: ProgramSummary) => {
+    e.stopPropagation()
+    if (!window.confirm(`ลบหลักสูตร "${p.name_th}" ทั้งหมด? ข้อมูลจะหายถาวรและกู้คืนไม่ได้`)) {
+      return
+    }
+    try {
+      await api.delete(`/programs/${p.program_id}`)
+      await load()
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      setError(axiosErr.response?.data?.detail ?? 'ลบหลักสูตรไม่สำเร็จ')
+    }
+  }
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -112,6 +126,7 @@ export default function Programs() {
               <th className="py-2 pr-4">ระดับ</th>
               <th className="py-2 pr-4">วันที่สร้าง</th>
               <th className="py-2 pr-4">สถานะ</th>
+              <th className="py-2 pr-4"></th>
             </tr>
           </thead>
           <tbody>
@@ -146,6 +161,14 @@ export default function Programs() {
                       {STATUS_LABELS[p.session_status] ?? p.session_status}
                     </span>
                   )}
+                </td>
+                <td className="py-2 pr-4">
+                  <button
+                    onClick={(e) => handleDelete(e, p)}
+                    className="text-red-600 hover:underline text-xs"
+                  >
+                    ลบ
+                  </button>
                 </td>
               </tr>
             ))}
