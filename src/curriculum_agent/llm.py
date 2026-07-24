@@ -23,7 +23,7 @@ def _get_client() -> instructor.AsyncInstructor:
     return instructor.from_openai(
         AsyncOpenAI(
             base_url=f"{settings.ollama_base_url}/v1",
-            api_key="ollama",
+            api_key=settings.llm_api_key,
         ),
         mode=instructor.Mode.JSON,
     )
@@ -33,7 +33,7 @@ def _get_client() -> instructor.AsyncInstructor:
 def _get_raw_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         base_url=f"{settings.ollama_base_url}/v1",
-        api_key="ollama",
+        api_key=settings.llm_api_key,
     )
 
 

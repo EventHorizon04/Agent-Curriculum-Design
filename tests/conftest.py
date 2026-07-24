@@ -15,6 +15,7 @@ if sys.platform == "win32":
 
 import pytest
 
+from curriculum_agent.config import settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
@@ -29,6 +30,16 @@ SMART_PASS = SMARTCheck(specific=True, measurable=True, achievable=True, relevan
 SMART_FAIL = SMARTCheck(
     specific=True, measurable=False, achievable=True, relevant=True, timely=True
 )
+
+
+@pytest.fixture(autouse=True)
+def _default_api_key_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests assume auth is disabled (settings.api_key is None) unless a test
+    explicitly monkeypatches it otherwise. Without this, a developer's local
+    .env with a real API_KEY leaks into the whole suite via pydantic-settings'
+    env loading, turning every unauthenticated-request test into a spurious
+    401."""
+    monkeypatch.setattr(settings, "api_key", None)
 
 
 @pytest.fixture

@@ -7,7 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # extra="ignore": stray/legacy keys in .env (e.g. from prior experiments)
+    # must not crash Settings() — only declared fields are read.
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     ollama_base_url: str = "http://localhost:11434"
     qdrant_url: str = "http://localhost:6333"
@@ -17,9 +19,15 @@ class Settings(BaseSettings):
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin_dev"
-    light_model: str = "scb10x/typhoon2-8b-instruct"
-    heavy_model: str = "qwen2.5:7b"
+    light_model: str = "gemma4:31b-cloud"
+    heavy_model: str = "gemma4:31b-cloud"
+    # REST API auth secret (require_api_key). None disables auth (dev default).
     api_key: str | None = None
+    # Sent as the OpenAI-client api_key when talking to local Ollama. Ollama
+    # ignores it for local models; cloud-tagged models (":cloud") are
+    # authenticated via the host's own `ollama signin` session, not this
+    # value — "ollama" is just a non-empty placeholder the client requires.
+    llm_api_key: str = "ollama"
     llm_rate_limit_per_minute: int = 5
 
     @computed_field  # type: ignore[prop-decorator]
