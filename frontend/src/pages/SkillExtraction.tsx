@@ -53,6 +53,9 @@ interface ExtractedSkill {
   source_evidence_id: string
   extraction_method: string
   confidence: number
+  bloom_level: string | null
+  ksec_category: string
+  importance_score: number
 }
 
 interface ClusterTrace {
@@ -220,8 +223,22 @@ function ClusterTracePanel({ programId, clusterId }: { programId: string; cluste
                       <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${SKILL_TYPE_COLOR[s.skill_type] ?? 'bg-gray-100 text-gray-600'}`}>
                         {SKILL_TYPE_LABEL[s.skill_type] ?? s.skill_type}
                       </span>
+                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${KSEC_COLOR[s.ksec_category] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {KSEC_LABEL[s.ksec_category] ?? s.ksec_category}
+                      </span>
+                      {s.bloom_level && (
+                        <span className="text-xs px-1.5 py-0.5 rounded font-medium bg-indigo-100 text-indigo-800">
+                          {LEVEL_TH[s.bloom_level] ?? s.bloom_level}
+                        </span>
+                      )}
                       <span className="text-xs font-mono text-gray-400 bg-gray-50 border border-gray-100 rounded px-1.5 py-0.5">
                         {s.extraction_method}
+                      </span>
+                      <span
+                        title="importance_score (demand ก่อน cluster)"
+                        className={`text-xs font-mono px-1.5 py-0.5 rounded ${s.importance_score >= 0.7 ? 'text-green-700 bg-green-50' : s.importance_score >= 0.4 ? 'text-amber-700 bg-amber-50' : 'text-red-700 bg-red-50'}`}
+                      >
+                        ★{(s.importance_score * 100).toFixed(0)}%
                       </span>
                       <span className={`text-xs font-mono px-1.5 py-0.5 rounded ${s.confidence >= 0.7 ? 'text-green-700 bg-green-50' : s.confidence >= 0.4 ? 'text-amber-700 bg-amber-50' : 'text-red-700 bg-red-50'}`}>
                         {(s.confidence * 100).toFixed(0)}%
@@ -286,6 +303,21 @@ const SKILL_TYPE_COLOR: Record<string, string> = {
   psychomotor: 'bg-green-100 text-green-800',
   affective: 'bg-purple-100 text-purple-800',
   mixed: 'bg-orange-100 text-orange-800',
+}
+
+// TQF K/S/E/C — 4-domain collapse of มคอ. domains 1-5, orthogonal to skill_type (Bloom domain)
+const KSEC_LABEL: Record<string, string> = {
+  K: 'K · ความรู้',
+  S: 'S · ทักษะ',
+  E: 'E · จริยธรรม',
+  C: 'C · คุณลักษณะ',
+}
+
+const KSEC_COLOR: Record<string, string> = {
+  K: 'bg-sky-100 text-sky-800',
+  S: 'bg-teal-100 text-teal-800',
+  E: 'bg-rose-100 text-rose-800',
+  C: 'bg-amber-100 text-amber-800',
 }
 
 const BLOOM_ORDER = ['remember', 'understand', 'apply', 'analyze', 'evaluate', 'create'] as const

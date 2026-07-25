@@ -66,6 +66,9 @@ class SkillTable(Base):
     source_evidence_id: Mapped[str] = mapped_column(String, ForeignKey("evidence.evidence_id"))
     extraction_method: Mapped[str] = mapped_column(String(20))
     confidence: Mapped[float] = mapped_column(Float)
+    bloom_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ksec_category: Mapped[str] = mapped_column(String(1), default="K")
+    importance_score: Mapped[float] = mapped_column(Float, default=0.0)
 
 
 class ClusterTable(Base):

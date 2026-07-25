@@ -17,12 +17,14 @@ from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
     ExtractedSkill,
+    KSECCategory,
     SkillCluster,
     SkillType,
     StakeholderEvidence,
     StakeholderType,
 )
 from curriculum_agent.prompts.classify_cluster_bloom import build_cluster_bloom_prompt
+from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.name_cluster import build_name_cluster_prompt
 from curriculum_agent.stages.llm_clustering import cluster_skill_names, dedupe_names
 
@@ -32,6 +34,11 @@ class _SkillItem(BaseModel):
     skill_name_en: str | None = None
     skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
     is_subject_specific: bool
+    # Cognitive-only Bloom tag — see build_extract_skills_prompt.
+    bloom_level: (
+        Literal["remember", "understand", "apply", "analyze", "evaluate", "create"] | None
+    ) = None
+    ksec_category: Literal["K", "S", "E", "C"] = "K"
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
 
     @field_validator("skill_name_th", mode="before")
@@ -69,19 +76,6 @@ class _ClusterBloomResult(BaseModel):
     is_subject_specific: bool
 
 
-_EXTRACT_SYSTEM = (
-    "คุณเป็นผู้เชี่ยวชาญวิเคราะห์ทักษะจากข้อความ\n"
-    "จากข้อความ evidence จงระบุทักษะที่ตลาดแรงงานต้องการ\n"
-    "ตอบเป็น JSON object: { skills: [ { "
-    "skill_name_th: ชื่อทักษะภาษาไทย, "
-    "skill_name_en: ชื่อทักษะภาษาอังกฤษมาตรฐาน "
-    "(เช่น 'Python', 'Data Analysis', 'Communication') ห้ามเว้นว่าง, "
-    "skill_type (knowledge|psychomotor|affective|mixed), "
-    "is_subject_specific, confidence } ] }\n"
-    "สกัดไม่เกิน 8 ทักษะต่อข้อความ เน้นทักษะที่วัดได้จริง"
-)
-
-
 _WEIGHTED_CLASSES = {"requirement", "need", "unclassified"}
 
 
@@ -113,6 +107,36 @@ def _compute_demand_score(
     return score, is_optional, coverage
 
 
+def _compute_skill_importance(
+    raw_skills: list[dict[str, Any]],
+    classified: list[dict[str, Any]],
+    classification_by_evidence: dict[str, str],
+    total_req_need_evidence: int,
+) -> dict[str, float]:
+    """Per-skill-name demand, computed before clustering.
+
+    Same weighting as SkillCluster.demand_score (_compute_demand_score), grouped
+    by skill_name_th instead of cluster membership — every ExtractedSkill mention
+    of the same name gets the same importance_score.
+    """
+    eids_by_name: dict[str, set[str]] = {}
+    for s in raw_skills:
+        eids_by_name.setdefault(s["skill_name_th"], set()).add(s["evidence_id"])
+
+    scores: dict[str, float] = {}
+    for name, eids in eids_by_name.items():
+        stk_coverage: dict[str, int] = {}
+        for item_dict in classified:
+            if item_dict.get("evidence_id") in eids:
+                stype = item_dict.get("stakeholder_type", "employer")
+                stk_coverage[stype] = stk_coverage.get(stype, 0) + 1
+        score, _, _ = _compute_demand_score(
+            list(eids), stk_coverage, total_req_need_evidence, classification_by_evidence
+        )
+        scores[name] = score
+    return scores
+
+
 async def run(state: AgentState) -> AgentState:
     """Stage 2: extract skills from evidence, cluster with the heavy LLM, name clusters."""
     classified = state.get("classified_evidence", [])
@@ -139,11 +163,7 @@ async def run(state: AgentState) -> AgentState:
             result = _ExtractedSkillsResponse.model_validate_json(cached[1])
             logger.debug(f"Cache hit for evidence {evidence.evidence_id}")
         else:
-            evidence_context = f"[ประเภทหลักฐาน: {evidence.classification}]\n{text_slice}"
-            messages = [
-                {"role": "system", "content": _EXTRACT_SYSTEM},
-                {"role": "user", "content": evidence_context},
-            ]
+            messages = build_extract_skills_prompt(text_slice, evidence.classification)
             try:
                 result = await complete_light(_ExtractedSkillsResponse, messages)
                 await _cache.set(cache_key, settings.light_model, result.model_dump_json())
@@ -167,7 +187,17 @@ async def run(state: AgentState) -> AgentState:
         state["current_stage"] = "skill_extraction"
         return state
 
-    # --- Step 2: Build ExtractedSkill objects ---
+    # --- Step 2: per-skill-name importance, then build ExtractedSkill objects ---
+    classification_by_evidence: dict[str, str] = {
+        str(d["evidence_id"]): str(d.get("classification", "unclassified"))
+        for d in classified
+        if d.get("evidence_id")
+    }
+    total_req_need = sum(1 for c in classification_by_evidence.values() if c in _WEIGHTED_CLASSES)
+    importance_by_name = _compute_skill_importance(
+        raw_skills, classified, classification_by_evidence, total_req_need
+    )
+
     extracted: list[ExtractedSkill] = []
     for s in raw_skills:
         skill_id = str(uuid.uuid4())
@@ -182,6 +212,9 @@ async def run(state: AgentState) -> AgentState:
                 source_evidence_id=s["evidence_id"],
                 extraction_method=s.get("extraction_method", "llm"),
                 confidence=s.get("confidence", 0.8),
+                bloom_level=s.get("bloom_level"),
+                ksec_category=KSECCategory(s.get("ksec_category", "K")),
+                importance_score=importance_by_name.get(s["skill_name_th"], 0.0),
             )
         )
 
@@ -194,13 +227,8 @@ async def run(state: AgentState) -> AgentState:
     ]
 
     # --- Step 4 & 5: Name clusters via LLM and compute demand_score ---
+    # classification_by_evidence / total_req_need already computed in Step 2.
     clusters: list[SkillCluster] = []
-    classification_by_evidence: dict[str, str] = {
-        str(d["evidence_id"]): str(d.get("classification", "unclassified"))
-        for d in classified
-        if d.get("evidence_id")
-    }
-    total_req_need = sum(1 for c in classification_by_evidence.values() if c in _WEIGHTED_CLASSES)
 
     for cluster_idx, member_indices in enumerate(member_indices_per_cluster):
         member_skills = [extracted[i] for i in member_indices]

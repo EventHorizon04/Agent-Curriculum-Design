@@ -63,6 +63,17 @@ class SkillType(StrEnum):
     MIXED = "mixed"
 
 
+# TQF 4-domain collapse (มคอ. domains 1-5 rolled into 4 tags) — used to pre-tag
+# ExtractedSkill for eventual มคอ.2/CHECO mapping. K=ความรู้, E=คุณธรรมจริยธรรม,
+# C=คุณลักษณะบุคคล; S absorbs TQF's ทักษะทางปัญญา + ทักษะปฏิบัติ + ทักษะความสัมพันธ์
+# ระหว่างบุคคล + ทักษะการวิเคราะห์เชิงตัวเลข/การสื่อสาร/IT.
+class KSECCategory(StrEnum):
+    KNOWLEDGE = "K"
+    SKILL = "S"
+    ETHICS = "E"
+    CHARACTER = "C"
+
+
 class Domain(StrEnum):
     COGNITIVE = "cognitive"
     PSYCHOMOTOR = "psychomotor"
@@ -201,6 +212,15 @@ class ExtractedSkill(BaseModel):
     source_evidence_id: str
     extraction_method: Literal["keybert", "llm", "manual", "ner"]
     confidence: float = Field(ge=0, le=1)
+    # Cognitive-only Bloom tag (no psychomotor/krathwohl scale at extraction level —
+    # those are assigned later, at cluster level, once domain is settled by clustering).
+    bloom_level: BloomLevel | None = None
+    # TQF K/S/E/C category — always set.
+    ksec_category: KSECCategory
+    # Per-skill-name demand, computed pre-clustering: same formula/weights as
+    # SkillCluster.demand_score (requirement+need evidence only, want=0 weight),
+    # grouped by skill_name_th instead of cluster membership.
+    importance_score: float = Field(ge=0, le=1)
 
 
 class SkillCluster(BaseModel):
