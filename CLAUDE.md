@@ -18,12 +18,10 @@ The `curriculum-design-agent` skill (`.claude/skills/curriculum-design-agent/`) 
 - **Agent:** LangGraph (state machine with `interrupt` for HITL)
 - **LLM:** Ollama running **natively on the host** (no Ollama container) serving Typhoon 2 8B (light) + Qwen 2.5 7B/14B (heavy). Dual-model pattern — see `src/curriculum_agent/llm.py`
 - **Structured output:** Instructor + Pydantic v2 (no hand-parsing JSON). The `openai` package is a dependency because Instructor uses OpenAI-compatible API to talk to Ollama — not for the OpenAI cloud service.
-- **Thai NLP:** PyThaiNLP for tokenization, BGE-M3 for embeddings
-- **Skill extraction:** KeyBERT + scikit-learn
-- **Vector store:** Qdrant
+- **Clustering:** LLM-based (heavy model) — no embeddings/KeyBERT/Qdrant on this branch; see docs/superpowers/specs/2026-07-18-llm-only-pipeline-design.md
 - **Storage:** PostgreSQL (structured), MinIO (raw files)
 - **API/UI:** FastAPI backend, React 19 + Vite + TypeScript + Tailwind frontend in `frontend/`
-- **Deployment:** Hybrid for the PoC — postgres/qdrant/minio/pgadmin in Docker Compose, Ollama and the API/UI run natively
+- **Deployment:** Hybrid for the PoC — postgres/minio/pgadmin in Docker Compose, Ollama and the API/UI run natively
 
 ## Running it
 
@@ -74,7 +72,7 @@ The `Data/` directory holds real-world inputs used during Stage 2 (stakeholder n
 - `Data/Skills.xlsx` — structured skill taxonomy aligned with the occupation data
 - `Data/linkedin_offers2026-04-30.csv` — scraped LinkedIn job postings (April 2026 snapshot) for skill-frequency analysis
 
-These files feed the NLP pipeline; do not reformat them without checking scraper/parser compatibility.
+These files feed the extraction pipeline; do not reformat them without checking scraper/parser compatibility.
 
 ## Code conventions
 
@@ -110,9 +108,8 @@ src/curriculum_agent/
   config.py            ← pydantic-settings, reads .env
   prompts/             ← one file per LLM prompt, typed builder fns
   stages/              ← intake, stakeholder_needs, skill_extraction,
-                          plo_synthesis, plo_report (+ smart_rules)
-  data/                ← repositories, postgres, qdrant, minio_store
-  nlp/                 ← embedding, extraction (KeyBERT)
+                          llm_clustering, plo_synthesis, plo_report (+ smart_rules)
+  data/                ← repositories, postgres, minio_store
   scrapers/            ← per-site job scrapers
   parsers/             ← document parsers (Tika, มคอ.1)
   exporters/           ← CHECO, มคอ.2, Excel matrix
@@ -135,7 +132,7 @@ tests/integration/     ← LLM mocked, full stages
 ## Common pitfalls
 
 - **Don't bypass the SMART retry loop after synthesis.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. Hard checks are pure code (`smart_rules.py`); the soft judge is a separate light-model prompt. Escalated PLOs must stay visible in the UI.
-- **Don't pass full evidence text into synthesis prompts.** Summarize each cluster in ≤200 tokens. Full evidence stays in Postgres/Qdrant for drill-down, not in the synthesis prompt.
+- **Don't pass full evidence text into synthesis prompts.** Summarize each cluster in ≤200 tokens. Full evidence stays in Postgres for drill-down, not in the synthesis prompt.
 - **Don't ask the model for "as many PLOs as needed."** Always 6–10 main PLOs; 1–4 optional PLOs from want-clusters in a separate non-blocking pass.
 - **Test Pydantic validators before integration tests.** They're the cheapest, most important guardrail. If a validator is wrong, every downstream test is suspect.
 - **Don't `git push` model files.** Ollama models live on the host. `.env` files with API keys are gitignored — keep it that way.

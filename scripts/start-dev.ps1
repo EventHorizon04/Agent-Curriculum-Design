@@ -3,7 +3,7 @@
 .SYNOPSIS
   Start local dev environment: DB services (Docker) + FastAPI (local)
 .DESCRIPTION
-  Checks prerequisites, starts postgres/qdrant/minio via Docker Compose,
+  Checks prerequisites, starts postgres/minio via Docker Compose,
   runs Alembic migrations, then starts uvicorn in the background.
   React UI must be started separately: cd frontend && npm run dev
 #>
@@ -42,7 +42,7 @@ try {
 }
 
 # --- 3. Start Docker DB services ---
-Write-Step "Starting DB services (postgres, qdrant, minio)..."
+Write-Step "Starting DB services (postgres, minio)..."
 docker compose up -d --remove-orphans
 if ($LASTEXITCODE -ne 0) { Write-Fail "docker compose up failed" }
 Write-Ok "Containers started"
@@ -80,7 +80,6 @@ Write-Host "=== Dev environment ready ===" -ForegroundColor Yellow
 Write-Host "  API:           http://localhost:8000"
 Write-Host "  API docs:      http://localhost:8000/docs"
 Write-Host "  MinIO console: http://localhost:9001"
-Write-Host "  Qdrant:        http://localhost:6333"
 Write-Host ""
 Write-Host "  UI (start separately):" -ForegroundColor Yellow
 Write-Host "    cd frontend && npm run dev   ->  http://localhost:5173"

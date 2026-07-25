@@ -230,7 +230,7 @@ class ExtractedSkill(BaseModel):
     # Cognitive-only Bloom tag (no psychomotor/krathwohl scale at extraction level —
     # those are assigned later, at cluster level, once domain is settled by clustering).
     bloom_level: BloomLevel | None = None
-    # TQF K/S/E/C category — always set (defaults to K for untagged KeyBERT fallback skills).
+    # TQF K/S/E/C category — always set.
     ksec_category: KSECCategory
     # Per-skill-name demand, computed pre-clustering: same formula/weights as
     # SkillCluster.demand_score (requirement+need evidence only, want=0 weight),

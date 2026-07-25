@@ -1,18 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import uuid
 from typing import Any, Literal
 
-import numpy as np
 from loguru import logger
-from pydantic import BaseModel, Field
-from qdrant_client.models import Distance, PointStruct, VectorParams
-from sklearn.cluster import KMeans
+from pydantic import BaseModel, Field, field_validator
 
 from curriculum_agent.config import settings
-from curriculum_agent.data.qdrant import SKILL_COLLECTION, get_qdrant
 from curriculum_agent.data.repositories import (
     ClusterRepository,
     LLMCacheRepository,
@@ -28,17 +23,14 @@ from curriculum_agent.models import (
     StakeholderEvidence,
     StakeholderType,
 )
-from curriculum_agent.nlp.embedding import embed
-from curriculum_agent.nlp.extraction import extract_keywords
 from curriculum_agent.prompts.classify_cluster_bloom import build_cluster_bloom_prompt
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.name_cluster import build_name_cluster_prompt
-
-_EMBED_DIM = 1024
+from curriculum_agent.stages.llm_clustering import cluster_skill_names, dedupe_names
 
 
 class _SkillItem(BaseModel):
-    skill_name_th: str
+    skill_name_th: str = Field(min_length=1)
     skill_name_en: str | None = None
     skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
     is_subject_specific: bool
@@ -48,6 +40,14 @@ class _SkillItem(BaseModel):
     ) = None
     ksec_category: Literal["K", "S", "E", "C"] = "K"
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
+
+    @field_validator("skill_name_th", mode="before")
+    @classmethod
+    def _strip_skill_name_th(cls, v: object) -> object:
+        """Strip surrounding whitespace before min_length is checked, so a
+        whitespace-only name fails validation (Instructor will reask) instead
+        of silently passing as a non-empty string."""
+        return v.strip() if isinstance(v, str) else v
 
 
 class _ExtractedSkillsResponse(BaseModel):
@@ -74,17 +74,6 @@ class _ClusterBloomResult(BaseModel):
         Literal["receiving", "responding", "valuing", "organization", "characterization"] | None
     ) = None
     is_subject_specific: bool
-
-
-async def _ensure_skill_collection() -> None:
-    client = get_qdrant()
-    existing = await client.get_collections()
-    names = {c.name for c in existing.collections}
-    if SKILL_COLLECTION not in names:
-        await client.create_collection(
-            collection_name=SKILL_COLLECTION,
-            vectors_config=VectorParams(size=_EMBED_DIM, distance=Distance.COSINE),
-        )
 
 
 _WEIGHTED_CLASSES = {"requirement", "need", "unclassified"}
@@ -149,7 +138,7 @@ def _compute_skill_importance(
 
 
 async def run(state: AgentState) -> AgentState:
-    """Stage 2: extract skills from evidence, cluster with KMeans, name clusters with LLM."""
+    """Stage 2: extract skills from evidence, cluster with the heavy LLM, name clusters."""
     classified = state.get("classified_evidence", [])
     program_id = state.get("program_id", "unknown")
     logger.info(f"Stage 2: skill_extraction from {len(classified)} evidence items")
@@ -191,30 +180,6 @@ async def run(state: AgentState) -> AgentState:
                     }
                 )
 
-    # --- Step 2: KeyBERT backup signal ---
-    for eid, text in evidence_texts.items():
-        kw_pairs = extract_keywords(text, top_n=5)
-        for kw, score in kw_pairs:
-            # Find stakeholder type for this evidence
-            stk_type = next(
-                (d["stakeholder_type"] for d in classified if d.get("evidence_id") == eid),
-                "employer",
-            )
-            raw_skills.append(
-                {
-                    "skill_name_th": kw,
-                    "skill_name_en": None,
-                    "skill_type": "knowledge",
-                    "is_subject_specific": True,
-                    "bloom_level": None,
-                    "ksec_category": "K",
-                    "confidence": float(score),
-                    "evidence_id": eid,
-                    "stakeholder_type": stk_type,
-                    "extraction_method": "keybert",
-                }
-            )
-
     if not raw_skills:
         logger.warning("Stage 2: no skills extracted — returning empty clusters")
         state["extracted_skills"] = []
@@ -222,7 +187,7 @@ async def run(state: AgentState) -> AgentState:
         state["current_stage"] = "skill_extraction"
         return state
 
-    # --- Step 3: per-skill-name importance, then build ExtractedSkill objects ---
+    # --- Step 2: per-skill-name importance, then build ExtractedSkill objects ---
     classification_by_evidence: dict[str, str] = {
         str(d["evidence_id"]): str(d.get("classification", "unclassified"))
         for d in classified
@@ -253,28 +218,19 @@ async def run(state: AgentState) -> AgentState:
             )
         )
 
-    skill_texts = [s.skill_name_th for s in extracted]
-    vectors = await asyncio.to_thread(embed, skill_texts)
+    # --- Step 3: LLM clustering over deduped skill names ---
+    unique_names, name_groups = dedupe_names([s.skill_name_th for s in extracted])
+    logger.info(f"Clustering {len(unique_names)} unique skills via heavy model")
+    unique_clusters = await cluster_skill_names(unique_names)
+    member_indices_per_cluster = [
+        sorted({orig for u in group for orig in name_groups[u]}) for group in unique_clusters
+    ]
 
-    # --- Step 4: KMeans clustering ---
-    n_skills = len(extracted)
-    n_clusters = max(1, min(n_skills, max(4, min(12, n_skills // 3))))
-    matrix = np.array(vectors, dtype=np.float32)
-
-    # TODO: consider HDBSCAN or density-based clustering
-    # to avoid forcing all skills into clusters
-    kmeans = KMeans(n_clusters=n_clusters, random_state=42, n_init="auto")
-    labels = kmeans.fit_predict(matrix)
-
-    # --- Step 5 & 6: Name clusters via LLM and compute demand_score ---
-    # classification_by_evidence / total_req_need already computed in Step 3.
+    # --- Step 4 & 5: Name clusters via LLM and compute demand_score ---
+    # classification_by_evidence / total_req_need already computed in Step 2.
     clusters: list[SkillCluster] = []
 
-    for cluster_idx in range(n_clusters):
-        member_indices = [i for i, lbl in enumerate(labels) if lbl == cluster_idx]
-        if not member_indices:
-            continue
-
+    for cluster_idx, member_indices in enumerate(member_indices_per_cluster):
         member_skills = [extracted[i] for i in member_indices]
         source_eids = list({s.source_evidence_id for s in member_skills})
 
@@ -360,28 +316,6 @@ async def run(state: AgentState) -> AgentState:
     await SkillRepository().bulk_insert(extracted)
     repo = ClusterRepository()
     await repo.bulk_insert(clusters)
-
-    # Upsert cluster centroids to Qdrant
-    await _ensure_skill_collection()
-    client = get_qdrant()
-    centroid_vecs = kmeans.cluster_centers_.tolist()
-    points = [
-        PointStruct(
-            id=abs(hash(c.cluster_id)) % (2**63),
-            vector=centroid_vecs[i],
-            payload={
-                "cluster_id": c.cluster_id,
-                "program_id": c.program_id,
-                "canonical_name_th": c.canonical_name_th,
-                "demand_score": c.demand_score,
-                "is_common_need": c.is_common_need,
-            },
-        )
-        for i, c in enumerate(clusters)
-        if i < len(centroid_vecs)
-    ]
-    if points:
-        await client.upsert(collection_name=SKILL_COLLECTION, points=points)
 
     state["extracted_skills"] = [s.model_dump(mode="json") for s in extracted]
     state["skill_clusters"] = [c.model_dump(mode="json") for c in clusters]
