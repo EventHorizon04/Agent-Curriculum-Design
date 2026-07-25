@@ -91,6 +91,10 @@ Run in this order; on any hard-fail, send the PLO back to the LLM with the speci
 
 Hard-fails trigger the automatic retry loop (bounded — max 3 attempts before escalating to human review). Soft-fails surface as warnings in the human-in-the-loop checkpoint UI, not block the pipeline.
 
+## K/S/E/C vs Bloom domain — do not conflate
+
+`ExtractedSkill.ksec_category` (see `data-schemas.md`) is a **TQF/มคอ. compliance tag**, not a Bloom domain. It is a 4-way collapse of มคอ.'s 5 domains: K=ความรู้, S=ทักษะ (absorbs ทักษะทางปัญญา + ปฏิบัติ + ความสัมพันธ์ระหว่างบุคคล + วิเคราะห์ตัวเลข/สื่อสาร/IT), E=คุณธรรมจริยธรรม, C=คุณลักษณะบุคคล. It exists to make eventual มคอ.2/CHECO domain mapping traceable back to the skill level, and is orthogonal to `ExtractedSkill.skill_type` (Bloom's 3 domains: knowledge/psychomotor/affective/mixed) and `bloom_level` (the cognitive-scale tag below). A skill can be `skill_type=knowledge` and `ksec_category=S` at the same time (e.g. "วิเคราะห์ข้อมูลเชิงสถิติ" is cognitive-domain but sits in TQF's ทักษะ bucket) — don't try to derive one field from the other.
+
 ## Bloom's Taxonomy — three learning domains
 
 Bloom's Taxonomy spans three domains, each with its own level scale. Tag every outcome with the scale matching its domain:

@@ -79,6 +79,13 @@ Why `classification`: distinguishing needs (must-have) from wants (nice-to-have)
 ## Stage 3: Extracted skills and clusters
 
 ```python
+class KSECCategory(str, Enum):
+    """TQF 4-domain collapse (มคอ. domains 1-5 rolled into 4 tags)."""
+    KNOWLEDGE = "K"  # ความรู้
+    SKILL = "S"      # ทักษะทางปัญญา + ปฏิบัติ + ความสัมพันธ์ระหว่างบุคคล + วิเคราะห์ตัวเลข/สื่อสาร/IT
+    ETHICS = "E"      # คุณธรรมจริยธรรม
+    CHARACTER = "C"   # คุณลักษณะบุคคล
+
 class ExtractedSkill(BaseModel):
     """A single skill mention extracted from one evidence item. High-volume."""
     skill_id: str
@@ -90,6 +97,17 @@ class ExtractedSkill(BaseModel):
     source_evidence_id: str  # FK to StakeholderEvidence
     extraction_method: Literal["keybert", "llm", "manual", "ner"]
     confidence: float = Field(ge=0, le=1)
+    # Cognitive-only Bloom tag — no psychomotor/krathwohl scale at extraction
+    # level; those get assigned later at cluster level once domain settles.
+    # None for KeyBERT-only fallback mentions (no LLM tagging pass).
+    bloom_level: BloomLevel | None = None
+    # TQF K/S/E/C category. Always set — defaults to K for KeyBERT fallback.
+    ksec_category: KSECCategory
+    # Per-skill-name demand, computed pre-clustering with the SAME weighting as
+    # SkillCluster.demand_score (requirement+need evidence only, want=0 weight),
+    # grouped by skill_name_th instead of cluster membership. Every mention of
+    # the same skill name across evidence carries the same importance_score.
+    importance_score: float = Field(ge=0, le=1)
 
 class SkillCluster(BaseModel):
     """Output of Stage 3 — grouped skills representing a coherent capability."""
