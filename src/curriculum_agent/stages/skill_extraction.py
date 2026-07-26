@@ -33,6 +33,13 @@ from curriculum_agent.stages.llm_clustering import cluster_skill_names, dedupe_n
 
 _WS_RE = re.compile(r"\s+")
 
+# Minimum length for a quote to count as evidence. Thai has no inter-word
+# spaces, so character count is the available proxy for "this is a phrase, not
+# a stray glyph". Below this, a span is so likely to appear in any Thai text by
+# chance that matching it proves nothing about whether the skill was invented.
+# Tunable: watch the logged drop rate and raise or lower it against real data.
+_MIN_SPAN_CHARS = 12
+
 
 def normalize_for_match(text: str) -> str:
     """Collapse whitespace, trim, lowercase — for substring comparison only."""
@@ -40,14 +47,18 @@ def normalize_for_match(text: str) -> str:
 
 
 def is_grounded(span_th: str, evidence_text: str) -> bool:
-    """True when `span_th` really occurs in `evidence_text`.
+    """True when `span_th` really occurs in `evidence_text` and is long enough
+    to prove it, not merely disprove nothing.
 
     Verifies the model quoted rather than invented. Whitespace-insensitive so a
     re-spaced but genuine quote still passes; anything the evidence does not
-    contain fails, and the skill is dropped by the caller.
+    contain fails, and the skill is dropped by the caller. Spans shorter than
+    `_MIN_SPAN_CHARS` (after normalisation) are rejected outright, since a
+    single character or punctuation mark occurs in almost any real evidence
+    text by chance and would otherwise pass without proving the quote is real.
     """
     span = normalize_for_match(span_th)
-    if not span:
+    if len(span) < _MIN_SPAN_CHARS:
         return False
     return span in normalize_for_match(evidence_text)
 
@@ -57,7 +68,7 @@ class _SkillItem(BaseModel):
     skill_name_en: str | None = None
     ksec_category: Literal["K", "GS", "SS", "C", "E"]
     bloom_level: Literal["remember", "understand", "apply", "analyze", "evaluate", "create"]
-    evidence_span_th: str = Field(min_length=1)
+    evidence_span_th: str = Field(min_length=_MIN_SPAN_CHARS)
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
 
     @field_validator("skill_name_th", "evidence_span_th", mode="before")
@@ -135,6 +146,8 @@ async def run(state: AgentState) -> AgentState:
     raw_skills: list[dict[str, Any]] = []
     evidence_texts: dict[str, str] = {}
     dropped_ungrounded = 0
+    dropped_too_short = 0
+    dropped_not_found = 0
     _cache = LLMCacheRepository()
 
     for item_dict in classified:
@@ -163,9 +176,15 @@ async def run(state: AgentState) -> AgentState:
             for sk in result.skills:
                 if not is_grounded(sk.evidence_span_th, evidence.raw_text_th):
                     dropped_ungrounded += 1
+                    if len(normalize_for_match(sk.evidence_span_th)) < _MIN_SPAN_CHARS:
+                        dropped_too_short += 1
+                        reason = "span too short to prove anything"
+                    else:
+                        dropped_not_found += 1
+                        reason = "quoted text not found in evidence"
                     logger.debug(
                         f"  dropped ungrounded skill '{sk.skill_name_th}' "
-                        f"from {evidence.evidence_id}"
+                        f"from {evidence.evidence_id} ({reason})"
                     )
                     continue
                 raw_skills.append(
@@ -178,9 +197,13 @@ async def run(state: AgentState) -> AgentState:
 
     if dropped_ungrounded:
         total_seen = len(raw_skills) + dropped_ungrounded
+        drop_rate = dropped_ungrounded / total_seen * 100
         logger.warning(
-            f"Dropped {dropped_ungrounded}/{total_seen} skills failing the groundedness "
-            "check (quoted text not found in evidence)"
+            f"Dropped {dropped_ungrounded}/{total_seen} ({drop_rate:.1f}%) skills failing "
+            "the groundedness check: "
+            f"{dropped_too_short} too-short (span below {_MIN_SPAN_CHARS} chars, likely "
+            f"paraphrase/vague quote), {dropped_not_found} not-found in evidence "
+            "(likely fabricated)"
         )
     state["dropped_ungrounded_count"] = dropped_ungrounded
 
