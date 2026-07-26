@@ -9,27 +9,17 @@ from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 
 from curriculum_agent.config import settings
-from curriculum_agent.data.repositories import (
-    ClusterRepository,
-    LLMCacheRepository,
-    SkillRepository,
-)
+from curriculum_agent.data.repositories import LLMCacheRepository, SkillRepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
     BloomLevel,
     ExtractedSkill,
     KSECCategory,
-    SkillCluster,
-    SkillType,
     StakeholderEvidence,
-    StakeholderType,
 )
-from curriculum_agent.prompts.classify_cluster_bloom import build_cluster_bloom_prompt
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
-from curriculum_agent.prompts.name_cluster import build_name_cluster_prompt
 from curriculum_agent.stages.demand import WEIGHTED_CLASSES, compute_demand_score
-from curriculum_agent.stages.llm_clustering import cluster_skill_names, dedupe_names
 
 _WS_RE = re.compile(r"\s+")
 
@@ -83,39 +73,17 @@ class _ExtractedSkillsResponse(BaseModel):
     skills: list[_SkillItem]
 
 
-class _ClusterNameResult(BaseModel):
-    canonical_name_th: str
-    canonical_name_en: str
-    description_th: str
-    skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
-    is_subject_specific: bool
-    sample_quotes_th: list[str] = Field(default_factory=list)
-
-
-class _ClusterBloomResult(BaseModel):
-    bloom_level: (
-        Literal["remember", "understand", "apply", "analyze", "evaluate", "create"] | None
-    ) = None
-    psychomotor_level: (
-        Literal["imitate", "manipulate", "precise", "articulate", "naturalize"] | None
-    ) = None
-    krathwohl_level: (
-        Literal["receiving", "responding", "valuing", "organization", "characterization"] | None
-    ) = None
-    is_subject_specific: bool
-
-
 def _compute_skill_importance(
     raw_skills: list[dict[str, Any]],
     classified: list[dict[str, Any]],
     classification_by_evidence: dict[str, str],
     total_req_need_evidence: int,
 ) -> dict[str, float]:
-    """Per-skill-name demand, computed before clustering.
+    """Per-skill-name demand, computed before Need grouping (a later stage).
 
-    Same weighting as SkillCluster.demand_score (compute_demand_score from
+    Same weighting as Need.demand_score (compute_demand_score from
     curriculum_agent.stages.demand), grouped by skill_name_th instead of
-    cluster membership — every ExtractedSkill mention of the same name gets
+    Need membership — every ExtractedSkill mention of the same name gets
     the same importance_score.
     """
     eids_by_name: dict[str, set[str]] = {}
@@ -137,14 +105,17 @@ def _compute_skill_importance(
 
 
 async def run(state: AgentState) -> AgentState:
-    """Stage 2: extract skills from evidence, cluster with the heavy LLM, name clusters."""
+    """Stage 2: extract skills from evidence via the light LLM (grounded, cache-first).
+
+    Grouping into Needs is a separate stage (need_combination); this stage only
+    extracts and persists ExtractedSkill rows.
+    """
     classified = state.get("classified_evidence", [])
     program_id = state.get("program_id", "unknown")
     logger.info(f"Stage 2: skill_extraction from {len(classified)} evidence items")
 
     # --- Step 1: LLM skill extraction per evidence item (cache-first) ---
     raw_skills: list[dict[str, Any]] = []
-    evidence_texts: dict[str, str] = {}
     dropped_ungrounded = 0
     dropped_too_short = 0
     dropped_not_found = 0
@@ -152,7 +123,6 @@ async def run(state: AgentState) -> AgentState:
 
     for item_dict in classified:
         evidence = StakeholderEvidence.model_validate(item_dict)
-        evidence_texts[evidence.evidence_id] = evidence.raw_text_th
 
         text_slice = evidence.raw_text_th[:1200]
         cache_key = hashlib.sha256(
@@ -208,9 +178,8 @@ async def run(state: AgentState) -> AgentState:
     state["dropped_ungrounded_count"] = dropped_ungrounded
 
     if not raw_skills:
-        logger.warning("Stage 2: no skills extracted — returning empty clusters")
+        logger.warning("Stage 2: no skills extracted")
         state["extracted_skills"] = []
-        state["skill_clusters"] = []
         state["current_stage"] = "skill_extraction"
         return state
 
@@ -244,106 +213,8 @@ async def run(state: AgentState) -> AgentState:
             )
         )
 
-    # --- Step 3: LLM clustering over deduped skill names ---
-    unique_names, name_groups = dedupe_names([s.skill_name_th for s in extracted])
-    logger.info(f"Clustering {len(unique_names)} unique skills via heavy model")
-    unique_clusters = await cluster_skill_names(unique_names)
-    member_indices_per_cluster = [
-        sorted({orig for u in group for orig in name_groups[u]}) for group in unique_clusters
-    ]
-
-    # --- Step 4 & 5: Name clusters via LLM and compute demand_score ---
-    # classification_by_evidence / total_req_need already computed in Step 2.
-    clusters: list[SkillCluster] = []
-
-    for cluster_idx, member_indices in enumerate(member_indices_per_cluster):
-        member_skills = [extracted[i] for i in member_indices]
-        source_eids = list({s.source_evidence_id for s in member_skills})
-
-        # Build stakeholder_coverage
-        stk_coverage: dict[str, int] = {}
-        for item_dict in classified:
-            if item_dict.get("evidence_id") in source_eids:
-                stype = item_dict.get("stakeholder_type", "employer")
-                stk_coverage[stype] = stk_coverage.get(stype, 0) + 1
-
-        sample_texts = [evidence_texts.get(eid, "") for eid in source_eids[:3]]
-        kw_list = [s.skill_name_th for s in member_skills]
-
-        try:
-            naming = await complete_light(
-                _ClusterNameResult,
-                build_name_cluster_prompt(kw_list, sample_texts),
-            )
-        except Exception as exc:
-            logger.warning(f"Cluster {cluster_idx} naming failed: {exc}")
-            naming = _ClusterNameResult(
-                canonical_name_th=f"กลุ่มทักษะ {cluster_idx + 1}",
-                canonical_name_en=f"Skill Cluster {cluster_idx + 1}",
-                description_th=", ".join(kw_list[:5]),
-                skill_type="knowledge",
-                is_subject_specific=True,
-            )
-
-        bloom_level: str | None = None
-        psychomotor_level: str | None = None
-        krathwohl_level: str | None = None
-        is_specific = naming.is_subject_specific
-        try:
-            tag = await complete_light(
-                _ClusterBloomResult,
-                build_cluster_bloom_prompt(
-                    naming.canonical_name_th, naming.description_th, kw_list, naming.skill_type
-                ),
-            )
-            if naming.skill_type == "affective":
-                krathwohl_level = tag.krathwohl_level
-            elif naming.skill_type == "psychomotor":
-                psychomotor_level = tag.psychomotor_level
-            else:
-                bloom_level = tag.bloom_level
-            is_specific = tag.is_subject_specific
-        except Exception as exc:
-            logger.warning(f"Cluster {cluster_idx} Bloom tagging failed: {exc}")
-
-        demand, is_optional, cls_coverage = compute_demand_score(
-            source_eids, stk_coverage, total_req_need, classification_by_evidence
-        )
-
-        # Filter stakeholder coverage to valid enum values
-        filtered_coverage = {
-            StakeholderType(k): v
-            for k, v in stk_coverage.items()
-            if k in StakeholderType._value2member_map_
-        }
-        cluster = SkillCluster(
-            cluster_id=str(uuid.uuid4()),
-            program_id=program_id,
-            canonical_name_th=naming.canonical_name_th,
-            canonical_name_en=naming.canonical_name_en,
-            description_th=naming.description_th,
-            skill_type=SkillType(naming.skill_type),
-            is_subject_specific=is_specific,
-            member_skill_ids=[s.skill_id for s in member_skills],
-            source_evidence_ids=source_eids,
-            stakeholder_coverage=filtered_coverage,
-            demand_score=demand,
-            is_common_need=demand > 0.4 and not is_optional,
-            is_optional=is_optional,
-            classification_coverage=cls_coverage,
-            sample_quotes_th=naming.sample_quotes_th[:5],
-            bloom_level=bloom_level,
-            psychomotor_level=psychomotor_level,
-            krathwohl_level=krathwohl_level,
-        )
-        clusters.append(cluster)
-
-    # Persist skills and clusters to Postgres
     await SkillRepository().bulk_insert(extracted)
-    repo = ClusterRepository()
-    await repo.bulk_insert(clusters)
 
     state["extracted_skills"] = [s.model_dump(mode="json") for s in extracted]
-    state["skill_clusters"] = [c.model_dump(mode="json") for c in clusters]
     state["current_stage"] = "skill_extraction"
     return state

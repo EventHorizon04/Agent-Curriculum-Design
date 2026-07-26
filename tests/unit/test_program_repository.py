@@ -125,7 +125,7 @@ async def test_delete_cascade_deletes_tables_in_fk_safe_order() -> None:
     assert result is True
     executed_sql = [str(c.args[0]) for c in mock_session.execute.call_args_list]
     assert executed_sql[0].startswith("DELETE FROM skills")
-    assert executed_sql[1].startswith("DELETE FROM clusters")
+    assert executed_sql[1].startswith("DELETE FROM needs")
     assert executed_sql[2].startswith("DELETE FROM plos")
     assert executed_sql[3].startswith("DELETE FROM checkpoints")
     assert executed_sql[4].startswith("DELETE FROM sessions")

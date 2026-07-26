@@ -8,13 +8,10 @@ from curriculum_agent.models import (
     BloomLevel,
     Domain,
     ExtractedSkill,
-    KrathwohlLevel,
     KSECCategory,
+    Need,
     ProgramCreateRequest,
     ProgramMetadata,
-    PsychomotorLevel,
-    SkillCluster,
-    SkillType,
     SMARTCheck,
     StakeholderType,
 )
@@ -85,7 +82,7 @@ def test_affective_plo_accepts_krathwohl() -> None:
         **make_plo(
             domain=Domain.AFFECTIVE,
             bloom_level=None,
-            krathwohl_level=KrathwohlLevel.VALUING,
+            krathwohl_level="valuing",
         )
     )
     assert plo.domain == Domain.AFFECTIVE
@@ -107,35 +104,16 @@ def test_psychomotor_plo_accepts_psychomotor_level() -> None:
         **make_plo(
             domain=Domain.PSYCHOMOTOR,
             bloom_level=None,
-            psychomotor_level=PsychomotorLevel.PRECISE,
+            psychomotor_level="precise",
             statement_th="สาธิตการใช้เครื่องมือวัดทางไฟฟ้าได้อย่างถูกต้อง",
             action_verb_th="สาธิต",
         )
     )
     assert plo.domain == Domain.PSYCHOMOTOR
-    assert plo.psychomotor_level == PsychomotorLevel.PRECISE
+    assert plo.psychomotor_level == "precise"
 
 
 # ---- new fields (Task 2) ---------------------------------------------------
-
-
-def test_skill_cluster_new_field_defaults() -> None:
-    c = SkillCluster(
-        cluster_id="c1",
-        program_id="p1",
-        canonical_name_th="วิเคราะห์ข้อมูล",
-        description_th="กลุ่มทักษะวิเคราะห์ข้อมูล",
-        skill_type=SkillType.KNOWLEDGE,
-        is_subject_specific=True,
-        member_skill_ids=["s1"],
-        source_evidence_ids=["e1"],
-        demand_score=0.5,
-    )
-    assert c.bloom_level is None
-    assert c.psychomotor_level is None
-    assert c.krathwohl_level is None
-    assert c.is_optional is False
-    assert c.classification_coverage == {}
 
 
 def test_plo_new_field_defaults() -> None:
@@ -350,3 +328,41 @@ def test_extracted_skill_no_longer_has_mixed_capable_fields():
     skill = ExtractedSkill(**_skill_kwargs())
     assert not hasattr(skill, "skill_type")
     assert not hasattr(skill, "is_subject_specific")
+
+
+# ---- Need model (Task 5) -----------------------------------------------
+
+
+def _need_kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "need_id": "N1",
+        "program_id": "cs-test",
+        "statement_th": "สามารถวิเคราะห์ข้อมูลขนาดใหญ่เพื่อหา insight ทางธุรกิจ",
+        "ksec_category": KSECCategory.SS,
+        "bloom_level": BloomLevel.ANALYZE,
+        "member_skill_ids": ["S1", "S2"],
+        "source_evidence_ids": ["E1"],
+        "freq": 2,
+        "demand_score": 0.8,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_need_accepts_valid_payload():
+    need = Need(**_need_kwargs())
+    assert need.freq == 2
+    assert need.is_optional is False
+
+
+@pytest.mark.parametrize("empty_field", ["member_skill_ids", "source_evidence_ids"])
+def test_need_requires_evidence_trail(empty_field: str):
+    with pytest.raises(ValidationError):
+        Need(**_need_kwargs(**{empty_field: []}))
+
+
+def test_skill_cluster_and_mixed_enums_are_gone():
+    import curriculum_agent.models as m
+
+    for removed in ("SkillCluster", "SkillType", "PsychomotorLevel", "KrathwohlLevel"):
+        assert not hasattr(m, removed), f"{removed} should have been deleted"

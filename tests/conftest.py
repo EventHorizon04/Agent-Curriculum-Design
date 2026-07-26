@@ -20,9 +20,9 @@ from curriculum_agent.models import (
     PLO,
     BloomLevel,
     Domain,
+    KSECCategory,
+    Need,
     ProgramMetadata,
-    SkillCluster,
-    SkillType,
     SMARTCheck,
 )
 
@@ -62,22 +62,22 @@ def program_metadata() -> ProgramMetadata:
 
 
 @pytest.fixture
-def skill_cluster() -> SkillCluster:
-    return SkillCluster(
-        cluster_id="C1",
+def need() -> Need:
+    return Need(
+        need_id="N1",
         program_id="cs-test",
-        canonical_name_th="การเขียนโปรแกรม",
-        description_th="ทักษะการเขียนและออกแบบโปรแกรม",
-        skill_type=SkillType.KNOWLEDGE,
-        is_subject_specific=True,
+        statement_th="สามารถเขียนและออกแบบโปรแกรมตามความต้องการของธุรกิจ",
+        ksec_category=KSECCategory.SS,
+        bloom_level=BloomLevel.CREATE,
         member_skill_ids=["S1", "S2"],
         source_evidence_ids=["E1"],
+        freq=2,
         demand_score=0.9,
     )
 
 
 @pytest.fixture
-def valid_plo(skill_cluster: SkillCluster) -> PLO:
+def valid_plo(need: Need) -> PLO:
     return PLO(
         plo_id="PLO1",
         program_id="cs-test",
@@ -87,7 +87,8 @@ def valid_plo(skill_cluster: SkillCluster) -> PLO:
         is_subject_specific=True,
         action_verb_th="ออกแบบ",
         smart_check=SMART_PASS,
-        source_cluster_ids=["C1"],
+        source_cluster_ids=[need.need_id],
+        source_evidence_ids=need.source_evidence_ids,
         rationale_th="ทักษะหลักที่นายจ้างต้องการ",
     )
 
@@ -112,17 +113,17 @@ def sample_metadata() -> ProgramMetadata:
 
 
 @pytest.fixture
-def sample_clusters(sample_metadata: ProgramMetadata) -> list[SkillCluster]:
+def sample_needs(sample_metadata: ProgramMetadata) -> list[Need]:
     return [
-        SkillCluster(
-            cluster_id="C1",
+        Need(
+            need_id="C1",
             program_id=sample_metadata.program_id,
-            canonical_name_th="การเขียนโปรแกรม",
-            description_th="ทักษะการเขียนและออกแบบโปรแกรม",
-            skill_type=SkillType.KNOWLEDGE,
-            is_subject_specific=True,
+            statement_th="สามารถเขียนและออกแบบโปรแกรมตามความต้องการของธุรกิจ",
+            ksec_category=KSECCategory.SS,
+            bloom_level=BloomLevel.CREATE,
             member_skill_ids=["S1", "S2"],
             source_evidence_ids=["E1"],
+            freq=2,
             demand_score=0.9,
         )
     ]

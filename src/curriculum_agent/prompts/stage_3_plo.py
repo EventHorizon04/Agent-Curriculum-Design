@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from curriculum_agent.models import ProgramMetadata, SkillCluster
+from curriculum_agent.models import Need, ProgramMetadata
 
 
 def build_plo_synthesis_prompt(
     metadata: ProgramMetadata,
-    clusters: list[SkillCluster],
+    needs: list[Need],
 ) -> list[dict[str, str]]:
-    cluster_summary = "\n".join(
-        f"- [{c.cluster_id}] {c.canonical_name_th}: {c.description_th} "
-        f"(demand={c.demand_score:.2f}, evidence={len(c.source_evidence_ids)})"
-        for c in clusters
+    need_summary = "\n".join(
+        f"- [{n.need_id}] {n.statement_th} "
+        f"(demand={n.demand_score:.2f}, evidence={len(n.source_evidence_ids)})"
+        for n in needs
     )
     return [
         {
@@ -30,7 +30,7 @@ def build_plo_synthesis_prompt(
                 f"- ระดับ: {metadata.degree_level} ({metadata.duration_years} ปี)\n"
                 f"- มหาวิทยาลัย: {metadata.university} / คณะ: {metadata.faculty}\n"
                 f"- วิสัยทัศน์: {metadata.vision_th}\n\n"
-                f"Skill clusters (สรุปจากหลักฐานผู้มีส่วนได้ส่วนเสีย):\n{cluster_summary}\n\n"
+                f"Needs (สรุปจากหลักฐานผู้มีส่วนได้ส่วนเสีย):\n{need_summary}\n\n"
                 "สังเคราะห์ PLO 6-10 รายการ พร้อม plo_id, statement_th, domain, "
                 "ระดับตาม domain (cognitive → bloom_level, psychomotor → psychomotor_level, "
                 "affective → krathwohl_level), "
@@ -42,11 +42,9 @@ def build_plo_synthesis_prompt(
 
 def build_optional_plo_prompt(
     metadata: ProgramMetadata,
-    clusters: list[SkillCluster],
+    needs: list[Need],
 ) -> list[dict[str, str]]:
-    cluster_summary = "\n".join(
-        f"- [{c.cluster_id}] {c.canonical_name_th}: {c.description_th}" for c in clusters
-    )
+    need_summary = "\n".join(f"- [{n.need_id}] {n.statement_th}" for n in needs)
     return [
         {
             "role": "system",
@@ -61,7 +59,7 @@ def build_optional_plo_prompt(
             "role": "user",
             "content": (
                 f"สาขาวิชา: {metadata.field} ระดับ {metadata.degree_level}\n"
-                f"Want-based skill clusters:\n{cluster_summary}\n\n"
+                f"Want-based Needs:\n{need_summary}\n\n"
                 "สังเคราะห์ PLO เสริม 1-4 รายการ พร้อม plo_id (นำหน้าด้วย OPT), statement_th, "
                 "domain, ระดับตาม domain (cognitive → bloom_level, "
                 "psychomotor → psychomotor_level, affective → krathwohl_level), "

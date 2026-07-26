@@ -39,7 +39,7 @@ class AgentState(TypedDict, total=False):
 
     # Stage 2
     extracted_skills: list[dict[str, Any]]
-    skill_clusters: list[dict[str, Any]]
+    needs: list[dict[str, Any]]
     dropped_ungrounded_count: int
 
     # Stage 3
@@ -71,6 +71,12 @@ async def stage_2_skill_extraction(state: AgentState) -> AgentState:
     return await run(state)
 
 
+async def stage_2b_need_combination(state: AgentState) -> AgentState:
+    from curriculum_agent.stages.need_combination import run  # noqa: PLC0415
+
+    return await run(state)
+
+
 async def stage_3_plo_synthesis(state: AgentState) -> AgentState:
     from curriculum_agent.stages.plo_synthesis import run  # noqa: PLC0415
 
@@ -93,8 +99,8 @@ def review_stakeholder_needs(state: AgentState) -> AgentState:
     return state
 
 
-def review_skill_clusters(state: AgentState) -> AgentState:
-    payload = interrupt("Stage 2 complete — review/edit skill clusters before PLO synthesis")
+def review_needs(state: AgentState) -> AgentState:
+    payload = interrupt("Stage 3 complete — review raw skills and distilled Needs")
     if isinstance(payload, dict):
         return {**state, **payload}
     return state
@@ -126,7 +132,8 @@ def build_graph(
     g.add_node("stakeholder_needs", stage_1_stakeholder_needs)
     g.add_node("review_evidence", review_stakeholder_needs)
     g.add_node("skill_extraction", stage_2_skill_extraction)
-    g.add_node("review_clusters", review_skill_clusters)
+    g.add_node("need_combination", stage_2b_need_combination)
+    g.add_node("review_needs_node", review_needs)
     g.add_node("plo_synthesis", stage_3_plo_synthesis)
     g.add_node("review_plos_node", review_plos)
     g.add_node("plo_report", stage_5_plo_report)
@@ -136,8 +143,9 @@ def build_graph(
     g.add_edge("intake", "stakeholder_needs")
     g.add_edge("stakeholder_needs", "review_evidence")
     g.add_edge("review_evidence", "skill_extraction")
-    g.add_edge("skill_extraction", "review_clusters")
-    g.add_edge("review_clusters", "plo_synthesis")
+    g.add_edge("skill_extraction", "need_combination")
+    g.add_edge("need_combination", "review_needs_node")
+    g.add_edge("review_needs_node", "plo_synthesis")
     g.add_edge("plo_synthesis", "review_plos_node")
     g.add_edge("review_plos_node", "plo_report")
     g.add_edge("plo_report", "review_plo_report")

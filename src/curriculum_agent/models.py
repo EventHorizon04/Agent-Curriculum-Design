@@ -23,10 +23,8 @@ class StakeholderType(StrEnum):
     PEER_PROGRAM = "peer_program"
 
 
-# Bloom's Taxonomy spans three learning domains, each with its own level scale:
-#   Cognitive (Knowledge/Thinking)  -> BloomLevel
-#   Psychomotor (Skill/Doing)       -> PsychomotorLevel (Dave's taxonomy)
-#   Affective (Attitude/Feeling)    -> KrathwohlLevel
+# Bloom's Taxonomy (cognitive domain) is the only learning-domain scale the
+# agent models — Needs and PLOs are cognitive-only (the agent stops at PLO).
 
 
 class BloomLevel(StrEnum):
@@ -37,31 +35,6 @@ class BloomLevel(StrEnum):
     ANALYZE = "analyze"
     EVALUATE = "evaluate"
     CREATE = "create"
-
-
-class PsychomotorLevel(StrEnum):
-    # Psychomotor domain levels (Dave), in order of increasing mastery
-    IMITATE = "imitate"
-    MANIPULATE = "manipulate"
-    PRECISE = "precise"
-    ARTICULATE = "articulate"
-    NATURALIZE = "naturalize"
-
-
-class KrathwohlLevel(StrEnum):
-    # Affective domain levels (Krathwohl), in order of increasing internalization
-    RECEIVING = "receiving"
-    RESPONDING = "responding"
-    VALUING = "valuing"
-    ORGANIZATION = "organization"
-    CHARACTERIZATION = "characterization"
-
-
-class SkillType(StrEnum):
-    KNOWLEDGE = "knowledge"
-    PSYCHOMOTOR = "psychomotor"
-    AFFECTIVE = "affective"
-    MIXED = "mixed"
 
 
 # TQF/มคอ. competency domains collapsed to five tags, used to pre-tag every
@@ -94,20 +67,6 @@ BLOOM_ORDER = [
     BloomLevel.ANALYZE,
     BloomLevel.EVALUATE,
     BloomLevel.CREATE,
-]
-PSYCHOMOTOR_ORDER = [
-    PsychomotorLevel.IMITATE,
-    PsychomotorLevel.MANIPULATE,
-    PsychomotorLevel.PRECISE,
-    PsychomotorLevel.ARTICULATE,
-    PsychomotorLevel.NATURALIZE,
-]
-KRATHWOHL_ORDER = [
-    KrathwohlLevel.RECEIVING,
-    KrathwohlLevel.RESPONDING,
-    KrathwohlLevel.VALUING,
-    KrathwohlLevel.ORGANIZATION,
-    KrathwohlLevel.CHARACTERIZATION,
 ]
 
 
@@ -240,25 +199,32 @@ class ExtractedSkill(BaseModel):
     importance_score: float = Field(ge=0, le=1)
 
 
-class SkillCluster(BaseModel):
-    cluster_id: str
+class Need(BaseModel):
+    """A market-side demand distilled from a group of extracted skills.
+
+    One sentence stating what the labour market asks for. PLO synthesis restates
+    it from the graduate's side; keeping both makes "which demand does this PLO
+    answer?" answerable from the data rather than inferred.
+    """
+
+    need_id: str
     program_id: str
-    canonical_name_th: str
-    canonical_name_en: str | None = None
-    description_th: str
-    skill_type: SkillType
-    is_subject_specific: bool
-    member_skill_ids: list[str]
-    source_evidence_ids: list[str]
+    statement_th: str = Field(min_length=1)
+    statement_en: str | None = None
+    # Single-valued by construction: grouping runs inside one KSEC bucket.
+    ksec_category: KSECCategory
+    # Highest Bloom level among member skills.
+    bloom_level: BloomLevel
+    member_skill_ids: list[str] = Field(min_length=1)
+    source_evidence_ids: list[str] = Field(min_length=1)
     stakeholder_coverage: dict[StakeholderType, int] = Field(default_factory=dict)
+    # Raw mention count: len(member_skill_ids). Explainable to a designer in a
+    # way the weighted score is not.
+    freq: int = Field(ge=1)
     demand_score: float = Field(ge=0, le=1)
-    is_common_need: bool = False
-    sample_quotes_th: list[str] = Field(default_factory=list, max_length=5)
-    bloom_level: BloomLevel | None = None
-    psychomotor_level: PsychomotorLevel | None = None
-    krathwohl_level: KrathwohlLevel | None = None
     is_optional: bool = False
     classification_coverage: dict[str, int] = Field(default_factory=dict)
+    sample_quotes_th: list[str] = Field(default_factory=list, max_length=5)
 
 
 # --------------------------- Stage 3 -----------------------------
@@ -284,8 +250,12 @@ class PLO(BaseModel):
     statement_en: str | None = None
     domain: Domain
     bloom_level: BloomLevel | None = None
-    psychomotor_level: PsychomotorLevel | None = None
-    krathwohl_level: KrathwohlLevel | None = None
+    # Psychomotor/Krathwohl scales are not modelled as enums (Needs and PLOs are
+    # cognitive-only per the PLO-scope decision); these two fields are legacy
+    # slots kept only so check_domain_level_match still gates non-cognitive
+    # domains until Task 6 removes Domain from the PLO reshape.
+    psychomotor_level: str | None = None
+    krathwohl_level: str | None = None
     is_subject_specific: bool
     action_verb_th: str
     smart_check: SMARTCheck
@@ -347,7 +317,14 @@ class PLO(BaseModel):
 class StageCheckpoint(BaseModel):
     checkpoint_id: str
     program_id: str
-    stage: Literal["intake", "stakeholder_needs", "skill_extraction", "plo_synthesis", "plo_report"]
+    stage: Literal[
+        "intake",
+        "stakeholder_needs",
+        "skill_extraction",
+        "need_combination",
+        "plo_synthesis",
+        "plo_report",
+    ]
     artifacts: dict[str, Any]
     created_at: datetime = Field(default_factory=datetime.utcnow)
     reviewed_by: str | None = None

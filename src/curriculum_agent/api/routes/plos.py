@@ -5,13 +5,13 @@ from pydantic import BaseModel
 
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import (
-    ClusterRepository,
     EvidenceRepository,
+    NeedRepository,
     PLORepository,
     ProgramRepository,
 )
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import PLO, SkillCluster, StakeholderEvidence
+from curriculum_agent.models import PLO, Need, StakeholderEvidence
 
 router = APIRouter()
 _repo = PLORepository()
@@ -19,7 +19,7 @@ _repo = PLORepository()
 
 class PLOTrace(BaseModel):
     plo: PLO
-    clusters: list[SkillCluster]
+    clusters: list[Need]
     evidence: list[StakeholderEvidence]
 
 
@@ -35,15 +35,15 @@ async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     if plo is None:
         raise HTTPException(status_code=404, detail="PLO not found")
 
-    cluster_ids = set(plo.source_cluster_ids)
+    need_ids = set(plo.source_cluster_ids)
     evidence_ids = set(plo.source_evidence_ids)
 
-    all_clusters = await ClusterRepository().list_by_program(program_id)
+    all_needs = await NeedRepository().list_by_program(program_id)
     all_evidence = await EvidenceRepository().list_by_program(program_id)
 
     return PLOTrace(
         plo=plo,
-        clusters=[c for c in all_clusters if c.cluster_id in cluster_ids],
+        clusters=[n for n in all_needs if n.need_id in need_ids],
         evidence=[e for e in all_evidence if e.evidence_id in evidence_ids],
     )
 
@@ -56,17 +56,17 @@ async def run_plo_synthesis(program_id: str) -> list[PLO]:
     if metadata is None:
         raise HTTPException(status_code=404, detail="Program not found")
 
-    clusters = await ClusterRepository().list_by_program(program_id)
-    if not clusters:
+    needs = await NeedRepository().list_by_program(program_id)
+    if not needs:
         raise HTTPException(
             status_code=422,
-            detail="ไม่มี skill clusters สำหรับโปรแกรมนี้ กรุณารัน Skill Extraction ก่อน",
+            detail="ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Skill Extraction ก่อน",
         )
 
     state: AgentState = {
         "program_id": program_id,
         "metadata": metadata.model_dump(mode="json"),
-        "skill_clusters": [c.model_dump(mode="json") for c in clusters],
+        "needs": [n.model_dump(mode="json") for n in needs],
     }
 
     result_state = await run(state)

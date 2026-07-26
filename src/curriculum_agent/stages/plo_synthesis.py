@@ -12,10 +12,8 @@ from curriculum_agent.models import (
     PLO,
     BloomLevel,
     Domain,
-    KrathwohlLevel,
+    Need,
     ProgramMetadata,
-    PsychomotorLevel,
-    SkillCluster,
     SMARTCheck,
 )
 from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
@@ -42,8 +40,9 @@ class _PLODraft(BaseModel):
     statement_en: str | None = None
     domain: Domain
     bloom_level: BloomLevel | None = None
-    psychomotor_level: PsychomotorLevel | None = None
-    krathwohl_level: KrathwohlLevel | None = None
+    # Not modelled as enums — see the same note on PLO in models.py.
+    psychomotor_level: str | None = None
+    krathwohl_level: str | None = None
     is_subject_specific: bool = True
     action_verb_th: str
     source_cluster_ids: list[str]
@@ -185,21 +184,23 @@ async def _ensure_smart(
 
 
 async def run(state: AgentState) -> AgentState:
-    """Stage 3: synthesize 4-6 PLOs from approved skill clusters."""
-    clusters_dicts = state.get("skill_clusters", [])
+    """Stage 3: synthesize 4-6 PLOs from approved Needs."""
+    need_dicts = state.get("needs", [])
     program_id = state.get("program_id", "unknown")
     metadata_dict = state.get("metadata")
     if not metadata_dict:
         raise ValueError("AgentState missing 'metadata' — cannot run PLO synthesis stage")
     metadata = ProgramMetadata.model_validate(metadata_dict)
 
-    clusters = [SkillCluster.model_validate(d) for d in clusters_dicts]
-    optional_clusters = [c for c in clusters if c.is_optional]
-    core_clusters = [c for c in clusters if not c.is_optional]
+    needs = [Need.model_validate(d) for d in need_dicts]
+    optional_needs = [n for n in needs if n.is_optional]
+    core_needs = [n for n in needs if not n.is_optional]
 
-    selected = [c for c in core_clusters if c.is_common_need]
-    if len(selected) < _MIN_PLOS:
-        selected = sorted(core_clusters, key=lambda c: c.demand_score, reverse=True)[:12]
+    selected = (
+        core_needs
+        if len(core_needs) <= 12
+        else sorted(core_needs, key=lambda n: n.demand_score, reverse=True)[:12]
+    )
 
     if not selected:
         raise ValueError(
@@ -207,12 +208,10 @@ async def run(state: AgentState) -> AgentState:
             "run Stage 2 successfully before proceeding to PLO synthesis"
         )
 
-    cluster_evidence_map: dict[str, list[str]] = {
-        c.cluster_id: c.source_evidence_ids for c in clusters
-    }
-    known_cluster_ids = {c.cluster_id for c in clusters}
+    need_evidence_map: dict[str, list[str]] = {n.need_id: n.source_evidence_ids for n in needs}
+    known_cluster_ids = {n.need_id for n in needs}
 
-    logger.info(f"Stage 3: synthesizing PLOs from {len(selected)} clusters")
+    logger.info(f"Stage 3: synthesizing PLOs from {len(selected)} Needs")
 
     messages = build_plo_synthesis_prompt(metadata, selected)
     draft_list = await complete_heavy(_PLODraftList, messages, max_retries=_MAX_RETRIES)
@@ -223,27 +222,27 @@ async def run(state: AgentState) -> AgentState:
         outcome = await _ensure_smart(draft, known_cluster_ids, metadata)
         validated_draft, smart_check = outcome.draft, outcome.smart_check
 
-        # Derive evidence IDs from referenced clusters when LLM omits them.
-        # Fallback chain: draft field → referenced clusters → all clusters.
+        # Derive evidence IDs from referenced Needs when LLM omits them.
+        # Fallback chain: draft field → referenced Needs → all Needs.
         evidence_ids = validated_draft.source_evidence_ids
         if not evidence_ids:
             evidence_ids = list(
                 {
                     eid
                     for cid in validated_draft.source_cluster_ids
-                    for eid in cluster_evidence_map.get(cid, [])
+                    for eid in need_evidence_map.get(cid, [])
                 }
             )
             logger.debug(
                 f"  PLO {validated_draft.plo_id}: derived {len(evidence_ids)} "
-                "source_evidence_ids from referenced clusters"
+                "source_evidence_ids from referenced Needs"
             )
         if not evidence_ids:
-            # Referenced clusters have no evidence; collect from all clusters in program.
-            evidence_ids = list({eid for c in clusters for eid in c.source_evidence_ids})
+            # Referenced Needs have no evidence; collect from all Needs in program.
+            evidence_ids = list({eid for n in needs for eid in n.source_evidence_ids})
             logger.warning(
-                f"  PLO {validated_draft.plo_id}: source clusters carry no evidence IDs — "
-                f"fell back to all-cluster pool ({len(evidence_ids)} IDs)"
+                f"  PLO {validated_draft.plo_id}: source Needs carry no evidence IDs — "
+                f"fell back to all-Need pool ({len(evidence_ids)} IDs)"
             )
         if not evidence_ids:
             raise ValueError(
@@ -280,12 +279,12 @@ async def run(state: AgentState) -> AgentState:
             f"Stage 3: only {len(plos)} PLOs generated (expected {_MIN_PLOS}-{_MAX_PLOS})"
         )
 
-    if optional_clusters:
+    if optional_needs:
         try:
             logger.info(
-                f"Stage 3: synthesizing optional PLOs from {len(optional_clusters)} want-clusters"
+                f"Stage 3: synthesizing optional PLOs from {len(optional_needs)} want-Needs"
             )
-            opt_msgs = build_optional_plo_prompt(metadata, optional_clusters)
+            opt_msgs = build_optional_plo_prompt(metadata, optional_needs)
             opt_list = await complete_heavy(_OptionalDraftList, opt_msgs, max_retries=2)
             for draft in opt_list.plos:
                 outcome = await _ensure_smart(draft, known_cluster_ids, metadata)
@@ -297,10 +296,10 @@ async def run(state: AgentState) -> AgentState:
                         {
                             eid
                             for cid in outcome.draft.source_cluster_ids
-                            for eid in cluster_evidence_map.get(cid, [])
+                            for eid in need_evidence_map.get(cid, [])
                         }
                     )
-                    or list({eid for c in optional_clusters for eid in c.source_evidence_ids})
+                    or list({eid for n in optional_needs for eid in n.source_evidence_ids})
                 )
                 if not evidence_ids:
                     logger.warning(f"optional PLO {outcome.draft.plo_id}: no evidence — skipped")

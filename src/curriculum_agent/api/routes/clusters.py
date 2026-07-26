@@ -6,21 +6,21 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from curriculum_agent.data.repositories import (
-    ClusterRepository,
     EvidenceRepository,
+    NeedRepository,
     SkillRepository,
 )
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import (
     ExtractedSkill,
-    SkillCluster,
+    Need,
     StakeholderEvidence,
     StakeholderType,
 )
 from curriculum_agent.stages.demand import BREADTH_WEIGHT, FREQ_WEIGHT
 
 router = APIRouter()
-_repo = ClusterRepository()
+_repo = NeedRepository()
 
 _MAX_STAKEHOLDER_TYPES = len(StakeholderType)
 
@@ -36,37 +36,37 @@ class DemandSignal(BaseModel):
     stakeholder_breakdown: dict[str, int]  # type → evidence count
 
 
-class ClusterTrace(BaseModel):
-    cluster: SkillCluster
+class NeedTrace(BaseModel):
+    need: Need
     skills: list[ExtractedSkill]
     evidence: list[StakeholderEvidence]
     demand_signal: DemandSignal
 
 
-@router.get("/", response_model=list[SkillCluster])
-async def list_clusters(program_id: str) -> list[SkillCluster]:
+@router.get("/", response_model=list[Need])
+async def list_clusters(program_id: str) -> list[Need]:
     return await _repo.list_by_program(program_id)
 
 
-@router.get("/{cluster_id}/trace", response_model=ClusterTrace)
-async def get_cluster_trace(program_id: str, cluster_id: str) -> ClusterTrace:
-    clusters = await _repo.list_by_program(program_id)
-    cluster = next((c for c in clusters if c.cluster_id == cluster_id), None)
-    if cluster is None:
+@router.get("/{cluster_id}/trace", response_model=NeedTrace)
+async def get_cluster_trace(program_id: str, cluster_id: str) -> NeedTrace:
+    needs = await _repo.list_by_program(program_id)
+    need = next((n for n in needs if n.need_id == cluster_id), None)
+    if need is None:
         raise HTTPException(status_code=404, detail="Cluster not found")
 
-    all_evidence, cluster_skills = await asyncio.gather(
+    all_evidence, need_skills = await asyncio.gather(
         EvidenceRepository().list_by_program(program_id),
-        SkillRepository().list_by_ids(cluster.member_skill_ids),
+        SkillRepository().list_by_ids(need.member_skill_ids),
     )
     total = len(all_evidence)
 
-    evidence_ids = set(cluster.source_evidence_ids)
-    cluster_evidence = [e for e in all_evidence if e.evidence_id in evidence_ids]
+    evidence_ids = set(need.source_evidence_ids)
+    need_evidence = [e for e in all_evidence if e.evidence_id in evidence_ids]
 
     unique = len(evidence_ids)
     freq = unique / max(total, 1)
-    stk_count = len(cluster.stakeholder_coverage)
+    stk_count = len(need.stakeholder_coverage)
     breadth = stk_count / max(_MAX_STAKEHOLDER_TYPES, 1)
 
     demand_signal = DemandSignal(
@@ -78,22 +78,26 @@ async def get_cluster_trace(program_id: str, cluster_id: str) -> ClusterTrace:
         breadth_score=round(breadth, 4),
         demand_score=round(min(freq * FREQ_WEIGHT + breadth * BREADTH_WEIGHT, 1.0), 4),
         stakeholder_breakdown={
-            k.value if hasattr(k, "value") else k: v
-            for k, v in cluster.stakeholder_coverage.items()
+            k.value if hasattr(k, "value") else k: v for k, v in need.stakeholder_coverage.items()
         },
     )
 
-    return ClusterTrace(
-        cluster=cluster,
-        skills=cluster_skills,
-        evidence=cluster_evidence,
+    return NeedTrace(
+        need=need,
+        skills=need_skills,
+        evidence=need_evidence,
         demand_signal=demand_signal,
     )
 
 
-@router.post("/run", response_model=list[SkillCluster])
-async def run_skill_extraction(program_id: str) -> list[SkillCluster]:
-    from curriculum_agent.stages.skill_extraction import run  # noqa: PLC0415
+@router.post("/run", response_model=list[Need])
+async def run_skill_extraction(program_id: str) -> list[Need]:
+    from curriculum_agent.stages.need_combination import (
+        run as run_need_combination,  # noqa: PLC0415
+    )
+    from curriculum_agent.stages.skill_extraction import (
+        run as run_skill_extraction,  # noqa: PLC0415
+    )
 
     evidence_repo = EvidenceRepository()
     evidence_items = await evidence_repo.list_by_program(program_id)
@@ -109,6 +113,7 @@ async def run_skill_extraction(program_id: str) -> list[SkillCluster]:
         "classified_evidence": [e.model_dump(mode="json") for e in evidence_items],
     }
 
-    result_state = await asyncio.wait_for(run(state), timeout=300)
-    clusters = [SkillCluster.model_validate(c) for c in result_state.get("skill_clusters", [])]
-    return clusters
+    state = await asyncio.wait_for(run_skill_extraction(state), timeout=300)
+    result_state = await asyncio.wait_for(run_need_combination(state), timeout=300)
+    needs = [Need.model_validate(n) for n in result_state.get("needs", [])]
+    return needs

@@ -2,38 +2,38 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-from curriculum_agent.models import ProgramMetadata, SkillCluster, SkillType
+from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetadata
 from curriculum_agent.prompts.stage_3_plo import build_optional_plo_prompt
 
 
-def _cluster(cid: str, optional: bool) -> SkillCluster:
-    return SkillCluster(
-        cluster_id=cid,
+def _need(nid: str, optional: bool) -> Need:
+    return Need(
+        need_id=nid,
         program_id="p1",
-        canonical_name_th=f"กลุ่ม {cid}",
-        description_th="คำอธิบาย",
-        skill_type=SkillType.KNOWLEDGE,
-        is_subject_specific=True,
+        statement_th=f"สามารถทำงานตามความต้องการของกลุ่ม {nid}",
+        ksec_category=KSECCategory.SS,
+        bloom_level=BloomLevel.APPLY,
         member_skill_ids=["s1"],
         source_evidence_ids=["e1"],
+        freq=1,
         demand_score=0.6,
         is_optional=optional,
     )
 
 
-def test_optional_prompt_labels_output_optional(sample_metadata, sample_clusters):
-    msgs = build_optional_plo_prompt(sample_metadata, sample_clusters)
+def test_optional_prompt_labels_output_optional(sample_metadata, sample_needs):
+    msgs = build_optional_plo_prompt(sample_metadata, sample_needs)
     joined = msgs[0]["content"] + msgs[1]["content"]
     assert "เสริม" in joined or "optional" in joined.lower()
     assert "1-4" in joined
 
 
 def test_optional_clusters_split_from_core():
-    clusters = [_cluster("c1", False), _cluster("c2", True), _cluster("c3", False)]
-    core = [c for c in clusters if not c.is_optional]
-    optional = [c for c in clusters if c.is_optional]
-    assert [c.cluster_id for c in core] == ["c1", "c3"]
-    assert [c.cluster_id for c in optional] == ["c2"]
+    needs = [_need("c1", False), _need("c2", True), _need("c3", False)]
+    core = [n for n in needs if not n.is_optional]
+    optional = [n for n in needs if n.is_optional]
+    assert [n.need_id for n in core] == ["c1", "c3"]
+    assert [n.need_id for n in optional] == ["c2"]
 
 
 from curriculum_agent.stages.plo_synthesis import (  # noqa: E402
@@ -48,7 +48,7 @@ _SOFT_OK = _SmartSoftJudge(specific_object_ok=True, achievable_ok=True, relevant
 
 
 def _core_draft(i: int) -> _PLODraft:
-    from curriculum_agent.models import BloomLevel, Domain
+    from curriculum_agent.models import Domain
 
     return _PLODraft(
         plo_id=f"PLO-{i}",
@@ -64,7 +64,7 @@ def _core_draft(i: int) -> _PLODraft:
 
 
 def _optional_draft() -> _PLODraft:
-    from curriculum_agent.models import BloomLevel, Domain
+    from curriculum_agent.models import Domain
 
     return _PLODraft(
         plo_id="OPT-1",
@@ -79,10 +79,10 @@ def _optional_draft() -> _PLODraft:
     )
 
 
-def _clusters_core_plus_optional() -> list[dict]:
-    clusters = [_cluster(f"c{i}", False) for i in range(1, 7)]
-    clusters.append(_cluster("c7", True))
-    return [c.model_dump(mode="json") for c in clusters]
+def _needs_core_plus_optional() -> list[dict]:
+    needs = [_need(f"c{i}", False) for i in range(1, 7)]
+    needs.append(_need("c7", True))
+    return [n.model_dump(mode="json") for n in needs]
 
 
 async def test_run_optional_pass_produces_one_optional_plo(
@@ -91,7 +91,7 @@ async def test_run_optional_pass_produces_one_optional_plo(
     state = {
         "program_id": program_metadata.program_id,
         "metadata": program_metadata.model_dump(mode="json"),
-        "skill_clusters": _clusters_core_plus_optional(),
+        "needs": _needs_core_plus_optional(),
     }
 
     main_drafts = _PLODraftList(plos=[_core_draft(i) for i in range(1, 7)])

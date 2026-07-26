@@ -8,8 +8,8 @@ from curriculum_agent.models import (
     PLO,
     BloomLevel,
     Domain,
-    SkillCluster,
-    SkillType,
+    KSECCategory,
+    Need,
     SMARTCheck,
 )
 
@@ -32,28 +32,28 @@ def _plo(cluster_ids: list[str]) -> dict:
     ).model_dump(mode="json")
 
 
-def _cluster(cid: str, subject_specific: bool) -> SkillCluster:
-    return SkillCluster(
-        cluster_id=cid,
+def _need(nid: str, ksec: KSECCategory) -> Need:
+    return Need(
+        need_id=nid,
         program_id="prog-1",
-        canonical_name_th="ทักษะ",
-        canonical_name_en="Skill",
-        description_th="รายละเอียด",
-        skill_type=SkillType.KNOWLEDGE,
-        is_subject_specific=subject_specific,
+        statement_th="ทักษะ",
+        statement_en="Skill",
+        ksec_category=ksec,
+        bloom_level=BloomLevel.APPLY,
         member_skill_ids=["s1"],
         source_evidence_ids=["ev-1"],
+        freq=1,
         demand_score=0.5,
     )
 
 
-def _patch_ctx(clusters, light_mock):
-    cluster_repo = AsyncMock()
-    cluster_repo.list_by_program = AsyncMock(return_value=clusters)
+def _patch_ctx(needs, light_mock):
+    need_repo = AsyncMock()
+    need_repo.list_by_program = AsyncMock(return_value=needs)
     plo_repo = AsyncMock()
     plo_repo.bulk_insert = AsyncMock()
     return (
-        patch("curriculum_agent.stages.plo_report.ClusterRepository", return_value=cluster_repo),
+        patch("curriculum_agent.stages.plo_report.NeedRepository", return_value=need_repo),
         patch("curriculum_agent.stages.plo_report.PLORepository", return_value=plo_repo),
         patch("curriculum_agent.stages.plo_report.complete_light", light_mock),
     )
@@ -62,9 +62,13 @@ def _patch_ctx(clusters, light_mock):
 async def test_field_clear_specific_skips_llm():
     from curriculum_agent.stages.plo_report import run
 
-    clusters = [_cluster("c1", True), _cluster("c2", True), _cluster("c3", True)]
+    needs = [
+        _need("c1", KSECCategory.SS),
+        _need("c2", KSECCategory.SS),
+        _need("c3", KSECCategory.SS),
+    ]
     light = AsyncMock()
-    p1, p2, p3 = _patch_ctx(clusters, light)
+    p1, p2, p3 = _patch_ctx(needs, light)
     state = {"program_id": "prog-1", "plos": [_plo(["c1", "c2", "c3"])]}
     with p1, p2, p3:
         result = await run(state)
@@ -79,9 +83,13 @@ async def test_field_clear_specific_skips_llm():
 async def test_field_clear_generic_skips_llm():
     from curriculum_agent.stages.plo_report import run
 
-    clusters = [_cluster("c1", False), _cluster("c2", False), _cluster("c3", False)]
+    needs = [
+        _need("c1", KSECCategory.GS),
+        _need("c2", KSECCategory.GS),
+        _need("c3", KSECCategory.GS),
+    ]
     light = AsyncMock()
-    p1, p2, p3 = _patch_ctx(clusters, light)
+    p1, p2, p3 = _patch_ctx(needs, light)
     state = {"program_id": "prog-1", "plos": [_plo(["c1", "c2", "c3"])]}
     with p1, p2, p3:
         result = await run(state)
@@ -96,11 +104,14 @@ async def test_field_clear_generic_skips_llm():
 async def test_ambiguous_uses_llm_fallback():
     from curriculum_agent.stages.plo_report import _ClassificationResult, run
 
-    clusters = [_cluster("c1", True), _cluster("c2", False)]  # fraction 0.5 → ambiguous
+    needs = [
+        _need("c1", KSECCategory.SS),
+        _need("c2", KSECCategory.GS),
+    ]  # fraction 0.5 → ambiguous
     light = AsyncMock(
         return_value=_ClassificationResult(classification="generic", rationale_th="ทักษะทั่วไป")
     )
-    p1, p2, p3 = _patch_ctx(clusters, light)
+    p1, p2, p3 = _patch_ctx(needs, light)
     state = {"program_id": "prog-1", "plos": [_plo(["c1", "c2"])]}
     with p1, p2, p3:
         result = await run(state)
@@ -116,11 +127,11 @@ async def test_ambiguous_uses_llm_fallback():
 async def test_no_resolvable_clusters_uses_llm():
     from curriculum_agent.stages.plo_report import _ClassificationResult, run
 
-    clusters = []  # PLO references c9 which does not exist
+    needs: list[Need] = []  # PLO references c9 which does not exist
     light = AsyncMock(
         return_value=_ClassificationResult(classification="specific", rationale_th="เฉพาะสาขา")
     )
-    p1, p2, p3 = _patch_ctx(clusters, light)
+    p1, p2, p3 = _patch_ctx(needs, light)
     state = {"program_id": "prog-1", "plos": [_plo(["c9"])]}
     with p1, p2, p3:
         result = await run(state)

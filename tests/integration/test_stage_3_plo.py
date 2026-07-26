@@ -7,8 +7,8 @@ import pytest
 from curriculum_agent.models import (
     BloomLevel,
     Domain,
+    Need,
     ProgramMetadata,
-    SkillCluster,
 )
 from curriculum_agent.stages.plo_synthesis import _PLODraft, _PLODraftList, _SmartSoftJudge, run
 
@@ -23,7 +23,7 @@ _SAMPLE_DRAFTS = _PLODraftList(
             bloom_level=BloomLevel.CREATE,
             is_subject_specific=True,
             action_verb_th="ออกแบบ",
-            source_cluster_ids=["C1"],
+            source_cluster_ids=["N1"],
             source_evidence_ids=["E1"],
             rationale_th=f"ทักษะที่นายจ้างต้องการลำดับที่ {i}",
         )
@@ -33,11 +33,11 @@ _SAMPLE_DRAFTS = _PLODraftList(
 
 
 @pytest.fixture
-def state(program_metadata: ProgramMetadata, skill_cluster: SkillCluster) -> dict:
+def state(program_metadata: ProgramMetadata, need: Need) -> dict:
     return {
         "program_id": program_metadata.program_id,
         "metadata": program_metadata.model_dump(mode="json"),
-        "skill_clusters": [skill_cluster.model_dump(mode="json")],
+        "needs": [need.model_dump(mode="json")],
     }
 
 
