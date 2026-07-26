@@ -43,8 +43,8 @@ async def _classify_one(plo: PLO, needs_by_id: dict[str, Need]) -> tuple[str, st
             return "generic", "ksec", rationale
 
     # Ambiguous fraction, or no resolvable Needs → LLM fallback.
-    summaries = [_need_summary(n) for n in resolved]
-    messages = build_plo_classify_prompt(plo.statement_th, plo.bloom_level.value, summaries)
+    need_summaries = [_need_summary(n) for n in resolved]
+    messages = build_plo_classify_prompt(plo.statement_th, plo.bloom_level.value, need_summaries)
     result = await complete_light(_ClassificationResult, messages)
     return result.classification, "llm", result.rationale_th
 
