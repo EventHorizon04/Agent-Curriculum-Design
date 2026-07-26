@@ -63,10 +63,10 @@ Every PLO must satisfy all five SMART dimensions **before it leaves the PLO synt
 **คำนิยาม:** ผลลัพธ์การเรียนรู้ต้องมีความเชื่อมโยงและตอบสนองต่อความต้องการของผู้มีส่วนได้ส่วนเสีย (Stakeholder Needs) สะท้อนสมรรถนะทางวิชาชีพที่ตลาดแรงงานต้องการ รวมถึงสอดคล้องกับวิสัยทัศน์และพันธกิจของสถาบัน
 
 **Validation rule:**
-- Every PLO must carry a non-empty `source_cluster_ids`/`source_evidence_ids` evidence trail pointing back to at least one `StakeholderEvidence` or `SkillCluster` record (per `references/data-schemas.md`). A PLO with an empty evidence trail is a hard reject — this is the same rule as "Every PLO carries evidence" in SKILL.md.
+- Every PLO must carry a non-empty `source_need_ids`/`source_evidence_ids` evidence trail pointing back to at least one `Need` and one `StakeholderEvidence` record (per `references/data-schemas.md`). A PLO with an empty evidence trail is a hard reject — this is the same rule as "Every PLO carries evidence" in SKILL.md.
 - Check semantic alignment between the PLO statement and the program's stated vision/mission text (embedding similarity threshold, or LLM-judged alignment) — flag low-similarity PLOs for human review.
 
-**ไม่ผ่าน:** PLO ที่ไม่มี `source_cluster_ids` อ้างอิงถึงหลักฐานผู้มีส่วนได้ส่วนเสียใด ๆ (ถือเป็น fabricated PLO)
+**ไม่ผ่าน:** PLO ที่ไม่มี `source_need_ids` อ้างอิงถึงหลักฐานผู้มีส่วนได้ส่วนเสียใด ๆ (ถือเป็น fabricated PLO)
 **ผ่าน:** PLO ที่ตรวจสอบย้อนกลับได้ถึง job posting, มคอ.1, หรือ feedback จากศิษย์เก่าที่บันทึกไว้
 
 ### T — Time-bound (มีกรอบเวลาที่ชัดเจน)
@@ -85,7 +85,7 @@ Run in this order; on any hard-fail, send the PLO back to the LLM with the speci
 
 1. **[S, hard]** Exactly one recognized Bloom verb present, applied to a non-generic, named object.
 2. **[M, hard]** No forbidden unmeasurable word present (รู้ / จำ / เข้าใจ / ซาบซึ้ง / ตระหนัก / ศรัทธา / รัก).
-3. **[R, hard]** `source_cluster_ids` evidence trail is non-empty and resolves to a real `StakeholderEvidence`/`SkillCluster` record.
+3. **[R, hard]** `source_need_ids` evidence trail is non-empty and resolves to a real `Need`/`StakeholderEvidence` record.
 4. **[A, soft/flag]** Bloom level is plausible for the qualification level and program resources — flag for human review rather than auto-reject.
 5. **[R, soft/flag]** Semantic alignment with program vision/mission above threshold — flag for human review if low.
 
@@ -93,17 +93,19 @@ Hard-fails trigger the automatic retry loop (bounded — max 3 attempts before e
 
 ## K/S/E/C vs Bloom domain — do not conflate
 
-`ExtractedSkill.ksec_category` (see `data-schemas.md`) is a **TQF/มคอ. compliance tag**, not a Bloom domain. It is a 4-way collapse of มคอ.'s 5 domains: K=ความรู้, S=ทักษะ (absorbs ทักษะทางปัญญา + ปฏิบัติ + ความสัมพันธ์ระหว่างบุคคล + วิเคราะห์ตัวเลข/สื่อสาร/IT), E=คุณธรรมจริยธรรม, C=คุณลักษณะบุคคล. It exists to make eventual มคอ.2/CHECO domain mapping traceable back to the skill level, and is orthogonal to `ExtractedSkill.skill_type` (Bloom's 3 domains: knowledge/psychomotor/affective/mixed) and `bloom_level` (the cognitive-scale tag below). A skill can be `skill_type=knowledge` and `ksec_category=S` at the same time (e.g. "วิเคราะห์ข้อมูลเชิงสถิติ" is cognitive-domain but sits in TQF's ทักษะ bucket) — don't try to derive one field from the other.
+`ExtractedSkill.ksec_category` / `Need.ksec_category` (see `data-schemas.md`) is a **TQF/มคอ. compliance tag**, not a Bloom domain. It is a 5-way collapse of มคอ.'s domains: K=ความรู้, GS=ทักษะทั่วไป (generic/transferable), SS=ทักษะเฉพาะสาขา (subject-specific), C=คุณลักษณะบุคคล, E=คุณธรรมจริยธรรม. มคอ.'s ทักษะ domain is split into GS and SS here rather than kept as one `S` tag with a separate `is_subject_specific` boolean bolted on — a skill or Need has exactly one KSEC tag, so there is no "mixed" value and no way for the specificity flag to disagree with the tag. It exists to make eventual มคอ.2/CHECO domain mapping traceable back to the skill level, and is orthogonal to `bloom_level` (the cognitive-scale tag below) — a skill can be `ksec_category=SS` at any Bloom level, e.g. "วิเคราะห์ข้อมูลเชิงสถิติ" is `analyze` and `SS` at the same time. Don't try to derive one field from the other.
 
-## Bloom's Taxonomy — three learning domains
+## Bloom's Taxonomy — three learning domains (agent models only the first)
 
-Bloom's Taxonomy spans three domains, each with its own level scale. Tag every outcome with the scale matching its domain:
+Bloom's Taxonomy spans three domains, each with its own level scale:
 
 | Domain | Focus | Scale (low → high) |
 |--------|-------|--------------------|
 | Cognitive | Knowledge / Thinking | Remember → Understand → Apply → Analyze → Evaluate → Create |
 | Psychomotor | Skill / Doing | Imitate → Manipulate → Precise → Articulate → Naturalize (Dave) |
 | Affective | Attitude / Feeling | Receiving → Responding → Valuing → Organization → Characterization (Krathwohl) |
+
+**Agent scope note:** this codebase only models the Cognitive scale (`BloomLevel`). Every `ExtractedSkill`, `Need`, and `PLO` the agent produces is cognitive-only — there is no `PsychomotorLevel` or `KrathwohlLevel` class, and no field on any of those models carries a psychomotor or affective tag. The Psychomotor and Affective sections below are kept as **faculty reference for the YLO/CLO hand-off**, not agent behaviour — a faculty member deriving YLOs/CLOs from a psychomotor- or affective-flavoured PLO statement needs these scales; the agent itself never assigns them. Do not re-implement psychomotor/affective tagging in the pipeline on the strength of these sections being present.
 
 ## Bloom Taxonomy — cognitive domain action verbs
 
@@ -136,9 +138,11 @@ These words CANNOT be observed or measured. Reject any PLO that uses them:
 
 If translating from English: "have knowledge of" → use "explain"; "understand" → "describe" or "interpret"; "appreciate" → "demonstrate" or "exhibit through behavior."
 
-## Psychomotor domain (Dave) — for skill/doing PLOs
+## Psychomotor domain (Dave) — faculty reference for YLO/CLO, not agent behaviour
 
-When a PLO targets a physical or hands-on skill (lab technique, instrument operation, craft, clinical procedure), use Dave's psychomotor progression instead of the cognitive scale:
+**This scale is not modelled by the agent.** PLO is cognitive-only (see the scope note above); no code in this repository assigns a psychomotor level to anything. This section exists so that faculty deriving YLOs/CLOs from a hands-on PLO have the progression on hand at hand-off — it is domain knowledge for the next stage of OBE, not a spec to implement here.
+
+When a PLO targets a physical or hands-on skill (lab technique, instrument operation, craft, clinical procedure), faculty use Dave's psychomotor progression instead of the cognitive scale to derive the relevant YLOs/CLOs:
 
 1. **Imitate** — copies an observed action under supervision (ทำตามแบบ)
 2. **Manipulate** — performs from instructions or memory without a model (ทำตามคำสั่ง)
@@ -148,9 +152,11 @@ When a PLO targets a physical or hands-on skill (lab technique, instrument opera
 
 Bachelor-level psychomotor PLOs typically sit at Precise / Articulate. Example verbs: สาธิต, ปฏิบัติ, ประกอบ, ปรับแต่ง, ควบคุมเครื่องมือ.
 
-## Affective domain (Krathwohl) — for attitude/values PLOs
+## Affective domain (Krathwohl) — faculty reference for YLO/CLO, not agent behaviour
 
-When a PLO targets attitude rather than cognition, use the Krathwohl progression instead of Bloom:
+**This scale is not modelled by the agent** either, for the same reason as Psychomotor above — kept here as domain reference for the faculty hand-off, not something the pipeline assigns.
+
+When a PLO targets attitude rather than cognition, faculty use the Krathwohl progression instead of Bloom to derive the relevant YLOs/CLOs:
 
 1. **Receiving** — pays attention, listens
 2. **Responding** — participates, complies
@@ -177,7 +183,7 @@ A program with only subject-specific PLOs fails AUN-QA review. A program with on
 
 Before marking a PLO set final (hand-off to faculty for YLO/BCD work), verify:
 
-1. PLOs trace back to stakeholder needs (evidence trail intact — every PLO has non-empty `source_cluster_ids`)
+1. PLOs trace back to stakeholder needs (evidence trail intact — every PLO has non-empty `source_need_ids`)
 2. Each PLO passes the full SMART validation checklist above (no outstanding hard-fails; soft-flags reviewed by the designer)
 3. 6–10 PLOs, mix of subject-specific and generic
 4. PLOs align with the program's stated objectives and the university/faculty vision
