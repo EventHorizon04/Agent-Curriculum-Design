@@ -111,9 +111,7 @@ class ProgramRepository:
                 current_stage=(
                     latest[p.program_id].current_stage if p.program_id in latest else None
                 ),
-                session_status=(
-                    latest[p.program_id].status if p.program_id in latest else None
-                ),
+                session_status=(latest[p.program_id].status if p.program_id in latest else None),
             )
             for p in prog_rows
         ]
@@ -127,16 +125,12 @@ class ProgramRepository:
         """
         async with AsyncSessionLocal() as session:
             await session.execute(delete(SkillTable).where(SkillTable.program_id == program_id))
-            await session.execute(
-                delete(ClusterTable).where(ClusterTable.program_id == program_id)
-            )
+            await session.execute(delete(ClusterTable).where(ClusterTable.program_id == program_id))
             await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
             await session.execute(
                 delete(CheckpointTable).where(CheckpointTable.program_id == program_id)
             )
-            await session.execute(
-                delete(SessionTable).where(SessionTable.program_id == program_id)
-            )
+            await session.execute(delete(SessionTable).where(SessionTable.program_id == program_id))
             await session.execute(
                 delete(EvidenceTable).where(EvidenceTable.program_id == program_id)
             )

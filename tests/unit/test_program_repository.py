@@ -119,9 +119,7 @@ async def test_delete_cascade_deletes_tables_in_fk_safe_order() -> None:
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-    with patch(
-        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx
-    ):
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx):
         result = await repo.delete_cascade("cs")
 
     assert result is True
@@ -143,9 +141,7 @@ async def test_delete_cascade_returns_false_when_program_missing() -> None:
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-    with patch(
-        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx
-    ):
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx):
         result = await repo.delete_cascade("missing")
 
     assert result is False
@@ -159,9 +155,7 @@ async def test_delete_cascade_commits_once() -> None:
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
-    with patch(
-        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx
-    ):
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx):
         await repo.delete_cascade("cs")
 
     mock_session.commit.assert_awaited_once()
