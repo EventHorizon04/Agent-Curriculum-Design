@@ -40,6 +40,7 @@ class AgentState(TypedDict, total=False):
     # Stage 2
     extracted_skills: list[dict[str, Any]]
     skill_clusters: list[dict[str, Any]]
+    dropped_ungrounded_count: int
 
     # Stage 3
     plos: list[dict[str, Any]]

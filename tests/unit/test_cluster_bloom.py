@@ -70,8 +70,9 @@ async def _run_stage_with_mocked_llm(naming_result, bloom_effect):
             se._SkillItem(
                 skill_name_th="Python",
                 skill_name_en="Python",
-                skill_type="knowledge",
-                is_subject_specific=True,
+                ksec_category="SS",
+                bloom_level="apply",
+                evidence_span_th="ต้องการผู้เชี่ยวชาญด้าน Python",
                 confidence=0.9,
             )
         ]
@@ -115,6 +116,59 @@ async def _run_stage_with_mocked_llm(naming_result, bloom_effect):
         ),
     ):
         return await se.run(state)
+
+
+async def test_ungrounded_skill_is_dropped_and_counted():
+    """A skill whose evidence_span_th does not occur in the evidence text is
+    dropped by the groundedness filter before clustering, and the drop is
+    counted on state — the LLM invented a quote, is_grounded() catches it."""
+    state = _build_initial_state()
+
+    extraction_result = se._ExtractedSkillsResponse(
+        skills=[
+            se._SkillItem(
+                skill_name_th="Python",
+                skill_name_en="Python",
+                ksec_category="SS",
+                bloom_level="apply",
+                evidence_span_th="ข้อความที่ไม่มีอยู่จริงในหลักฐานเลย",
+                confidence=0.9,
+            )
+        ]
+    )
+
+    async def dispatch_complete_light(response_model, messages, **kwargs):
+        if response_model is se._ExtractedSkillsResponse:
+            return extraction_result
+        raise AssertionError(f"unexpected response_model {response_model}")
+
+    mock_cache_repo = AsyncMock()
+    mock_cache_repo.get = AsyncMock(return_value=None)
+    mock_cache_repo.set = AsyncMock()
+
+    with (
+        patch(
+            "curriculum_agent.stages.skill_extraction.LLMCacheRepository",
+            return_value=mock_cache_repo,
+        ),
+        patch(
+            "curriculum_agent.stages.skill_extraction.complete_light",
+            side_effect=dispatch_complete_light,
+        ),
+        patch(
+            "curriculum_agent.stages.skill_extraction.SkillRepository",
+            return_value=AsyncMock(bulk_insert=AsyncMock()),
+        ),
+        patch(
+            "curriculum_agent.stages.skill_extraction.ClusterRepository",
+            return_value=AsyncMock(bulk_insert=AsyncMock()),
+        ),
+    ):
+        result_state = await se.run(state)
+
+    assert result_state["extracted_skills"] == []
+    assert result_state["skill_clusters"] == []
+    assert result_state["dropped_ungrounded_count"] == 1
 
 
 async def test_full_stage_tags_clusters_with_bloom_level():
@@ -237,22 +291,25 @@ async def test_dedupe_then_cluster_remaps_to_original_skill_indices():
         se._SkillItem(
             skill_name_th="Python",
             skill_name_en="Python",
-            skill_type="knowledge",
-            is_subject_specific=True,
+            ksec_category="SS",
+            bloom_level="apply",
+            evidence_span_th="ต้องการผู้เชี่ยวชาญด้าน Python",
             confidence=0.9,
         ),
         se._SkillItem(
             skill_name_th="  python ",
             skill_name_en="Python",
-            skill_type="knowledge",
-            is_subject_specific=True,
+            ksec_category="SS",
+            bloom_level="apply",
+            evidence_span_th="ต้องการผู้เชี่ยวชาญด้าน Python",
             confidence=0.8,
         ),
         se._SkillItem(
             skill_name_th="SQL",
             skill_name_en="SQL",
-            skill_type="knowledge",
-            is_subject_specific=True,
+            ksec_category="SS",
+            bloom_level="apply",
+            evidence_span_th="และการวิเคราะห์ข้อมูล",
             confidence=0.9,
         ),
     ]

@@ -18,6 +18,7 @@ class StakeholderType(StrEnum):
     ACCREDITATION_BODY = "accreditation_body"
     UNIVERSITY = "university"
     COMMUNITY = "community"
+    PARENT = "parent"
     SUBJECT_BENCHMARK = "subject_benchmark"
     PEER_PROGRAM = "peer_program"
 
@@ -63,15 +64,17 @@ class SkillType(StrEnum):
     MIXED = "mixed"
 
 
-# TQF 4-domain collapse (มคอ. domains 1-5 rolled into 4 tags) — used to pre-tag
-# ExtractedSkill for eventual มคอ.2/CHECO mapping. K=ความรู้, E=คุณธรรมจริยธรรม,
-# C=คุณลักษณะบุคคล; S absorbs TQF's ทักษะทางปัญญา + ทักษะปฏิบัติ + ทักษะความสัมพันธ์
-# ระหว่างบุคคล + ทักษะการวิเคราะห์เชิงตัวเลข/การสื่อสาร/IT.
+# TQF/มคอ. competency domains collapsed to five tags, used to pre-tag every
+# ExtractedSkill for eventual มคอ.2/CHECO mapping. The skill domain is split by
+# specificity so `is_subject_specific` is absorbed here rather than kept as a
+# separate field that could disagree with the tag. This is NOT a Bloom domain —
+# it is orthogonal to bloom_level, and a skill may be SS at Bloom `analyze`.
 class KSECCategory(StrEnum):
-    KNOWLEDGE = "K"
-    SKILL = "S"
-    ETHICS = "E"
-    CHARACTER = "C"
+    K = "K"  # ความรู้
+    GS = "GS"  # ทักษะทั่วไป (generic/transferable)
+    SS = "SS"  # ทักษะเฉพาะสาขา (subject-specific)
+    C = "C"  # คุณลักษณะบุคคล
+    E = "E"  # คุณธรรมจริยธรรม
 
 
 class Domain(StrEnum):
@@ -220,21 +223,20 @@ class StakeholderEvidence(BaseModel):
 class ExtractedSkill(BaseModel):
     skill_id: str
     program_id: str
-    skill_name_th: str
+    # A phrase / skill word-group ("วิเคราะห์ข้อมูลขนาดใหญ่"), never a bare word.
+    skill_name_th: str = Field(min_length=1)
     skill_name_en: str | None = None
-    skill_type: SkillType
-    is_subject_specific: bool
-    source_evidence_id: str
-    extraction_method: Literal["keybert", "llm", "manual", "ner"]
-    confidence: float = Field(ge=0, le=1)
-    # Cognitive-only Bloom tag (no psychomotor/krathwohl scale at extraction level —
-    # those are assigned later, at cluster level, once domain is settled by clustering).
-    bloom_level: BloomLevel | None = None
-    # TQF K/S/E/C category — always set.
     ksec_category: KSECCategory
-    # Per-skill-name demand, computed pre-clustering: same formula/weights as
-    # SkillCluster.demand_score (requirement+need evidence only, want=0 weight),
-    # grouped by skill_name_th instead of cluster membership.
+    # Cognitive scale only. Psychomotor/affective scales are not modelled: the
+    # agent stops at PLO and every PLO it produces is cognitive.
+    bloom_level: BloomLevel
+    # Verbatim quote from the source evidence that justifies this skill.
+    # Verified against the evidence text in pure code — see is_grounded().
+    evidence_span_th: str = Field(min_length=1)
+    source_evidence_id: str
+    extraction_method: Literal["llm", "manual"]
+    confidence: float = Field(ge=0, le=1)
+    # Per-skill-name demand, computed before grouping. Orders the raw-skill table.
     importance_score: float = Field(ge=0, le=1)
 
 

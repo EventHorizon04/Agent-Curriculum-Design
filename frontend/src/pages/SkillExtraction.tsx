@@ -48,13 +48,12 @@ interface ExtractedSkill {
   skill_id: string
   skill_name_th: string
   skill_name_en: string | null
-  skill_type: string
-  is_subject_specific: boolean
+  ksec_category: string
+  bloom_level: string
+  evidence_span_th: string
   source_evidence_id: string
   extraction_method: string
   confidence: number
-  bloom_level: string | null
-  ksec_category: string
   importance_score: number
 }
 
@@ -220,9 +219,6 @@ function ClusterTracePanel({ programId, clusterId }: { programId: string; cluste
                       )}
                     </div>
                     <div className="shrink-0 flex items-center gap-1.5">
-                      <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${SKILL_TYPE_COLOR[s.skill_type] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {SKILL_TYPE_LABEL[s.skill_type] ?? s.skill_type}
-                      </span>
                       <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${KSEC_COLOR[s.ksec_category] ?? 'bg-gray-100 text-gray-600'}`}>
                         {KSEC_LABEL[s.ksec_category] ?? s.ksec_category}
                       </span>
@@ -305,19 +301,20 @@ const SKILL_TYPE_COLOR: Record<string, string> = {
   mixed: 'bg-orange-100 text-orange-800',
 }
 
-// TQF K/S/E/C — 4-domain collapse of มคอ. domains 1-5, orthogonal to skill_type (Bloom domain)
 const KSEC_LABEL: Record<string, string> = {
   K: 'K · ความรู้',
-  S: 'S · ทักษะ',
-  E: 'E · จริยธรรม',
+  GS: 'GS · ทักษะทั่วไป',
+  SS: 'SS · ทักษะเฉพาะสาขา',
   C: 'C · คุณลักษณะ',
+  E: 'E · จริยธรรม',
 }
 
 const KSEC_COLOR: Record<string, string> = {
   K: 'bg-sky-100 text-sky-800',
-  S: 'bg-teal-100 text-teal-800',
-  E: 'bg-rose-100 text-rose-800',
+  GS: 'bg-teal-100 text-teal-800',
+  SS: 'bg-emerald-100 text-emerald-800',
   C: 'bg-amber-100 text-amber-800',
+  E: 'bg-rose-100 text-rose-800',
 }
 
 const BLOOM_ORDER = ['remember', 'understand', 'apply', 'analyze', 'evaluate', 'create'] as const

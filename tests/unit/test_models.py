@@ -7,13 +7,16 @@ from curriculum_agent.models import (
     PLO,
     BloomLevel,
     Domain,
+    ExtractedSkill,
     KrathwohlLevel,
+    KSECCategory,
     ProgramCreateRequest,
     ProgramMetadata,
     PsychomotorLevel,
     SkillCluster,
     SkillType,
     SMARTCheck,
+    StakeholderType,
 )
 
 SMART_PASS = SMARTCheck(specific=True, measurable=True, achievable=True, relevant=True, timely=True)
@@ -293,3 +296,57 @@ def test_program_summary_with_session_fields() -> None:
     )
     assert s.current_stage == "skill_extraction"
     assert s.session_status == "suspended"
+
+
+# ---- KSEC split / ExtractedSkill reshape (Task 2) ----------------------
+
+
+def test_ksec_category_has_five_values_with_skill_split():
+    assert {c.value for c in KSECCategory} == {"K", "GS", "SS", "C", "E"}
+
+
+def test_ksec_category_rejects_mixed_and_bare_s():
+    for bad in ("mixed", "S"):
+        with pytest.raises(ValueError):
+            KSECCategory(bad)
+
+
+def test_parent_stakeholder_type_exists():
+    assert StakeholderType.PARENT.value == "parent"
+
+
+def _skill_kwargs(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {
+        "skill_id": "S1",
+        "program_id": "cs-test",
+        "skill_name_th": "วิเคราะห์ข้อมูลขนาดใหญ่",
+        "ksec_category": KSECCategory.SS,
+        "bloom_level": BloomLevel.ANALYZE,
+        "evidence_span_th": "ต้องวิเคราะห์ข้อมูลขนาดใหญ่ได้",
+        "source_evidence_id": "E1",
+        "extraction_method": "llm",
+        "confidence": 0.9,
+        "importance_score": 0.5,
+    }
+    base.update(overrides)
+    return base
+
+
+def test_extracted_skill_accepts_full_tag_set():
+    skill = ExtractedSkill(**_skill_kwargs())
+    assert skill.ksec_category is KSECCategory.SS
+    assert skill.bloom_level is BloomLevel.ANALYZE
+
+
+@pytest.mark.parametrize("missing", ["bloom_level", "ksec_category", "evidence_span_th"])
+def test_extracted_skill_requires_tags_and_span(missing: str):
+    kwargs = _skill_kwargs()
+    del kwargs[missing]
+    with pytest.raises(ValidationError):
+        ExtractedSkill(**kwargs)
+
+
+def test_extracted_skill_no_longer_has_mixed_capable_fields():
+    skill = ExtractedSkill(**_skill_kwargs())
+    assert not hasattr(skill, "skill_type")
+    assert not hasattr(skill, "is_subject_specific")

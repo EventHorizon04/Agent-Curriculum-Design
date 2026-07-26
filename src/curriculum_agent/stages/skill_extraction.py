@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from typing import Any, Literal
 
@@ -16,6 +17,7 @@ from curriculum_agent.data.repositories import (
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
+    BloomLevel,
     ExtractedSkill,
     KSECCategory,
     SkillCluster,
@@ -29,25 +31,40 @@ from curriculum_agent.prompts.name_cluster import build_name_cluster_prompt
 from curriculum_agent.stages.demand import WEIGHTED_CLASSES, compute_demand_score
 from curriculum_agent.stages.llm_clustering import cluster_skill_names, dedupe_names
 
+_WS_RE = re.compile(r"\s+")
+
+
+def normalize_for_match(text: str) -> str:
+    """Collapse whitespace, trim, lowercase — for substring comparison only."""
+    return _WS_RE.sub(" ", text).strip().lower()
+
+
+def is_grounded(span_th: str, evidence_text: str) -> bool:
+    """True when `span_th` really occurs in `evidence_text`.
+
+    Verifies the model quoted rather than invented. Whitespace-insensitive so a
+    re-spaced but genuine quote still passes; anything the evidence does not
+    contain fails, and the skill is dropped by the caller.
+    """
+    span = normalize_for_match(span_th)
+    if not span:
+        return False
+    return span in normalize_for_match(evidence_text)
+
 
 class _SkillItem(BaseModel):
     skill_name_th: str = Field(min_length=1)
     skill_name_en: str | None = None
-    skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
-    is_subject_specific: bool
-    # Cognitive-only Bloom tag — see build_extract_skills_prompt.
-    bloom_level: (
-        Literal["remember", "understand", "apply", "analyze", "evaluate", "create"] | None
-    ) = None
-    ksec_category: Literal["K", "S", "E", "C"] = "K"
+    ksec_category: Literal["K", "GS", "SS", "C", "E"]
+    bloom_level: Literal["remember", "understand", "apply", "analyze", "evaluate", "create"]
+    evidence_span_th: str = Field(min_length=1)
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
 
-    @field_validator("skill_name_th", mode="before")
+    @field_validator("skill_name_th", "evidence_span_th", mode="before")
     @classmethod
-    def _strip_skill_name_th(cls, v: object) -> object:
-        """Strip surrounding whitespace before min_length is checked, so a
-        whitespace-only name fails validation (Instructor will reask) instead
-        of silently passing as a non-empty string."""
+    def _strip_text(cls, v: object) -> object:
+        """Strip before min_length runs, so a whitespace-only value fails
+        validation (Instructor reasks) instead of passing as a non-empty string."""
         return v.strip() if isinstance(v, str) else v
 
 
@@ -117,6 +134,7 @@ async def run(state: AgentState) -> AgentState:
     # --- Step 1: LLM skill extraction per evidence item (cache-first) ---
     raw_skills: list[dict[str, Any]] = []
     evidence_texts: dict[str, str] = {}
+    dropped_ungrounded = 0
     _cache = LLMCacheRepository()
 
     for item_dict in classified:
@@ -143,6 +161,13 @@ async def run(state: AgentState) -> AgentState:
 
         if result is not None:
             for sk in result.skills:
+                if not is_grounded(sk.evidence_span_th, evidence.raw_text_th):
+                    dropped_ungrounded += 1
+                    logger.debug(
+                        f"  dropped ungrounded skill '{sk.skill_name_th}' "
+                        f"from {evidence.evidence_id}"
+                    )
+                    continue
                 raw_skills.append(
                     {
                         **sk.model_dump(mode="json"),
@@ -150,6 +175,14 @@ async def run(state: AgentState) -> AgentState:
                         "stakeholder_type": evidence.stakeholder_type.value,
                     }
                 )
+
+    if dropped_ungrounded:
+        total_seen = len(raw_skills) + dropped_ungrounded
+        logger.warning(
+            f"Dropped {dropped_ungrounded}/{total_seen} skills failing the groundedness "
+            "check (quoted text not found in evidence)"
+        )
+    state["dropped_ungrounded_count"] = dropped_ungrounded
 
     if not raw_skills:
         logger.warning("Stage 2: no skills extracted — returning empty clusters")
@@ -178,13 +211,12 @@ async def run(state: AgentState) -> AgentState:
                 program_id=program_id,
                 skill_name_th=s["skill_name_th"],
                 skill_name_en=s.get("skill_name_en"),
-                skill_type=SkillType(s.get("skill_type", "knowledge")),
-                is_subject_specific=s.get("is_subject_specific", True),
+                ksec_category=KSECCategory(s["ksec_category"]),
+                bloom_level=BloomLevel(s["bloom_level"]),
+                evidence_span_th=s["evidence_span_th"],
                 source_evidence_id=s["evidence_id"],
-                extraction_method=s.get("extraction_method", "llm"),
+                extraction_method="llm",
                 confidence=s.get("confidence", 0.8),
-                bloom_level=s.get("bloom_level"),
-                ksec_category=KSECCategory(s.get("ksec_category", "K")),
                 importance_score=importance_by_name.get(s["skill_name_th"], 0.0),
             )
         )

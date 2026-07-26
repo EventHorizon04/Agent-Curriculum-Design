@@ -19,7 +19,8 @@ async def test_cache_hit_skips_extraction_llm_call():
 
     cached_json = (
         '{"skills": [{"skill_name_th": "Python", "skill_name_en": "Python",'
-        ' "skill_type": "knowledge", "is_subject_specific": true, "confidence": 0.9}]}'
+        ' "ksec_category": "SS", "bloom_level": "apply",'
+        ' "evidence_span_th": "ต้องการผู้เชี่ยวชาญด้าน Python", "confidence": 0.9}]}'
     )
 
     evidence_dict = {
