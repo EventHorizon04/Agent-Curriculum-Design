@@ -43,17 +43,33 @@ class NeedTrace(BaseModel):
     demand_signal: DemandSignal
 
 
+class NeedRunResult(BaseModel):
+    """POST /run returns the drop count alongside the Needs.
+
+    The count is a property of the run, not of any stored row, so it travels in
+    the response rather than being re-derivable from the database later.
+    """
+
+    needs: list[Need]
+    dropped_ungrounded_count: int
+
+
 @router.get("/", response_model=list[Need])
-async def list_clusters(program_id: str) -> list[Need]:
+async def list_needs(program_id: str) -> list[Need]:
     return await _repo.list_by_program(program_id)
 
 
-@router.get("/{cluster_id}/trace", response_model=NeedTrace)
-async def get_cluster_trace(program_id: str, cluster_id: str) -> NeedTrace:
+@router.get("/skills", response_model=list[ExtractedSkill])
+async def list_skills(program_id: str) -> list[ExtractedSkill]:
+    return await SkillRepository().list_by_program(program_id)
+
+
+@router.get("/{need_id}/trace", response_model=NeedTrace)
+async def get_need_trace(program_id: str, need_id: str) -> NeedTrace:
     needs = await _repo.list_by_program(program_id)
-    need = next((n for n in needs if n.need_id == cluster_id), None)
+    need = next((n for n in needs if n.need_id == need_id), None)
     if need is None:
-        raise HTTPException(status_code=404, detail="Cluster not found")
+        raise HTTPException(status_code=404, detail="Need not found")
 
     all_evidence, need_skills = await asyncio.gather(
         EvidenceRepository().list_by_program(program_id),
@@ -90,18 +106,12 @@ async def get_cluster_trace(program_id: str, cluster_id: str) -> NeedTrace:
     )
 
 
-@router.post("/run", response_model=list[Need])
-async def run_skill_extraction(program_id: str) -> list[Need]:
-    from curriculum_agent.stages.need_combination import (
-        run as run_need_combination,  # noqa: PLC0415
-    )
-    from curriculum_agent.stages.skill_extraction import (
-        run as run_skill_extraction,  # noqa: PLC0415
-    )
+@router.post("/run", response_model=NeedRunResult)
+async def run_need_pipeline(program_id: str) -> NeedRunResult:
+    from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
+    from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
 
-    evidence_repo = EvidenceRepository()
-    evidence_items = await evidence_repo.list_by_program(program_id)
-
+    evidence_items = await EvidenceRepository().list_by_program(program_id)
     if not evidence_items:
         raise HTTPException(
             status_code=422,
@@ -112,8 +122,9 @@ async def run_skill_extraction(program_id: str) -> list[Need]:
         "program_id": program_id,
         "classified_evidence": [e.model_dump(mode="json") for e in evidence_items],
     }
-
-    state = await asyncio.wait_for(run_skill_extraction(state), timeout=300)
-    result_state = await asyncio.wait_for(run_need_combination(state), timeout=300)
-    needs = [Need.model_validate(n) for n in result_state.get("needs", [])]
-    return needs
+    state = await asyncio.wait_for(run_skills(state), timeout=300)
+    state = await asyncio.wait_for(run_needs(state), timeout=300)
+    return NeedRunResult(
+        needs=[Need.model_validate(n) for n in state.get("needs", [])],
+        dropped_ungrounded_count=state.get("dropped_ungrounded_count", 0),
+    )

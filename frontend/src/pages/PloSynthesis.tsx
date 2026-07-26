@@ -35,14 +35,13 @@ interface PLO {
   is_optional: boolean
 }
 
-interface SkillCluster {
-  cluster_id: string
-  canonical_name_th: string
-  canonical_name_en: string | null
-  description_th: string
-  skill_type: string
+interface NeedSummary {
+  need_id: string
+  statement_th: string
+  statement_en: string | null
+  ksec_category: string
+  bloom_level: string
   demand_score: number
-  is_common_need: boolean
   source_evidence_ids: string[]
 }
 
@@ -57,7 +56,7 @@ interface StakeholderEvidence {
 
 interface PLOTrace {
   plo: PLO
-  clusters: SkillCluster[]
+  clusters: NeedSummary[]
   evidence: StakeholderEvidence[]
 }
 
@@ -78,9 +77,16 @@ const SOFT_FLAG_TH: Record<string, string> = {
   R_alignment: 'อาจไม่สอดคล้องวิสัยทัศน์',
 }
 
+interface NeedListItem {
+  need_id: string
+  statement_th: string
+}
+
 export default function PloSynthesis() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
+  const [needs, setNeeds] = useState<NeedListItem[]>([])
+  const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
@@ -90,8 +96,12 @@ export default function PloSynthesis() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.get<PLO[]>(`/programs/${programId}/plos/`)
-      setPlos(res.data)
+      const [ploRes, needRes] = await Promise.all([
+        api.get<PLO[]>(`/programs/${programId}/plos/`),
+        api.get<NeedListItem[]>(`/programs/${programId}/needs/`),
+      ])
+      setPlos(ploRes.data)
+      setNeeds(needRes.data)
     } catch {
       setError('โหลด PLO ไม่สำเร็จ')
     } finally {
@@ -118,6 +128,33 @@ export default function PloSynthesis() {
 
   const handleUpdate = (updated: PLO) =>
     setPlos(prev => prev.map(p => (p.plo_id === updated.plo_id ? updated : p)))
+
+  const toggleNeed = (needId: string) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (next.has(needId)) next.delete(needId)
+      else next.add(needId)
+      return next
+    })
+  }
+
+  const mergeSelected = async () => {
+    if (selected.size < 2 || !programId) return
+    setRunning(true)
+    setError('')
+    try {
+      await api.post(`/programs/${programId}/plos/from-needs`, {
+        need_ids: [...selected],
+      })
+      setSelected(new Set())
+      await fetchPlos()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      setError(msg ?? 'รวม Need เป็น PLO เดียวไม่สำเร็จ')
+    } finally {
+      setRunning(false)
+    }
+  }
 
   if (!programId) {
     return (
@@ -192,6 +229,40 @@ export default function PloSynthesis() {
               <PLOCard key={p.plo_id} plo={p} programId={programId} onUpdate={handleUpdate} />
             ))}
           </div>
+
+          {needs.length >= 2 && (
+            <div className="mt-8 rounded-xl border border-gray-200 bg-gray-50/60 p-5">
+              <h2 className="text-sm font-semibold text-gray-700 mb-1">
+                รวม Need หลายรายการเป็น PLO เดียว
+              </h2>
+              <p className="text-xs text-gray-500 mb-3">
+                เลือก Need ตั้งแต่ 2 รายการที่ต้องการให้ AI สังเคราะห์รวมเป็น PLO เดียว
+              </p>
+              <div className="space-y-2 mb-4">
+                {needs.map(n => (
+                  <label
+                    key={n.need_id}
+                    className="flex items-start gap-2 rounded-lg border border-gray-200 bg-white p-3"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selected.has(n.need_id)}
+                      onChange={() => toggleNeed(n.need_id)}
+                      className="mt-1"
+                    />
+                    <span className="text-sm text-gray-800">{n.statement_th}</span>
+                  </label>
+                ))}
+              </div>
+              <button
+                onClick={mergeSelected}
+                disabled={selected.size < 2 || running}
+                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:bg-gray-300"
+              >
+                รวมเป็น PLO เดียว ({selected.size})
+              </button>
+            </div>
+          )}
         </>
       )}
     </div>
@@ -232,35 +303,27 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
 
   return (
     <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
-      {/* Clusters */}
+      {/* Needs */}
       <div>
         <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-          Skill Clusters ({trace.clusters.length})
+          Needs ({trace.clusters.length})
         </h4>
         <div className="space-y-2">
           {trace.clusters.map(c => (
-            <div key={c.cluster_id} className="bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
+            <div key={c.need_id} className="bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800 leading-snug">{c.canonical_name_th}</p>
-                  {c.canonical_name_en && (
-                    <p className="text-xs text-gray-400 italic">{c.canonical_name_en}</p>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1 leading-relaxed">{c.description_th}</p>
-                </div>
-                <div className="shrink-0 flex flex-col items-end gap-1">
-                  <span className="text-xs font-mono bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600">
-                    {(c.demand_score * 100).toFixed(0)}%
-                  </span>
-                  {c.is_common_need && (
-                    <span className="text-xs bg-green-50 text-green-700 border border-green-200 rounded px-1.5 py-0.5">
-                      common need
-                    </span>
+                  <p className="text-sm font-medium text-gray-800 leading-snug">{c.statement_th}</p>
+                  {c.statement_en && (
+                    <p className="text-xs text-gray-400 italic">{c.statement_en}</p>
                   )}
                 </div>
+                <span className="shrink-0 text-xs font-mono bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600">
+                  {(c.demand_score * 100).toFixed(0)}%
+                </span>
               </div>
               <p className="text-xs text-gray-400 mt-1.5">
-                {c.source_evidence_ids.length} evidence · {c.skill_type}
+                {c.source_evidence_ids.length} evidence · {c.ksec_category} · {c.bloom_level}
               </p>
             </div>
           ))}
