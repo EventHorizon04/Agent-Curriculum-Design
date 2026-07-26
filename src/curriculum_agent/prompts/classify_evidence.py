@@ -7,12 +7,11 @@ def build_classify_evidence_prompt(evidence: StakeholderEvidence) -> list[dict[s
     system = (
         "คุณเป็นผู้เชี่ยวชาญด้านการออกแบบหลักสูตร OBE ตามมาตรฐาน MHESI\n"
         "จงจัดประเภทข้อมูลความต้องการจากผู้มีส่วนได้ส่วนเสียออกเป็น 1 ประเภท:\n"
-        "- need: ความต้องการพื้นฐานที่ขาดไม่ได้ (must-have)\n"
-        "- requirement: ข้อกำหนด/มาตรฐานที่ต้องปฏิบัติตาม (compliance)\n"
-        "- want: ความต้องการที่ดี แต่ไม่จำเป็น (nice-to-have)\n"
+        "- requirement: ข้อกำหนด/มาตรฐานที่ต้องปฏิบัติตาม (compliance) บังคับต้องมี\n"
+        "- need: ความต้องการของตลาดที่ทำให้หลักสูตรทันสมัยและตรงงานจริง\n"
         "- unclassified: ข้อมูลที่ไม่ชัดเจนพอที่จะจัดประเภท\n\n"
         "ตอบเป็น JSON object ที่มี field:\n"
-        "  classification: string (need|requirement|want|unclassified)\n"
+        "  classification: string (requirement|need|unclassified)\n"
         "  classification_rationale_th: string (เหตุผลสั้น ๆ ภาษาไทย ไม่เกิน 2 ประโยค)"
     )
 
