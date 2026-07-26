@@ -85,9 +85,10 @@ def _compute_skill_importance(
 ) -> dict[str, float]:
     """Per-skill-name demand, computed before clustering.
 
-    Same weighting as SkillCluster.demand_score (_compute_demand_score), grouped
-    by skill_name_th instead of cluster membership — every ExtractedSkill mention
-    of the same name gets the same importance_score.
+    Same weighting as SkillCluster.demand_score (compute_demand_score from
+    curriculum_agent.stages.demand), grouped by skill_name_th instead of
+    cluster membership — every ExtractedSkill mention of the same name gets
+    the same importance_score.
     """
     eids_by_name: dict[str, set[str]] = {}
     for s in raw_skills:

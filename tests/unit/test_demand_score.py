@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from curriculum_agent.models import StakeholderType
 from curriculum_agent.stages.demand import compute_demand_score
 
 
@@ -40,8 +41,12 @@ def test_unclassified_treated_as_need():
 
 
 def test_score_is_capped_at_one():
-    cls = _classify(e1="requirement")
-    score, _, _ = compute_demand_score(
-        ["e1"], {t: 1 for t in ("employer", "alumni", "community")}, 1, cls
-    )
+    # To exercise the min(..., 1.0) clamp, the unclamped raw sum must exceed 1.0.
+    # We pass more weighted evidence (3) than total_req_need_evidence (2),
+    # making freq = 3/2 = 1.5. We cover all StakeholderType values,
+    # making breadth = 8/8 = 1.0. The raw sum is 1.5*0.6 + 1.0*0.4 = 1.3,
+    # so min(1.3, 1.0) exercises the clamp. Without it, this test would fail.
+    cls = _classify(e1="requirement", e2="need", e3="need")
+    all_stakeholders = {t.value: 1 for t in StakeholderType}
+    score, _, _ = compute_demand_score(["e1", "e2", "e3"], all_stakeholders, 2, cls)
     assert score <= 1.0
