@@ -24,23 +24,23 @@ _METADATA = {
 
 
 @pytest.mark.asyncio
-async def test_run_raises_when_no_clusters() -> None:
-    """Stage 3 must raise ValueError before hitting LLM when Needs is empty."""
+async def test_run_raises_when_no_needs() -> None:
+    """Stage 4 must raise ValueError before hitting LLM when Needs is empty."""
     state: AgentState = {
         "program_id": "test",
         "needs": [],
         "metadata": _METADATA,
     }
-    with pytest.raises(ValueError, match="no skill clusters"):
+    with pytest.raises(ValueError, match="no Needs"):
         await run(state)
 
 
 @pytest.mark.asyncio
-async def test_run_raises_when_clusters_missing() -> None:
-    """Stage 3 must raise ValueError when clusters_dicts is missing."""
+async def test_run_raises_when_needs_missing() -> None:
+    """Stage 4 must raise ValueError when the needs key is missing."""
     state: AgentState = {
         "program_id": "test",
         "metadata": _METADATA,
     }
-    with pytest.raises(ValueError, match="no skill clusters"):
+    with pytest.raises(ValueError, match="no Needs"):
         await run(state)

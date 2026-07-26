@@ -17,20 +17,17 @@ interface PLO {
   program_id: string
   statement_th: string
   statement_en: string | null
-  domain: string
-  bloom_level: string | null
-  psychomotor_level: string | null
-  krathwohl_level: string | null
+  bloom_level: string
   is_subject_specific: boolean
   action_verb_th: string
   smart_check: SMARTCheck
-  source_cluster_ids: string[]
+  source_need_ids: string[]
   source_evidence_ids: string[]
   rationale_th: string
   distinctive_feature_th: string | null
   version: number
   classification: 'generic' | 'specific' | null
-  classification_method: 'skill_type' | 'llm' | 'manual' | null
+  classification_method: 'ksec' | 'llm' | 'manual' | null
   classification_rationale_th: string | null
   smart_retry_count: number
   smart_escalated: boolean
@@ -45,13 +42,13 @@ interface SkillCluster {
 }
 
 const METHOD_LABEL: Record<string, string> = {
-  skill_type: 'field',
+  ksec: 'field',
   llm: 'LLM',
   manual: 'manual',
 }
 
 const METHOD_COLOR: Record<string, string> = {
-  skill_type: 'bg-gray-100 text-gray-600',
+  ksec: 'bg-gray-100 text-gray-600',
   llm: 'bg-blue-100 text-blue-700',
   manual: 'bg-amber-100 text-amber-700',
 }
@@ -134,7 +131,7 @@ export default function PloReport() {
   const generic = mainPlos.filter(p => effectiveClass(p) === 'generic')
   const specific = mainPlos.filter(p => effectiveClass(p) === 'specific')
   const referencedClusters = clusters.filter(c =>
-    mainPlos.some(p => p.source_cluster_ids.includes(c.cluster_id))
+    mainPlos.some(p => p.source_need_ids.includes(c.cluster_id))
   )
 
   return (
@@ -352,7 +349,7 @@ function ReportMatrix({ plos, clusters }: { plos: PLO[]; clusters: SkillCluster[
               </td>
               {clusters.map(c => (
                 <td key={c.cluster_id} className="px-3 py-2 border-b border-gray-100 text-center">
-                  {p.source_cluster_ids.includes(c.cluster_id)
+                  {p.source_need_ids.includes(c.cluster_id)
                     ? <span className="text-green-600 font-bold">✓</span>
                     : <span className="text-gray-200">·</span>}
                 </td>

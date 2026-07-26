@@ -6,7 +6,6 @@ from pydantic import ValidationError
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
-    Domain,
     ExtractedSkill,
     KSECCategory,
     Need,
@@ -24,12 +23,11 @@ def make_plo(**overrides) -> dict:
         "plo_id": "PLO1",
         "program_id": "cs-test",
         "statement_th": "ออกแบบระบบซอฟต์แวร์ขนาดใหญ่ได้",
-        "domain": Domain.COGNITIVE,
         "bloom_level": BloomLevel.CREATE,
         "is_subject_specific": True,
         "action_verb_th": "ออกแบบ",
         "smart_check": SMART_PASS,
-        "source_cluster_ids": ["C1"],
+        "source_need_ids": ["C1"],
         "source_evidence_ids": ["E1"],
         "rationale_th": "ทดสอบ",
     }
@@ -54,9 +52,9 @@ def test_plo_accepts_clean_statement() -> None:
 # ---- evidence tracing --------------------------------------------------
 
 
-def test_plo_rejects_empty_source_clusters() -> None:
-    with pytest.raises(ValidationError, match="no source clusters"):
-        PLO(**make_plo(source_cluster_ids=[]))
+def test_plo_rejects_empty_source_need_ids() -> None:
+    with pytest.raises(ValidationError, match="no source Needs"):
+        PLO(**make_plo(source_need_ids=[]))
 
 
 def test_plo_rejects_empty_source_evidence_ids() -> None:
@@ -64,53 +62,19 @@ def test_plo_rejects_empty_source_evidence_ids() -> None:
         PLO(**make_plo(source_evidence_ids=[]))
 
 
-# ---- domain / level matching -------------------------------------------
+# ---- cognitive-only reshape (Task 6) ------------------------------------
 
 
-def test_cognitive_plo_requires_bloom_level() -> None:
-    with pytest.raises(ValidationError, match="missing bloom_level"):
-        PLO(**make_plo(bloom_level=None))
+def test_plo_requires_bloom_level() -> None:
+    # bloom_level has no default — every PLO is cognitive, so it must be supplied.
+    with pytest.raises(ValidationError):
+        PLO(**{k: v for k, v in make_plo().items() if k != "bloom_level"})
 
 
-def test_affective_plo_requires_krathwohl_level() -> None:
-    with pytest.raises(ValidationError, match="missing krathwohl_level"):
-        PLO(**make_plo(domain=Domain.AFFECTIVE, bloom_level=None, krathwohl_level=None))
-
-
-def test_affective_plo_accepts_krathwohl() -> None:
-    plo = PLO(
-        **make_plo(
-            domain=Domain.AFFECTIVE,
-            bloom_level=None,
-            krathwohl_level="valuing",
-        )
-    )
-    assert plo.domain == Domain.AFFECTIVE
-
-
-def test_psychomotor_plo_requires_psychomotor_level() -> None:
-    with pytest.raises(ValidationError, match="missing psychomotor_level"):
-        PLO(**make_plo(domain=Domain.PSYCHOMOTOR, bloom_level=None))
-
-
-def test_psychomotor_plo_rejects_bloom_only() -> None:
-    # bloom_level does not substitute for the psychomotor scale
-    with pytest.raises(ValidationError, match="missing psychomotor_level"):
-        PLO(**make_plo(domain=Domain.PSYCHOMOTOR, bloom_level=BloomLevel.APPLY))
-
-
-def test_psychomotor_plo_accepts_psychomotor_level() -> None:
-    plo = PLO(
-        **make_plo(
-            domain=Domain.PSYCHOMOTOR,
-            bloom_level=None,
-            psychomotor_level="precise",
-            statement_th="สาธิตการใช้เครื่องมือวัดทางไฟฟ้าได้อย่างถูกต้อง",
-            action_verb_th="สาธิต",
-        )
-    )
-    assert plo.domain == Domain.PSYCHOMOTOR
-    assert plo.psychomotor_level == "precise"
+def test_plo_has_no_domain_or_non_cognitive_level_fields() -> None:
+    plo = PLO(**make_plo())
+    for removed in ("domain", "psychomotor_level", "krathwohl_level"):
+        assert not hasattr(plo, removed), f"{removed} should have been deleted from PLO"
 
 
 # ---- new fields (Task 2) ---------------------------------------------------
@@ -121,14 +85,13 @@ def test_plo_new_field_defaults() -> None:
         plo_id="PLO1",
         program_id="p1",
         statement_th="วิเคราะห์ข้อมูลด้วยเทคนิคทางสถิติได้",
-        domain=Domain.COGNITIVE,
         bloom_level=BloomLevel.ANALYZE,
         is_subject_specific=True,
         action_verb_th="วิเคราะห์",
         smart_check=SMARTCheck(
             specific=True, measurable=True, achievable=True, relevant=True, timely=True
         ),
-        source_cluster_ids=["c1"],
+        source_need_ids=["c1"],
         source_evidence_ids=["e1"],
         rationale_th="จำเป็นต่อวิชาชีพ",
     )
@@ -143,14 +106,13 @@ def test_escalated_plo_may_carry_forbidden_word() -> None:
         plo_id="PLO9",
         program_id="p1",
         statement_th="เข้าใจหลักการวิเคราะห์ข้อมูล",  # forbidden word, but escalated
-        domain=Domain.COGNITIVE,
         bloom_level=BloomLevel.ANALYZE,
         is_subject_specific=True,
         action_verb_th="วิเคราะห์",
         smart_check=SMARTCheck(
             specific=True, measurable=False, achievable=True, relevant=True, timely=True
         ),
-        source_cluster_ids=["c1"],
+        source_need_ids=["c1"],
         source_evidence_ids=["e1"],
         rationale_th="เหตุผล",
         smart_escalated=True,
@@ -159,19 +121,18 @@ def test_escalated_plo_may_carry_forbidden_word() -> None:
 
 
 def test_escalated_plo_still_requires_evidence() -> None:
-    with pytest.raises(ValidationError, match="no source clusters"):
+    with pytest.raises(ValidationError, match="no source Needs"):
         PLO(
             plo_id="PLO9",
             program_id="p1",
             statement_th="เข้าใจหลักการวิเคราะห์ข้อมูล",
-            domain=Domain.COGNITIVE,
             bloom_level=BloomLevel.ANALYZE,
             is_subject_specific=True,
             action_verb_th="วิเคราะห์",
             smart_check=SMARTCheck(
                 specific=True, measurable=False, achievable=True, relevant=True, timely=True
             ),
-            source_cluster_ids=[],
+            source_need_ids=[],
             source_evidence_ids=[],
             rationale_th="เหตุผล",
             smart_escalated=True,
@@ -364,5 +325,5 @@ def test_need_requires_evidence_trail(empty_field: str):
 def test_skill_cluster_and_mixed_enums_are_gone():
     import curriculum_agent.models as m
 
-    for removed in ("SkillCluster", "SkillType", "PsychomotorLevel", "KrathwohlLevel"):
+    for removed in ("SkillCluster", "SkillType", "PsychomotorLevel", "KrathwohlLevel", "Domain"):
         assert not hasattr(m, removed), f"{removed} should have been deleted"

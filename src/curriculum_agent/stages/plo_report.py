@@ -28,7 +28,7 @@ def _need_summary(n: Need) -> str:
 
 async def _classify_one(plo: PLO, needs_by_id: dict[str, Need]) -> tuple[str, str, str]:
     """Return (classification, method, rationale_th) for a single PLO."""
-    resolved = [needs_by_id[cid] for cid in plo.source_cluster_ids if cid in needs_by_id]
+    resolved = [needs_by_id[cid] for cid in plo.source_need_ids if cid in needs_by_id]
 
     if resolved:
         n_specific = sum(1 for n in resolved if n.ksec_category is KSECCategory.SS)
@@ -38,13 +38,13 @@ async def _classify_one(plo: PLO, needs_by_id: dict[str, Need]) -> tuple[str, st
             f"(fraction {fraction:.2f})"
         )
         if fraction >= _SPECIFIC_HI:
-            return "specific", "skill_type", rationale
+            return "specific", "ksec", rationale
         if fraction <= _SPECIFIC_LO:
-            return "generic", "skill_type", rationale
+            return "generic", "ksec", rationale
 
     # Ambiguous fraction, or no resolvable Needs → LLM fallback.
     summaries = [_need_summary(n) for n in resolved]
-    messages = build_plo_classify_prompt(plo.statement_th, plo.domain.value, summaries)
+    messages = build_plo_classify_prompt(plo.statement_th, plo.bloom_level.value, summaries)
     result = await complete_light(_ClassificationResult, messages)
     return result.classification, "llm", result.rationale_th
 

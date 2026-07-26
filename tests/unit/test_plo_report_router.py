@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from curriculum_agent.api.routes.plos import router
-from curriculum_agent.models import PLO, BloomLevel, Domain, SMARTCheck
+from curriculum_agent.models import PLO, BloomLevel, SMARTCheck
 
 app = FastAPI()
 app.include_router(router, prefix="/programs/{program_id}/plos")
@@ -20,12 +20,11 @@ def _plo(**overrides) -> PLO:
         plo_id="PLO1",
         program_id="p1",
         statement_th="ออกแบบและพัฒนาระบบซอฟต์แวร์",
-        domain=Domain.COGNITIVE,
         bloom_level=BloomLevel.CREATE,
         is_subject_specific=True,
         action_verb_th="ออกแบบ",
         smart_check=_SMART,
-        source_cluster_ids=["c1"],
+        source_need_ids=["c1"],
         source_evidence_ids=["e1"],
         rationale_th="เหตุผล",
     )
@@ -34,7 +33,7 @@ def _plo(**overrides) -> PLO:
 
 
 def test_report_run_returns_classified_plos():
-    classified = _plo(classification="specific", classification_method="skill_type")
+    classified = _plo(classification="specific", classification_method="ksec")
 
     async def fake_run(state):
         return {"plos": [classified.model_dump(mode="json")]}

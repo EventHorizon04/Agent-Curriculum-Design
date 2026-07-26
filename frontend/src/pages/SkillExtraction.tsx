@@ -18,8 +18,6 @@ interface SkillCluster {
   is_common_need: boolean
   sample_quotes_th: string[]
   bloom_level: string | null
-  psychomotor_level: string | null
-  krathwohl_level: string | null
   is_optional: boolean
   classification_coverage: Record<string, number>
 }
@@ -332,7 +330,7 @@ function groupByBloom(clusters: SkillCluster[]): [string, SkillCluster[]][] {
   for (const level of LEVEL_ORDER) groups.set(level, [])
   groups.set('untagged', [])
   for (const c of clusters) {
-    const level = c.bloom_level ?? c.psychomotor_level
+    const level = c.bloom_level
     const key = level && LEVEL_ORDER.includes(level) ? level : 'untagged'
     groups.get(key)!.push(c)
   }
@@ -490,9 +488,6 @@ function ClusterCard({ cluster: c, programId }: { cluster: SkillCluster; program
               <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 font-medium">
                 เสริม (want)
               </span>
-            )}
-            {c.krathwohl_level && (
-              <span className="text-xs text-gray-400">Krathwohl: {c.krathwohl_level}</span>
             )}
           </div>
           <p className="text-gray-600 text-sm">{c.description_th}</p>

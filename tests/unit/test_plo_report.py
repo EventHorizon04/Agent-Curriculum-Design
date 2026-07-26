@@ -7,7 +7,6 @@ import pytest
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
-    Domain,
     KSECCategory,
     Need,
     SMARTCheck,
@@ -16,17 +15,16 @@ from curriculum_agent.models import (
 _SMART = SMARTCheck(specific=True, measurable=True, achievable=True, relevant=True, timely=True)
 
 
-def _plo(cluster_ids: list[str]) -> dict:
+def _plo(need_ids: list[str]) -> dict:
     return PLO(
         plo_id="PLO1",
         program_id="prog-1",
         statement_th="ออกแบบและพัฒนาระบบซอฟต์แวร์",
-        domain=Domain.COGNITIVE,
         bloom_level=BloomLevel.CREATE,
         is_subject_specific=False,
         action_verb_th="ออกแบบ",
         smart_check=_SMART,
-        source_cluster_ids=cluster_ids,
+        source_need_ids=need_ids,
         source_evidence_ids=["ev-1"],
         rationale_th="เหตุผล",
     ).model_dump(mode="json")
@@ -75,7 +73,7 @@ async def test_field_clear_specific_skips_llm():
 
     plo = result["plos"][0]
     assert plo["classification"] == "specific"
-    assert plo["classification_method"] == "skill_type"
+    assert plo["classification_method"] == "ksec"
     assert plo["is_subject_specific"] is True
     light.assert_not_called()
 
@@ -96,7 +94,7 @@ async def test_field_clear_generic_skips_llm():
 
     plo = result["plos"][0]
     assert plo["classification"] == "generic"
-    assert plo["classification_method"] == "skill_type"
+    assert plo["classification_method"] == "ksec"
     assert plo["is_subject_specific"] is False
     light.assert_not_called()
 

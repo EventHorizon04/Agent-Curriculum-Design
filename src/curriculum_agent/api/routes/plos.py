@@ -35,7 +35,7 @@ async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     if plo is None:
         raise HTTPException(status_code=404, detail="PLO not found")
 
-    need_ids = set(plo.source_cluster_ids)
+    need_ids = set(plo.source_need_ids)
     evidence_ids = set(plo.source_evidence_ids)
 
     all_needs = await NeedRepository().list_by_program(program_id)

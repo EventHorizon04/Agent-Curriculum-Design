@@ -26,16 +26,13 @@ _SOFT_OK = ps._SmartSoftJudge(
 )
 
 
-def _draft(
-    statement: str, verb: str = "วิเคราะห์", clusters: list[str] | None = None
-) -> ps._PLODraft:
+def _draft(statement: str, verb: str = "วิเคราะห์", needs: list[str] | None = None) -> ps._PLODraft:
     return ps._PLODraft(
         plo_id="PLO1",
         statement_th=statement,
-        domain="cognitive",
         bloom_level="analyze",
         action_verb_th=verb,
-        source_cluster_ids=clusters if clusters is not None else ["c1"],
+        source_need_ids=needs if needs is not None else ["c1"],
         rationale_th="เหตุผล",
     )
 

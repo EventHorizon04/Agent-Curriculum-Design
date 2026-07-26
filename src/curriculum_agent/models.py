@@ -50,12 +50,6 @@ class KSECCategory(StrEnum):
     E = "E"  # คุณธรรมจริยธรรม
 
 
-class Domain(StrEnum):
-    COGNITIVE = "cognitive"
-    PSYCHOMOTOR = "psychomotor"
-    AFFECTIVE = "affective"
-
-
 # Words forbidden in PLO statements (Thai). Cause SMART measurable to fail.
 FORBIDDEN_WORDS_TH = {"รู้", "จำ", "เข้าใจ", "ซาบซึ้ง", "ตระหนัก", "ศรัทธา", "รัก"}
 
@@ -248,24 +242,19 @@ class PLO(BaseModel):
     program_id: str
     statement_th: str
     statement_en: str | None = None
-    domain: Domain
-    bloom_level: BloomLevel | None = None
-    # Psychomotor/Krathwohl scales are not modelled as enums (Needs and PLOs are
-    # cognitive-only per the PLO-scope decision); these two fields are legacy
-    # slots kept only so check_domain_level_match still gates non-cognitive
-    # domains until Task 6 removes Domain from the PLO reshape.
-    psychomotor_level: str | None = None
-    krathwohl_level: str | None = None
+    # Cognitive only. The agent stops at PLO, and psychomotor/affective level
+    # scales belong to the faculty's YLO/CLO work, not here.
+    bloom_level: BloomLevel
     is_subject_specific: bool
     action_verb_th: str
     smart_check: SMARTCheck
-    source_cluster_ids: list[str]
+    source_need_ids: list[str]
     source_evidence_ids: list[str] = Field(default_factory=list)
     rationale_th: str
     distinctive_feature_th: str | None = None
     version: int = 1
     classification: Literal["generic", "specific"] | None = None
-    classification_method: Literal["skill_type", "llm", "manual"] | None = None
+    classification_method: Literal["ksec", "llm", "manual"] | None = None
     classification_rationale_th: str | None = None
     smart_retry_count: int = 0
     smart_escalated: bool = False
@@ -286,28 +275,15 @@ class PLO(BaseModel):
 
     @model_validator(mode="after")
     def check_evidence(self) -> PLO:
-        if not self.source_cluster_ids:
+        if not self.source_need_ids:
             raise ValueError(
-                f"PLO {self.plo_id} has no source clusters — every PLO must trace to evidence."
+                f"PLO {self.plo_id} has no source Needs — every PLO must trace to evidence."
             )
         if not self.source_evidence_ids:
             raise ValueError(
                 f"PLO {self.plo_id} has empty source_evidence_ids — "
                 "every PLO must trace to evidence."
             )
-        return self
-
-    @model_validator(mode="after")
-    def check_domain_level_match(self) -> PLO:
-        if self.domain == Domain.AFFECTIVE:
-            if self.krathwohl_level is None:
-                raise ValueError(f"PLO {self.plo_id} is affective but missing krathwohl_level")
-        elif self.domain == Domain.PSYCHOMOTOR:
-            if self.psychomotor_level is None:
-                raise ValueError(f"PLO {self.plo_id} is psychomotor but missing psychomotor_level")
-        else:
-            if self.bloom_level is None:
-                raise ValueError(f"PLO {self.plo_id} is cognitive but missing bloom_level")
         return self
 
 

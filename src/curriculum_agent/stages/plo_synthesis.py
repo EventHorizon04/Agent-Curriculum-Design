@@ -11,16 +11,14 @@ from curriculum_agent.llm import complete_heavy, complete_light
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
-    Domain,
+    KSECCategory,
     Need,
     ProgramMetadata,
     SMARTCheck,
 )
 from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
-from curriculum_agent.prompts.stage_3_plo import (
-    build_optional_plo_prompt,
-    build_plo_synthesis_prompt,
-)
+from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
+from curriculum_agent.stages.need_grouping import MAX_NEEDS, MIN_NEEDS
 from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
@@ -28,8 +26,6 @@ from curriculum_agent.stages.smart_rules import (
 )
 
 _MAX_RETRIES = 3
-_MIN_PLOS = 6
-_MAX_PLOS = 10
 
 
 class _PLODraft(BaseModel):
@@ -38,44 +34,19 @@ class _PLODraft(BaseModel):
     plo_id: str
     statement_th: str
     statement_en: str | None = None
-    domain: Domain
-    bloom_level: BloomLevel | None = None
-    # Not modelled as enums — see the same note on PLO in models.py.
-    psychomotor_level: str | None = None
-    krathwohl_level: str | None = None
+    bloom_level: BloomLevel
     is_subject_specific: bool = True
     action_verb_th: str
-    source_cluster_ids: list[str]
+    source_need_ids: list[str]
     source_evidence_ids: list[str] = Field(default_factory=list)
     rationale_th: str
     distinctive_feature_th: str | None = None
 
     @model_validator(mode="after")
-    def _check_clusters(self) -> _PLODraft:
-        if not self.source_cluster_ids:
-            raise ValueError("source_cluster_ids must not be empty")
+    def _check_needs(self) -> _PLODraft:
+        if not self.source_need_ids:
+            raise ValueError("source_need_ids must not be empty")
         return self
-
-    @model_validator(mode="after")
-    def _check_level(self) -> _PLODraft:
-        if self.domain == Domain.AFFECTIVE:
-            if self.krathwohl_level is None:
-                raise ValueError("affective domain requires krathwohl_level")
-        elif self.domain == Domain.PSYCHOMOTOR:
-            if self.psychomotor_level is None:
-                raise ValueError("psychomotor domain requires psychomotor_level")
-        else:
-            if self.bloom_level is None:
-                raise ValueError("cognitive domain requires bloom_level")
-        return self
-
-
-class _PLODraftList(BaseModel):
-    plos: list[_PLODraft] = Field(min_length=_MIN_PLOS, max_length=_MAX_PLOS)
-
-
-class _OptionalDraftList(BaseModel):
-    plos: list[_PLODraft] = Field(min_length=1, max_length=4)
 
 
 class _SingleDraftResponse(BaseModel):
@@ -112,7 +83,7 @@ def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[d
             "content": (
                 f"PLO เดิม:\n{draft.statement_th}\n\n"
                 f"เกณฑ์ที่ไม่ผ่าน:\n{hints}\n\n"
-                f"Domain: {draft.domain.value}, action_verb_th: {draft.action_verb_th}\n"
+                f"Bloom level: {draft.bloom_level.value}, action_verb_th: {draft.action_verb_th}\n"
                 "เขียน PLO ใหม่ให้ผ่านเกณฑ์ข้างต้นทุกข้อ"
             ),
         },
@@ -120,11 +91,11 @@ def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[d
 
 
 async def _ensure_smart(
-    draft: _PLODraft, known_cluster_ids: set[str], metadata: ProgramMetadata
+    draft: _PLODraft, known_need_ids: set[str], metadata: ProgramMetadata
 ) -> _SmartOutcome:
     """Hard fails → per-PLO retry (max _MAX_RETRIES) naming the criterion; soft fails → flags."""
     fails = hard_failures(
-        draft.statement_th, draft.action_verb_th, draft.source_cluster_ids, known_cluster_ids
+        draft.statement_th, draft.action_verb_th, draft.source_need_ids, known_need_ids
     )
     retries = 0
     while fails and retries < _MAX_RETRIES:
@@ -138,7 +109,7 @@ async def _ensure_smart(
         except Exception as exc:
             logger.warning(f"  SMART fix attempt {retries} failed: {exc}")
         fails = hard_failures(
-            draft.statement_th, draft.action_verb_th, draft.source_cluster_ids, known_cluster_ids
+            draft.statement_th, draft.action_verb_th, draft.source_need_ids, known_need_ids
         )
 
     escalated = bool(fails)
@@ -183,157 +154,97 @@ async def _ensure_smart(
     )
 
 
+async def synthesize_from_needs(
+    metadata: ProgramMetadata,
+    needs: list[Need],
+    program_id: str,
+    known_need_ids: set[str],
+) -> PLO | None:
+    """Draft one PLO from one or more Needs, then run it through the SMART gate.
+
+    Shared by the 1:1 stage loop and the designer-driven N:1 endpoint, so both
+    paths get the same SMART enforcement and evidence fallback. Returns None when
+    the model call fails outright — the caller decides whether that is fatal.
+    """
+    if not needs:
+        raise ValueError("synthesize_from_needs requires at least one Need")
+
+    try:
+        response = await complete_heavy(
+            _SingleDraftResponse,
+            build_plo_from_need_prompt(metadata, needs),
+            max_retries=_MAX_RETRIES,
+        )
+    except Exception as exc:
+        ids = ", ".join(n.need_id for n in needs)
+        logger.warning(f"PLO synthesis failed for Need(s) {ids}: {exc}")
+        return None
+
+    outcome = await _ensure_smart(response.plo, known_need_ids, metadata)
+    draft = outcome.draft
+
+    # The Needs already carry a verified evidence trail; fall back to it rather
+    # than trusting the model to echo evidence ids correctly.
+    evidence_ids = draft.source_evidence_ids or sorted(
+        {eid for n in needs for eid in n.source_evidence_ids}
+    )
+
+    return PLO(
+        plo_id=draft.plo_id or f"PLO-{uuid.uuid4().hex[:6]}",
+        program_id=program_id,
+        statement_th=draft.statement_th,
+        statement_en=draft.statement_en,
+        bloom_level=draft.bloom_level,
+        # Specific when any contributing Need is subject-specific: a PLO covering
+        # a domain capability stays domain-specific even if merged with a generic one.
+        is_subject_specific=any(n.ksec_category is KSECCategory.SS for n in needs),
+        action_verb_th=draft.action_verb_th,
+        smart_check=outcome.smart_check,
+        source_need_ids=[n.need_id for n in needs],
+        source_evidence_ids=evidence_ids,
+        rationale_th=draft.rationale_th,
+        distinctive_feature_th=draft.distinctive_feature_th,
+        version=1,
+        smart_retry_count=outcome.retry_count,
+        smart_escalated=outcome.escalated,
+        soft_flags=outcome.soft_flags,
+        # Optional only when every contributing Need is optional.
+        is_optional=all(n.is_optional for n in needs),
+    )
+
+
 async def run(state: AgentState) -> AgentState:
-    """Stage 3: synthesize 4-6 PLOs from approved Needs."""
-    need_dicts = state.get("needs", [])
+    """Stage 4: one PLO per Need."""
     program_id = state.get("program_id", "unknown")
     metadata_dict = state.get("metadata")
     if not metadata_dict:
         raise ValueError("AgentState missing 'metadata' — cannot run PLO synthesis stage")
     metadata = ProgramMetadata.model_validate(metadata_dict)
 
-    needs = [Need.model_validate(d) for d in need_dicts]
-    optional_needs = [n for n in needs if n.is_optional]
-    core_needs = [n for n in needs if not n.is_optional]
-
-    selected = (
-        core_needs
-        if len(core_needs) <= 12
-        else sorted(core_needs, key=lambda n: n.demand_score, reverse=True)[:12]
-    )
-
-    if not selected:
+    needs = [Need.model_validate(d) for d in state.get("needs", [])]
+    if not needs:
         raise ValueError(
-            f"Stage 3: no skill clusters available for program '{program_id}' — "
-            "run Stage 2 successfully before proceeding to PLO synthesis"
+            f"Stage 4: no Needs for program '{program_id}' — "
+            "run need_combination successfully before PLO synthesis"
         )
 
-    need_evidence_map: dict[str, list[str]] = {n.need_id: n.source_evidence_ids for n in needs}
-    known_cluster_ids = {n.need_id for n in needs}
-
-    logger.info(f"Stage 3: synthesizing PLOs from {len(selected)} Needs")
-
-    messages = build_plo_synthesis_prompt(metadata, selected)
-    draft_list = await complete_heavy(_PLODraftList, messages, max_retries=_MAX_RETRIES)
-    drafts = draft_list.plos[:_MAX_PLOS]
+    known_need_ids = {n.need_id for n in needs}
+    logger.info(f"Stage 4: synthesizing one PLO per Need ({len(needs)} Needs)")
 
     plos: list[PLO] = []
-    for draft in drafts:
-        outcome = await _ensure_smart(draft, known_cluster_ids, metadata)
-        validated_draft, smart_check = outcome.draft, outcome.smart_check
+    for need in needs:
+        plo = await synthesize_from_needs(metadata, [need], program_id, known_need_ids)
+        if plo is not None:
+            plos.append(plo)
 
-        # Derive evidence IDs from referenced Needs when LLM omits them.
-        # Fallback chain: draft field → referenced Needs → all Needs.
-        evidence_ids = validated_draft.source_evidence_ids
-        if not evidence_ids:
-            evidence_ids = list(
-                {
-                    eid
-                    for cid in validated_draft.source_cluster_ids
-                    for eid in need_evidence_map.get(cid, [])
-                }
-            )
-            logger.debug(
-                f"  PLO {validated_draft.plo_id}: derived {len(evidence_ids)} "
-                "source_evidence_ids from referenced Needs"
-            )
-        if not evidence_ids:
-            # Referenced Needs have no evidence; collect from all Needs in program.
-            evidence_ids = list({eid for n in needs for eid in n.source_evidence_ids})
-            logger.warning(
-                f"  PLO {validated_draft.plo_id}: source Needs carry no evidence IDs — "
-                f"fell back to all-Need pool ({len(evidence_ids)} IDs)"
-            )
-        if not evidence_ids:
-            raise ValueError(
-                f"PLO {validated_draft.plo_id}: cannot trace to any evidence — "
-                "run stakeholder needs + skill extraction before PLO synthesis"
-            )
-
-        plos.append(
-            PLO(
-                plo_id=validated_draft.plo_id or str(uuid.uuid4()),
-                program_id=program_id,
-                statement_th=validated_draft.statement_th,
-                statement_en=validated_draft.statement_en,
-                domain=validated_draft.domain,
-                bloom_level=validated_draft.bloom_level,
-                psychomotor_level=validated_draft.psychomotor_level,
-                krathwohl_level=validated_draft.krathwohl_level,
-                is_subject_specific=validated_draft.is_subject_specific,
-                action_verb_th=validated_draft.action_verb_th,
-                smart_check=smart_check,
-                source_cluster_ids=validated_draft.source_cluster_ids,
-                source_evidence_ids=evidence_ids,
-                rationale_th=validated_draft.rationale_th,
-                distinctive_feature_th=validated_draft.distinctive_feature_th,
-                version=1,
-                smart_retry_count=outcome.retry_count,
-                smart_escalated=outcome.escalated,
-                soft_flags=outcome.soft_flags,
-            )
-        )
-
-    if len(plos) < _MIN_PLOS:
+    core = sum(1 for p in plos if not p.is_optional)
+    if not MIN_NEEDS <= core <= MAX_NEEDS:
         logger.warning(
-            f"Stage 3: only {len(plos)} PLOs generated (expected {_MIN_PLOS}-{_MAX_PLOS})"
+            f"Stage 4 produced {core} core PLOs, outside the {MIN_NEEDS}-{MAX_NEEDS} policy — "
+            "need_combination should have enforced this; review at the checkpoint"
         )
-
-    if optional_needs:
-        try:
-            logger.info(
-                f"Stage 3: synthesizing optional PLOs from {len(optional_needs)} want-Needs"
-            )
-            opt_msgs = build_optional_plo_prompt(metadata, optional_needs)
-            opt_list = await complete_heavy(_OptionalDraftList, opt_msgs, max_retries=2)
-            for draft in opt_list.plos:
-                outcome = await _ensure_smart(draft, known_cluster_ids, metadata)
-
-                # Evidence fallback chain, scoped to optional clusters.
-                evidence_ids = (
-                    outcome.draft.source_evidence_ids
-                    or list(
-                        {
-                            eid
-                            for cid in outcome.draft.source_cluster_ids
-                            for eid in need_evidence_map.get(cid, [])
-                        }
-                    )
-                    or list({eid for n in optional_needs for eid in n.source_evidence_ids})
-                )
-                if not evidence_ids:
-                    logger.warning(f"optional PLO {outcome.draft.plo_id}: no evidence — skipped")
-                    continue
-
-                plos.append(
-                    PLO(
-                        plo_id=outcome.draft.plo_id or f"OPT-{uuid.uuid4().hex[:6]}",
-                        program_id=program_id,
-                        statement_th=outcome.draft.statement_th,
-                        statement_en=outcome.draft.statement_en,
-                        domain=outcome.draft.domain,
-                        bloom_level=outcome.draft.bloom_level,
-                        psychomotor_level=outcome.draft.psychomotor_level,
-                        krathwohl_level=outcome.draft.krathwohl_level,
-                        is_subject_specific=outcome.draft.is_subject_specific,
-                        action_verb_th=outcome.draft.action_verb_th,
-                        smart_check=outcome.smart_check,
-                        source_cluster_ids=outcome.draft.source_cluster_ids,
-                        source_evidence_ids=evidence_ids,
-                        rationale_th=outcome.draft.rationale_th,
-                        distinctive_feature_th=outcome.draft.distinctive_feature_th,
-                        version=1,
-                        smart_retry_count=outcome.retry_count,
-                        smart_escalated=outcome.escalated,
-                        soft_flags=outcome.soft_flags,
-                        is_optional=True,
-                    )
-                )
-        except Exception as exc:
-            logger.warning(f"Optional PLO pass failed (non-blocking): {exc}")
 
     await PLORepository().bulk_insert(plos)
-
     state["plos"] = [p.model_dump(mode="json") for p in plos]
     state["current_stage"] = "plo_synthesis"
     return state

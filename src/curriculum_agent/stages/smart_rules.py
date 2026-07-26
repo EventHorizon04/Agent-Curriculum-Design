@@ -20,7 +20,7 @@ CRITERION_FIX_HINTS_TH: dict[HardCriterion, str] = {
         "ให้แทนด้วยกริยาที่สังเกตได้ เช่น อธิบาย วิเคราะห์ ออกแบบ"
     ),
     HardCriterion.R_EVIDENCE: (
-        "Relevant ไม่ผ่าน: source_cluster_ids ทุกรายการต้องอ้างอิง cluster ที่มีอยู่จริง "
+        "Relevant ไม่ผ่าน: source_need_ids ทุกรายการต้องอ้างอิง Need ที่มีอยู่จริง "
         "(ห้ามมี id ที่ไม่รู้จักแม้แต่รายการเดียว) และต้องมีอย่างน้อย 1 รายการ"
     ),
 }
@@ -29,8 +29,8 @@ CRITERION_FIX_HINTS_TH: dict[HardCriterion, str] = {
 def hard_failures(
     statement_th: str,
     action_verb_th: str,
-    source_cluster_ids: list[str],
-    known_cluster_ids: set[str],
+    source_need_ids: list[str],
+    known_need_ids: set[str],
 ) -> list[HardCriterion]:
     """Code-level SMART hard checks (S verb presence, M forbidden words, R evidence)."""
     fails: list[HardCriterion] = []
@@ -38,6 +38,6 @@ def hard_failures(
         fails.append(HardCriterion.S_VERB)
     if any(word in statement_th for word in FORBIDDEN_WORDS_TH):
         fails.append(HardCriterion.M_FORBIDDEN)
-    if not source_cluster_ids or not set(source_cluster_ids) <= known_cluster_ids:
+    if not source_need_ids or not set(source_need_ids) <= known_need_ids:
         fails.append(HardCriterion.R_EVIDENCE)
     return fails

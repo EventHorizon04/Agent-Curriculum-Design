@@ -17,20 +17,17 @@ interface PLO {
   program_id: string
   statement_th: string
   statement_en: string | null
-  domain: string
-  bloom_level: string | null
-  psychomotor_level: string | null
-  krathwohl_level: string | null
+  bloom_level: string
   is_subject_specific: boolean
   action_verb_th: string
   smart_check: SMARTCheck
-  source_cluster_ids: string[]
+  source_need_ids: string[]
   source_evidence_ids: string[]
   rationale_th: string
   distinctive_feature_th: string | null
   version: number
   classification: 'generic' | 'specific' | null
-  classification_method: 'skill_type' | 'llm' | 'manual' | null
+  classification_method: 'ksec' | 'llm' | 'manual' | null
   classification_rationale_th: string | null
   smart_retry_count: number
   smart_escalated: boolean
@@ -64,18 +61,6 @@ interface PLOTrace {
   evidence: StakeholderEvidence[]
 }
 
-const DOMAIN_LABEL: Record<string, string> = {
-  cognitive: 'Cognitive',
-  psychomotor: 'Psychomotor',
-  affective: 'Affective',
-}
-
-const DOMAIN_COLOR: Record<string, string> = {
-  cognitive: 'bg-blue-100 text-blue-800',
-  psychomotor: 'bg-green-100 text-green-800',
-  affective: 'bg-purple-100 text-purple-800',
-}
-
 const BLOOM_LABEL: Record<string, string> = {
   remember: 'Remember',
   understand: 'Understand',
@@ -83,11 +68,6 @@ const BLOOM_LABEL: Record<string, string> = {
   analyze: 'Analyze',
   evaluate: 'Evaluate',
   create: 'Create',
-  imitate: 'Imitate',
-  manipulate: 'Manipulate',
-  precise: 'Precise',
-  articulate: 'Articulate',
-  naturalize: 'Naturalize',
 }
 
 const SMART_KEYS: (keyof SMARTCheck)[] = ['specific', 'measurable', 'achievable', 'relevant', 'timely']
@@ -354,17 +334,9 @@ function PLOCard({
             <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded">
               {p.plo_id}
             </span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${DOMAIN_COLOR[p.domain] ?? 'bg-gray-100 text-gray-700'}`}>
-              {DOMAIN_LABEL[p.domain] ?? p.domain}
+            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">
+              {BLOOM_LABEL[p.bloom_level] ?? p.bloom_level}
             </span>
-            {(p.bloom_level || p.psychomotor_level || p.krathwohl_level) && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">
-                {(() => {
-                  const level = p.bloom_level ?? p.psychomotor_level
-                  return level ? BLOOM_LABEL[level] ?? level : p.krathwohl_level
-                })()}
-              </span>
-            )}
             {p.is_subject_specific && (
               <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">
                 subject-specific
@@ -464,7 +436,7 @@ function PLOCard({
       {!editing && (
         <>
           <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4 text-xs text-gray-400">
-            <span>{p.source_cluster_ids.length} clusters</span>
+            <span>{p.source_need_ids.length} clusters</span>
             <span>{p.source_evidence_ids.length} evidence</span>
             <button
               onClick={() => setTraceOpen(v => !v)}

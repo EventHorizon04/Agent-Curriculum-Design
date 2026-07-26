@@ -19,7 +19,6 @@ from curriculum_agent.config import settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
-    Domain,
     KSECCategory,
     Need,
     ProgramMetadata,
@@ -82,12 +81,11 @@ def valid_plo(need: Need) -> PLO:
         plo_id="PLO1",
         program_id="cs-test",
         statement_th="ออกแบบและพัฒนาซอฟต์แวร์ที่มีคุณภาพได้",
-        domain=Domain.COGNITIVE,
         bloom_level=BloomLevel.CREATE,
         is_subject_specific=True,
         action_verb_th="ออกแบบ",
         smart_check=SMART_PASS,
-        source_cluster_ids=[need.need_id],
+        source_need_ids=[need.need_id],
         source_evidence_ids=need.source_evidence_ids,
         rationale_th="ทักษะหลักที่นายจ้างต้องการ",
     )
