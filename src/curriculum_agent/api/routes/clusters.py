@@ -17,6 +17,7 @@ from curriculum_agent.models import (
     StakeholderEvidence,
     StakeholderType,
 )
+from curriculum_agent.stages.demand import BREADTH_WEIGHT, FREQ_WEIGHT
 
 router = APIRouter()
 _repo = ClusterRepository()
@@ -75,7 +76,7 @@ async def get_cluster_trace(program_id: str, cluster_id: str) -> ClusterTrace:
         stakeholder_type_count=stk_count,
         max_stakeholder_types=_MAX_STAKEHOLDER_TYPES,
         breadth_score=round(breadth, 4),
-        demand_score=round(min(freq * 0.6 + breadth * 0.4, 1.0), 4),
+        demand_score=round(min(freq * FREQ_WEIGHT + breadth * BREADTH_WEIGHT, 1.0), 4),
         stakeholder_breakdown={
             k.value if hasattr(k, "value") else k: v
             for k, v in cluster.stakeholder_coverage.items()

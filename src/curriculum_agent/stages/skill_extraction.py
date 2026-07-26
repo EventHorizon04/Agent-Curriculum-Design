@@ -26,6 +26,7 @@ from curriculum_agent.models import (
 from curriculum_agent.prompts.classify_cluster_bloom import build_cluster_bloom_prompt
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.name_cluster import build_name_cluster_prompt
+from curriculum_agent.stages.demand import WEIGHTED_CLASSES, compute_demand_score
 from curriculum_agent.stages.llm_clustering import cluster_skill_names, dedupe_names
 
 
@@ -76,37 +77,6 @@ class _ClusterBloomResult(BaseModel):
     is_subject_specific: bool
 
 
-_WEIGHTED_CLASSES = {"requirement", "need", "unclassified"}
-
-
-def _compute_demand_score(
-    source_evidence_ids: list[str],
-    stakeholder_coverage: dict[str, int],
-    total_req_need_evidence: int,
-    classification_by_evidence: dict[str, str],
-) -> tuple[float, bool, dict[str, int]]:
-    """Score from requirement+need evidence only; want evidence carries zero weight.
-
-    Returns (demand_score, is_optional, classification_coverage).
-    """
-    coverage: dict[str, int] = {}
-    weighted = 0
-    want = 0
-    for eid in set(source_evidence_ids):
-        cls = classification_by_evidence.get(eid, "unclassified")
-        coverage[cls] = coverage.get(cls, 0) + 1
-        if cls in _WEIGHTED_CLASSES:
-            weighted += 1
-        elif cls == "want":
-            want += 1
-
-    freq = weighted / max(total_req_need_evidence, 1)
-    breadth = len(stakeholder_coverage) / max(len(StakeholderType), 1)
-    score = round(min(freq * 0.6 + breadth * 0.4, 1.0), 4)
-    is_optional = want > weighted
-    return score, is_optional, coverage
-
-
 def _compute_skill_importance(
     raw_skills: list[dict[str, Any]],
     classified: list[dict[str, Any]],
@@ -130,7 +100,7 @@ def _compute_skill_importance(
             if item_dict.get("evidence_id") in eids:
                 stype = item_dict.get("stakeholder_type", "employer")
                 stk_coverage[stype] = stk_coverage.get(stype, 0) + 1
-        score, _, _ = _compute_demand_score(
+        score, _, _ = compute_demand_score(
             list(eids), stk_coverage, total_req_need_evidence, classification_by_evidence
         )
         scores[name] = score
@@ -193,7 +163,7 @@ async def run(state: AgentState) -> AgentState:
         for d in classified
         if d.get("evidence_id")
     }
-    total_req_need = sum(1 for c in classification_by_evidence.values() if c in _WEIGHTED_CLASSES)
+    total_req_need = sum(1 for c in classification_by_evidence.values() if c in WEIGHTED_CLASSES)
     importance_by_name = _compute_skill_importance(
         raw_skills, classified, classification_by_evidence, total_req_need
     )
@@ -280,7 +250,7 @@ async def run(state: AgentState) -> AgentState:
         except Exception as exc:
             logger.warning(f"Cluster {cluster_idx} Bloom tagging failed: {exc}")
 
-        demand, is_optional, cls_coverage = _compute_demand_score(
+        demand, is_optional, cls_coverage = compute_demand_score(
             source_eids, stk_coverage, total_req_need, classification_by_evidence
         )
 
