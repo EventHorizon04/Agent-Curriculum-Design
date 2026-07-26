@@ -8,12 +8,12 @@ from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetad
 from curriculum_agent.stages import plo_synthesis as ps
 
 
-def _need(nid: str, optional: bool = False) -> Need:
+def _need(nid: str, optional: bool = False, ksec_category: KSECCategory = KSECCategory.SS) -> Need:
     return Need(
         need_id=nid,
         program_id="cs-test",
         statement_th=f"สามารถทำงาน {nid} ตามที่ตลาดต้องการ",
-        ksec_category=KSECCategory.SS,
+        ksec_category=ksec_category,
         bloom_level=BloomLevel.ANALYZE,
         member_skill_ids=[f"S-{nid}"],
         source_evidence_ids=[f"E-{nid}"],
@@ -185,3 +185,108 @@ async def test_synthesize_returns_none_when_the_model_fails(
 async def test_synthesize_rejects_an_empty_need_list(program_metadata: ProgramMetadata):
     with pytest.raises(ValueError, match="at least one Need"):
         await ps.synthesize_from_needs(program_metadata, [], "cs-test", set())
+
+
+async def test_mixed_ss_and_gs_needs_yields_subject_specific_plo(
+    program_metadata: ProgramMetadata, monkeypatch: pytest.MonkeyPatch
+):
+    """Ensure the is_subject_specific predicate uses any(), not all().
+
+    When one Need is SS and one is GS, the PLO must stay subject-specific.
+    The mock draft returns False to verify we compute, not read from draft.
+    """
+
+    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+        draft = _draft("N1").model_copy(update={"is_subject_specific": False})
+        return ps._SingleDraftResponse(plo=draft)
+
+    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
+        return ps._SmartSoftJudge(
+            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
+        )
+
+    monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
+    monkeypatch.setattr(ps, "complete_light", fake_light)
+
+    plo = await ps.synthesize_from_needs(
+        program_metadata,
+        [_need("N1", ksec_category=KSECCategory.SS), _need("N2", ksec_category=KSECCategory.GS)],
+        "cs-test",
+        {"N1", "N2"},
+    )
+
+    assert plo is not None
+    assert plo.is_subject_specific is True
+
+
+async def test_all_generic_needs_yield_non_subject_specific_plo(
+    program_metadata: ProgramMetadata, monkeypatch: pytest.MonkeyPatch
+):
+    """When no Need is subject-specific, the PLO should not be subject-specific.
+
+    The mock draft returns True to verify we compute, not read from draft.
+    """
+
+    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+        draft = _draft("N1").model_copy(update={"is_subject_specific": True})
+        return ps._SingleDraftResponse(plo=draft)
+
+    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
+        return ps._SmartSoftJudge(
+            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
+        )
+
+    monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
+    monkeypatch.setattr(ps, "complete_light", fake_light)
+
+    plo = await ps.synthesize_from_needs(
+        program_metadata,
+        [_need("N1", ksec_category=KSECCategory.GS), _need("N2", ksec_category=KSECCategory.GS)],
+        "cs-test",
+        {"N1", "N2"},
+    )
+
+    assert plo is not None
+    assert plo.is_subject_specific is False
+
+
+async def test_run_skips_failed_need_and_emits_rest(
+    program_metadata: ProgramMetadata, monkeypatch: pytest.MonkeyPatch
+):
+    """Verify run() survives partial failure: one Need fails, others succeed.
+
+    Drives run() with three Needs where the model fails for exactly N2.
+    Asserts: stage completes, exactly two PLOs come back (not None),
+    they are N1 and N3, and the list contains no None.
+    """
+    needs = [_need("N1"), _need("N2"), _need("N3")]
+    drafts = {n.need_id: _draft(n.need_id) for n in needs}
+
+    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+        body = messages[-1]["content"]
+        nid = next(n.need_id for n in needs if n.need_id in body)
+        if nid == "N2":
+            raise RuntimeError("model timeout for N2")
+        return ps._SingleDraftResponse(plo=drafts[nid])
+
+    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
+        return ps._SmartSoftJudge(
+            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
+        )
+
+    monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
+    monkeypatch.setattr(ps, "complete_light", fake_light)
+
+    state = await ps.run(
+        {
+            "program_id": "cs-test",
+            "metadata": program_metadata.model_dump(mode="json"),
+            "needs": [n.model_dump(mode="json") for n in needs],
+        }
+    )
+
+    plos = state["plos"]
+    assert len(plos) == 2
+    assert None not in plos
+    plo_need_ids = [p["source_need_ids"][0] for p in plos]
+    assert set(plo_need_ids) == {"N1", "N3"}

@@ -436,7 +436,7 @@ function PLOCard({
       {!editing && (
         <>
           <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4 text-xs text-gray-400">
-            <span>{p.source_need_ids.length} clusters</span>
+            <span>{p.source_need_ids.length} needs</span>
             <span>{p.source_evidence_ids.length} evidence</span>
             <button
               onClick={() => setTraceOpen(v => !v)}
