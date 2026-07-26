@@ -100,21 +100,20 @@ class MergeNeedsRequest(BaseModel):
 async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO:
     """Synthesize one PLO covering several designer-selected Needs.
 
-    Needs are validated before the program lookup: a bad need_id is a client
-    error the designer can fix from this page alone, whereas a missing program
-    is a different failure mode entirely — no need to pay for it on this path.
+    Program is looked up first: a missing program is a 404, not a 422 blaming
+    the Needs. Need ids are validated only after the program exists.
     """
     from curriculum_agent.stages.plo_synthesis import synthesize_from_needs  # noqa: PLC0415
+
+    program = await ProgramRepository().get(program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
 
     all_needs = await NeedRepository().list_by_program(program_id)
     by_id = {n.need_id: n for n in all_needs}
     missing = [nid for nid in body.need_ids if nid not in by_id]
     if missing:
         raise HTTPException(status_code=422, detail=f"ไม่พบ Need: {', '.join(missing)}")
-
-    program = await ProgramRepository().get(program_id)
-    if program is None:
-        raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
 
     selected = [by_id[nid] for nid in body.need_ids]
     plo = await synthesize_from_needs(program, selected, program_id, {n.need_id for n in all_needs})

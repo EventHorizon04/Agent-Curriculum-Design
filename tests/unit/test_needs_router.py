@@ -13,6 +13,7 @@ from curriculum_agent.models import (
     ExtractedSkill,
     KSECCategory,
     Need,
+    ProgramMetadata,
 )
 
 
@@ -42,6 +43,24 @@ def _skill() -> ExtractedSkill:
         extraction_method="llm",
         confidence=0.9,
         importance_score=0.75,
+    )
+
+
+def _program() -> ProgramMetadata:
+    return ProgramMetadata(
+        program_id="cs-test",
+        name_th="วิทยาการคอมพิวเตอร์",
+        name_en="Computer Science",
+        field="Computer Science",
+        degree_level="bachelor",
+        duration_years=4,
+        faculty="วิศวกรรมศาสตร์",
+        university="มหาวิทยาลัยทดสอบ",
+        vision_th="มุ่งผลิตบัณฑิตที่มีความเชี่ยวชาญด้านเทคโนโลยี",
+        mission_th="พันธกิจของหลักสูตร",
+        philosophy_th="ปรัชญาของหลักสูตร",
+        program_goals_th=["เป้าหมายหลักสูตรที่ 1"],
+        program_objectives_th=["ผลิตบัณฑิตที่มีทักษะด้านซอฟต์แวร์"],
     )
 
 
@@ -112,6 +131,7 @@ async def test_from_needs_rejects_fewer_than_two_needs(
     # the need-lookup would find it, and the response would NOT be 422 with a
     # "too_short" body error — proving this 422 comes from the count guard, not
     # from an unrelated failure (e.g. an unknown-need or missing-program error).
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
         plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
     )
@@ -125,6 +145,7 @@ async def test_from_needs_rejects_fewer_than_two_needs(
 async def test_from_needs_rejects_unknown_need_ids(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
         plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
     )
@@ -133,3 +154,16 @@ async def test_from_needs_rejects_unknown_need_ids(
     )
     assert response.status_code == 422
     assert "ghost" in response.json()["detail"]
+
+
+async def test_from_needs_returns_404_for_missing_program(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    # When program does not exist, endpoint returns 404, not 422 blaming the Needs.
+    # This test pins the correct check order: program lookup first.
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=None))
+    response = await client.post(
+        "/programs/unknown-program/plos/from-needs", json={"need_ids": ["N1", "N2"]}
+    )
+    assert response.status_code == 404
+    assert "หลักสูตร" in response.json()["detail"]
