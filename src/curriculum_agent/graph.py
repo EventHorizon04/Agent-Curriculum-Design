@@ -100,7 +100,7 @@ def review_stakeholder_needs(state: AgentState) -> AgentState:
 
 
 def review_needs(state: AgentState) -> AgentState:
-    payload = interrupt("Stage 3 complete — review raw skills and distilled Needs")
+    payload = interrupt("Stage 2 complete — review raw skills and distilled Needs")
     if isinstance(payload, dict):
         return {**state, **payload}
     return state

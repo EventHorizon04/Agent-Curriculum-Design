@@ -6,14 +6,11 @@ import pytest
 
 from curriculum_agent.graph import AgentState, build_graph
 from curriculum_agent.models import (
-    BloomLevel,
-    Domain,
     ProgramMetadata,
     SMARTCheck,
     StakeholderEvidence,
     StakeholderType,
 )
-from curriculum_agent.stages.plo_synthesis import _PLODraft, _PLODraftList
 
 _SMART_PASS = SMARTCheck(
     specific=True, measurable=True, achievable=True, relevant=True, timely=True
@@ -27,35 +24,11 @@ _EVIDENCE_CLASSIFY = type(
 
 _SKILL_RESP = type("_ExtractedSkillsResponse", (), {"skills": []})()
 
-_CLUSTER_RESP = type(
-    "_ClusterNameResult",
-    (),
-    {
-        "canonical_name_th": "การเขียนโปรแกรม",
-        "canonical_name_en": "Programming",
-        "description_th": "ทักษะการเขียนโปรแกรม",
-        "skill_type": "knowledge",
-        "is_subject_specific": True,
-        "sample_quotes_th": [],
-    },
-)()
-
-_PLO_DRAFTS = _PLODraftList(
-    plos=[
-        _PLODraft(
-            plo_id=f"PLO-{i}",
-            statement_th=f"ออกแบบและพัฒนาซอฟต์แวร์ในด้านที่ {i} ได้อย่างเป็นระบบ",
-            domain=Domain.COGNITIVE,
-            bloom_level=BloomLevel.CREATE,
-            is_subject_specific=True,
-            action_verb_th="ออกแบบ",
-            source_cluster_ids=["C1"],
-            source_evidence_ids=["E1"],
-            rationale_th=f"สาเหตุที่ {i}",
-        )
-        for i in range(1, 7)
-    ]
-)
+# _CLUSTER_RESP and _PLO_DRAFTS used to stand in for the deleted SkillCluster
+# naming/classification step and its downstream PLO drafts. The single test in
+# this file stops at the review_evidence interrupt, before skill extraction,
+# need_combination, or PLO synthesis ever run, so neither constant was ever
+# read — they were deleted rather than reshaped to the Need-based pipeline.
 
 
 @pytest.fixture

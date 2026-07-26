@@ -60,7 +60,7 @@ async def run_plo_synthesis(program_id: str) -> list[PLO]:
     if not needs:
         raise HTTPException(
             status_code=422,
-            detail="ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Skill Extraction ก่อน",
+            detail="ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน",
         )
 
     state: AgentState = {

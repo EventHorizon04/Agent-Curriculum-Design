@@ -173,6 +173,8 @@ async def test_merge_bucket_falls_back_when_llm_returns_wrong_count(
     monkeypatch: pytest.MonkeyPatch,
 ):
     bucket = [_group(f"g{i}", i / 10, f"E{i}") for i in range(5)]
+    all_skill_ids = {sid for g in bucket for sid in g.skill_ids}
+    all_evidence_ids = {eid for g in bucket for eid in g.evidence_ids}
 
     async def bad_merge(model, messages, **kw):  # noqa: ANN001, ANN003
         return nc.MergeGroupsResponse(groups=[[0, 1, 2, 3, 4]])  # 1 group, asked for 2
@@ -180,10 +182,18 @@ async def test_merge_bucket_falls_back_when_llm_returns_wrong_count(
     monkeypatch.setattr(nc, "complete_heavy", bad_merge)
     merged = await nc._merge_bucket(bucket, 2, KSECCategory.SS)
     assert len(merged) == 2
+    # A fallback that truncates the ranked list instead of fusing (`return
+    # ranked[:limit]`) still yields the right count here but silently drops
+    # the surplus groups' evidence — exactly the traceability bug `_fuse`
+    # exists to prevent. Every input id must survive into the output.
+    assert {sid for g in merged for sid in g.skill_ids} == all_skill_ids
+    assert {eid for g in merged for eid in g.evidence_ids} == all_evidence_ids
 
 
 async def test_merge_bucket_falls_back_when_llm_raises(monkeypatch: pytest.MonkeyPatch):
     bucket = [_group(f"g{i}", i / 10, f"E{i}") for i in range(4)]
+    all_skill_ids = {sid for g in bucket for sid in g.skill_ids}
+    all_evidence_ids = {eid for g in bucket for eid in g.evidence_ids}
 
     async def boom(model, messages, **kw):  # noqa: ANN001, ANN003
         raise RuntimeError("model unavailable")
@@ -191,17 +201,35 @@ async def test_merge_bucket_falls_back_when_llm_raises(monkeypatch: pytest.Monke
     monkeypatch.setattr(nc, "complete_heavy", boom)
     merged = await nc._merge_bucket(bucket, 2, KSECCategory.SS)
     assert len(merged) == 2
+    # Same traceability pin as the wrong-count test above: a truncating
+    # fallback would still land on the right count while dropping evidence.
+    assert {sid for g in merged for sid in g.skill_ids} == all_skill_ids
+    assert {eid for g in merged for eid in g.evidence_ids} == all_evidence_ids
 
 
 async def test_merge_bucket_uses_llm_grouping_when_count_matches(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    bucket = [_group(f"g{i}", 0.5, f"E{i}") for i in range(4)]
+    # Demand scores are deliberately distinct (no ties). Demand-ranked fusion
+    # (_fuse_by_demand) would keep the two highest-demand groups ("a" 0.9 and
+    # "c" 0.8) and fold the surplus into them by rank — pairing a-with-d and
+    # c-with-b. The mocked LLM instead returns a-with-b and c-with-d, a
+    # pairing demand-ranked fusion would never choose, so this test only
+    # passes if the LLM grouping path actually ran. Do not "simplify" these
+    # scores back to a tie — that lets the fallback produce the same shape
+    # and hides a mutation that always skips the LLM path.
+    bucket = [
+        _group("a", 0.9, "E-a"),
+        _group("b", 0.1, "E-b"),
+        _group("c", 0.8, "E-c"),
+        _group("d", 0.2, "E-d"),
+    ]
 
     async def good_merge(model, messages, **kw):  # noqa: ANN001, ANN003
-        return nc.MergeGroupsResponse(groups=[[0, 1], [2, 3]])
+        return nc.MergeGroupsResponse(groups=[[0, 1], [2, 3]])  # a+b, c+d
 
     monkeypatch.setattr(nc, "complete_heavy", good_merge)
     merged = await nc._merge_bucket(bucket, 2, KSECCategory.SS)
     assert len(merged) == 2
-    assert all(len(g.skill_names) == 2 for g in merged)
+    actual_pairs = {frozenset(g.skill_names) for g in merged}
+    assert actual_pairs == {frozenset({"a", "b"}), frozenset({"c", "d"})}
