@@ -53,15 +53,26 @@ def dedupe_with_bloom_max(
     is sorted by normalized form so prompts and cache keys are deterministic
     regardless of input order; `index_groups[i]` lists the positions in `skills`
     that collapsed into `display_names[i]`.
+
+    Names that normalize to an empty string (blank/whitespace-only) are skipped.
+    This is a defence-in-depth guard for the extraction_method="manual" path and
+    direct construction; the LLM-facing schema strips before validating and
+    ExtractedSkill.skill_name_th carries Field(min_length=1), so blank names are
+    not reachable through normal extraction.
     """
     by_norm: dict[str, list[int]] = {}
     display: dict[str, str] = {}
+    skipped = 0
     for i, skill in enumerate(skills):
         norm = _normalize(skill.skill_name_th)
         if not norm:
+            skipped += 1
             continue
         by_norm.setdefault(norm, []).append(i)
         display.setdefault(norm, skill.skill_name_th.strip())
+
+    if skipped:
+        logger.warning(f"dedupe_with_bloom_max: skipped {skipped} blank/whitespace-only name(s)")
 
     ordered = sorted(by_norm)
     names = [display[k] for k in ordered]

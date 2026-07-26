@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory
@@ -79,6 +81,29 @@ def test_dedupe_collapses_same_name_and_keeps_max_bloom():
     assert sorted(len(g) for g in groups) == [1, 2]
 
 
+def test_dedupe_with_blank_name_reports_skip():
+    """Verify that whitespace-only skill names are skipped with a warning."""
+    skills = [
+        _skill("วิเคราะห์ข้อมูล", skill_id="S1"),
+        _skill("   ", skill_id="S2"),  # whitespace-only
+        _skill("\t\n", skill_id="S3"),  # other whitespace
+        _skill("เขียนรายงาน", skill_id="S4"),
+    ]
+
+    with patch("curriculum_agent.stages.need_grouping.logger") as mock_logger:
+        names, groups, bloom_by_name = dedupe_with_bloom_max(skills)
+
+        # Two valid names, two skipped
+        assert len(names) == 2
+        assert len(groups) == 2
+        assert all(name.strip() for name in names)  # no blank names in output
+
+        # logger.warning must be called with the skip count
+        mock_logger.warning.assert_called_once()
+        call_args = mock_logger.warning.call_args[0][0]
+        assert call_args == "dedupe_with_bloom_max: skipped 2 blank/whitespace-only name(s)"
+
+
 def test_quota_passthrough_when_already_within_cap():
     counts = {KSECCategory.SS: 4, KSECCategory.GS: 3}
     quota = allocate_quota(counts, {KSECCategory.SS: 0.8, KSECCategory.GS: 0.4})
@@ -115,6 +140,9 @@ def test_quota_keeps_every_non_empty_bucket_alive():
 
 
 def test_quota_never_exceeds_available_groups_in_a_bucket():
+    # Note: this test passes even without the growth cap in allocate_quota because the
+    # growth the inputs require happens to coincide with that bucket's actual limit.
+    # test_quota_shrink_loop_caps_initial_excess is what actually pins the growth cap.
     counts = {KSECCategory.SS: 11, KSECCategory.GS: 2}
     demand = {KSECCategory.SS: 0.2, KSECCategory.GS: 0.9}
     quota = allocate_quota(counts, demand)
