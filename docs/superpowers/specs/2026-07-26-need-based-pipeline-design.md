@@ -280,17 +280,17 @@ rather than patched; the current cluster-first layout does not survive the restr
 | Skill | `skill_name_th` (`skill_name_en` secondary) | |
 | Bloom's | `bloom_level` | Thai + English label |
 | KSEC | `ksec_category` | one of K / GS / SS / C / E, colour-coded |
-| Stakeholder class | source evidence `classification` + `stakeholder_type` | see note |
+| Stakeholder class | source evidence `classification` | requirement / need / want only |
 | Importance score | `importance_score` | default sort, descending |
 
 A table beats cards here because the designer's task on this tab is scanning for outliers across
 a few hundred rows — wrong tag, implausible Bloom level, suspiciously low importance — which is
 comparison across rows, exactly what a table is for.
 
-*Note on "stakeholder class":* rendered as two adjacent cells — the evidence classification
-(requirement / need / want) and the stakeholder type (employer, alumni, community, …). These are
-distinct facts the design deliberately separates, and both bear on whether a skill deserves to
-reach a PLO. If only one was intended, dropping the other is a one-line change.
+The source `stakeholder_type` (employer, alumni, community, …) is deliberately **not** a column.
+It appears on row expand instead: it is provenance a designer occasionally drills into, not a
+field worth scanning across hundreds of rows, and `classification` already carries the signal
+that matters for judging a skill.
 
 `evidence_span_th` is too long for a column, so it appears on row expand together with the source
 evidence name. Above the table sits the drop summary: "ทิ้งไป N ทักษะ (ยกอ้างไม่ตรง evidence)".
