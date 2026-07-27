@@ -37,8 +37,15 @@ def _need(nid: str, demand: float, *, optional: bool = False) -> Need:
     )
 
 
-def test_draft_schema_has_no_plo_id_for_the_model_to_fill():
-    assert "plo_id" not in ps._PLODraft.model_fields
+def test_draft_schema_omits_every_field_the_code_owns():
+    """plo_id, source_evidence_ids and is_subject_specific are all derived.
+
+    Each was once in the contract and each caused or invited a defect: colliding
+    primary keys, an evidence trail pointing nowhere, and a specificity flag that
+    could disagree with the Needs it came from.
+    """
+    for field in ("plo_id", "source_evidence_ids", "is_subject_specific"):
+        assert field not in ps._PLODraft.model_fields, f"{field} is the code's to decide"
 
 
 def test_format_plo_id_uses_separate_series_per_kind():

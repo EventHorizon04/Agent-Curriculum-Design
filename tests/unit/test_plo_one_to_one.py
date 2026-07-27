@@ -27,7 +27,6 @@ def _draft(nid: str) -> ps._PLODraft:
     return ps._PLODraft(
         statement_th=f"วิเคราะห์งาน {nid} เพื่อเสนอแนวทางแก้ปัญหาได้",
         bloom_level=BloomLevel.ANALYZE,
-        is_subject_specific=True,
         action_verb_th="วิเคราะห์",
         source_need_ids=[nid],
         rationale_th="ตรงกับความต้องการของตลาด",
@@ -231,12 +230,12 @@ async def test_mixed_ss_and_gs_needs_yields_subject_specific_plo(
     """Ensure the is_subject_specific predicate uses any(), not all().
 
     When one Need is SS and one is GS, the PLO must stay subject-specific.
-    The mock draft returns False to verify we compute, not read from draft.
+    The draft schema no longer carries is_subject_specific at all, so there is
+    nothing for the model to contradict — the value can only come from the Needs.
     """
 
     async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
-        draft = _draft("N1").model_copy(update={"is_subject_specific": False})
-        return ps._SingleDraftResponse(plo=draft)
+        return ps._SingleDraftResponse(plo=_draft("N1"))
 
     async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SmartSoftJudge(
@@ -263,12 +262,10 @@ async def test_all_generic_needs_yield_non_subject_specific_plo(
 ):
     """When no Need is subject-specific, the PLO should not be subject-specific.
 
-    The mock draft returns True to verify we compute, not read from draft.
     """
 
     async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
-        draft = _draft("N1").model_copy(update={"is_subject_specific": True})
-        return ps._SingleDraftResponse(plo=draft)
+        return ps._SingleDraftResponse(plo=_draft("N1"))
 
     async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SmartSoftJudge(

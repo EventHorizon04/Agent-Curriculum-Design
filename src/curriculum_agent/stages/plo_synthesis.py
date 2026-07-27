@@ -68,17 +68,24 @@ def synthesis_order(needs: list[Need]) -> list[Need]:
 class _PLODraft(BaseModel):
     """Intermediate schema for LLM output before SMART check is added.
 
-    Deliberately has no `plo_id`: the identifier is assigned by code. Each Need
-    gets its own LLM call with no knowledge of the others, so a model asked to
-    name its outcome would return "PLO1" every time — and since `plo_id` is the
-    primary key and the repository upserts, a whole set would collapse into one
-    row while the run reported success.
+    Carries only what the model is genuinely deciding. Three fields it used to
+    declare are facts the code owns, and asking for them invited the model to
+    contradict the data:
+
+    - `plo_id`: each Need gets its own call with no knowledge of the others, so a
+      model naming its own outcome answers "PLO1" every time — and since `plo_id`
+      is the primary key and the repository upserts, a whole set collapsed into
+      one row while the run reported success.
+    - `source_evidence_ids`: the prompt never showed the model any evidence ids,
+      so it invented them and the trail pointed nowhere.
+    - `is_subject_specific`: derived from the contributing Needs' KSEC tags.
+
+    Keep it that way. A field the code computes does not belong in the contract.
     """
 
     statement_th: str
     statement_en: str | None = None
     bloom_level: BloomLevel
-    is_subject_specific: bool = True
     action_verb_th: str
     source_need_ids: list[str]
     rationale_th: str
