@@ -10,7 +10,11 @@ from curriculum_agent.api.deps import RateLimiter
 from curriculum_agent.api.main import app
 from curriculum_agent.models import ExtractedMetadata
 from curriculum_agent.prompts.extract_metadata import build_extract_metadata_prompt
-from curriculum_agent.stages.intake import DOC_TEXT_LIMIT, extract_metadata_from_text
+from curriculum_agent.stages.intake import (
+    DOC_TEXT_LIMIT,
+    extract_metadata_from_text,
+    grounding_ratio,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -50,15 +54,32 @@ def test_prompt_builder_puts_doc_text_in_user_message() -> None:
 # --- extract_metadata_from_text helper ---
 
 
-async def test_extract_helper_returns_llm_result() -> None:
-    expected = ExtractedMetadata(vision_th="วิสัยทัศน์", mission_th="พันธกิจ")
+async def test_extract_helper_carries_the_llm_values_through() -> None:
+    extracted = ExtractedMetadata(vision_th="วิสัยทัศน์", mission_th="พันธกิจ")
+    doc = "เอกสารฉบับนี้ระบุ วิสัยทัศน์ และ พันธกิจ ของมหาวิทยาลัยไว้อย่างชัดเจน"
     with patch(
         "curriculum_agent.stages.intake.complete_light",
-        new=AsyncMock(return_value=expected),
+        new=AsyncMock(return_value=extracted),
     ) as mock_llm:
-        result = await extract_metadata_from_text("ข้อความเอกสาร")
-    assert result == expected
+        result = await extract_metadata_from_text(doc)
+    assert result.vision_th == "วิสัยทัศน์"
+    assert result.mission_th == "พันธกิจ"
+    # Both values really do appear in the document, so nothing is flagged.
+    assert result.low_grounding_fields == []
     mock_llm.assert_awaited_once()
+
+
+async def test_extract_helper_flags_a_value_absent_from_the_document() -> None:
+    """A fabricated value is surfaced, not dropped — the prompt allows paraphrase."""
+    invented = ExtractedMetadata(vision_th="มุ่งสู่การเป็นผู้นำนวัตกรรมอวกาศระดับโลกภายในปี 2570")
+    with patch(
+        "curriculum_agent.stages.intake.complete_light",
+        new=AsyncMock(return_value=invented),
+    ):
+        result = await extract_metadata_from_text("เอกสารนี้กล่าวถึงระเบียบการลงทะเบียนเรียนเท่านั้น")
+    assert result.low_grounding_fields == ["vision_th"]
+    # Surfaced for review, never overruled by the code.
+    assert result.vision_th == invented.vision_th
 
 
 async def test_extract_helper_truncates_long_text() -> None:
@@ -169,3 +190,34 @@ def test_extract_route_requires_api_key_when_configured(monkeypatch) -> None:
     monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
     resp = _post_file()
     assert resp.status_code == 401
+
+
+# --- grounding_ratio: the code-side check that replaced trusting the prompt ---
+
+
+def test_grounding_ratio_scores_a_verbatim_copy_as_fully_grounded() -> None:
+    doc = "วิสัยทัศน์ของมหาวิทยาลัยคือการเป็นผู้นำด้านเทคโนโลยีของภูมิภาค"
+    assert grounding_ratio("การเป็นผู้นำด้านเทคโนโลยีของภูมิภาค", doc) == 1.0
+
+
+def test_grounding_ratio_survives_line_breaks_and_bullets_in_the_source() -> None:
+    """Layout must not depress the score — whitespace is stripped before comparing."""
+    doc = "วิสัยทัศน์\n  - การเป็นผู้นำ\n    ด้านเทคโนโลยี\tของภูมิภาค"
+    assert grounding_ratio("การเป็นผู้นำด้านเทคโนโลยีของภูมิภาค", doc) == 1.0
+
+
+def test_grounding_ratio_stays_high_for_a_faithful_rewording() -> None:
+    doc = "มหาวิทยาลัยมุ่งผลิตบัณฑิตที่มีความเชี่ยวชาญด้านเทคโนโลยีสารสนเทศและนวัตกรรม"
+    reworded = "มุ่งผลิตบัณฑิตที่มีความเชี่ยวชาญด้านเทคโนโลยีสารสนเทศ"
+    assert grounding_ratio(reworded, doc) > 0.8
+
+
+def test_grounding_ratio_is_near_zero_for_invented_text() -> None:
+    doc = "เอกสารนี้กล่าวถึงระเบียบการลงทะเบียนเรียนและปฏิทินการศึกษา"
+    invented = "มุ่งสู่การเป็นผู้นำนวัตกรรมอวกาศระดับโลกภายในปี 2570"
+    assert grounding_ratio(invented, doc) < 0.3
+
+
+def test_grounding_ratio_does_not_flag_text_too_short_to_judge() -> None:
+    # Shorter than one n-gram carries no signal; flagging it would be noise.
+    assert grounding_ratio("ก", "ข้อความอื่นที่ไม่เกี่ยวข้องเลย") == 1.0

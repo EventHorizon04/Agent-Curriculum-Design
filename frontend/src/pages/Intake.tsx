@@ -42,6 +42,13 @@ interface ExtractedMetadata {
   student_identity_th: string | null
 }
 
+// The endpoint adds a code-computed warning list on top of the extracted values.
+// The extraction prompt permits paraphrase, so a flagged field is a prompt to
+// check rather than proof of invention — it is filled in either way.
+interface MetadataExtractionResult extends ExtractedMetadata {
+  low_grounding_fields: (keyof ExtractedMetadata)[]
+}
+
 const FIELD_LABELS: Record<keyof ExtractedMetadata, string> = {
   vision_th: 'วิสัยทัศน์',
   mission_th: 'พันธกิจ',
@@ -73,6 +80,7 @@ export default function Intake() {
   const [docFile, setDocFile] = useState<File | null>(null)
   const [extracting, setExtracting] = useState(false)
   const [extractMessage, setExtractMessage] = useState('')
+  const [flaggedFields, setFlaggedFields] = useState<string[]>([])
   const [iscedResult, setIscedResult] = useState<IscedSuggestion | null>(null)
   const [iscedCode, setIscedCode] = useState('')
   const [iscedLoading, setIscedLoading] = useState(false)
@@ -93,10 +101,11 @@ export default function Intake() {
     }
     setExtracting(true)
     setExtractMessage('')
+    setFlaggedFields([])
     try {
       const fd = new FormData()
       fd.append('file', docFile)
-      const resp = await api.post<ExtractedMetadata>('/programs/extract-metadata', fd)
+      const resp = await api.post<MetadataExtractionResult>('/programs/extract-metadata', fd)
       const data = resp.data
       // Compute the merge OUTSIDE the state updater — React StrictMode runs
       // updaters twice, which would duplicate side effects like filled.push.
@@ -112,6 +121,12 @@ export default function Intake() {
       if (filled.length > 0) {
         setForm(prev => ({ ...prev, ...updates }))
       }
+      // Warn only about fields actually filled in — a flag on a field the
+      // designer had already written themselves is noise.
+      const suspect = (data.low_grounding_fields ?? [])
+        .filter(key => updates[key] !== undefined)
+        .map(key => FIELD_LABELS[key])
+      setFlaggedFields(suspect)
       setExtractMessage(
         filled.length > 0
           ? `เติมข้อมูลแล้ว ${filled.length} รายการ (${filled.join(', ')})`
@@ -402,6 +417,17 @@ export default function Intake() {
               </div>
               {extractMessage && (
                 <p className="text-xs text-blue-700">{extractMessage}</p>
+              )}
+              {flaggedFields.length > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <p className="font-medium">
+                    ตรวจทาน {flaggedFields.length} รายการ: {flaggedFields.join(', ')}
+                  </p>
+                  <p className="mt-0.5">
+                    ข้อความที่เติมให้มีเนื้อหาตรงกับเอกสารต้นฉบับน้อย อาจถูกเรียบเรียงใหม่มากหรือไม่ได้อยู่ในเอกสาร
+                    กรุณาเทียบกับต้นฉบับก่อนบันทึก
+                  </p>
+                </div>
               )}
             </div>
           )}

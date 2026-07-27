@@ -140,6 +140,23 @@ class ExtractedMetadata(BaseModel):
     student_identity_th: str | None = None
 
 
+class MetadataExtractionResult(ExtractedMetadata):
+    """What the prefill endpoint returns: the extracted values plus a warning list.
+
+    Separate from `ExtractedMetadata` on purpose. That model is the LLM's response
+    contract, and adding a field there would mean asking the model to grade its own
+    output — the same mistake that had it inventing PLO ids and evidence trails.
+    The grade is computed in code, so it lives on the API model only.
+
+    `low_grounding_fields` names the fields whose text has little character overlap
+    with the source document. The extraction prompt permits paraphrase, so weak
+    overlap is a prompt for the designer to check rather than proof of invention —
+    these are surfaced in the intake form, never dropped.
+    """
+
+    low_grounding_fields: list[str] = Field(default_factory=list)
+
+
 class SuggestedName(BaseModel):
     name_th: str
     name_en: str

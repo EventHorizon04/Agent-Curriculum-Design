@@ -13,8 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from curriculum_agent.api.deps import enforce_llm_rate_limit, require_api_key
 from curriculum_agent.data.repositories import ProgramRepository
 from curriculum_agent.models import (
-    ExtractedMetadata,
     IscedSuggestion,
+    MetadataExtractionResult,
     ProgramCreateRequest,
     ProgramMetadata,
     ProgramSummary,
@@ -74,10 +74,10 @@ async def create_program(req: ProgramCreateRequest, request: Request) -> Program
 
 @router.post(
     "/extract-metadata",
-    response_model=ExtractedMetadata,
+    response_model=MetadataExtractionResult,
     dependencies=[Depends(require_api_key), Depends(enforce_llm_rate_limit)],
 )
-async def extract_metadata(file: UploadFile) -> ExtractedMetadata:
+async def extract_metadata(file: UploadFile) -> MetadataExtractionResult:
     """Parse an uploaded university document and LLM-extract intake prefill fields.
 
     Stateless: the file is parsed in a temp location and discarded — nothing
