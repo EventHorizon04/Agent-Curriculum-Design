@@ -61,37 +61,32 @@ class SkillTable(Base):
     program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
     skill_name_th: Mapped[str] = mapped_column(Text)
     skill_name_en: Mapped[str | None] = mapped_column(Text, nullable=True)
-    skill_type: Mapped[str] = mapped_column(String(20))
-    is_subject_specific: Mapped[bool] = mapped_column(Boolean)
+    ksec_category: Mapped[str] = mapped_column(String(2))
+    bloom_level: Mapped[str] = mapped_column(String(20))
+    evidence_span_th: Mapped[str] = mapped_column(Text)
     source_evidence_id: Mapped[str] = mapped_column(String, ForeignKey("evidence.evidence_id"))
     extraction_method: Mapped[str] = mapped_column(String(20))
     confidence: Mapped[float] = mapped_column(Float)
-    bloom_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    ksec_category: Mapped[str] = mapped_column(String(1), default="K")
     importance_score: Mapped[float] = mapped_column(Float, default=0.0)
 
 
-class ClusterTable(Base):
-    __tablename__ = "clusters"
+class NeedTable(Base):
+    __tablename__ = "needs"
 
-    cluster_id: Mapped[str] = mapped_column(String, primary_key=True)
+    need_id: Mapped[str] = mapped_column(String, primary_key=True)
     program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
-    canonical_name_th: Mapped[str] = mapped_column(Text)
-    canonical_name_en: Mapped[str | None] = mapped_column(Text, nullable=True)
-    description_th: Mapped[str] = mapped_column(Text)
-    skill_type: Mapped[str] = mapped_column(String(20))
-    is_subject_specific: Mapped[bool] = mapped_column(Boolean)
+    statement_th: Mapped[str] = mapped_column(Text)
+    statement_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ksec_category: Mapped[str] = mapped_column(String(2))
+    bloom_level: Mapped[str] = mapped_column(String(20))
     member_skill_ids: Mapped[list[str]] = mapped_column(JSONB)
     source_evidence_ids: Mapped[list[str]] = mapped_column(JSONB)
     stakeholder_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    freq: Mapped[int] = mapped_column(Integer)
     demand_score: Mapped[float] = mapped_column(Float)
-    is_common_need: Mapped[bool] = mapped_column(Boolean, default=False)
-    sample_quotes_th: Mapped[list[str]] = mapped_column(JSONB, default=list)
-    bloom_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    psychomotor_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    krathwohl_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
     classification_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    sample_quotes_th: Mapped[list[str]] = mapped_column(JSONB, default=list)
 
 
 class PLOTable(Base):
@@ -101,15 +96,12 @@ class PLOTable(Base):
     program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
     statement_th: Mapped[str] = mapped_column(Text)
     statement_en: Mapped[str | None] = mapped_column(Text, nullable=True)
-    domain: Mapped[str] = mapped_column(String(20))
-    bloom_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    psychomotor_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    krathwohl_level: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    bloom_level: Mapped[str] = mapped_column(String(20))
     is_subject_specific: Mapped[bool] = mapped_column(Boolean)
     action_verb_th: Mapped[str] = mapped_column(Text)
     # Serialized SMARTCheck model — bool criteria plus optional notes string
     smart_check: Mapped[dict[str, Any]] = mapped_column(JSONB)
-    source_cluster_ids: Mapped[list[str]] = mapped_column(JSONB)
+    source_need_ids: Mapped[list[str]] = mapped_column(JSONB)
     source_evidence_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
     rationale_th: Mapped[str] = mapped_column(Text)
     distinctive_feature_th: Mapped[str | None] = mapped_column(Text, nullable=True)

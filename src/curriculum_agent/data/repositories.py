@@ -8,9 +8,9 @@ from sqlalchemy import CursorResult, delete, select, update
 from curriculum_agent.data.orm import (
     Base,
     CheckpointTable,
-    ClusterTable,
     EvidenceTable,
     LLMCacheTable,
+    NeedTable,
     PLOTable,
     ProgramTable,
     SessionTable,
@@ -20,10 +20,10 @@ from curriculum_agent.data.postgres import AsyncSessionLocal
 from curriculum_agent.models import (
     PLO,
     ExtractedSkill,
+    Need,
     ProgramMetadata,
     ProgramSummary,
     SessionInfo,
-    SkillCluster,
     StageCheckpoint,
     StakeholderEvidence,
 )
@@ -111,9 +111,7 @@ class ProgramRepository:
                 current_stage=(
                     latest[p.program_id].current_stage if p.program_id in latest else None
                 ),
-                session_status=(
-                    latest[p.program_id].status if p.program_id in latest else None
-                ),
+                session_status=(latest[p.program_id].status if p.program_id in latest else None),
             )
             for p in prog_rows
         ]
@@ -127,16 +125,12 @@ class ProgramRepository:
         """
         async with AsyncSessionLocal() as session:
             await session.execute(delete(SkillTable).where(SkillTable.program_id == program_id))
-            await session.execute(
-                delete(ClusterTable).where(ClusterTable.program_id == program_id)
-            )
+            await session.execute(delete(NeedTable).where(NeedTable.program_id == program_id))
             await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
             await session.execute(
                 delete(CheckpointTable).where(CheckpointTable.program_id == program_id)
             )
-            await session.execute(
-                delete(SessionTable).where(SessionTable.program_id == program_id)
-            )
+            await session.execute(delete(SessionTable).where(SessionTable.program_id == program_id))
             await session.execute(
                 delete(EvidenceTable).where(EvidenceTable.program_id == program_id)
             )
@@ -228,26 +222,25 @@ class SkillRepository:
             return [ExtractedSkill.model_validate(_row_to_dict(row)) for row in rows]
 
 
-class ClusterRepository:
-    async def bulk_insert(self, clusters: list[SkillCluster]) -> None:
+class NeedRepository:
+    async def bulk_insert(self, needs: list[Need]) -> None:
         async with AsyncSessionLocal() as session:
-            for cluster in clusters:
-                data = cluster.model_dump(mode="json")
-                existing = await session.get(ClusterTable, cluster.cluster_id)
+            for need in needs:
+                data = need.model_dump(mode="json")
+                existing = await session.get(NeedTable, need.need_id)
                 if existing is None:
-                    session.add(ClusterTable(**data))
+                    session.add(NeedTable(**data))
                 else:
                     for k, v in data.items():
                         setattr(existing, k, v)
             await session.commit()
 
-    async def list_by_program(self, program_id: str) -> list[SkillCluster]:
+    async def list_by_program(self, program_id: str) -> list[Need]:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(ClusterTable).where(ClusterTable.program_id == program_id)
+                select(NeedTable).where(NeedTable.program_id == program_id)
             )
-            rows = result.scalars().all()
-            return [SkillCluster.model_validate(_row_to_dict(row)) for row in rows]
+            return [Need.model_validate(_row_to_dict(row)) for row in result.scalars().all()]
 
 
 class PLORepository:

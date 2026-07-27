@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 # Curriculum Design Agent
 
-AI agent that helps Thai higher-education curriculum designers produce programs meeting MHESI (กระทรวงอุดมศึกษา) standards and Outcome-Based Education (OBE) principles. The agent runs a 5-stage pipeline (intake → stakeholder needs → skill extraction → PLO synthesis → PLO report) with human-in-the-loop review at every stage boundary. **The agent's scope ends at PLO** — YLO and CLO derivation are faculty work and the code for them has been removed.
+AI agent that helps Thai higher-education curriculum designers produce programs meeting MHESI (กระทรวงอุดมศึกษา) standards and Outcome-Based Education (OBE) principles. The agent runs a 6-stage pipeline (intake → stakeholder needs → skill extraction → need combination → PLO synthesis → PLO report) with human-in-the-loop review at every stage boundary — except skill extraction and need combination, which share one checkpoint placed after need combination. **The agent's scope ends at PLO** — YLO and CLO derivation are faculty work and the code for them has been removed.
 
 **Current state:** Proof-of-concept implemented. All modules under `src/`, Docker DB services, React UI, FastAPI backend, test suite, migrations, and exporters are in place. The codebase matches the design below — read existing code before adding new files.
 
@@ -66,7 +66,7 @@ uv run uvicorn curriculum_agent.api.main:app --reload
 
 ## Seed data
 
-The `Data/` directory holds real-world inputs used during Stage 2 (stakeholder needs) and Stage 3 (skill extraction):
+The `Data/` directory holds real-world inputs used during the stakeholder needs and skill extraction stages:
 
 - `Data/Occupation Data.xlsx` — Thai job-market occupation taxonomy
 - `Data/Skills.xlsx` — structured skill taxonomy aligned with the occupation data
@@ -90,25 +90,26 @@ These files feed the extraction pipeline; do not reformat them without checking 
 These are project decisions. If a request conflicts with one, surface the conflict before complying.
 
 1. **The agent stops at PLO.** OBE chain is PLO → YLO → CLO, but YLO/CLO are faculty work. Never add YLO/CLO generation back.
-2. **Every PLO must trace to evidence.** `source_cluster_ids` and `source_evidence_ids` are non-empty. Pydantic validators enforce this; do not weaken them.
+2. **Every PLO must trace to evidence.** `source_need_ids` and `source_evidence_ids` are non-empty. Pydantic validators enforce this; do not weaken them.
 3. **Forbidden words in PLO statements:** รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. The Pydantic model rejects these (exception: a PLO with `smart_escalated=True` is kept for human repair) — do not bypass.
 4. **One Bloom action verb per outcome.** Two verbs allowed only if at adjacent levels.
 5. **SMART gate on every synthesized PLO.** Hard criteria (S verb-in-statement, M no-forbidden-word, R evidence-resolves) drive an automated retry loop (max 3, criterion named in the retry prompt) — an unfixed PLO is marked `smart_escalated` for human repair, never silently dropped. Soft criteria (S object quality, A level plausibility, R vision alignment) become `soft_flags` for human review and never block.
-6. **6–10 main PLOs per program.** Optional PLOs synthesized from want-based clusters (`is_optional=True`) are exempt from this count.
-7. **Human-in-the-loop at every stage boundary.** Stages never auto-chain into the next without checkpoint approval.
+6. **6–10 main PLOs per program, mapped one-to-one from 6–10 main Needs.** The quota is enforced upstream in `need_combination` (merging within each KSEC bucket down to a per-bucket quota), and PLO synthesis then drafts exactly one PLO per Need. Optional PLOs synthesized from want-based Needs (`is_optional=True`) are exempt from this count.
+7. **Human-in-the-loop at every stage boundary — except one shared checkpoint.** Stages never auto-chain into the next without checkpoint approval; the one exception is skill_extraction → need_combination, which run back-to-back and share a single checkpoint after need_combination so the designer reviews raw skills and distilled Needs together.
 8. **Open-source LLM by default.** Paid APIs (Claude, GPT-4o) are config-switchable for synthesis stages but never hardcoded.
 
 ## Project layout
 
 ```
 src/curriculum_agent/
-  models.py            ← Pydantic schemas (PLO, SkillCluster, etc.)
+  models.py            ← Pydantic schemas (PLO, Need, ExtractedSkill, etc.)
   graph.py             ← LangGraph state machine, HITL interrupts
   llm.py               ← Ollama client, dual-model routing
   config.py            ← pydantic-settings, reads .env
   prompts/             ← one file per LLM prompt, typed builder fns
   stages/              ← intake, stakeholder_needs, skill_extraction,
-                          llm_clustering, plo_synthesis, plo_report (+ smart_rules)
+                          need_combination, llm_clustering, plo_synthesis,
+                          plo_report (+ smart_rules)
   data/                ← repositories, postgres, minio_store
   scrapers/            ← per-site job scrapers
   parsers/             ← document parsers (Tika, มคอ.1)
@@ -132,8 +133,8 @@ tests/integration/     ← LLM mocked, full stages
 ## Common pitfalls
 
 - **Don't bypass the SMART retry loop after synthesis.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. Hard checks are pure code (`smart_rules.py`); the soft judge is a separate light-model prompt. Escalated PLOs must stay visible in the UI.
-- **Don't pass full evidence text into synthesis prompts.** Summarize each cluster in ≤200 tokens. Full evidence stays in Postgres for drill-down, not in the synthesis prompt.
-- **Don't ask the model for "as many PLOs as needed."** Always 6–10 main PLOs; 1–4 optional PLOs from want-clusters in a separate non-blocking pass.
+- **Don't pass full evidence text into synthesis prompts.** Summarize each Need in ≤200 tokens. Full evidence stays in Postgres for drill-down, not in the synthesis prompt.
+- **Never merge or cluster skills across a KSEC bucket.** `need_combination` buckets `ExtractedSkill`s by `ksec_category` before any clustering or merging runs, and every merge step (semantic or demand-ranked fallback) stays inside one bucket. This is what makes "a Need has exactly one KSEC tag" a structural guarantee rather than a rule someone has to remember — don't add a grouping path that clusters or merges across buckets, even to hit the 6–10 quota faster.
 - **Test Pydantic validators before integration tests.** They're the cheapest, most important guardrail. If a validator is wrong, every downstream test is suspect.
 - **Don't `git push` model files.** Ollama models live on the host. `.env` files with API keys are gitignored — keep it that way.
 - **Don't refactor the OBE flow to "save a stage."** Re-adding YLO/CLO generation, or collapsing plo_synthesis and plo_report, breaks the scope decision and CHECO compliance.

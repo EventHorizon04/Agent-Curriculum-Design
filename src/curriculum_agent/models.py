@@ -18,14 +18,13 @@ class StakeholderType(StrEnum):
     ACCREDITATION_BODY = "accreditation_body"
     UNIVERSITY = "university"
     COMMUNITY = "community"
+    PARENT = "parent"
     SUBJECT_BENCHMARK = "subject_benchmark"
     PEER_PROGRAM = "peer_program"
 
 
-# Bloom's Taxonomy spans three learning domains, each with its own level scale:
-#   Cognitive (Knowledge/Thinking)  -> BloomLevel
-#   Psychomotor (Skill/Doing)       -> PsychomotorLevel (Dave's taxonomy)
-#   Affective (Attitude/Feeling)    -> KrathwohlLevel
+# Bloom's Taxonomy (cognitive domain) is the only learning-domain scale the
+# agent models — Needs and PLOs are cognitive-only (the agent stops at PLO).
 
 
 class BloomLevel(StrEnum):
@@ -38,46 +37,17 @@ class BloomLevel(StrEnum):
     CREATE = "create"
 
 
-class PsychomotorLevel(StrEnum):
-    # Psychomotor domain levels (Dave), in order of increasing mastery
-    IMITATE = "imitate"
-    MANIPULATE = "manipulate"
-    PRECISE = "precise"
-    ARTICULATE = "articulate"
-    NATURALIZE = "naturalize"
-
-
-class KrathwohlLevel(StrEnum):
-    # Affective domain levels (Krathwohl), in order of increasing internalization
-    RECEIVING = "receiving"
-    RESPONDING = "responding"
-    VALUING = "valuing"
-    ORGANIZATION = "organization"
-    CHARACTERIZATION = "characterization"
-
-
-class SkillType(StrEnum):
-    KNOWLEDGE = "knowledge"
-    PSYCHOMOTOR = "psychomotor"
-    AFFECTIVE = "affective"
-    MIXED = "mixed"
-
-
-# TQF 4-domain collapse (มคอ. domains 1-5 rolled into 4 tags) — used to pre-tag
-# ExtractedSkill for eventual มคอ.2/CHECO mapping. K=ความรู้, E=คุณธรรมจริยธรรม,
-# C=คุณลักษณะบุคคล; S absorbs TQF's ทักษะทางปัญญา + ทักษะปฏิบัติ + ทักษะความสัมพันธ์
-# ระหว่างบุคคล + ทักษะการวิเคราะห์เชิงตัวเลข/การสื่อสาร/IT.
+# TQF/มคอ. competency domains collapsed to five tags, used to pre-tag every
+# ExtractedSkill for eventual มคอ.2/CHECO mapping. The skill domain is split by
+# specificity so `is_subject_specific` is absorbed here rather than kept as a
+# separate field that could disagree with the tag. This is NOT a Bloom domain —
+# it is orthogonal to bloom_level, and a skill may be SS at Bloom `analyze`.
 class KSECCategory(StrEnum):
-    KNOWLEDGE = "K"
-    SKILL = "S"
-    ETHICS = "E"
-    CHARACTER = "C"
-
-
-class Domain(StrEnum):
-    COGNITIVE = "cognitive"
-    PSYCHOMOTOR = "psychomotor"
-    AFFECTIVE = "affective"
+    K = "K"  # ความรู้
+    GS = "GS"  # ทักษะทั่วไป (generic/transferable)
+    SS = "SS"  # ทักษะเฉพาะสาขา (subject-specific)
+    C = "C"  # คุณลักษณะบุคคล
+    E = "E"  # คุณธรรมจริยธรรม
 
 
 # Words forbidden in PLO statements (Thai). Cause SMART measurable to fail.
@@ -91,20 +61,6 @@ BLOOM_ORDER = [
     BloomLevel.ANALYZE,
     BloomLevel.EVALUATE,
     BloomLevel.CREATE,
-]
-PSYCHOMOTOR_ORDER = [
-    PsychomotorLevel.IMITATE,
-    PsychomotorLevel.MANIPULATE,
-    PsychomotorLevel.PRECISE,
-    PsychomotorLevel.ARTICULATE,
-    PsychomotorLevel.NATURALIZE,
-]
-KRATHWOHL_ORDER = [
-    KrathwohlLevel.RECEIVING,
-    KrathwohlLevel.RESPONDING,
-    KrathwohlLevel.VALUING,
-    KrathwohlLevel.ORGANIZATION,
-    KrathwohlLevel.CHARACTERIZATION,
 ]
 
 
@@ -220,43 +176,49 @@ class StakeholderEvidence(BaseModel):
 class ExtractedSkill(BaseModel):
     skill_id: str
     program_id: str
-    skill_name_th: str
+    # A phrase / skill word-group ("วิเคราะห์ข้อมูลขนาดใหญ่"), never a bare word.
+    skill_name_th: str = Field(min_length=1)
     skill_name_en: str | None = None
-    skill_type: SkillType
-    is_subject_specific: bool
-    source_evidence_id: str
-    extraction_method: Literal["keybert", "llm", "manual", "ner"]
-    confidence: float = Field(ge=0, le=1)
-    # Cognitive-only Bloom tag (no psychomotor/krathwohl scale at extraction level —
-    # those are assigned later, at cluster level, once domain is settled by clustering).
-    bloom_level: BloomLevel | None = None
-    # TQF K/S/E/C category — always set.
     ksec_category: KSECCategory
-    # Per-skill-name demand, computed pre-clustering: same formula/weights as
-    # SkillCluster.demand_score (requirement+need evidence only, want=0 weight),
-    # grouped by skill_name_th instead of cluster membership.
+    # Cognitive scale only. Psychomotor/affective scales are not modelled: the
+    # agent stops at PLO and every PLO it produces is cognitive.
+    bloom_level: BloomLevel
+    # Verbatim quote from the source evidence that justifies this skill.
+    # Verified against the evidence text in pure code — see is_grounded().
+    evidence_span_th: str = Field(min_length=1)
+    source_evidence_id: str
+    extraction_method: Literal["llm", "manual"]
+    confidence: float = Field(ge=0, le=1)
+    # Per-skill-name demand, computed before grouping. Orders the raw-skill table.
     importance_score: float = Field(ge=0, le=1)
 
 
-class SkillCluster(BaseModel):
-    cluster_id: str
+class Need(BaseModel):
+    """A market-side demand distilled from a group of extracted skills.
+
+    One sentence stating what the labour market asks for. PLO synthesis restates
+    it from the graduate's side; keeping both makes "which demand does this PLO
+    answer?" answerable from the data rather than inferred.
+    """
+
+    need_id: str
     program_id: str
-    canonical_name_th: str
-    canonical_name_en: str | None = None
-    description_th: str
-    skill_type: SkillType
-    is_subject_specific: bool
-    member_skill_ids: list[str]
-    source_evidence_ids: list[str]
+    statement_th: str = Field(min_length=1)
+    statement_en: str | None = None
+    # Single-valued by construction: grouping runs inside one KSEC bucket.
+    ksec_category: KSECCategory
+    # Highest Bloom level among member skills.
+    bloom_level: BloomLevel
+    member_skill_ids: list[str] = Field(min_length=1)
+    source_evidence_ids: list[str] = Field(min_length=1)
     stakeholder_coverage: dict[StakeholderType, int] = Field(default_factory=dict)
+    # Raw mention count: len(member_skill_ids). Explainable to a designer in a
+    # way the weighted score is not.
+    freq: int = Field(ge=1)
     demand_score: float = Field(ge=0, le=1)
-    is_common_need: bool = False
-    sample_quotes_th: list[str] = Field(default_factory=list, max_length=5)
-    bloom_level: BloomLevel | None = None
-    psychomotor_level: PsychomotorLevel | None = None
-    krathwohl_level: KrathwohlLevel | None = None
     is_optional: bool = False
     classification_coverage: dict[str, int] = Field(default_factory=dict)
+    sample_quotes_th: list[str] = Field(default_factory=list, max_length=5)
 
 
 # --------------------------- Stage 3 -----------------------------
@@ -280,20 +242,19 @@ class PLO(BaseModel):
     program_id: str
     statement_th: str
     statement_en: str | None = None
-    domain: Domain
-    bloom_level: BloomLevel | None = None
-    psychomotor_level: PsychomotorLevel | None = None
-    krathwohl_level: KrathwohlLevel | None = None
+    # Cognitive only. The agent stops at PLO, and psychomotor/affective level
+    # scales belong to the faculty's YLO/CLO work, not here.
+    bloom_level: BloomLevel
     is_subject_specific: bool
     action_verb_th: str
     smart_check: SMARTCheck
-    source_cluster_ids: list[str]
+    source_need_ids: list[str]
     source_evidence_ids: list[str] = Field(default_factory=list)
     rationale_th: str
     distinctive_feature_th: str | None = None
     version: int = 1
     classification: Literal["generic", "specific"] | None = None
-    classification_method: Literal["skill_type", "llm", "manual"] | None = None
+    classification_method: Literal["ksec", "llm", "manual", "fallback"] | None = None
     classification_rationale_th: str | None = None
     smart_retry_count: int = 0
     smart_escalated: bool = False
@@ -314,28 +275,15 @@ class PLO(BaseModel):
 
     @model_validator(mode="after")
     def check_evidence(self) -> PLO:
-        if not self.source_cluster_ids:
+        if not self.source_need_ids:
             raise ValueError(
-                f"PLO {self.plo_id} has no source clusters — every PLO must trace to evidence."
+                f"PLO {self.plo_id} has no source Needs — every PLO must trace to evidence."
             )
         if not self.source_evidence_ids:
             raise ValueError(
                 f"PLO {self.plo_id} has empty source_evidence_ids — "
                 "every PLO must trace to evidence."
             )
-        return self
-
-    @model_validator(mode="after")
-    def check_domain_level_match(self) -> PLO:
-        if self.domain == Domain.AFFECTIVE:
-            if self.krathwohl_level is None:
-                raise ValueError(f"PLO {self.plo_id} is affective but missing krathwohl_level")
-        elif self.domain == Domain.PSYCHOMOTOR:
-            if self.psychomotor_level is None:
-                raise ValueError(f"PLO {self.plo_id} is psychomotor but missing psychomotor_level")
-        else:
-            if self.bloom_level is None:
-                raise ValueError(f"PLO {self.plo_id} is cognitive but missing bloom_level")
         return self
 
 
@@ -345,7 +293,14 @@ class PLO(BaseModel):
 class StageCheckpoint(BaseModel):
     checkpoint_id: str
     program_id: str
-    stage: Literal["intake", "stakeholder_needs", "skill_extraction", "plo_synthesis", "plo_report"]
+    stage: Literal[
+        "intake",
+        "stakeholder_needs",
+        "skill_extraction",
+        "need_combination",
+        "plo_synthesis",
+        "plo_report",
+    ]
     artifacts: dict[str, Any]
     created_at: datetime = Field(default_factory=datetime.utcnow)
     reviewed_by: str | None = None

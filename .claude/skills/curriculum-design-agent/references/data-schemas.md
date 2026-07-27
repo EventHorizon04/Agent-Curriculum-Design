@@ -10,15 +10,15 @@ Every artifact derived from another must carry the IDs of its sources. This is n
 
 ```
 StakeholderEvidence (raw)
-  ↓ source_ids
+  ↓ source_evidence_id + evidence_span_th (verified in code)
 ExtractedSkill (per evidence item)
-  ↓ source_ids: list[str]
-SkillCluster (grouped skills)
-  ↓ source_ids: list[str]
+  ↓ member_skill_ids
+Need (grouped skills, one KSEC tag, one sentence)
+  ↓ source_need_ids
 PLO (final artifact — agent scope ends here)
 ```
 
-Never break the chain. If a model doesn't have a `source_ids` or equivalent field, you can't trace its provenance.
+Never break the chain. If a model doesn't have a source-tracing field (or equivalent), you can't trace its provenance. Two of these links are enforced in pure code, not just by convention: `ExtractedSkill.evidence_span_th` must actually occur in its source evidence (`is_grounded()` in `stages/skill_extraction.py`), and `PLO.source_need_ids` / `PLO.source_evidence_ids` are rejected as empty by a Pydantic validator.
 
 ## Stage 1: Program metadata
 
@@ -56,6 +56,7 @@ class StakeholderType(str, Enum):
     ACCREDITATION_BODY = "accreditation_body"
     UNIVERSITY = "university"
     COMMUNITY = "community"
+    PARENT = "parent"
     SUBJECT_BENCHMARK = "subject_benchmark"  # มคอ.1
     PEER_PROGRAM = "peer_program"
 
@@ -69,81 +70,92 @@ class StakeholderEvidence(BaseModel):
     raw_text_th: str  # original Thai text
     raw_text_en: str | None = None  # English original if available
     collected_at: datetime
-    # need vs want classification, set by Stage 2 LLM
+    # need vs requirement vs want classification, set in Stage 2
     classification: Literal["need", "requirement", "want", "unclassified"] = "unclassified"
     metadata: dict = {}  # job title, salary, location, etc. for job postings
 ```
 
-Why `classification`: distinguishing needs (must-have) from wants (nice-to-have) is central to the pipeline. Stage 2 ends with a classification step before passing to Stage 3.
+Why `classification`: distinguishing needs (must-have) from wants (nice-to-have) is central to the pipeline. `want` is never chosen by the LLM: `COMMUNITY` and `PARENT` evidence is always classified `want` in pure code (deterministic, no LLM call — `WANT_ONLY_TYPES` in `stages/stakeholder_needs.py`); every other stakeholder type goes to the LLM, whose schema only offers `need` / `requirement` / `unclassified`. This binds in both directions — those two types are never anything but `want`, and no other type is ever `want`.
 
-## Stage 3: Extracted skills and clusters
+## Stage 3: Extracted skills, and Needs (Stage 3b: need_combination)
 
 ```python
 class KSECCategory(str, Enum):
-    """TQF 4-domain collapse (มคอ. domains 1-5 rolled into 4 tags)."""
-    KNOWLEDGE = "K"  # ความรู้
-    SKILL = "S"      # ทักษะทางปัญญา + ปฏิบัติ + ความสัมพันธ์ระหว่างบุคคล + วิเคราะห์ตัวเลข/สื่อสาร/IT
-    ETHICS = "E"      # คุณธรรมจริยธรรม
-    CHARACTER = "C"   # คุณลักษณะบุคคล
+    """TQF/มคอ. competency domains collapsed to five tags, pre-tagging every
+    ExtractedSkill for eventual มคอ.2/CHECO mapping. NOT a Bloom domain — it is
+    orthogonal to bloom_level. One skill has exactly one tag; "mixed" is
+    unrepresentable by construction."""
+    K = "K"    # ความรู้
+    GS = "GS"  # ทักษะทั่วไป (generic/transferable)
+    SS = "SS"  # ทักษะเฉพาะสาขา (subject-specific)
+    C = "C"    # คุณลักษณะบุคคล
+    E = "E"    # คุณธรรมจริยธรรม
 
 class ExtractedSkill(BaseModel):
     """A single skill mention extracted from one evidence item. High-volume."""
     skill_id: str
     program_id: str
-    skill_name_th: str
+    skill_name_th: str = Field(min_length=1)  # a phrase, never a bare word
     skill_name_en: str | None = None
-    skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
-    is_subject_specific: bool  # vs generic transferable
+    ksec_category: KSECCategory  # always set — replaces the old separate type tag + specificity flag
+    # Cognitive scale only, and required. Psychomotor/affective are not
+    # modelled anywhere in the agent — it stops at PLO and every PLO it
+    # produces is cognitive.
+    bloom_level: BloomLevel
+    # Verbatim quote from the source evidence that justifies this skill.
+    # Verified against the evidence text in pure code, not trusted from the
+    # LLM — see `is_grounded()` below.
+    evidence_span_th: str = Field(min_length=1)
     source_evidence_id: str  # FK to StakeholderEvidence
-    extraction_method: Literal["keybert", "llm", "manual", "ner"]
+    extraction_method: Literal["llm", "manual"]
     confidence: float = Field(ge=0, le=1)
-    # Cognitive-only Bloom tag — no psychomotor/krathwohl scale at extraction
-    # level; those get assigned later at cluster level once domain settles.
-    bloom_level: BloomLevel | None = None
-    # TQF K/S/E/C category. Always set.
-    ksec_category: KSECCategory
-    # Per-skill-name demand, computed pre-clustering with the SAME weighting as
-    # SkillCluster.demand_score (requirement+need evidence only, want=0 weight),
-    # grouped by skill_name_th instead of cluster membership. Every mention of
+    # Per-skill-name demand, computed pre-grouping with the SAME weighting as
+    # Need.demand_score (requirement+need evidence only, want=0 weight),
+    # grouped by skill_name_th instead of Need membership. Every mention of
     # the same skill name across evidence carries the same importance_score.
     importance_score: float = Field(ge=0, le=1)
 
-class SkillCluster(BaseModel):
-    """Output of Stage 3 — grouped skills representing a coherent capability."""
-    cluster_id: str
+class Need(BaseModel):
+    """Output of need_combination — a market-side demand distilled from a
+    group of extracted skills. One sentence stating what the labour market
+    asks for; PLO synthesis restates it from the graduate's side."""
+    need_id: str
     program_id: str
-    canonical_name_th: str  # cluster's representative name
-    canonical_name_en: str | None = None
-    description_th: str
-    skill_type: Literal["knowledge", "psychomotor", "affective", "mixed"]
-    is_subject_specific: bool
-    member_skill_ids: list[str]  # ExtractedSkill IDs in this cluster
-    source_evidence_ids: list[str]  # all evidence behind this cluster
-    stakeholder_coverage: dict[StakeholderType, int]  # which groups mentioned it, how often
+    statement_th: str = Field(min_length=1)
+    statement_en: str | None = None
+    ksec_category: KSECCategory  # single-valued by construction — see below
+    bloom_level: BloomLevel  # highest Bloom level among member skills
+    member_skill_ids: list[str] = Field(min_length=1)  # ExtractedSkill IDs
+    source_evidence_ids: list[str] = Field(min_length=1)
+    stakeholder_coverage: dict[StakeholderType, int] = {}  # which groups, how often
+    freq: int = Field(ge=1)  # = len(member_skill_ids), a raw mention count
     demand_score: float = Field(ge=0, le=1)  # weighted frequency × stakeholder breadth
-    is_common_need: bool = False  # appears in multiple stakeholder groups → likely PLO
-    sample_quotes_th: list[str] = []  # 2-3 illustrative excerpts
-    bloom_level: BloomLevel | None = None  # tagged by light model (knowledge/mixed clusters)
-    psychomotor_level: PsychomotorLevel | None = None  # tagged for psychomotor clusters
-    krathwohl_level: KrathwohlLevel | None = None  # tagged for affective clusters
-    is_optional: bool = False  # majority-want cluster → supplementary, not core
-    classification_coverage: dict[str, int] = {}  # evidence count per classification, e.g. {"need": 3, "want": 1}
+    is_optional: bool = False  # majority-want group → supplementary, not core
+    classification_coverage: dict[str, int] = {}  # evidence count per classification
+    sample_quotes_th: list[str] = []  # up to 3-5 illustrative excerpts
 ```
 
-`demand_score` is the data-science output that the agent uses to decide which clusters are PLO-worthy. The weighting rule (implemented in `_compute_demand_score` in `stages/skill_extraction.py`):
+**Groundedness (`ExtractedSkill.evidence_span_th`):** verified by `is_grounded()` in `stages/skill_extraction.py`. A span passes only if, after whitespace-normalisation, it is at least `_MIN_SPAN_CHARS` (12) characters long *and* occurs verbatim in the source evidence text. Skills whose quote is too short to prove anything, or whose quote isn't actually in the evidence (a fabrication), are dropped before persistence; the stage counts and logs both drop reasons separately (`dropped_too_short` / `dropped_not_found`) and the total dropped count travels in `AgentState["dropped_ungrounded_count"]` for checkpoint display.
+
+**Single-tag guarantee (`Need.ksec_category`):** `need_combination` buckets `ExtractedSkill`s by `ksec_category` (`bucket_by_ksec` in `stages/need_grouping.py`) *before* clustering, and both the semantic merge and the demand-ranked fallback merge only ever fuse groups within one bucket. A Need mixing two KSEC tags is therefore structurally impossible, not just a convention.
+
+`demand_score` is the signal the agent uses to decide which Needs are core vs optional. The weighting rule (`compute_demand_score` in `stages/demand.py`, shared by skill-level `importance_score` and Need-level `demand_score`):
 
 - Only **requirement + need** evidence carries weight (unclassified counts as need); **want evidence contributes zero**.
 - `score = min(freq * 0.6 + breadth * 0.4, 1.0)` where `freq` = weighted-evidence count / total requirement+need evidence, `breadth` = stakeholder-group coverage ratio.
-- A cluster whose want-evidence count exceeds its requirement+need count gets `is_optional=True` — it feeds the optional PLO pass, not the main 6–10 set.
+- A group whose want-evidence count exceeds its requirement+need count gets `is_optional=True` — it feeds the optional PLO pass, not the main 6–10 set.
 - `classification_coverage` records the per-classification evidence counts for checkpoint display.
 
-## Stage 4: PLO
+**6–10 quota:** enforced upstream of PLO synthesis. `need_combination` merges each KSEC bucket's candidate groups down to a per-bucket quota (`allocate_quota` in `stages/need_grouping.py`, `MIN_NEEDS=6` / `MAX_NEEDS=10`, shares proportional to group count, demand breaks ties) so the program ends with 6–10 core Needs before a single PLO is drafted. PLO synthesis then maps one Need to one PLO (see below), so the same 6–10 count carries through unchanged. Optional (want-dominant) Needs are exempt from the quota, same as optional PLOs.
+
+## Stage 4: PLO (plo_synthesis) — cognitive-only, one Need → one PLO
 
 ```python
-# Bloom's Taxonomy — one level scale per learning domain:
-#   Cognitive (Knowledge/Thinking) → BloomLevel
-#   Psychomotor (Skill/Doing)      → PsychomotorLevel (Dave)
-#   Affective (Attitude/Feeling)   → KrathwohlLevel
+# Bloom's Taxonomy has three learning-domain scales in the OBE tradition
+# (see obe-principles.md for the full three-domain picture), but PLO is
+# cognitive-only: the agent's scope ends at PLO, and the other two domains'
+# level scales are YLO/CLO-era faculty work, not modelled here. This
+# codebase has no second or third level-scale class alongside BloomLevel.
 
 class BloomLevel(str, Enum):
     REMEMBER = "remember"
@@ -152,20 +164,6 @@ class BloomLevel(str, Enum):
     ANALYZE = "analyze"
     EVALUATE = "evaluate"
     CREATE = "create"
-
-class PsychomotorLevel(str, Enum):
-    IMITATE = "imitate"
-    MANIPULATE = "manipulate"
-    PRECISE = "precise"
-    ARTICULATE = "articulate"
-    NATURALIZE = "naturalize"
-
-class KrathwohlLevel(str, Enum):
-    RECEIVING = "receiving"
-    RESPONDING = "responding"
-    VALUING = "valuing"
-    ORGANIZATION = "organization"
-    CHARACTERIZATION = "characterization"
 
 class SMARTCheck(BaseModel):
     specific: bool
@@ -181,27 +179,29 @@ class PLO(BaseModel):
     program_id: str
     statement_th: str  # the actual outcome text in Thai
     statement_en: str | None = None
-    domain: Literal["cognitive", "psychomotor", "affective"]
-    bloom_level: BloomLevel | None = None  # for cognitive
-    psychomotor_level: PsychomotorLevel | None = None  # for psychomotor
-    krathwohl_level: KrathwohlLevel | None = None  # for affective
+    bloom_level: BloomLevel  # cognitive only — no domain field, no other scale
     is_subject_specific: bool
     action_verb_th: str  # the single Bloom verb extracted
     smart_check: SMARTCheck
-    source_cluster_ids: list[str]  # SkillCluster IDs that justify this PLO
-    source_evidence_ids: list[str]  # rolled up from clusters
+    source_need_ids: list[str]  # Need IDs that justify this PLO (1+ — see below)
+    source_evidence_ids: list[str] = []  # rolled up from those Needs
     rationale_th: str  # why this PLO exists, for designer review
+    distinctive_feature_th: str | None = None  # what differentiates this PLO
     version: int = 1
+    classification: Literal["generic", "specific"] | None = None  # set in plo_report
+    classification_method: Literal["ksec", "llm", "manual"] | None = None
+    classification_rationale_th: str | None = None
     smart_retry_count: int = 0  # SMART hard-fail fix attempts consumed (max 3)
     smart_escalated: bool = False  # still hard-failing after retries → human repair
     soft_flags: list[str] = []  # non-blocking review flags: "S_object", "A_level", "R_alignment"
-    is_optional: bool = False  # supplementary PLO from want-clusters, exempt from 6-10 count
+    is_optional: bool = False  # PLO from want-dominant Need(s), exempt from 6-10 count
 ```
+
+**One Need → one PLO, with a designer escape hatch.** `stages/plo_synthesis.run()` drafts exactly one PLO per Need — a single focused LLM call each, not a batch call over all Needs. A designer can also merge several Needs into one PLO via `POST /programs/{id}/plos/from-needs`, which calls the same `synthesize_from_needs()` function with more than one Need; that function is shared by both paths so both get identical SMART enforcement and evidence handling. When multiple Needs feed one PLO, `is_subject_specific` is true if *any* contributing Need is SS, and `is_optional` is true only if *every* contributing Need is optional.
 
 Validation rules for PLO (enforce in code):
 - `statement_th` must not contain forbidden words (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก) — see `obe-principles.md`. Exception: a PLO with `smart_escalated=True` may carry them — it exists precisely so a human can repair it, and the SMART gate already failed it loudly.
-- The level field matching `domain` must be set: cognitive → `bloom_level`, psychomotor → `psychomotor_level`, affective → `krathwohl_level`
-- `source_cluster_ids` must be non-empty (no PLO without evidence)
+- `source_need_ids` must be non-empty (no PLO without a Need behind it), and `source_evidence_ids` must be non-empty (no PLO without an evidence trail) — two separate validators, both hard rejects.
 - `smart_check` all five fields must be `True` to mark the PLO ready
 - Hard vs soft failure handling: S-verb / M-forbidden / R-evidence failures (pure code, `stages/smart_rules.py`) trigger the automated SMART retry loop (max 3, criterion named in the retry prompt; unfixed → `smart_escalated=True`). S-object / A-level / R-alignment concerns come from one light-model judge call and land in `soft_flags` without blocking. Implement per the SMART validation checklist in `obe-principles.md`.
 
@@ -212,7 +212,10 @@ class StageCheckpoint(BaseModel):
     """Saved at every stage boundary for human review."""
     checkpoint_id: str
     program_id: str
-    stage: Literal["intake", "stakeholder_needs", "skill_extraction", "plo_synthesis", "plo_report"]
+    stage: Literal[
+        "intake", "stakeholder_needs", "skill_extraction",
+        "need_combination", "plo_synthesis", "plo_report",
+    ]
     artifacts: dict  # serialized output of the stage
     created_at: datetime
     reviewed_by: str | None = None
@@ -223,6 +226,8 @@ class StageCheckpoint(BaseModel):
 ```
 
 LangGraph's interrupt mechanism saves a `StageCheckpoint` and waits. The React UI fetches pending checkpoints via the FastAPI routes, lets the designer edit, then signals approval. The graph resumes with the (possibly edited) artifacts.
+
+Note: `skill_extraction` and `need_combination` are separate graph nodes but share one checkpoint, placed after `need_combination` — the designer reviews raw extracted skills and the distilled Needs together in one review, not at two separate boundaries. Every other stage boundary gets its own checkpoint.
 
 ## Versioning
 

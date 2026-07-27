@@ -1,71 +1,51 @@
 from __future__ import annotations
 
-from curriculum_agent.models import ProgramMetadata, SkillCluster
+from curriculum_agent.models import Need, ProgramMetadata
 
 
-def build_plo_synthesis_prompt(
-    metadata: ProgramMetadata,
-    clusters: list[SkillCluster],
+def build_plo_from_need_prompt(
+    metadata: ProgramMetadata, needs: list[Need]
 ) -> list[dict[str, str]]:
-    cluster_summary = "\n".join(
-        f"- [{c.cluster_id}] {c.canonical_name_th}: {c.description_th} "
-        f"(demand={c.demand_score:.2f}, evidence={len(c.source_evidence_ids)})"
-        for c in clusters
+    """Restate one or more market Needs as a single graduate-side PLO.
+
+    Takes a list because the designer may merge several Needs into one PLO; the
+    1:1 stage path passes a single-element list.
+    """
+    plural = len(needs) > 1
+    system = (
+        "คุณเป็นผู้เชี่ยวชาญ OBE ตามมาตรฐาน MHESI\n"
+        + (
+            "จงรวม 'ความต้องการของตลาด' ที่ให้มาทั้งหมด ให้เป็น PLO เพียงหนึ่งข้อ\n\n"
+            if plural
+            else "จงแปลง 'ความต้องการของตลาด' หนึ่งข้อ ให้เป็น PLO หนึ่งข้อ\n\n"
+        )
+        + "กติกา:\n"
+        "- เขียนจากมุมผู้เรียน: 'บัณฑิตทำอะไรได้' ไม่ใช่ 'ตลาดต้องการอะไร'\n"
+        "- ใช้คำกริยาแสดงพฤติกรรมตาม Bloom เพียง 1 คำ\n"
+        "- ห้ามใช้คำที่วัดไม่ได้: รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก\n"
+        "- ต้องระบุวัตถุของกริยาให้เจาะจง ห้ามใช้คำกว้างเช่น 'ความรู้ที่จำเป็น'\n"
+        "- source_need_ids ต้องเป็น need_id ที่ให้มาทั้งหมด ห้ามเพิ่มหรือตัดทิ้ง\n"
+        + ("- ต้องครอบคลุมสาระของทุกความต้องการที่ให้มา ห้ามละข้อใดข้อหนึ่ง\n" if plural else "")
+        + "\nตอบเป็น JSON object ที่มี field: plo (object) โดย plo มี field:\n"
+        "  plo_id, statement_th, statement_en, bloom_level, is_subject_specific,\n"
+        "  action_verb_th, source_need_ids, rationale_th, distinctive_feature_th\n"
+        "(ไม่ต้องระบุ evidence ใด ๆ — ระบบจะผูก evidence จาก need ที่ให้มาเอง)"
+    )
+    need_block = "\n\n".join(
+        f"need_id: {n.need_id}\n"
+        f"ความต้องการของตลาด: {n.statement_th}\n"
+        f"หมวดสมรรถนะ: {n.ksec_category.value}\n"
+        f"ระดับ Bloom ที่เหมาะสม: {n.bloom_level.value}\n"
+        f"ความถี่ที่ถูกกล่าวถึง: {n.freq} ครั้ง (demand {n.demand_score})"
+        for n in needs
+    )
+    user = (
+        f"หลักสูตร: {metadata.name_th} ({metadata.degree_level}, {metadata.duration_years} ปี)\n"
+        f"สาขา: {metadata.field}\n"
+        f"วิสัยทัศน์: {metadata.vision_th}\n\n"
+        f"{need_block}"
     )
     return [
-        {
-            "role": "system",
-            "content": (
-                "คุณเป็นผู้เชี่ยวชาญด้านการออกแบบหลักสูตรตามแนว OBE (Outcome-Based Education) "
-                "สร้าง PLO (Program Learning Outcomes) จำนวน 6-10 รายการ "
-                "แต่ละ PLO ต้องมีกริยาแสดงพฤติกรรม Bloom ที่วัดได้ ไม่ใช้คำต้องห้าม "
-                "(รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก) และผ่าน SMART"
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"บริบทหลักสูตร:\n"
-                f"- สาขาวิชา: {metadata.field}\n"
-                f"- ระดับ: {metadata.degree_level} ({metadata.duration_years} ปี)\n"
-                f"- มหาวิทยาลัย: {metadata.university} / คณะ: {metadata.faculty}\n"
-                f"- วิสัยทัศน์: {metadata.vision_th}\n\n"
-                f"Skill clusters (สรุปจากหลักฐานผู้มีส่วนได้ส่วนเสีย):\n{cluster_summary}\n\n"
-                "สังเคราะห์ PLO 6-10 รายการ พร้อม plo_id, statement_th, domain, "
-                "ระดับตาม domain (cognitive → bloom_level, psychomotor → psychomotor_level, "
-                "affective → krathwohl_level), "
-                "action_verb_th, source_cluster_ids, และ rationale_th"
-            ),
-        },
-    ]
-
-
-def build_optional_plo_prompt(
-    metadata: ProgramMetadata,
-    clusters: list[SkillCluster],
-) -> list[dict[str, str]]:
-    cluster_summary = "\n".join(
-        f"- [{c.cluster_id}] {c.canonical_name_th}: {c.description_th}" for c in clusters
-    )
-    return [
-        {
-            "role": "system",
-            "content": (
-                "คุณเป็นผู้เชี่ยวชาญ OBE สร้าง PLO เสริม (optional) จากทักษะประเภท want "
-                "(ตลาดต้องการเพิ่มเติมแต่ไม่จำเป็นทุกคน) จำนวน 1-4 รายการ "
-                "กติกาเดียวกับ PLO หลัก: กริยา Bloom วัดได้ ไม่ใช้คำต้องห้าม "
-                "(รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก)"
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"สาขาวิชา: {metadata.field} ระดับ {metadata.degree_level}\n"
-                f"Want-based skill clusters:\n{cluster_summary}\n\n"
-                "สังเคราะห์ PLO เสริม 1-4 รายการ พร้อม plo_id (นำหน้าด้วย OPT), statement_th, "
-                "domain, ระดับตาม domain (cognitive → bloom_level, "
-                "psychomotor → psychomotor_level, affective → krathwohl_level), "
-                "action_verb_th, source_cluster_ids, rationale_th"
-            ),
-        },
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
     ]

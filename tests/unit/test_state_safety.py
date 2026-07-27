@@ -23,18 +23,17 @@ async def test_plo_synthesis_raises_valueerror_not_keyerror_on_missing_metadata(
 
     state: AgentState = {
         "program_id": "test",
-        "skill_clusters": [
+        "needs": [
             {
-                "cluster_id": "C1",
+                "need_id": "N1",
                 "program_id": "test",
-                "canonical_name_th": "test",
-                "description_th": "test",
-                "skill_type": "knowledge",
-                "is_subject_specific": True,
+                "statement_th": "test",
+                "ksec_category": "SS",
+                "bloom_level": "apply",
                 "member_skill_ids": ["S1"],
                 "source_evidence_ids": ["E1"],
+                "freq": 1,
                 "demand_score": 0.9,
-                "is_common_need": True,
             }
         ],
     }

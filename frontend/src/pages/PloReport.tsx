@@ -17,20 +17,17 @@ interface PLO {
   program_id: string
   statement_th: string
   statement_en: string | null
-  domain: string
-  bloom_level: string | null
-  psychomotor_level: string | null
-  krathwohl_level: string | null
+  bloom_level: string
   is_subject_specific: boolean
   action_verb_th: string
   smart_check: SMARTCheck
-  source_cluster_ids: string[]
+  source_need_ids: string[]
   source_evidence_ids: string[]
   rationale_th: string
   distinctive_feature_th: string | null
   version: number
   classification: 'generic' | 'specific' | null
-  classification_method: 'skill_type' | 'llm' | 'manual' | null
+  classification_method: 'ksec' | 'llm' | 'manual' | null
   classification_rationale_th: string | null
   smart_retry_count: number
   smart_escalated: boolean
@@ -38,20 +35,20 @@ interface PLO {
   is_optional: boolean
 }
 
-interface SkillCluster {
-  cluster_id: string
-  canonical_name_th: string
-  canonical_name_en: string | null
+interface NeedSummary {
+  need_id: string
+  statement_th: string
+  statement_en: string | null
 }
 
 const METHOD_LABEL: Record<string, string> = {
-  skill_type: 'field',
+  ksec: 'field',
   llm: 'LLM',
   manual: 'manual',
 }
 
 const METHOD_COLOR: Record<string, string> = {
-  skill_type: 'bg-gray-100 text-gray-600',
+  ksec: 'bg-gray-100 text-gray-600',
   llm: 'bg-blue-100 text-blue-700',
   manual: 'bg-amber-100 text-amber-700',
 }
@@ -64,7 +61,7 @@ function effectiveClass(p: PLO): 'generic' | 'specific' {
 export default function PloReport() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
-  const [clusters, setClusters] = useState<SkillCluster[]>([])
+  const [needs, setNeeds] = useState<NeedSummary[]>([])
   const [view, setView] = useState<'list' | 'matrix'>('list')
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
@@ -75,12 +72,12 @@ export default function PloReport() {
     setLoading(true)
     setError('')
     try {
-      const [ploRes, clusterRes] = await Promise.all([
+      const [ploRes, needRes] = await Promise.all([
         api.get<PLO[]>(`/programs/${programId}/plos/`),
-        api.get<SkillCluster[]>(`/programs/${programId}/clusters/`),
+        api.get<NeedSummary[]>(`/programs/${programId}/needs/`),
       ])
       setPlos(ploRes.data)
-      setClusters(clusterRes.data)
+      setNeeds(needRes.data)
     } catch {
       setError('โหลดข้อมูลไม่สำเร็จ')
     } finally {
@@ -133,8 +130,8 @@ export default function PloReport() {
   const optionalPlos = plos.filter(p => p.is_optional)
   const generic = mainPlos.filter(p => effectiveClass(p) === 'generic')
   const specific = mainPlos.filter(p => effectiveClass(p) === 'specific')
-  const referencedClusters = clusters.filter(c =>
-    mainPlos.some(p => p.source_cluster_ids.includes(c.cluster_id))
+  const referencedNeeds = needs.filter(n =>
+    mainPlos.some(p => p.source_need_ids.includes(n.need_id))
   )
 
   return (
@@ -202,7 +199,7 @@ export default function PloReport() {
               <ReportGroup title="Specific Skills" plos={specific} onFlip={flip} />
             </div>
           ) : (
-            <ReportMatrix plos={mainPlos} clusters={referencedClusters} />
+            <ReportMatrix plos={mainPlos} needs={referencedNeeds} />
           )}
 
           {optionalPlos.length > 0 && (
@@ -318,9 +315,9 @@ function ReportGroup({
   )
 }
 
-function ReportMatrix({ plos, clusters }: { plos: PLO[]; clusters: SkillCluster[] }) {
-  if (clusters.length === 0) {
-    return <p className="text-gray-400 text-sm">ไม่มี cluster ที่ PLO อ้างอิง</p>
+function ReportMatrix({ plos, needs }: { plos: PLO[]; needs: NeedSummary[] }) {
+  if (needs.length === 0) {
+    return <p className="text-gray-400 text-sm">ไม่มี Need ที่ PLO อ้างอิง</p>
   }
   return (
     <div className="overflow-x-auto border border-gray-200 rounded-xl">
@@ -330,13 +327,13 @@ function ReportMatrix({ plos, clusters }: { plos: PLO[]; clusters: SkillCluster[
             <th className="sticky left-0 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200">
               PLO / Class
             </th>
-            {clusters.map(c => (
+            {needs.map(n => (
               <th
-                key={c.cluster_id}
+                key={n.need_id}
                 className="px-3 py-2 font-medium text-gray-500 border-b border-gray-200 whitespace-nowrap text-xs"
-                title={c.canonical_name_th}
+                title={n.statement_th}
               >
-                {c.canonical_name_en ?? c.canonical_name_th}
+                {n.statement_en ?? n.statement_th}
               </th>
             ))}
           </tr>
@@ -350,9 +347,9 @@ function ReportMatrix({ plos, clusters }: { plos: PLO[]; clusters: SkillCluster[
                   <ClassBadge value={effectiveClass(p)} />
                 </div>
               </td>
-              {clusters.map(c => (
-                <td key={c.cluster_id} className="px-3 py-2 border-b border-gray-100 text-center">
-                  {p.source_cluster_ids.includes(c.cluster_id)
+              {needs.map(n => (
+                <td key={n.need_id} className="px-3 py-2 border-b border-gray-100 text-center">
+                  {p.source_need_ids.includes(n.need_id)
                     ? <span className="text-green-600 font-bold">✓</span>
                     : <span className="text-gray-200">·</span>}
                 </td>

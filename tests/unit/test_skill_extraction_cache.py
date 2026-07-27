@@ -9,7 +9,7 @@ from curriculum_agent.config import settings
 async def test_cache_hit_skips_extraction_llm_call():
     """Cache hit for evidence → complete_light not called for skill extraction."""
     from curriculum_agent.graph import AgentState
-    from curriculum_agent.stages.skill_extraction import _ClusterNameResult, run
+    from curriculum_agent.stages.skill_extraction import run
 
     text = "ต้องการผู้เชี่ยวชาญด้าน Python และ Machine Learning"
     text_slice = text[:1200]
@@ -19,7 +19,8 @@ async def test_cache_hit_skips_extraction_llm_call():
 
     cached_json = (
         '{"skills": [{"skill_name_th": "Python", "skill_name_en": "Python",'
-        ' "skill_type": "knowledge", "is_subject_specific": true, "confidence": 0.9}]}'
+        ' "ksec_category": "SS", "bloom_level": "apply",'
+        ' "evidence_span_th": "ต้องการผู้เชี่ยวชาญด้าน Python", "confidence": 0.9}]}'
     )
 
     evidence_dict = {
@@ -37,26 +38,17 @@ async def test_cache_hit_skips_extraction_llm_call():
         "program_id": "prog-001",
         "classified_evidence": [evidence_dict],
         "extracted_skills": [],
-        "skill_clusters": [],
     }
 
     mock_cache_repo = AsyncMock()
     mock_cache_repo.get = AsyncMock(return_value=(settings.light_model, cached_json))
     mock_cache_repo.set = AsyncMock()
 
-    cluster_name = _ClusterNameResult(
-        canonical_name_th="ทักษะ Python",
-        canonical_name_en="Python Skills",
-        description_th="ทักษะด้าน Python",
-        skill_type="knowledge",
-        is_subject_specific=True,
-    )
-
     llm_call_response_models: list = []
 
     async def mock_complete_light(response_model, messages, **kwargs):
         llm_call_response_models.append(response_model)
-        return cluster_name
+        raise AssertionError("complete_light should not be called on a cache hit")
 
     with (
         patch(
@@ -68,27 +60,18 @@ async def test_cache_hit_skips_extraction_llm_call():
             side_effect=mock_complete_light,
         ),
         patch(
-            "curriculum_agent.stages.skill_extraction.cluster_skill_names",
-            new=AsyncMock(return_value=[[0]]),
-        ),
-        patch(
             "curriculum_agent.stages.skill_extraction.SkillRepository",
-            return_value=AsyncMock(bulk_insert=AsyncMock()),
-        ),
-        patch(
-            "curriculum_agent.stages.skill_extraction.ClusterRepository",
             return_value=AsyncMock(bulk_insert=AsyncMock()),
         ),
     ):
         result_state = await run(state)
 
-    from curriculum_agent.stages.skill_extraction import _ExtractedSkillsResponse
-
     # Cache was consulted with the text+classification+model key
     mock_cache_repo.get.assert_called_once_with(cache_key)
-    # Extraction LLM was NOT called (only cluster naming goes through complete_light)
-    assert _ExtractedSkillsResponse not in llm_call_response_models
+    # Extraction LLM was NOT called at all — cache satisfied it
+    assert llm_call_response_models == []
     # Skills came from cache and ended up in state
     assert len(result_state["extracted_skills"]) > 0
+    assert result_state["extracted_skills"][0]["skill_name_th"] == "Python"
     # Cache set should NOT be called on a hit
     mock_cache_repo.set.assert_not_called()

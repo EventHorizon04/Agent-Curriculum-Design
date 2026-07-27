@@ -6,48 +6,70 @@ import pytest
 
 from curriculum_agent.models import (
     BloomLevel,
-    Domain,
+    Need,
     ProgramMetadata,
-    SkillCluster,
 )
-from curriculum_agent.stages.plo_synthesis import _PLODraft, _PLODraftList, _SmartSoftJudge, run
+from curriculum_agent.stages.plo_synthesis import (
+    _PLODraft,
+    _SingleDraftResponse,
+    _SmartSoftJudge,
+    run,
+)
 
 _SOFT_OK = _SmartSoftJudge(specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True)
 
-_SAMPLE_DRAFTS = _PLODraftList(
-    plos=[
-        _PLODraft(
-            plo_id=f"PLO-{i}",
-            statement_th=f"ออกแบบและพัฒนาระบบสารสนเทศสำหรับงาน {i} ได้อย่างมีประสิทธิภาพ",
-            domain=Domain.COGNITIVE,
-            bloom_level=BloomLevel.CREATE,
-            is_subject_specific=True,
-            action_verb_th="ออกแบบ",
-            source_cluster_ids=["C1"],
-            source_evidence_ids=["E1"],
-            rationale_th=f"ทักษะที่นายจ้างต้องการลำดับที่ {i}",
-        )
-        for i in range(1, 7)
-    ]
-)
+
+def _draft_for(need: Need) -> _PLODraft:
+    return _PLODraft(
+        plo_id=f"PLO-{need.need_id}",
+        statement_th=f"ออกแบบและพัฒนาระบบสารสนเทศสำหรับงาน {need.need_id} ได้อย่างมีประสิทธิภาพ",
+        bloom_level=BloomLevel.CREATE,
+        is_subject_specific=True,
+        action_verb_th="ออกแบบ",
+        source_need_ids=[need.need_id],
+        rationale_th=f"ทักษะที่นายจ้างต้องการลำดับที่ {need.need_id}",
+    )
 
 
 @pytest.fixture
-def state(program_metadata: ProgramMetadata, skill_cluster: SkillCluster) -> dict:
+def needs() -> list[Need]:
+    return [
+        Need(
+            need_id=f"N{i}",
+            program_id="cs-test",
+            statement_th=f"สามารถทำงานสารสนเทศลำดับที่ {i} ได้",
+            ksec_category="SS",
+            bloom_level=BloomLevel.CREATE,
+            member_skill_ids=[f"S{i}"],
+            source_evidence_ids=[f"E{i}"],
+            freq=2,
+            demand_score=0.8,
+        )
+        for i in range(1, 7)
+    ]
+
+
+@pytest.fixture
+def state(program_metadata: ProgramMetadata, needs: list[Need]) -> dict:
     return {
         "program_id": program_metadata.program_id,
         "metadata": program_metadata.model_dump(mode="json"),
-        "skill_clusters": [skill_cluster.model_dump(mode="json")],
+        "needs": [n.model_dump(mode="json") for n in needs],
     }
 
 
-@pytest.mark.anyio
-async def test_stage_3_produces_plos(state: dict) -> None:
-    with (
+def _patched(needs: list[Need]):
+    drafts = {n.need_id: _draft_for(n) for n in needs}
+
+    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+        body = messages[-1]["content"]
+        nid = next(n.need_id for n in needs if n.need_id in body)
+        return _SingleDraftResponse(plo=drafts[nid])
+
+    return (
         patch(
             "curriculum_agent.stages.plo_synthesis.complete_heavy",
-            new_callable=AsyncMock,
-            return_value=_SAMPLE_DRAFTS,
+            new=fake_heavy,
         ),
         patch(
             "curriculum_agent.stages.plo_synthesis.complete_light",
@@ -58,31 +80,24 @@ async def test_stage_3_produces_plos(state: dict) -> None:
             "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
             new_callable=AsyncMock,
         ),
-    ):
+    )
+
+
+@pytest.mark.anyio
+async def test_stage_4_produces_one_plo_per_need(state: dict, needs: list[Need]) -> None:
+    p1, p2, p3 = _patched(needs)
+    with p1, p2, p3:
         result = await run(state)
 
     plos = result["plos"]
-    assert 6 <= len(plos) <= 10, f"Expected 6-10 PLOs, got {len(plos)}"
+    assert len(plos) == len(needs), f"Expected one PLO per Need ({len(needs)}), got {len(plos)}"
+    assert sorted(p["source_need_ids"][0] for p in plos) == sorted(n.need_id for n in needs)
 
 
 @pytest.mark.anyio
-async def test_stage_3_no_forbidden_words(state: dict) -> None:
-    with (
-        patch(
-            "curriculum_agent.stages.plo_synthesis.complete_heavy",
-            new_callable=AsyncMock,
-            return_value=_SAMPLE_DRAFTS,
-        ),
-        patch(
-            "curriculum_agent.stages.plo_synthesis.complete_light",
-            new_callable=AsyncMock,
-            return_value=_SOFT_OK,
-        ),
-        patch(
-            "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
-            new_callable=AsyncMock,
-        ),
-    ):
+async def test_stage_4_no_forbidden_words(state: dict, needs: list[Need]) -> None:
+    p1, p2, p3 = _patched(needs)
+    with p1, p2, p3:
         result = await run(state)
 
     from curriculum_agent.models import FORBIDDEN_WORDS_TH
@@ -94,52 +109,32 @@ async def test_stage_3_no_forbidden_words(state: dict) -> None:
 
 
 @pytest.mark.anyio
-async def test_stage_3_source_cluster_ids_non_empty(state: dict) -> None:
-    with (
-        patch(
-            "curriculum_agent.stages.plo_synthesis.complete_heavy",
-            new_callable=AsyncMock,
-            return_value=_SAMPLE_DRAFTS,
-        ),
-        patch(
-            "curriculum_agent.stages.plo_synthesis.complete_light",
-            new_callable=AsyncMock,
-            return_value=_SOFT_OK,
-        ),
-        patch(
-            "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
-            new_callable=AsyncMock,
-        ),
-    ):
+async def test_stage_4_source_need_ids_non_empty(state: dict, needs: list[Need]) -> None:
+    p1, p2, p3 = _patched(needs)
+    with p1, p2, p3:
         result = await run(state)
 
     for plo_dict in result["plos"]:
-        assert plo_dict["source_cluster_ids"], (
-            f"PLO {plo_dict['plo_id']} has empty source_cluster_ids"
+        assert plo_dict["source_need_ids"], f"PLO {plo_dict['plo_id']} has empty source_need_ids"
+        assert plo_dict["source_evidence_ids"], (
+            f"PLO {plo_dict['plo_id']} has empty source_evidence_ids"
         )
 
 
 @pytest.mark.anyio
-async def test_stage_3_smart_validator_called(state: dict) -> None:
+async def test_stage_4_smart_validator_called_once_per_need(state: dict, needs: list[Need]) -> None:
+    p1, _, p3 = _patched(needs)
     soft_judge_mock = AsyncMock(return_value=_SOFT_OK)
     with (
-        patch(
-            "curriculum_agent.stages.plo_synthesis.complete_heavy",
-            new_callable=AsyncMock,
-            return_value=_SAMPLE_DRAFTS,
-        ),
+        p1,
         patch("curriculum_agent.stages.plo_synthesis.complete_light", soft_judge_mock),
-        patch(
-            "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
-            new_callable=AsyncMock,
-        ),
+        p3,
     ):
         result = await run(state)
 
-    assert soft_judge_mock.call_count >= len(_SAMPLE_DRAFTS.plos), (
-        "soft judge should be called at least once per PLO"
+    assert soft_judge_mock.call_count >= len(needs), (
+        "soft judge should be called at least once per Need"
     )
-    # Verify the judge result was consumed by checking soft_flags and escalation
     for plo_dict in result["plos"]:
         assert plo_dict["soft_flags"] == [], (
             f"PLO {plo_dict['plo_id']} should have no soft flags when judge passes"
