@@ -106,6 +106,54 @@ class MergeGroupsResponse(BaseModel):
     groups: list[list[int]]
 
 
+def _clustering_contract_fingerprint() -> str:
+    """Short hash of everything that decides the SHAPE of a cached clustering.
+
+    Mirrors the extraction cache's fingerprint, for the same reason: the key is
+    otherwise just the input names plus the model, so changing a response schema
+    or a prompt leaves old entries matching and silently replays a grouping
+    produced under different instructions.
+    """
+    schemas = json.dumps(
+        [
+            ClusterAssignmentsResponse.model_json_schema(),
+            MergeGroupsResponse.model_json_schema(),
+        ],
+        sort_keys=True,
+    )
+    # Only the system messages carry instructions; the user message is the name
+    # list, which the key already covers.
+    prompts = "\x00".join(
+        [
+            build_cluster_skills_prompt([])[0]["content"],
+            build_merge_clusters_prompt([])[0]["content"],
+        ]
+    )
+    return hashlib.sha256(f"{schemas}\x00{prompts}".encode()).hexdigest()[:16]
+
+
+_CLUSTERING_CONTRACT = _clustering_contract_fingerprint()
+
+
+def is_valid_partition(groups: list[list[int]], n: int) -> bool:
+    """True when `groups` assigns every index below `n` exactly once.
+
+    Freshly computed groupings go through `validate_assignments`, which repairs a
+    malformed answer. A cached grouping bypasses that entirely — it is replayed
+    raw — so an entry written by an older or buggier version could hand back an
+    out-of-range index (an IndexError in the caller, which does `bucket[i]`) or a
+    partial cover (skills silently vanishing). Checking on the way out keeps the
+    cache from reintroducing a class of bug the compute path already guards.
+    """
+    seen: set[int] = set()
+    for group in groups:
+        for i in group:
+            if not isinstance(i, int) or not (0 <= i < n) or i in seen:
+                return False
+            seen.add(i)
+    return len(seen) == n
+
+
 async def _cluster_pass(names: list[str]) -> list[tuple[str, list[int]]]:
     """One heavy-model clustering call over `names`, validated."""
     result = await complete_heavy(
@@ -138,9 +186,12 @@ async def _cluster_map_reduce(names: list[str]) -> list[list[int]]:
 async def cluster_skill_names(names: list[str]) -> list[list[int]]:
     """Group skill names by meaning using the heavy model.
 
-    Returns groups of indices into `names`. Single pass when the list fits in
-    one prompt; batch + merge otherwise. Results are cached keyed on the full
-    name list + model, so re-runs on identical input are deterministic.
+    Returns groups of indices into `names`. Single pass when the list fits in one
+    prompt; batch + merge otherwise. Results are cached keyed on the full name
+    list, the model, and a fingerprint of the response schemas and prompts, so
+    re-runs on identical input are deterministic while a change to either
+    contract invalidates the affected entries. A cached grouping that does not
+    partition the names exactly once is discarded rather than trusted.
     """
     if not names:
         return []
@@ -150,10 +201,22 @@ async def cluster_skill_names(names: list[str]) -> list[list[int]]:
     cache = LLMCacheRepository()
     # Order- and spelling-sensitive: callers should pass a deterministic
     # ordering (dedupe_names' sorted, first-seen-spelling output).
-    cache_key = hashlib.sha256("\x00".join([*names, settings.heavy_model]).encode()).hexdigest()
+    cache_key = hashlib.sha256(
+        "\x00".join([*names, settings.heavy_model, _CLUSTERING_CONTRACT]).encode()
+    ).hexdigest()
     cached = await cache.get(cache_key)
     if cached is not None and cached[0] == settings.heavy_model:
-        return [[int(i) for i in g] for g in json.loads(cached[1])]
+        try:
+            groups = [[int(i) for i in g] for g in json.loads(cached[1])]
+        except (TypeError, ValueError) as exc:
+            logger.warning(f"Unreadable clustering cache entry, re-clustering: {exc}")
+        else:
+            if is_valid_partition(groups, len(names)):
+                return groups
+            logger.warning(
+                f"Cached clustering does not partition {len(names)} names exactly once — "
+                "discarding and re-clustering"
+            )
 
     if len(names) <= SINGLE_PASS_MAX:
         groups = [indices for _, indices in await _cluster_pass(names)]
