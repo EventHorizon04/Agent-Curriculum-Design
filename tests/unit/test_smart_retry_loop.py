@@ -28,7 +28,6 @@ _SOFT_OK = ps._SmartSoftJudge(
 
 def _draft(statement: str, verb: str = "วิเคราะห์", needs: list[str] | None = None) -> ps._PLODraft:
     return ps._PLODraft(
-        plo_id="PLO1",
         statement_th=statement,
         bloom_level="analyze",
         action_verb_th=verb,
@@ -39,7 +38,7 @@ def _draft(statement: str, verb: str = "วิเคราะห์", needs: lis
 
 async def test_clean_draft_passes_without_retry():
     with patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)):
-        out = await ps._ensure_smart(_draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"])
+        out = await ps._ensure_smart(_draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], "PLO1")
     assert out.retry_count == 0
     assert out.escalated is False
     assert out.smart_check.passed
@@ -57,7 +56,7 @@ async def test_hard_fail_retries_with_criterion_and_escalates():
         patch.object(ps, "complete_heavy", side_effect=fake_heavy),
         patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)),
     ):
-        out = await ps._ensure_smart(bad, {"c1"}, META, ["c1"])
+        out = await ps._ensure_smart(bad, {"c1"}, META, ["c1"], "PLO1")
 
     assert out.retry_count == 3
     assert out.escalated is True
@@ -73,7 +72,7 @@ async def test_soft_fail_flags_without_blocking():
         notes_th="ระดับสูงไป",
     )
     with patch.object(ps, "complete_light", AsyncMock(return_value=judge)):
-        out = await ps._ensure_smart(_draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"])
+        out = await ps._ensure_smart(_draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], "PLO1")
     assert out.escalated is False
     assert set(out.soft_flags) == {"A_level", "R_alignment"}
     assert out.smart_check.passed  # soft fails never block
@@ -101,7 +100,9 @@ async def test_gate_judges_authoritative_need_ids_not_the_models_echo():
         patch.object(ps, "complete_heavy", side_effect=fake_heavy),
         patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)),
     ):
-        out = await ps._ensure_smart(bad, {"c1"}, META, authoritative_need_ids=["c1"])
+        out = await ps._ensure_smart(
+            bad, {"c1"}, META, authoritative_need_ids=["c1"], plo_id="PLO1"
+        )
 
     assert out.retry_count == 0
     assert out.escalated is False

@@ -27,7 +27,7 @@ def build_plo_from_need_prompt(
         "- source_need_ids ต้องเป็น need_id ที่ให้มาทั้งหมด ห้ามเพิ่มหรือตัดทิ้ง\n"
         + ("- ต้องครอบคลุมสาระของทุกความต้องการที่ให้มา ห้ามละข้อใดข้อหนึ่ง\n" if plural else "")
         + "\nตอบเป็น JSON object ที่มี field: plo (object) โดย plo มี field:\n"
-        "  plo_id, statement_th, statement_en, bloom_level, is_subject_specific,\n"
+        "  statement_th, statement_en, bloom_level, is_subject_specific,\n"
         "  action_verb_th, source_need_ids, rationale_th, distinctive_feature_th\n"
         "(ไม่ต้องระบุ evidence ใด ๆ — ระบบจะผูก evidence จาก need ที่ให้มาเอง)"
     )

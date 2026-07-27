@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import uuid
+from collections.abc import Iterable
 
 from loguru import logger
 from pydantic import BaseModel, model_validator
@@ -27,11 +27,54 @@ from curriculum_agent.stages.smart_rules import (
 
 _MAX_RETRIES = 3
 
+# Identifier scheme. Main outcomes are PLO1..PLOn ordered by descending demand,
+# so PLO1 is the capability the labour market asked for most; supplementary
+# outcomes derived from want-dominant Needs get their own OPT1..OPTn series and
+# are exempt from the 6-10 count.
+_MAIN_PREFIX = "PLO"
+_OPTIONAL_PREFIX = "OPT"
+
+
+def format_plo_id(index: int, *, is_optional: bool) -> str:
+    """Build the identifier for the `index`-th outcome of its series (1-based)."""
+    return f"{_OPTIONAL_PREFIX if is_optional else _MAIN_PREFIX}{index}"
+
+
+def next_plo_id(existing_ids: Iterable[str], *, is_optional: bool) -> str:
+    """Lowest unused number in the relevant series.
+
+    Needed by the designer-driven merge endpoint, which creates one outcome at a
+    time and cannot see the whole ordered set. `plo_id` is the table's primary key
+    and the repository upserts, so a reused id would silently overwrite an
+    existing outcome rather than failing.
+    """
+    prefix = _OPTIONAL_PREFIX if is_optional else _MAIN_PREFIX
+    used = {
+        int(pid[len(prefix) :])
+        for pid in existing_ids
+        if pid.startswith(prefix) and pid[len(prefix) :].isdigit()
+    }
+    index = 1
+    while index in used:
+        index += 1
+    return format_plo_id(index, is_optional=is_optional)
+
+
+def synthesis_order(needs: list[Need]) -> list[Need]:
+    """Most-demanded first, `need_id` breaking ties so numbering is reproducible."""
+    return sorted(needs, key=lambda n: (-n.demand_score, n.need_id))
+
 
 class _PLODraft(BaseModel):
-    """Intermediate schema for LLM output before SMART check is added."""
+    """Intermediate schema for LLM output before SMART check is added.
 
-    plo_id: str
+    Deliberately has no `plo_id`: the identifier is assigned by code. Each Need
+    gets its own LLM call with no knowledge of the others, so a model asked to
+    name its outcome would return "PLO1" every time — and since `plo_id` is the
+    primary key and the repository upserts, a whole set would collapse into one
+    row while the run reported success.
+    """
+
     statement_th: str
     statement_en: str | None = None
     bloom_level: BloomLevel
@@ -94,6 +137,7 @@ async def _ensure_smart(
     known_need_ids: set[str],
     metadata: ProgramMetadata,
     authoritative_need_ids: list[str],
+    plo_id: str,
 ) -> _SmartOutcome:
     """Hard fails → per-PLO retry (max _MAX_RETRIES) naming the criterion; soft fails → flags.
 
@@ -113,7 +157,7 @@ async def _ensure_smart(
     retries = 0
     while fails and retries < _MAX_RETRIES:
         retries += 1
-        logger.debug(f"  SMART retry {retries} for PLO {draft.plo_id}: {[f.value for f in fails]}")
+        logger.debug(f"  SMART retry {retries} for PLO {plo_id}: {[f.value for f in fails]}")
         try:
             fix = await complete_heavy(
                 _SingleDraftResponse, _build_fix_prompt(draft, fails), max_retries=2
@@ -129,7 +173,7 @@ async def _ensure_smart(
     escalated = bool(fails)
     if escalated:
         logger.warning(
-            f"  PLO {draft.plo_id} escalated after {retries} retries: {[f.value for f in fails]}"
+            f"  PLO {plo_id} escalated after {retries} retries: {[f.value for f in fails]}"
         )
 
     soft_flags: list[str] = []
@@ -149,7 +193,7 @@ async def _ensure_smart(
         if not judge.relevant_alignment_ok:
             soft_flags.append("R_alignment")
     except Exception as exc:
-        logger.warning(f"  Soft judge failed for PLO {draft.plo_id}: {exc}")
+        logger.warning(f"  Soft judge failed for PLO {plo_id}: {exc}")
 
     smart = SMARTCheck(
         specific=HardCriterion.S_VERB not in fails,
@@ -173,6 +217,7 @@ async def synthesize_from_needs(
     needs: list[Need],
     program_id: str,
     known_need_ids: set[str],
+    plo_id: str,
 ) -> PLO | None:
     """Draft one PLO from one or more Needs, then run it through the SMART gate.
 
@@ -196,7 +241,9 @@ async def synthesize_from_needs(
         return None
 
     authoritative_need_ids = [n.need_id for n in needs]
-    outcome = await _ensure_smart(response.plo, known_need_ids, metadata, authoritative_need_ids)
+    outcome = await _ensure_smart(
+        response.plo, known_need_ids, metadata, authoritative_need_ids, plo_id
+    )
     draft = outcome.draft
 
     # Evidence ids are never asked of the model (see build_plo_from_need_prompt) —
@@ -205,7 +252,7 @@ async def synthesize_from_needs(
     evidence_ids = sorted({eid for n in needs for eid in n.source_evidence_ids})
 
     return PLO(
-        plo_id=draft.plo_id or f"PLO-{uuid.uuid4().hex[:6]}",
+        plo_id=plo_id,
         program_id=program_id,
         statement_th=draft.statement_th,
         statement_en=draft.statement_en,
@@ -250,11 +297,22 @@ async def run(state: AgentState) -> AgentState:
     known_need_ids = {n.need_id for n in needs}
     logger.info(f"Stage 4: synthesizing one PLO per Need ({len(needs)} Needs)")
 
+    # Number each series independently, most-demanded first, so PLO1 is the
+    # capability the market asked for most and the numbering is reproducible
+    # across re-runs on the same Needs.
     plos: list[PLO] = []
-    for need in needs:
-        plo = await synthesize_from_needs(metadata, [need], program_id, known_need_ids)
-        if plo is not None:
-            plos.append(plo)
+    for is_optional in (False, True):
+        series = synthesis_order([n for n in needs if n.is_optional is is_optional])
+        for index, need in enumerate(series, start=1):
+            plo_id = format_plo_id(index, is_optional=is_optional)
+            plo = await synthesize_from_needs(metadata, [need], program_id, known_need_ids, plo_id)
+            if plo is not None:
+                plos.append(plo)
+            else:
+                # Leave the number unused rather than renumbering the rest. A gap
+                # says "this Need failed"; renumbering would silently change what
+                # PLO4 refers to between runs, and designers cite these ids.
+                logger.warning(f"  {plo_id} not produced — its number stays unused")
 
     core = sum(1 for p in plos if not p.is_optional)
     if not MIN_NEEDS <= core <= MAX_NEEDS:

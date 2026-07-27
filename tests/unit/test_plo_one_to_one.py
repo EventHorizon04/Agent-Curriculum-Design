@@ -25,7 +25,6 @@ def _need(nid: str, optional: bool = False, ksec_category: KSECCategory = KSECCa
 
 def _draft(nid: str) -> ps._PLODraft:
     return ps._PLODraft(
-        plo_id=f"PLO-{nid}",
         statement_th=f"วิเคราะห์งาน {nid} เพื่อเสนอแนวทางแก้ปัญหาได้",
         bloom_level=BloomLevel.ANALYZE,
         is_subject_specific=True,
@@ -131,7 +130,7 @@ async def test_merging_needs_keeps_every_source_id_and_evidence(
     monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
     monkeypatch.setattr(ps, "complete_light", fake_light)
 
-    plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"})
+    plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"}, "PLO1")
 
     assert plo is not None
     assert plo.source_need_ids == ["N1", "N2"]
@@ -166,7 +165,7 @@ async def test_fabricated_model_evidence_ids_are_discarded(
     monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
     monkeypatch.setattr(ps, "complete_light", fake_light)
 
-    plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"})
+    plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"}, "PLO1")
 
     assert plo is not None
     assert plo.source_evidence_ids == ["E-N1", "E-N2"]
@@ -190,13 +189,18 @@ async def test_merged_plo_is_optional_only_when_all_sources_are(
     monkeypatch.setattr(ps, "complete_light", fake_light)
 
     mixed = await ps.synthesize_from_needs(
-        program_metadata, [_need("N1"), _need("N2", optional=True)], "cs-test", {"N1", "N2"}
+        program_metadata,
+        [_need("N1"), _need("N2", optional=True)],
+        "cs-test",
+        {"N1", "N2"},
+        "PLO1",
     )
     all_optional = await ps.synthesize_from_needs(
         program_metadata,
         [_need("N1", optional=True), _need("N2", optional=True)],
         "cs-test",
         {"N1", "N2"},
+        "OPT1",
     )
 
     assert mixed is not None and mixed.is_optional is False
@@ -210,13 +214,15 @@ async def test_synthesize_returns_none_when_the_model_fails(
         raise RuntimeError("model unavailable")
 
     monkeypatch.setattr(ps, "complete_heavy", boom)
-    result = await ps.synthesize_from_needs(program_metadata, [_need("N1")], "cs-test", {"N1"})
+    result = await ps.synthesize_from_needs(
+        program_metadata, [_need("N1")], "cs-test", {"N1"}, "PLO1"
+    )
     assert result is None
 
 
 async def test_synthesize_rejects_an_empty_need_list(program_metadata: ProgramMetadata):
     with pytest.raises(ValueError, match="at least one Need"):
-        await ps.synthesize_from_needs(program_metadata, [], "cs-test", set())
+        await ps.synthesize_from_needs(program_metadata, [], "cs-test", set(), "PLO1")
 
 
 async def test_mixed_ss_and_gs_needs_yields_subject_specific_plo(
@@ -245,6 +251,7 @@ async def test_mixed_ss_and_gs_needs_yields_subject_specific_plo(
         [_need("N1", ksec_category=KSECCategory.SS), _need("N2", ksec_category=KSECCategory.GS)],
         "cs-test",
         {"N1", "N2"},
+        "PLO1",
     )
 
     assert plo is not None
@@ -276,6 +283,7 @@ async def test_all_generic_needs_yield_non_subject_specific_plo(
         [_need("N1", ksec_category=KSECCategory.GS), _need("N2", ksec_category=KSECCategory.GS)],
         "cs-test",
         {"N1", "N2"},
+        "PLO1",
     )
 
     assert plo is not None

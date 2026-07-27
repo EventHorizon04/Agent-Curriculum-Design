@@ -103,7 +103,10 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     Program is looked up first: a missing program is a 404, not a 422 blaming
     the Needs. Need ids are validated only after the program exists.
     """
-    from curriculum_agent.stages.plo_synthesis import synthesize_from_needs  # noqa: PLC0415
+    from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
+        next_plo_id,
+        synthesize_from_needs,
+    )
 
     program = await ProgramRepository().get(program_id)
     if program is None:
@@ -116,7 +119,18 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         raise HTTPException(status_code=422, detail=f"ไม่พบ Need: {', '.join(missing)}")
 
     selected = [by_id[nid] for nid in body.need_ids]
-    plo = await synthesize_from_needs(program, selected, program_id, {n.need_id for n in all_needs})
+    # A merged outcome is supplementary only when every Need feeding it is, and it
+    # takes the next free number in that series — plo_id is the primary key and the
+    # repository upserts, so reusing one would overwrite an existing outcome.
+    is_optional = all(n.is_optional for n in selected)
+    existing_ids = [p.plo_id for p in await _repo.list_by_program(program_id)]
+    plo = await synthesize_from_needs(
+        program,
+        selected,
+        program_id,
+        {n.need_id for n in all_needs},
+        next_plo_id(existing_ids, is_optional=is_optional),
+    )
     if plo is None:
         raise HTTPException(status_code=502, detail="สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่")
 

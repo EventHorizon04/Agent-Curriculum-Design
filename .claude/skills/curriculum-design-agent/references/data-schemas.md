@@ -175,7 +175,8 @@ class SMARTCheck(BaseModel):
 
 class PLO(BaseModel):
     """A Program Learning Outcome — what every graduate can do at graduation."""
-    plo_id: str  # e.g. "PLO1"
+    # Assigned by code, never by the model — see the note below the class.
+    plo_id: str  # "PLO1".."PLOn" for the main set, "OPT1".."OPTn" for supplementary
     program_id: str
     statement_th: str  # the actual outcome text in Thai
     statement_en: str | None = None
@@ -198,6 +199,10 @@ class PLO(BaseModel):
 ```
 
 **One Need → one PLO, with a designer escape hatch.** `stages/plo_synthesis.run()` drafts exactly one PLO per Need — a single focused LLM call each, not a batch call over all Needs. A designer can also merge several Needs into one PLO via `POST /programs/{id}/plos/from-needs`, which calls the same `synthesize_from_needs()` function with more than one Need; that function is shared by both paths so both get identical SMART enforcement and evidence handling. When multiple Needs feed one PLO, `is_subject_specific` is true if *any* contributing Need is SS, and `is_optional` is true only if *every* contributing Need is optional.
+
+**`plo_id` is assigned by code, never requested from the model.** `PLO1`..`PLOn` for the main set, ordered by descending `Need.demand_score` with `need_id` breaking ties, so `PLO1` is the capability the labour market asked for most and the numbering reproduces across re-runs on the same Needs. Supplementary outcomes from want-dominant Needs get their own `OPT1`..`OPTn` series. Helpers live in `stages/plo_synthesis.py`: `format_plo_id`, `next_plo_id` (for the designer-driven merge endpoint, which creates one outcome at a time), and `synthesis_order`.
+
+This is not a style preference. Synthesis issues one LLM call per Need with no knowledge of the other calls, so a model asked to name its own outcome returns `PLO1` every time; `plo_id` is the table's primary key and `PLORepository.bulk_insert` upserts, so a duplicate silently overwrites instead of failing — a whole set collapsing into one row while the run reports success. A Need whose synthesis fails leaves its number unused rather than renumbering the rest, because designers cite these ids and renumbering would change what `PLO4` refers to between runs.
 
 Validation rules for PLO (enforce in code):
 - `statement_th` must not contain forbidden words (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก) — see `obe-principles.md`. Exception: a PLO with `smart_escalated=True` may carry them — it exists precisely so a human can repair it, and the SMART gate already failed it loudly.
