@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import uuid
 from typing import Any, Literal
 
 from loguru import logger
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import LLMCacheRepository, SkillRepository
@@ -74,6 +75,29 @@ class _ExtractedSkillsResponse(BaseModel):
     skills: list[_SkillItem]
 
 
+def _extraction_contract_fingerprint() -> str:
+    """Short hash of everything that decides the SHAPE of a cached extraction.
+
+    The LLM cache is keyed on the evidence text and the model, so before this
+    existed a change to the response schema or the prompt left old entries
+    matching. A stale payload was then replayed into the current schema and blew
+    up the stage — which is exactly what happened when `evidence_span_th` was
+    introduced and 18 cached rows still carried the pre-change fields.
+
+    Deriving the fingerprint from the schema and the prompt rather than hand-
+    maintaining a version integer means a future contributor cannot forget to
+    bump it: change either one and the key changes with it.
+    """
+    schema = json.dumps(_ExtractedSkillsResponse.model_json_schema(), sort_keys=True)
+    # The system message carries every instruction; only the user message varies
+    # per evidence item, so an empty text is enough to capture the contract.
+    system_prompt = build_extract_skills_prompt("", "")[0]["content"]
+    return hashlib.sha256(f"{schema}\x00{system_prompt}".encode()).hexdigest()[:16]
+
+
+_EXTRACTION_CONTRACT = _extraction_contract_fingerprint()
+
+
 def _compute_skill_importance(
     raw_skills: list[dict[str, Any]],
     classified: list[dict[str, Any]],
@@ -130,15 +154,24 @@ async def run(state: AgentState) -> AgentState:
 
         text_slice = evidence.raw_text_th[:1200]
         cache_key = hashlib.sha256(
-            f"{text_slice}\x00{evidence.classification}\x00{settings.light_model}".encode()
+            f"{text_slice}\x00{evidence.classification}\x00{settings.light_model}"
+            f"\x00{_EXTRACTION_CONTRACT}".encode()
         ).hexdigest()
 
         result: _ExtractedSkillsResponse | None = None
         cached = await _cache.get(cache_key)
         if cached is not None and cached[0] == settings.light_model:
-            result = _ExtractedSkillsResponse.model_validate_json(cached[1])
-            logger.debug(f"Cache hit for evidence {evidence.evidence_id}")
-        else:
+            try:
+                result = _ExtractedSkillsResponse.model_validate_json(cached[1])
+                logger.debug(f"Cache hit for evidence {evidence.evidence_id}")
+            except ValidationError as exc:
+                # Belt-and-braces: the contract fingerprint should already have
+                # missed on any incompatible entry. Treat a surviving one as a
+                # miss and fall through to a fresh extraction rather than failing
+                # the stage — or silently losing the item — over a cache artefact.
+                logger.warning(f"Unusable cache entry for {evidence.evidence_id}: {exc}")
+
+        if result is None:
             messages = build_extract_skills_prompt(text_slice, evidence.classification)
             try:
                 result = await complete_light(_ExtractedSkillsResponse, messages)

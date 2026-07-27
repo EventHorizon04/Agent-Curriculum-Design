@@ -9,12 +9,15 @@ from curriculum_agent.config import settings
 async def test_cache_hit_skips_extraction_llm_call():
     """Cache hit for evidence → complete_light not called for skill extraction."""
     from curriculum_agent.graph import AgentState
-    from curriculum_agent.stages.skill_extraction import run
+    from curriculum_agent.stages.skill_extraction import _EXTRACTION_CONTRACT, run
 
     text = "ต้องการผู้เชี่ยวชาญด้าน Python และ Machine Learning"
     text_slice = text[:1200]
+    # The contract fingerprint is part of the key on purpose: it is what stops a
+    # payload cached under an older response schema from being replayed. Import it
+    # rather than restating it, so this test cannot drift from the code again.
     cache_key = hashlib.sha256(
-        f"{text_slice}\x00need\x00{settings.light_model}".encode()
+        f"{text_slice}\x00need\x00{settings.light_model}\x00{_EXTRACTION_CONTRACT}".encode()
     ).hexdigest()
 
     cached_json = (

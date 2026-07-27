@@ -1,0 +1,141 @@
+"""The extraction cache must not replay a payload shaped for an older contract.
+
+The cache is keyed on the evidence text and the model. When `evidence_span_th`
+was added to the extraction schema, 18 already-cached rows still carried the
+pre-change fields, every cache hit replayed one into the new schema, and the
+stage died on a ValidationError. These tests pin both halves of the fix: the key
+changes when the contract changes, and a surviving incompatible entry is treated
+as a miss instead of taking the stage down.
+"""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import AsyncMock
+
+import pytest
+
+from curriculum_agent.stages import skill_extraction as se
+
+# Shaped exactly like the rows found in the live cache after the schema change:
+# skill_type and is_subject_specific present, evidence_span_th absent.
+_OLD_CONTRACT_PAYLOAD = json.dumps(
+    {
+        "skills": [
+            {
+                "skill_name_th": "การวิเคราะห์ข้อมูลขนาดใหญ่",
+                "skill_name_en": "Data Analysis",
+                "skill_type": "knowledge",
+                "is_subject_specific": False,
+                "ksec_category": "K",
+                "bloom_level": "analyze",
+                "confidence": 0.75,
+            }
+        ]
+    }
+)
+
+_EVIDENCE = {
+    "evidence_id": "E1",
+    "program_id": "cs-test",
+    "stakeholder_type": "employer",
+    "source_name": "ประกาศรับสมัครงาน",
+    "raw_text_th": "ผู้สมัครต้องวิเคราะห์ข้อมูลขนาดใหญ่เพื่อสนับสนุนการตัดสินใจทางธุรกิจได้",
+    "classification": "requirement",
+}
+
+
+def test_contract_fingerprint_is_stable_across_calls():
+    assert se._extraction_contract_fingerprint() == se._extraction_contract_fingerprint()
+
+
+def test_contract_fingerprint_changes_when_the_response_schema_changes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    before = se._extraction_contract_fingerprint()
+
+    class _Widened(se._ExtractedSkillsResponse):
+        extra_field: str | None = None
+
+    monkeypatch.setattr(se, "_ExtractedSkillsResponse", _Widened)
+    assert se._extraction_contract_fingerprint() != before
+
+
+def test_contract_fingerprint_changes_when_the_prompt_changes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    before = se._extraction_contract_fingerprint()
+
+    def _reworded(evidence_text: str, classification: str) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": "different instructions entirely"},
+            {"role": "user", "content": evidence_text},
+        ]
+
+    monkeypatch.setattr(se, "build_extract_skills_prompt", _reworded)
+    assert se._extraction_contract_fingerprint() != before
+
+
+async def test_cache_key_actually_incorporates_the_contract(monkeypatch: pytest.MonkeyPatch):
+    """The fingerprint must be *used* in the key, not merely computed.
+
+    Testing `_extraction_contract_fingerprint()` on its own says nothing about
+    whether `run` mixes it into the lookup key — drop it from the key and those
+    tests still pass while stale entries start matching again. This captures the
+    key `run` actually asks the cache for, under two different contracts.
+    """
+    seen: list[str] = []
+
+    async def capture(self, key: str):  # noqa: ANN001, ANN202
+        seen.append(key)
+        return None
+
+    monkeypatch.setattr(se.LLMCacheRepository, "get", capture)
+    monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
+    monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
+    monkeypatch.setattr(se, "complete_light", AsyncMock(side_effect=RuntimeError("no LLM")))
+
+    monkeypatch.setattr(se, "_EXTRACTION_CONTRACT", "contract-one")
+    await se.run({"program_id": "cs-test", "classified_evidence": [_EVIDENCE]})
+    monkeypatch.setattr(se, "_EXTRACTION_CONTRACT", "contract-two")
+    await se.run({"program_id": "cs-test", "classified_evidence": [_EVIDENCE]})
+
+    assert len(seen) == 2
+    assert seen[0] != seen[1], "cache key ignores the contract fingerprint"
+
+
+async def test_old_contract_cache_entry_is_re_extracted_not_raised(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A stale entry must degrade to a fresh LLM call, not kill the stage.
+
+    Without the try/except this raises ValidationError out of `run`; without the
+    fall-through it silently yields zero skills for the evidence item.
+    """
+    monkeypatch.setattr(
+        se.LLMCacheRepository, "get", AsyncMock(return_value=("stub-model", _OLD_CONTRACT_PAYLOAD))
+    )
+    monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
+    monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
+    monkeypatch.setattr(se.settings, "light_model", "stub-model")
+
+    fresh = se._ExtractedSkillsResponse(
+        skills=[
+            se._SkillItem(
+                skill_name_th="วิเคราะห์ข้อมูลขนาดใหญ่",
+                skill_name_en="Data Analysis",
+                ksec_category="SS",
+                bloom_level="analyze",
+                evidence_span_th="วิเคราะห์ข้อมูลขนาดใหญ่เพื่อสนับสนุนการตัดสินใจ",
+                confidence=0.9,
+            )
+        ]
+    )
+    llm = AsyncMock(return_value=fresh)
+    monkeypatch.setattr(se, "complete_light", llm)
+
+    state = await se.run({"program_id": "cs-test", "classified_evidence": [_EVIDENCE]})
+
+    llm.assert_awaited_once()
+    assert len(state["extracted_skills"]) == 1
+    assert state["extracted_skills"][0]["evidence_span_th"]
