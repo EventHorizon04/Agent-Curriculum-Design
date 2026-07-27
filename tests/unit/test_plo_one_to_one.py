@@ -31,7 +31,6 @@ def _draft(nid: str) -> ps._PLODraft:
         is_subject_specific=True,
         action_verb_th="วิเคราะห์",
         source_need_ids=[nid],
-        source_evidence_ids=[f"E-{nid}"],
         rationale_th="ตรงกับความต้องการของตลาด",
     )
 
@@ -121,9 +120,7 @@ async def test_merging_needs_keeps_every_source_id_and_evidence(
 
     async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
         # The model omits evidence ids; the Needs' own trail must fill the gap.
-        draft = _draft("N1").model_copy(
-            update={"source_need_ids": ["N1", "N2"], "source_evidence_ids": []}
-        )
+        draft = _draft("N1").model_copy(update={"source_need_ids": ["N1", "N2"]})
         return ps._SingleDraftResponse(plo=draft)
 
     async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
@@ -139,6 +136,41 @@ async def test_merging_needs_keeps_every_source_id_and_evidence(
     assert plo is not None
     assert plo.source_need_ids == ["N1", "N2"]
     assert set(plo.source_evidence_ids) == {"E-N1", "E-N2"}
+
+
+async def test_fabricated_model_evidence_ids_are_discarded(
+    program_metadata: ProgramMetadata, monkeypatch: pytest.MonkeyPatch
+):
+    """A model that invents evidence ids must not have them ship on the PLO.
+
+    _PLODraft no longer has a source_evidence_ids field for the model to fill
+    in — but even if something reattaches one (e.g. via model_copy, as this
+    test does to simulate a hostile/legacy model response), the code must
+    still derive the trail solely from the Needs. A test that only checked
+    "non-empty" would NOT catch this: the fabricated id below is non-empty
+    too, and the old code shipped it verbatim.
+    """
+    needs = [_need("N1"), _need("N2")]
+
+    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+        draft = _draft("N1").model_copy(
+            update={"source_need_ids": ["N1", "N2"], "source_evidence_ids": ["FABRICATED-EVID"]}
+        )
+        return ps._SingleDraftResponse(plo=draft)
+
+    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
+        return ps._SmartSoftJudge(
+            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
+        )
+
+    monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
+    monkeypatch.setattr(ps, "complete_light", fake_light)
+
+    plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"})
+
+    assert plo is not None
+    assert plo.source_evidence_ids == ["E-N1", "E-N2"]
+    assert "FABRICATED-EVID" not in plo.source_evidence_ids
 
 
 async def test_merged_plo_is_optional_only_when_all_sources_are(

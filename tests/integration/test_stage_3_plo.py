@@ -27,7 +27,6 @@ def _draft_for(need: Need) -> _PLODraft:
         is_subject_specific=True,
         action_verb_th="ออกแบบ",
         source_need_ids=[need.need_id],
-        source_evidence_ids=list(need.source_evidence_ids),
         rationale_th=f"ทักษะที่นายจ้างต้องการลำดับที่ {need.need_id}",
     )
 

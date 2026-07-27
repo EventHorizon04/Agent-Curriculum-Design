@@ -45,8 +45,22 @@ async def _classify_one(plo: PLO, needs_by_id: dict[str, Need]) -> tuple[str, st
     # Ambiguous fraction, or no resolvable Needs → LLM fallback.
     need_summaries = [_need_summary(n) for n in resolved]
     messages = build_plo_classify_prompt(plo.statement_th, plo.bloom_level.value, need_summaries)
-    result = await complete_light(_ClassificationResult, messages)
-    return result.classification, "llm", result.rationale_th
+    try:
+        result = await complete_light(_ClassificationResult, messages)
+        return result.classification, "llm", result.rationale_th
+    except Exception as exc:
+        # One LLM hiccup must degrade this PLO, not abort the whole report stage
+        # and discard classifications already completed for other PLOs. "generic"
+        # is the conservative default: it never overclaims subject-specificity
+        # without evidence. method="fallback" and the rationale keep the fallback
+        # visible to the designer instead of silently masquerading as a real
+        # classification.
+        logger.warning(f"PLO classification failed for {plo.plo_id}: {exc}")
+        return (
+            "generic",
+            "fallback",
+            "จำแนกอัตโนมัติไม่สำเร็จ (ใช้ค่าเริ่มต้น generic ชั่วคราว) กรุณาตรวจสอบและแก้ไขด้วยตนเอง",
+        )
 
 
 async def run(state: AgentState) -> AgentState:

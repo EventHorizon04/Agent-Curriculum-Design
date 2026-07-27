@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from loguru import logger
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, model_validator
 
 from curriculum_agent.data.repositories import PLORepository
 from curriculum_agent.graph import AgentState
@@ -38,7 +38,6 @@ class _PLODraft(BaseModel):
     is_subject_specific: bool = True
     action_verb_th: str
     source_need_ids: list[str]
-    source_evidence_ids: list[str] = Field(default_factory=list)
     rationale_th: str
     distinctive_feature_th: str | None = None
 
@@ -91,9 +90,23 @@ def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[d
 
 
 async def _ensure_smart(
-    draft: _PLODraft, known_need_ids: set[str], metadata: ProgramMetadata
+    draft: _PLODraft,
+    known_need_ids: set[str],
+    metadata: ProgramMetadata,
+    authoritative_need_ids: list[str],
 ) -> _SmartOutcome:
-    """Hard fails → per-PLO retry (max _MAX_RETRIES) naming the criterion; soft fails → flags."""
+    """Hard fails → per-PLO retry (max _MAX_RETRIES) naming the criterion; soft fails → flags.
+
+    `authoritative_need_ids` are the Need ids this PLO actually derives from (the
+    ones the caller passed into synthesize_from_needs, not whatever the model
+    echoed back). They are pinned onto the draft — and onto every retry's
+    replacement draft — before hard_failures runs, so the gate always judges the
+    ids that will actually ship. Without this, a model that returns one wrong or
+    invented need id would fail R_EVIDENCE, burn all retries against a fix prompt
+    that never mentions need ids (so it cannot repair the field), and escalate a
+    PLO whose real, shipped evidence trail was correct all along.
+    """
+    draft.source_need_ids = authoritative_need_ids
     fails = hard_failures(
         draft.statement_th, draft.action_verb_th, draft.source_need_ids, known_need_ids
     )
@@ -106,6 +119,7 @@ async def _ensure_smart(
                 _SingleDraftResponse, _build_fix_prompt(draft, fails), max_retries=2
             )
             draft = fix.plo
+            draft.source_need_ids = authoritative_need_ids
         except Exception as exc:
             logger.warning(f"  SMART fix attempt {retries} failed: {exc}")
         fails = hard_failures(
@@ -163,8 +177,9 @@ async def synthesize_from_needs(
     """Draft one PLO from one or more Needs, then run it through the SMART gate.
 
     Shared by the 1:1 stage loop and the designer-driven N:1 endpoint, so both
-    paths get the same SMART enforcement and evidence fallback. Returns None when
-    the model call fails outright — the caller decides whether that is fatal.
+    paths get the same SMART enforcement and the same code-derived evidence
+    trail. Returns None when the model call fails outright — the caller decides
+    whether that is fatal.
     """
     if not needs:
         raise ValueError("synthesize_from_needs requires at least one Need")
@@ -180,14 +195,14 @@ async def synthesize_from_needs(
         logger.warning(f"PLO synthesis failed for Need(s) {ids}: {exc}")
         return None
 
-    outcome = await _ensure_smart(response.plo, known_need_ids, metadata)
+    authoritative_need_ids = [n.need_id for n in needs]
+    outcome = await _ensure_smart(response.plo, known_need_ids, metadata, authoritative_need_ids)
     draft = outcome.draft
 
-    # The Needs already carry a verified evidence trail; fall back to it rather
-    # than trusting the model to echo evidence ids correctly.
-    evidence_ids = draft.source_evidence_ids or sorted(
-        {eid for n in needs for eid in n.source_evidence_ids}
-    )
+    # Evidence ids are never asked of the model (see build_plo_from_need_prompt) —
+    # they are derived entirely from the Needs' own verified evidence trail, so
+    # there is nothing here for a model to invent.
+    evidence_ids = sorted({eid for n in needs for eid in n.source_evidence_ids})
 
     return PLO(
         plo_id=draft.plo_id or f"PLO-{uuid.uuid4().hex[:6]}",
@@ -200,7 +215,11 @@ async def synthesize_from_needs(
         is_subject_specific=any(n.ksec_category is KSECCategory.SS for n in needs),
         action_verb_th=draft.action_verb_th,
         smart_check=outcome.smart_check,
-        source_need_ids=[n.need_id for n in needs],
+        # draft.source_need_ids was pinned to authoritative_need_ids inside
+        # _ensure_smart before the gate ran; reuse it rather than recomputing —
+        # recomputing here would just be the same list, and computing it twice
+        # invites the two copies drifting apart under future edits.
+        source_need_ids=draft.source_need_ids,
         source_evidence_ids=evidence_ids,
         rationale_th=draft.rationale_th,
         distinctive_feature_th=draft.distinctive_feature_th,

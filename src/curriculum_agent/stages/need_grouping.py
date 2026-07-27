@@ -15,7 +15,15 @@ _WS_RE = re.compile(r"\s+")
 _BLOOM_RANK = {level: i for i, level in enumerate(BLOOM_ORDER)}
 
 
-def _normalize(name: str) -> str:
+def normalize_need_name(name: str) -> str:
+    """Trim, collapse internal whitespace, lowercase.
+
+    The canonical normaliser for "is this the same skill name" grouping —
+    dedupe_with_bloom_max uses it to collapse duplicate skill names within a
+    KSEC bucket, and skill_extraction._compute_skill_importance reuses it so
+    per-skill-name importance scores are computed over the same buckets that
+    later collapse into one Need. Do not diverge the two.
+    """
     return _WS_RE.sub(" ", name.strip()).lower()
 
 
@@ -64,7 +72,7 @@ def dedupe_with_bloom_max(
     display: dict[str, str] = {}
     skipped = 0
     for i, skill in enumerate(skills):
-        norm = _normalize(skill.skill_name_th)
+        norm = normalize_need_name(skill.skill_name_th)
         if not norm:
             skipped += 1
             continue

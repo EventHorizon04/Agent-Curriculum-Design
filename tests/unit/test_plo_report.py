@@ -140,6 +140,48 @@ async def test_no_resolvable_clusters_uses_llm():
     light.assert_called_once()
 
 
+async def test_one_llm_classification_failure_degrades_only_that_plo():
+    """One PLO's LLM classification call fails; the stage must not abort and
+    discard classifications already completed for other PLOs. The failing PLO
+    gets a visible fallback classification instead of taking the whole report
+    stage down with it.
+    """
+    from curriculum_agent.stages.plo_report import _ClassificationResult, run
+
+    needs = [
+        _need("c1", KSECCategory.SS),
+        _need("c2", KSECCategory.GS),
+        _need("c3", KSECCategory.SS),
+        _need("c4", KSECCategory.GS),
+    ]  # fraction 0.5 for both PLOs → both routed through the LLM fallback
+
+    call_count = 0
+
+    async def flaky_light(model, messages, **kw):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("LLM unavailable")
+        return _ClassificationResult(classification="specific", rationale_th="เฉพาะสาขา")
+
+    p1, p2, p3 = _patch_ctx(needs, flaky_light)
+    state = {
+        "program_id": "prog-1",
+        "plos": [_plo(["c1", "c2"]), _plo(["c3", "c4"])],
+    }
+    with p1, p2, p3:
+        result = await run(state)
+
+    plos = result["plos"]
+    assert len(plos) == 2, "stage must not abort and drop the second PLO"
+
+    failed, ok = plos[0], plos[1]
+    assert failed["classification_method"] == "fallback"
+    assert failed["classification"] == "generic"
+    assert ok["classification_method"] == "llm"
+    assert ok["classification"] == "specific"
+
+
 async def test_raises_when_no_plos():
     from curriculum_agent.stages.plo_report import run
 

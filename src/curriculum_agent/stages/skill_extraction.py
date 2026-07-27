@@ -20,6 +20,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.stages.demand import WEIGHTED_CLASSES, compute_demand_score
+from curriculum_agent.stages.need_grouping import normalize_need_name
 
 _WS_RE = re.compile(r"\s+")
 
@@ -82,13 +83,16 @@ def _compute_skill_importance(
     """Per-skill-name demand, computed before Need grouping (a later stage).
 
     Same weighting as Need.demand_score (compute_demand_score from
-    curriculum_agent.stages.demand), grouped by skill_name_th instead of
-    Need membership — every ExtractedSkill mention of the same name gets
-    the same importance_score.
+    curriculum_agent.stages.demand), grouped by the same normalised name
+    (normalize_need_name) that need_grouping.dedupe_with_bloom_max later
+    collapses duplicates by — so two spellings of one skill that land in the
+    same Need also get the same importance_score here. Keyed by normalised
+    name; the caller must normalise before looking a score up.
     """
     eids_by_name: dict[str, set[str]] = {}
     for s in raw_skills:
-        eids_by_name.setdefault(s["skill_name_th"], set()).add(s["evidence_id"])
+        norm = normalize_need_name(s["skill_name_th"])
+        eids_by_name.setdefault(norm, set()).add(s["evidence_id"])
 
     scores: dict[str, float] = {}
     for name, eids in eids_by_name.items():
@@ -209,7 +213,9 @@ async def run(state: AgentState) -> AgentState:
                 source_evidence_id=s["evidence_id"],
                 extraction_method="llm",
                 confidence=s.get("confidence", 0.8),
-                importance_score=importance_by_name.get(s["skill_name_th"], 0.0),
+                importance_score=importance_by_name.get(
+                    normalize_need_name(s["skill_name_th"]), 0.0
+                ),
             )
         )
 

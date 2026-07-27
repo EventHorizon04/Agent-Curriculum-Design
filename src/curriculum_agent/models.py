@@ -254,7 +254,7 @@ class PLO(BaseModel):
     distinctive_feature_th: str | None = None
     version: int = 1
     classification: Literal["generic", "specific"] | None = None
-    classification_method: Literal["ksec", "llm", "manual"] | None = None
+    classification_method: Literal["ksec", "llm", "manual", "fallback"] | None = None
     classification_rationale_th: str | None = None
     smart_retry_count: int = 0
     smart_escalated: bool = False
