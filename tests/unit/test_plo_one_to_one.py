@@ -260,9 +260,7 @@ async def test_mixed_ss_and_gs_needs_yields_subject_specific_plo(
 async def test_all_generic_needs_yield_non_subject_specific_plo(
     program_metadata: ProgramMetadata, monkeypatch: pytest.MonkeyPatch
 ):
-    """When no Need is subject-specific, the PLO should not be subject-specific.
-
-    """
+    """When no Need is subject-specific, the PLO should not be subject-specific."""
 
     async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SingleDraftResponse(plo=_draft("N1"))
