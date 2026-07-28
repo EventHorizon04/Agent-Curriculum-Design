@@ -17,6 +17,7 @@ from curriculum_agent.models import (
     ProgramMetadata,
     StakeholderEvidence,
 )
+from curriculum_agent.stages import skill_extraction
 
 
 def _need() -> Need:
@@ -188,17 +189,47 @@ def _evidence() -> StakeholderEvidence:
 
 
 def _stub_need_stages(seen: dict[str, object]):
-    """Patch both stages POST /needs/run chains, recording the state it hands over."""
+    """Patch the POST /needs/run chain so need_combination.run is a recording
+    stand-in, but skill_extraction.run genuinely executes.
 
-    async def fake_skills(state):
-        return state
+    The note-forwarding contract this route relies on is that skill_extraction.run
+    mutates its input state dict in place and returns that same object — nothing
+    in the route re-merges keys between stages. A pass-through stub for
+    skill_extraction cannot prove that; it would still pass if a future rewrite
+    made the stage return a fresh dict instead. So here only the stage's own
+    dependencies are mocked (the LLM cache, the extraction call, the skill
+    repository — the same seam test_skill_extraction_cache.py and
+    test_skill_dedupe.py mock), and the real `skill_extraction.run` runs against
+    the one evidence item `_evidence()` provides.
+    """
 
     async def fake_needs(state):
         seen.update(state)
         return {**state, "needs": [], "dropped_ungrounded_count": 0}
 
+    fake_cache = AsyncMock()
+    fake_cache.get = AsyncMock(return_value=None)  # always miss, force the "extraction" below
+    fake_cache.set = AsyncMock()
+
+    async def fake_complete_light(response_model, messages, **kwargs):
+        # One grounded skill, quoting the evidence text verbatim so
+        # skill_extraction's groundedness check (is_grounded) accepts it.
+        return skill_extraction._ExtractedSkillsResponse(
+            skills=[
+                skill_extraction._SkillItem(
+                    skill_name_th="วิเคราะห์ข้อมูลขนาดใหญ่",
+                    ksec_category="SS",
+                    bloom_level="analyze",
+                    evidence_span_th=_evidence().raw_text_th,
+                    confidence=0.9,
+                )
+            ]
+        )
+
     return (
-        patch("curriculum_agent.stages.skill_extraction.run", new=fake_skills),
+        patch.object(skill_extraction, "LLMCacheRepository", return_value=fake_cache),
+        patch.object(skill_extraction, "complete_light", side_effect=fake_complete_light),
+        patch.object(skill_extraction, "SkillRepository", return_value=AsyncMock()),
         patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
     )
 
@@ -212,8 +243,8 @@ async def test_needs_run_carries_the_note_into_the_stage_state(
         "list_by_program",
         AsyncMock(return_value=[_evidence()]),
     )
-    skills_patch, needs_patch = _stub_need_stages(seen)
-    with skills_patch, needs_patch:
+    cache_patch, complete_patch, repo_patch, needs_patch = _stub_need_stages(seen)
+    with cache_patch, complete_patch, repo_patch, needs_patch:
         response = await client.post("/programs/cs-test/needs/run", json={"note_th": NOTE})
 
     assert response.status_code == 200, response.text
@@ -230,8 +261,8 @@ async def test_needs_run_still_works_with_no_body_at_all(
         "list_by_program",
         AsyncMock(return_value=[_evidence()]),
     )
-    skills_patch, needs_patch = _stub_need_stages(seen)
-    with skills_patch, needs_patch:
+    cache_patch, complete_patch, repo_patch, needs_patch = _stub_need_stages(seen)
+    with cache_patch, complete_patch, repo_patch, needs_patch:
         response = await client.post("/programs/cs-test/needs/run")
 
     assert response.status_code == 200, response.text

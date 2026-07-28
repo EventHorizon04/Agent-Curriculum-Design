@@ -243,7 +243,9 @@ async def run(state: AgentState) -> AgentState:
         try:
             written = await complete_light(
                 _NeedStatement,
-                build_summarize_need_prompt(group.skill_names, samples, group.ksec.value, note_th),
+                build_summarize_need_prompt(
+                    group.skill_names, samples, group.ksec.value, note_th=note_th
+                ),
             )
         except Exception as exc:
             logger.warning(f"Need summarize failed for {group.ksec.value} group: {exc}")

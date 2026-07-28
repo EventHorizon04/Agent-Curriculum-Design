@@ -245,7 +245,7 @@ async def synthesize_from_needs(
     try:
         response = await complete_heavy(
             _SingleDraftResponse,
-            build_plo_from_need_prompt(metadata, needs, note_th),
+            build_plo_from_need_prompt(metadata, needs, note_th=note_th),
             max_retries=_MAX_RETRIES,
         )
     except Exception as exc:

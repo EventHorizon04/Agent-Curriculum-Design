@@ -5,7 +5,7 @@ from curriculum_agent.prompts.designer_note import NOTE_POLICY_TH, append_note
 
 
 def build_plo_from_need_prompt(
-    metadata: ProgramMetadata, needs: list[Need], note_th: str | None = None
+    metadata: ProgramMetadata, needs: list[Need], *, note_th: str | None = None
 ) -> list[dict[str, str]]:
     """Restate one or more market Needs as a single graduate-side PLO.
 

@@ -15,6 +15,7 @@ def build_summarize_need_prompt(
     skill_names: list[str],
     sample_evidence: list[str],
     ksec: str,
+    *,
     note_th: str | None = None,
 ) -> list[dict[str, str]]:
     """Turn one group of related skills into a single market-demand sentence."""

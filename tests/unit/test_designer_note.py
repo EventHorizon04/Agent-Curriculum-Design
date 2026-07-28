@@ -77,7 +77,7 @@ def test_append_note_adds_a_headed_block_after_the_original_content():
 
 
 def test_need_prompt_puts_the_note_in_the_user_message_only():
-    messages = build_summarize_need_prompt(["วิเคราะห์ข้อมูล"], ["ตัวอย่าง evidence"], "SS", NOTE)
+    messages = build_summarize_need_prompt(["วิเคราะห์ข้อมูล"], ["ตัวอย่าง evidence"], "SS", note_th=NOTE)
     assert NOTE in messages[1]["content"]
     assert NOTE_HEADER_TH in messages[1]["content"]
     # The note is data the model is given, not policy it is bound by.
@@ -97,7 +97,7 @@ def test_need_prompt_system_text_is_identical_with_and_without_a_note():
     llm_clustering._clustering_contract_fingerprint). A system message that
     changed with the input would make such a fingerprint meaningless.
     """
-    with_note = build_summarize_need_prompt(["x"], [], "SS", NOTE)
+    with_note = build_summarize_need_prompt(["x"], [], "SS", note_th=NOTE)
     without = build_summarize_need_prompt(["x"], [], "SS")
     assert NOTE_POLICY_TH in without[0]["content"]
     assert with_note[0]["content"] == without[0]["content"]
@@ -107,7 +107,7 @@ def test_need_prompt_system_text_is_identical_with_and_without_a_note():
 
 
 def test_plo_prompt_puts_the_note_in_the_user_message_only():
-    messages = build_plo_from_need_prompt(_meta(), [_need()], NOTE)
+    messages = build_plo_from_need_prompt(_meta(), [_need()], note_th=NOTE)
     assert NOTE in messages[1]["content"]
     assert NOTE_HEADER_TH in messages[1]["content"]
     assert NOTE not in messages[0]["content"]
@@ -119,7 +119,7 @@ def test_plo_prompt_without_a_note_has_no_guidance_block():
 
 
 def test_plo_prompt_system_text_is_identical_with_and_without_a_note():
-    with_note = build_plo_from_need_prompt(_meta(), [_need()], NOTE)
+    with_note = build_plo_from_need_prompt(_meta(), [_need()], note_th=NOTE)
     without = build_plo_from_need_prompt(_meta(), [_need()])
     assert NOTE_POLICY_TH in without[0]["content"]
     assert with_note[0]["content"] == without[0]["content"]
@@ -127,7 +127,7 @@ def test_plo_prompt_system_text_is_identical_with_and_without_a_note():
 
 def test_plo_prompt_still_carries_the_need_id_and_statement():
     """Guards against the appended note displacing the Need block it follows."""
-    messages = build_plo_from_need_prompt(_meta(), [_need()], NOTE)
+    messages = build_plo_from_need_prompt(_meta(), [_need()], note_th=NOTE)
     assert "N1" in messages[1]["content"]
     assert "ตลาดต้องการผู้ที่วิเคราะห์ข้อมูลขนาดใหญ่ได้" in messages[1]["content"]
 
