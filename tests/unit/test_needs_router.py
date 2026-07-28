@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -9,11 +9,13 @@ from httpx import ASGITransport, AsyncClient
 from curriculum_agent.api.routes import needs as needs_route
 from curriculum_agent.api.routes import plos as plos_route
 from curriculum_agent.models import (
+    NOTE_MAX_CHARS,
     BloomLevel,
     ExtractedSkill,
     KSECCategory,
     Need,
     ProgramMetadata,
+    StakeholderEvidence,
 )
 
 
@@ -167,3 +169,151 @@ async def test_from_needs_returns_404_for_missing_program(
     )
     assert response.status_code == 404
     assert "หลักสูตร" in response.json()["detail"]
+
+
+# --- designer note on the three stage endpoints ---
+
+NOTE = "เน้นทักษะด้าน AI และการวิเคราะห์ข้อมูลขนาดใหญ่"
+
+
+def _evidence() -> StakeholderEvidence:
+    return StakeholderEvidence(
+        evidence_id="E1",
+        program_id="cs-test",
+        stakeholder_type="employer",
+        source_name="JD",
+        raw_text_th="ต้องการผู้ที่วิเคราะห์ข้อมูลขนาดใหญ่ได้",
+        classification="need",
+    )
+
+
+def _stub_need_stages(seen: dict[str, object]):
+    """Patch both stages POST /needs/run chains, recording the state it hands over."""
+
+    async def fake_skills(state):
+        return state
+
+    async def fake_needs(state):
+        seen.update(state)
+        return {**state, "needs": [], "dropped_ungrounded_count": 0}
+
+    return (
+        patch("curriculum_agent.stages.skill_extraction.run", new=fake_skills),
+        patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
+    )
+
+
+async def test_needs_run_carries_the_note_into_the_stage_state(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_evidence()]),
+    )
+    skills_patch, needs_patch = _stub_need_stages(seen)
+    with skills_patch, needs_patch:
+        response = await client.post("/programs/cs-test/needs/run", json={"note_th": NOTE})
+
+    assert response.status_code == 200, response.text
+    assert seen["designer_note"] == NOTE
+
+
+async def test_needs_run_still_works_with_no_body_at_all(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """The live frontend posts no body. That must keep working."""
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_evidence()]),
+    )
+    skills_patch, needs_patch = _stub_need_stages(seen)
+    with skills_patch, needs_patch:
+        response = await client.post("/programs/cs-test/needs/run")
+
+    assert response.status_code == 200, response.text
+    assert "designer_note" not in seen
+
+
+async def test_needs_run_rejects_an_over_length_note(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_evidence()]),
+    )
+    response = await client.post(
+        "/programs/cs-test/needs/run", json={"note_th": "ก" * (NOTE_MAX_CHARS + 1)}
+    )
+    assert response.status_code == 422
+
+
+async def test_plos_run_carries_the_note_into_the_stage_state(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    seen: dict[str, object] = {}
+
+    async def fake_run(state):
+        seen.update(state)
+        return {**state, "plos": []}
+
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
+    )
+    with patch("curriculum_agent.stages.plo_synthesis.run", new=fake_run):
+        response = await client.post("/programs/cs-test/plos/run", json={"note_th": NOTE})
+
+    assert response.status_code == 200, response.text
+    assert seen["designer_note"] == NOTE
+
+
+async def test_plos_run_still_works_with_no_body_at_all(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    seen: dict[str, object] = {}
+
+    async def fake_run(state):
+        seen.update(state)
+        return {**state, "plos": []}
+
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
+    )
+    with patch("curriculum_agent.stages.plo_synthesis.run", new=fake_run):
+        response = await client.post("/programs/cs-test/plos/run")
+
+    assert response.status_code == 200, response.text
+    assert "designer_note" not in seen
+
+
+async def test_from_needs_passes_the_note_to_synthesis(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    captured: dict[str, object] = {}
+    second = _need().model_copy(update={"need_id": "N2"})
+
+    async def fake_synth(metadata, needs, program_id, known, plo_id, *, note_th=None):
+        captured["note_th"] = note_th
+        return None  # the 502 path — this test only cares what synthesis was told
+
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.NeedRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_need(), second]),
+    )
+    monkeypatch.setattr(plos_route.PLORepository, "list_by_program", AsyncMock(return_value=[]))
+    with patch("curriculum_agent.stages.plo_synthesis.synthesize_from_needs", new=fake_synth):
+        response = await client.post(
+            "/programs/cs-test/plos/from-needs",
+            json={"need_ids": ["N1", "N2"], "note_th": NOTE},
+        )
+
+    assert response.status_code == 502
+    assert captured["note_th"] == NOTE

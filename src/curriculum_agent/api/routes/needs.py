@@ -12,6 +12,7 @@ from curriculum_agent.data.repositories import (
 )
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import (
+    DesignerNoteRequest,
     ExtractedSkill,
     Need,
     StakeholderEvidence,
@@ -71,7 +72,9 @@ async def get_need_trace(program_id: str, need_id: str) -> NeedTrace:
 
 
 @router.post("/run", response_model=NeedRunResult)
-async def run_need_pipeline(program_id: str) -> NeedRunResult:
+async def run_need_pipeline(
+    program_id: str, body: DesignerNoteRequest | None = None
+) -> NeedRunResult:
     from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
     from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
 
@@ -86,6 +89,10 @@ async def run_need_pipeline(program_id: str) -> NeedRunResult:
         "program_id": program_id,
         "classified_evidence": [e.model_dump(mode="json") for e in evidence_items],
     }
+    # Set only when there is a note: AgentState is total=False, so an absent key
+    # reads as None through .get and no empty string is stored.
+    if body is not None and body.note_th:
+        state["designer_note"] = body.note_th
     state = await asyncio.wait_for(run_skills(state), timeout=300)
     state = await asyncio.wait_for(run_needs(state), timeout=300)
     return NeedRunResult(

@@ -11,7 +11,7 @@ from curriculum_agent.data.repositories import (
     ProgramRepository,
 )
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import PLO, Need, StakeholderEvidence
+from curriculum_agent.models import PLO, DesignerNoteRequest, Need, StakeholderEvidence
 
 router = APIRouter()
 _repo = PLORepository()
@@ -49,7 +49,7 @@ async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
 
 
 @router.post("/run", response_model=list[PLO])
-async def run_plo_synthesis(program_id: str) -> list[PLO]:
+async def run_plo_synthesis(program_id: str, body: DesignerNoteRequest | None = None) -> list[PLO]:
     from curriculum_agent.stages.plo_synthesis import run  # noqa: PLC0415
 
     metadata = await ProgramRepository().get(program_id)
@@ -68,6 +68,8 @@ async def run_plo_synthesis(program_id: str) -> list[PLO]:
         "metadata": metadata.model_dump(mode="json"),
         "needs": [n.model_dump(mode="json") for n in needs],
     }
+    if body is not None and body.note_th:
+        state["designer_note"] = body.note_th
 
     result_state = await run(state)
     return [PLO.model_validate(p) for p in result_state.get("plos", [])]
@@ -92,7 +94,14 @@ async def run_plo_report(program_id: str) -> list[PLO]:
     return [PLO.model_validate(p) for p in result_state.get("plos", [])]
 
 
-class MergeNeedsRequest(BaseModel):
+class MergeNeedsRequest(DesignerNoteRequest):
+    """Designer-selected Needs to fuse into one PLO, plus the optional note.
+
+    Inherits `note_th` and its normalisation rather than restating them, so the
+    500-character limit and the blank-is-absent rule cannot drift between
+    endpoints.
+    """
+
     need_ids: list[str] = Field(min_length=2)
 
 
@@ -130,6 +139,7 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         program_id,
         {n.need_id for n in all_needs},
         next_plo_id(existing_ids, is_optional=is_optional),
+        note_th=body.note_th,
     )
     if plo is None:
         raise HTTPException(status_code=502, detail="สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่")
