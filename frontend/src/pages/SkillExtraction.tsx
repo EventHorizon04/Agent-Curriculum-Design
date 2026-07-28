@@ -4,6 +4,7 @@ import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import SkillTable, { type EvidenceMeta, type SkillRow } from './components/SkillTable'
 import NeedCard, { type NeedRow } from './components/NeedCard'
+import DesignerNote from './components/DesignerNote'
 
 export default function SkillExtraction() {
   const { programId } = useProgram()
@@ -15,6 +16,7 @@ export default function SkillExtraction() {
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
+  const [note, setNote] = useState('')
 
   const fetchAll = useCallback(async () => {
     if (!programId) return
@@ -54,6 +56,7 @@ export default function SkillExtraction() {
     try {
       const res = await api.post<{ needs: NeedRow[]; dropped_ungrounded_count: number }>(
         `/programs/${programId}/needs/run`,
+        { note_th: note.trim() || null },
       )
       setDroppedCount(res.data.dropped_ungrounded_count)
       await fetchAll()
@@ -63,7 +66,7 @@ export default function SkillExtraction() {
     } finally {
       setRunning(false)
     }
-  }, [programId, fetchAll])
+  }, [programId, note, fetchAll])
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
@@ -105,6 +108,9 @@ export default function SkillExtraction() {
           <div className="text-5xl mb-4">🔍</div>
           <p className="text-gray-500 text-lg font-medium mb-1">ยังไม่มีทักษะที่สกัดได้</p>
           <p className="text-gray-400 text-sm mb-6">กดปุ่มด้านล่างเพื่อสกัดทักษะจาก evidence ที่มีอยู่</p>
+          <div className="mx-auto mb-2 max-w-md">
+            <DesignerNote value={note} onChange={setNote} />
+          </div>
           <button
             onClick={runStage}
             className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-medium transition-colors"
@@ -114,6 +120,7 @@ export default function SkillExtraction() {
         </div>
       ) : (
         <>
+          <DesignerNote value={note} onChange={setNote} disabled={running} />
           <div className="flex justify-between items-center mb-5">
             <div className="flex items-center gap-3">
               <button

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
+import DesignerNote from './components/DesignerNote'
 
 interface SMARTCheck {
   specific: boolean
@@ -90,6 +91,7 @@ export default function PloSynthesis() {
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
+  const [note, setNote] = useState('')
 
   const fetchPlos = useCallback(async () => {
     if (!programId) return
@@ -114,7 +116,9 @@ export default function PloSynthesis() {
     setRunning(true)
     setError('')
     try {
-      const res = await api.post<PLO[]>(`/programs/${programId}/plos/run`)
+      const res = await api.post<PLO[]>(`/programs/${programId}/plos/run`, {
+        note_th: note.trim() || null,
+      })
       setPlos(res.data)
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
@@ -122,7 +126,7 @@ export default function PloSynthesis() {
     } finally {
       setRunning(false)
     }
-  }, [programId])
+  }, [programId, note])
 
   useEffect(() => { fetchPlos() }, [fetchPlos])
 
@@ -145,6 +149,7 @@ export default function PloSynthesis() {
     try {
       await api.post(`/programs/${programId}/plos/from-needs`, {
         need_ids: [...selected],
+        note_th: note.trim() || null,
       })
       setSelected(new Set())
       await fetchPlos()
@@ -194,6 +199,9 @@ export default function PloSynthesis() {
           <div className="text-5xl mb-4">🎯</div>
           <p className="text-gray-500 text-lg font-medium mb-1">ยังไม่มี PLO</p>
           <p className="text-gray-400 text-sm mb-6">กดปุ่มด้านล่างเพื่อให้ AI สังเคราะห์ PLO จาก skill clusters</p>
+          <div className="mx-auto mb-2 max-w-md">
+            <DesignerNote value={note} onChange={setNote} />
+          </div>
           <button
             onClick={runSynthesis}
             className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-medium transition-colors"
@@ -203,6 +211,7 @@ export default function PloSynthesis() {
         </div>
       ) : (
         <>
+          <DesignerNote value={note} onChange={setNote} disabled={running} />
           <div className="flex justify-between items-center mb-5">
             <div className="flex items-center gap-4 text-sm text-gray-500">
               <span>{plos.length} PLOs</span>
@@ -238,6 +247,11 @@ export default function PloSynthesis() {
               <p className="text-xs text-gray-500 mb-3">
                 เลือก Need ตั้งแต่ 2 รายการที่ต้องการให้ AI สังเคราะห์รวมเป็น PLO เดียว
               </p>
+              {note.trim() && (
+                <p className="mb-3 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
+                  ใช้หมายเหตุด้านบน: <span className="text-gray-700">{note.trim()}</span>
+                </p>
+              )}
               <div className="space-y-2 mb-4">
                 {needs.map(n => (
                   <label
