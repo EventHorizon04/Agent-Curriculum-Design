@@ -211,7 +211,10 @@ async def run(state: AgentState) -> AgentState:
     logger.info(f"Stage 3b: need_combination from {len(skills)} skills")
 
     if not skills:
-        logger.warning("need_combination: no extracted skills — returning no Needs")
+        # Returns before delete_by_program on purpose, same reasoning as the
+        # matching guard in skill_extraction: producing nothing must not destroy a
+        # previous run's Needs.
+        logger.warning("need_combination: no extracted skills — previous Needs left untouched")
         state["needs"] = []
         state["current_stage"] = "need_combination"
         return state
@@ -274,7 +277,14 @@ async def run(state: AgentState) -> AgentState:
             "the designer must add more at the review checkpoint"
         )
 
-    await NeedRepository().bulk_insert(needs)
+    # Replace, don't accumulate — need_id is a fresh uuid per run and the
+    # repository upserts by it. Also keeps member_skill_ids honest: the extraction
+    # re-run just replaced the skill rows an old Need would point at.
+    need_repo = NeedRepository()
+    removed = await need_repo.delete_by_program(program_id)
+    if removed:
+        logger.info(f"Replaced {removed} Need row(s) from a previous run")
+    await need_repo.bulk_insert(needs)
     state["needs"] = [n.model_dump(mode="json") for n in needs]
     state["current_stage"] = "need_combination"
     return state

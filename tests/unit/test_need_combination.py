@@ -57,11 +57,21 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(nc, "complete_light", fake_summarize)
 
 
+def _patch_repo(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub every persistence call the stage makes.
+
+    `run` clears the program's previous Needs before inserting the new set, so a
+    test stubbing only bulk_insert leaves the delete reaching a real database.
+    """
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
+    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+
+
 async def test_every_need_holds_exactly_one_ksec_tag(
     skills: list[ExtractedSkill], evidence: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
 ):
     _patch_llm(monkeypatch)
-    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+    _patch_repo(monkeypatch)
 
     state = await nc.run(
         {
@@ -84,7 +94,7 @@ async def test_want_only_need_is_marked_optional(
     skills: list[ExtractedSkill], evidence: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
 ):
     _patch_llm(monkeypatch)
-    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+    _patch_repo(monkeypatch)
 
     state = await nc.run(
         {
@@ -115,7 +125,7 @@ async def test_freq_counts_mentions_not_unique_names(
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_light", fake_summarize)
-    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+    _patch_repo(monkeypatch)
 
     state = await nc.run(
         {
@@ -130,7 +140,7 @@ async def test_freq_counts_mentions_not_unique_names(
 
 
 async def test_empty_skills_yields_no_needs(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+    _patch_repo(monkeypatch)
     state = await nc.run(
         {"program_id": "cs-test", "classified_evidence": [], "extracted_skills": []}
     )

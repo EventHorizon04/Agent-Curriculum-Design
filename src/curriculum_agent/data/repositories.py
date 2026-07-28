@@ -193,6 +193,24 @@ class EvidenceRepository:
 
 
 class SkillRepository:
+    async def delete_by_program(self, program_id: str) -> int:
+        """Drop every skill row for a program. Returns the row count removed.
+
+        `skill_id` is generated fresh on each extraction run while bulk_insert
+        upserts by that id, so a re-run would otherwise insert a second complete
+        set and the Stage 3 table would show every skill twice. Re-running a
+        stage replaces its output; this is what makes that true.
+        """
+        async with AsyncSessionLocal() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(SkillTable).where(SkillTable.program_id == program_id)
+                ),
+            )
+            await session.commit()
+            return result.rowcount
+
     async def bulk_insert(self, skills: list[ExtractedSkill]) -> None:
         async with AsyncSessionLocal() as session:
             for skill in skills:
@@ -223,6 +241,22 @@ class SkillRepository:
 
 
 class NeedRepository:
+    async def delete_by_program(self, program_id: str) -> int:
+        """Drop every Need row for a program. Returns the row count removed.
+
+        Same defect as SkillRepository.delete_by_program: `need_id` is a fresh
+        uuid per run and bulk_insert upserts by it. Needs also hold
+        member_skill_ids pointing at skill rows that the extraction re-run has
+        just replaced, so a surviving old Need would reference dead skill ids.
+        """
+        async with AsyncSessionLocal() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(delete(NeedTable).where(NeedTable.program_id == program_id)),
+            )
+            await session.commit()
+            return result.rowcount
+
     async def bulk_insert(self, needs: list[Need]) -> None:
         async with AsyncSessionLocal() as session:
             for need in needs:

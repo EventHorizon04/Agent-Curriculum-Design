@@ -21,7 +21,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.stages.demand import WEIGHTED_CLASSES, compute_demand_score
-from curriculum_agent.stages.need_grouping import normalize_need_name
+from curriculum_agent.stages.need_grouping import merge_bloom, normalize_need_name
 
 _WS_RE = re.compile(r"\s+")
 
@@ -147,6 +147,7 @@ async def run(state: AgentState) -> AgentState:
     dropped_ungrounded = 0
     dropped_too_short = 0
     dropped_not_found = 0
+    collapsed_duplicates = 0
     _cache = LLMCacheRepository()
 
     for item_dict in classified:
@@ -180,6 +181,16 @@ async def run(state: AgentState) -> AgentState:
                 logger.warning(f"LLM skill extraction failed for {evidence.evidence_id}: {exc}")
 
         if result is not None:
+            # Collapse repeated names within this one evidence item, keeping the
+            # highest Bloom level (same rule as merge_bloom — the lower level is
+            # implied by the higher). Everything else comes from the first
+            # occurrence; the alternatives are equally arbitrary and the span and
+            # confidence describe the same quoted phrase either way.
+            #
+            # Deduping is deliberately per-evidence, never across evidence items:
+            # two sources naming the same capability are two mentions, and that is
+            # precisely the signal Need.freq and demand_score are built from.
+            by_norm: dict[str, dict[str, Any]] = {}
             for sk in result.skills:
                 if not is_grounded(sk.evidence_span_th, evidence.raw_text_th):
                     dropped_ungrounded += 1
@@ -194,13 +205,26 @@ async def run(state: AgentState) -> AgentState:
                         f"from {evidence.evidence_id} ({reason})"
                     )
                     continue
-                raw_skills.append(
-                    {
-                        **sk.model_dump(mode="json"),
-                        "evidence_id": evidence.evidence_id,
-                        "stakeholder_type": evidence.stakeholder_type.value,
-                    }
+
+                norm = normalize_need_name(sk.skill_name_th)
+                row = {
+                    **sk.model_dump(mode="json"),
+                    "evidence_id": evidence.evidence_id,
+                    "stakeholder_type": evidence.stakeholder_type.value,
+                }
+                kept = by_norm.get(norm)
+                if kept is None:
+                    by_norm[norm] = row
+                    continue
+                collapsed_duplicates += 1
+                kept["bloom_level"] = merge_bloom(
+                    [BloomLevel(kept["bloom_level"]), BloomLevel(row["bloom_level"])]
+                ).value
+                logger.debug(
+                    f"  collapsed duplicate skill '{sk.skill_name_th}' "
+                    f"within {evidence.evidence_id}"
                 )
+            raw_skills.extend(by_norm.values())
 
     if dropped_ungrounded:
         total_seen = len(raw_skills) + dropped_ungrounded
@@ -212,10 +236,19 @@ async def run(state: AgentState) -> AgentState:
             f"paraphrase/vague quote), {dropped_not_found} not-found in evidence "
             "(likely fabricated)"
         )
+    if collapsed_duplicates:
+        logger.info(
+            f"Collapsed {collapsed_duplicates} duplicate skill name(s) named more than "
+            "once by a single evidence item"
+        )
     state["dropped_ungrounded_count"] = dropped_ungrounded
 
     if not raw_skills:
-        logger.warning("Stage 2: no skills extracted")
+        # Returns before delete_by_program on purpose: a run that extracted
+        # nothing (every call failed, or everything failed groundedness) must not
+        # wipe a previous run's good rows. The stale rows stay visible and a
+        # re-run replaces them once it actually produces something.
+        logger.warning("Stage 2: no skills extracted — previous rows left untouched")
         state["extracted_skills"] = []
         state["current_stage"] = "skill_extraction"
         return state
@@ -252,7 +285,14 @@ async def run(state: AgentState) -> AgentState:
             )
         )
 
-    await SkillRepository().bulk_insert(extracted)
+    # Replace, don't accumulate: skill_id is a fresh uuid per run and the
+    # repository upserts by it, so without the delete a re-run leaves both sets in
+    # the table and the Stage 3 skill table shows every skill twice.
+    skill_repo = SkillRepository()
+    removed = await skill_repo.delete_by_program(program_id)
+    if removed:
+        logger.info(f"Replaced {removed} skill row(s) from a previous run")
+    await skill_repo.bulk_insert(extracted)
 
     state["extracted_skills"] = [s.model_dump(mode="json") for s in extracted]
     state["current_stage"] = "skill_extraction"
