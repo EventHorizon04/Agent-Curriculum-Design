@@ -206,6 +206,8 @@ async def run(state: AgentState) -> AgentState:
     """Stage 3b: distil extracted skills into 6-10 market-demand Needs."""
     program_id = state.get("program_id", "unknown")
     classified = state.get("classified_evidence", [])
+    # Optional designer guidance for this run; absent on a plain re-run.
+    note_th = state.get("designer_note")
     skill_dicts = state.get("extracted_skills", [])
     skills = [ExtractedSkill.model_validate(d) for d in skill_dicts]
     logger.info(f"Stage 3b: need_combination from {len(skills)} skills")
@@ -241,7 +243,7 @@ async def run(state: AgentState) -> AgentState:
         try:
             written = await complete_light(
                 _NeedStatement,
-                build_summarize_need_prompt(group.skill_names, samples, group.ksec.value),
+                build_summarize_need_prompt(group.skill_names, samples, group.ksec.value, note_th),
             )
         except Exception as exc:
             logger.warning(f"Need summarize failed for {group.ksec.value} group: {exc}")

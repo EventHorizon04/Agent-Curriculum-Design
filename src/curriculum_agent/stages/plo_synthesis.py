@@ -225,6 +225,8 @@ async def synthesize_from_needs(
     program_id: str,
     known_need_ids: set[str],
     plo_id: str,
+    *,
+    note_th: str | None = None,
 ) -> PLO | None:
     """Draft one PLO from one or more Needs, then run it through the SMART gate.
 
@@ -232,6 +234,10 @@ async def synthesize_from_needs(
     paths get the same SMART enforcement and the same code-derived evidence
     trail. Returns None when the model call fails outright — the caller decides
     whether that is fatal.
+
+    `note_th` is optional designer guidance on wording. It reaches the draft
+    prompt only — never `_build_fix_prompt`, whose job is to repair one named
+    SMART criterion while preserving the substance it was handed.
     """
     if not needs:
         raise ValueError("synthesize_from_needs requires at least one Need")
@@ -239,7 +245,7 @@ async def synthesize_from_needs(
     try:
         response = await complete_heavy(
             _SingleDraftResponse,
-            build_plo_from_need_prompt(metadata, needs),
+            build_plo_from_need_prompt(metadata, needs, note_th),
             max_retries=_MAX_RETRIES,
         )
     except Exception as exc:
@@ -293,6 +299,7 @@ async def run(state: AgentState) -> AgentState:
     if not metadata_dict:
         raise ValueError("AgentState missing 'metadata' — cannot run PLO synthesis stage")
     metadata = ProgramMetadata.model_validate(metadata_dict)
+    note_th = state.get("designer_note")
 
     needs = [Need.model_validate(d) for d in state.get("needs", [])]
     if not needs:
@@ -312,7 +319,9 @@ async def run(state: AgentState) -> AgentState:
         series = synthesis_order([n for n in needs if n.is_optional is is_optional])
         for index, need in enumerate(series, start=1):
             plo_id = format_plo_id(index, is_optional=is_optional)
-            plo = await synthesize_from_needs(metadata, [need], program_id, known_need_ids, plo_id)
+            plo = await synthesize_from_needs(
+                metadata, [need], program_id, known_need_ids, plo_id, note_th=note_th
+            )
             if plo is not None:
                 plos.append(plo)
             else:
