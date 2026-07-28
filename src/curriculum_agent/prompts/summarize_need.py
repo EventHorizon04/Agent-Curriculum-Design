@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from curriculum_agent.prompts.designer_note import NOTE_POLICY_TH, append_note
+
 _KSEC_LABEL_TH = {
     "K": "ความรู้",
     "GS": "ทักษะทั่วไป",
@@ -10,7 +12,10 @@ _KSEC_LABEL_TH = {
 
 
 def build_summarize_need_prompt(
-    skill_names: list[str], sample_evidence: list[str], ksec: str
+    skill_names: list[str],
+    sample_evidence: list[str],
+    ksec: str,
+    note_th: str | None = None,
 ) -> list[dict[str, str]]:
     """Turn one group of related skills into a single market-demand sentence."""
     system = (
@@ -24,7 +29,7 @@ def build_summarize_need_prompt(
         "- ความยาวไม่เกิน 2 บรรทัด\n\n"
         "ตอบเป็น JSON object ที่มี field:\n"
         "  statement_th: string (ประโยคภาษาไทย)\n"
-        "  statement_en: string (ประโยคภาษาอังกฤษ)"
+        "  statement_en: string (ประโยคภาษาอังกฤษ)\n\n" + NOTE_POLICY_TH
     )
     label = _KSEC_LABEL_TH.get(ksec, ksec)
     keywords = ", ".join(skill_names[:30])
@@ -36,5 +41,5 @@ def build_summarize_need_prompt(
     )
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": user},
+        {"role": "user", "content": append_note(user, note_th)},
     ]

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from curriculum_agent.models import Need, ProgramMetadata
+from curriculum_agent.prompts.designer_note import NOTE_POLICY_TH, append_note
 
 
 def build_plo_from_need_prompt(
-    metadata: ProgramMetadata, needs: list[Need]
+    metadata: ProgramMetadata, needs: list[Need], note_th: str | None = None
 ) -> list[dict[str, str]]:
     """Restate one or more market Needs as a single graduate-side PLO.
 
@@ -29,7 +30,7 @@ def build_plo_from_need_prompt(
         + "\nตอบเป็น JSON object ที่มี field: plo (object) โดย plo มี field:\n"
         "  statement_th, statement_en, bloom_level,\n"
         "  action_verb_th, source_need_ids, rationale_th, distinctive_feature_th\n"
-        "(ไม่ต้องระบุ evidence ใด ๆ — ระบบจะผูก evidence จาก need ที่ให้มาเอง)"
+        "(ไม่ต้องระบุ evidence ใด ๆ — ระบบจะผูก evidence จาก need ที่ให้มาเอง)\n\n" + NOTE_POLICY_TH
     )
     need_block = "\n\n".join(
         f"need_id: {n.need_id}\n"
@@ -47,5 +48,5 @@ def build_plo_from_need_prompt(
     )
     return [
         {"role": "system", "content": system},
-        {"role": "user", "content": user},
+        {"role": "user", "content": append_note(user, note_th)},
     ]

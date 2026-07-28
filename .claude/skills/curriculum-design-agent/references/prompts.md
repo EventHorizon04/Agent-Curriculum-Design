@@ -151,7 +151,7 @@ Because clustering and merging both run *inside* one KSEC bucket (bucketing happ
 
 **Model:** light (`complete_light`)
 
-**File:** `prompts/summarize_need.py` — `build_summarize_need_prompt(skill_names, sample_evidence, ksec)`
+**File:** `prompts/summarize_need.py` — `build_summarize_need_prompt(skill_names, sample_evidence, ksec, note_th=None)`
 
 ```
 คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ความต้องการของตลาดแรงงาน
@@ -183,7 +183,7 @@ If this call fails, `stages/need_combination.py` falls back to a plain comma-joi
 
 **Model:** heavy (`complete_heavy`) — config-switchable to a proprietary model per project policy, never hardcoded
 
-**File:** `prompts/stage_3_plo.py` — `build_plo_from_need_prompt(metadata, needs)`
+**File:** `prompts/stage_3_plo.py` — `build_plo_from_need_prompt(metadata, needs, note_th=None)`
 
 ```
 คุณเป็นผู้เชี่ยวชาญ OBE ตามมาตรฐาน MHESI
@@ -199,9 +199,9 @@ If this call fails, `stages/need_combination.py` falls back to a plain comma-joi
   [ถ้ามีหลาย Need: ต้องครอบคลุมสาระของทุกความต้องการที่ให้มา ห้ามละข้อใดข้อหนึ่ง]
 
 ตอบเป็น JSON object ที่มี field: plo (object) โดย plo มี field:
-  plo_id, statement_th, statement_en, bloom_level, is_subject_specific,
-  action_verb_th, source_need_ids, source_evidence_ids, rationale_th,
-  distinctive_feature_th
+  statement_th, statement_en, bloom_level,
+  action_verb_th, source_need_ids, rationale_th, distinctive_feature_th
+(ไม่ต้องระบุ evidence ใด ๆ — ระบบจะผูก evidence จาก need ที่ให้มาเอง)
 
 [สำหรับแต่ละ Need ที่ให้มา:]
 need_id: {need_id}
@@ -211,7 +211,9 @@ need_id: {need_id}
 ความถี่ที่ถูกกล่าวถึง: {freq} ครั้ง (demand {demand_score})
 ```
 
-`source_evidence_ids` on the returned draft is a fallback, not the source of truth: `synthesize_from_needs()` in `stages/plo_synthesis.py` prefers the union of the contributing Needs' own `source_evidence_ids` (already verified upstream) over trusting the model to echo IDs correctly. Program context (`{field}`, `{degree_level}`, `{vision_th}`, etc. from `ProgramMetadata`) is also included in the real prompt — omitted above for brevity; see the file for the exact block.
+`plo_id`, `source_evidence_ids` and `is_subject_specific` are deliberately absent from the draft schema. Each is computed in code: the id by `format_plo_id`/`next_plo_id`, the evidence trail as the union of the contributing Needs' own verified `source_evidence_ids`, and the specificity flag from those Needs' KSEC tags. Asking the model for any of them invited it to contradict the data — it answered "PLO1" for every Need (collapsing a whole set into one upserted row) and invented evidence ids that pointed nowhere. Program context (`{field}`, `{degree_level}`, `{vision_th}` from `ProgramMetadata`) is included in the real prompt; see the file for the exact block.
+
+Both templates take an optional `note_th`. When present it is appended to the **user** message under `ข้อกำหนดเพิ่มเติมจากผู้ออกแบบหลักสูตร:`; the system message carries an unconditional line saying the note guides wording and does not override the rules above it. See `prompts/designer_note.py`.
 
 Every draft this prompt produces goes through the SMART hard-check retry loop (below) before it becomes a persisted `PLO` — this prompt alone does not guarantee a SMART-passing statement.
 
