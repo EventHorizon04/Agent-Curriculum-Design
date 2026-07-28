@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import urllib.parse
+from typing import Literal
 
 from pydantic import computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -11,15 +12,21 @@ class Settings(BaseSettings):
     # must not crash Settings() — only declared fields are read.
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    # "ollama" (default, open-source, local) or "openrouter" (paid, hosted).
+    # Config-switchable per project rule — never hardcode a paid provider.
+    llm_provider: Literal["ollama", "openrouter"] = "openrouter"
     ollama_base_url: str = "http://localhost:11434"
+    # No trailing /v1 — the OpenAI client path is appended once, in llm.py.
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_api_key: str | None = None
     postgres_dsn: str = (
         "postgresql+asyncpg://curriculum:curriculum_dev@localhost:5432/curriculum_agent"
     )
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin_dev"
-    light_model: str = "gemma4:31b-cloud"
-    heavy_model: str = "gemma4:31b-cloud"
+    light_model: str = "meta-llama/llama-3.3-70b-instruct"
+    heavy_model: str = "meta-llama/llama-3.3-70b-instruct"
     # REST API auth secret (require_api_key). None disables auth (dev default).
     api_key: str | None = None
     # Sent as the OpenAI-client api_key when talking to local Ollama. Ollama
