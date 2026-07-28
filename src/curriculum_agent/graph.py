@@ -49,6 +49,13 @@ class AgentState(TypedDict, total=False):
     checkpoint_status: Literal["pending", "approved", "needs_revision"]
     designer_notes: str
 
+    # Optional per-request guidance from the designer, read by the stages that
+    # author prose. Deliberately not accumulated: each REST endpoint sets it from
+    # its own request body, so a stage sees the note given to it and nothing
+    # earlier. That is also why no `Annotated[..., reducer]` is needed — a reducer
+    # is only required when two concurrent nodes write the same key.
+    designer_note: str
+
 
 # --------------------------- Stage nodes -------------------------
 

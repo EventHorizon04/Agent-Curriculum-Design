@@ -4,8 +4,10 @@ import pytest
 from pydantic import ValidationError
 
 from curriculum_agent.models import (
+    NOTE_MAX_CHARS,
     PLO,
     BloomLevel,
+    DesignerNoteRequest,
     ExtractedSkill,
     KSECCategory,
     Need,
@@ -327,3 +329,31 @@ def test_skill_cluster_and_mixed_enums_are_gone():
 
     for removed in ("SkillCluster", "SkillType", "PsychomotorLevel", "KrathwohlLevel", "Domain"):
         assert not hasattr(m, removed), f"{removed} should have been deleted"
+
+
+# ---- Cross-stage designer note (Task 1) ---------------------------------
+
+
+def test_designer_note_defaults_to_none():
+    assert DesignerNoteRequest().note_th is None
+
+
+def test_designer_note_blank_becomes_absent():
+    """A blank textarea must not append an empty guidance block to the prompt."""
+    assert DesignerNoteRequest(note_th="   \n\t ").note_th is None
+
+
+def test_designer_note_rejects_over_the_limit():
+    with pytest.raises(ValidationError):
+        DesignerNoteRequest(note_th="ก" * (NOTE_MAX_CHARS + 1))
+
+
+def test_designer_note_strips_before_measuring_length():
+    """The limit applies to the stripped text.
+
+    Pins the validator to mode="before". Run it after the constraint instead and
+    these trailing spaces push an exactly-full note over the limit, rejecting a
+    note the designer legitimately typed.
+    """
+    padded = "ก" * NOTE_MAX_CHARS + "    "
+    assert DesignerNoteRequest(note_th=padded).note_th == "ก" * NOTE_MAX_CHARS

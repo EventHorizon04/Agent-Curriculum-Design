@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from curriculum_agent.data.isced import get_detailed_field
 
@@ -339,3 +339,38 @@ class SessionInfo(BaseModel):
     suspended_message: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ------------------ Cross-stage designer note --------------------
+
+NOTE_MAX_CHARS = 500
+
+
+class DesignerNoteRequest(BaseModel):
+    """Optional free-text guidance a designer attaches when triggering a stage.
+
+    Influences wording only. `source_need_ids`, `source_evidence_ids` and
+    `plo_id` are computed in code and are not reachable from here — see
+    `plo_synthesis.synthesize_from_needs` for where each is pinned. Forbidden
+    words stay enforced by `smart_rules.hard_failures` and by
+    `PLO.check_no_forbidden_words`, so a note asking for one produces a retry and
+    then an escalated PLO, never a silent violation.
+
+    Not persisted: the note is an input to one request, so a re-run needs it typed
+    again. That matches how these stateless stage endpoints already behave.
+    """
+
+    note_th: str | None = Field(default=None, max_length=NOTE_MAX_CHARS)
+
+    @field_validator("note_th", mode="before")
+    @classmethod
+    def _blank_is_absent(cls, v: object) -> object:
+        """Strip before max_length runs, and treat a whitespace-only note as absent.
+
+        `mode="before"` for the same reason as `_SkillItem._strip_text` in
+        skill_extraction: it puts the constraint on the stripped text, so trailing
+        whitespace cannot tip an exactly-full note over the limit.
+        """
+        if isinstance(v, str):
+            return v.strip() or None
+        return v
