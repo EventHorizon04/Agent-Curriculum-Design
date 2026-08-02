@@ -8,7 +8,6 @@ export interface SkillRow {
   bloom_level: string
   evidence_span_th: string
   source_evidence_id: string
-  importance_score: number
 }
 
 export interface EvidenceMeta {
@@ -17,7 +16,7 @@ export interface EvidenceMeta {
   classification: string
 }
 
-type SortKey = 'skill_name_th' | 'bloom_level' | 'ksec_category' | 'classification' | 'importance_score'
+type SortKey = 'skill_name_th' | 'bloom_level' | 'ksec_category' | 'classification'
 
 const KSEC_LABEL: Record<string, string> = {
   K: 'K · ความรู้',
@@ -56,7 +55,6 @@ const COLUMNS: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'bloom_level', label: "Bloom's" },
   { key: 'ksec_category', label: 'KSEC' },
   { key: 'classification', label: 'Stakeholder class' },
-  { key: 'importance_score', label: 'Importance', numeric: true },
 ]
 
 export default function SkillTable({
@@ -68,8 +66,8 @@ export default function SkillTable({
   evidenceById: Record<string, EvidenceMeta>
   droppedCount: number
 }) {
-  const [sortKey, setSortKey] = useState<SortKey>('importance_score')
-  const [asc, setAsc] = useState(false)
+  const [sortKey, setSortKey] = useState<SortKey>('skill_name_th')
+  const [asc, setAsc] = useState(true)
   const [expanded, setExpanded] = useState<string | null>(null)
 
   const sorted = useMemo(() => {
@@ -91,7 +89,7 @@ export default function SkillTable({
     if (key === sortKey) setAsc(!asc)
     else {
       setSortKey(key)
-      setAsc(key !== 'importance_score')
+      setAsc(true)
     }
   }
 
@@ -169,9 +167,6 @@ export default function SkillTable({
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CLASS_COLOR[ev?.classification ?? 'unclassified']}`}>
                         {ev?.classification ?? 'unclassified'}
                       </span>
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-xs text-gray-700">
-                      {(s.importance_score * 100).toFixed(0)}%
                     </td>
                   </tr>
                   {open && (
