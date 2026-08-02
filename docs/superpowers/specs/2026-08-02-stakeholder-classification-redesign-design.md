@@ -147,8 +147,14 @@ that later collapse into one Need also merge here. Semantic matching is delibera
 added: that is exactly what LLM clustering does in `need_combination`, one stage later.
 
 **`unclassified`** is decided by the extraction LLM itself. `_SkillItem` gains
-`is_field_relevant: bool` — the extraction prompt already carries the ISCED detailed field
-and the program name, so this costs no extra call and no extra latency. A skill the model
+`is_field_relevant: bool`, judged in the same call that extracts the skill — no extra call
+and no extra latency.
+
+This requires fixing an existing defect: `build_extract_skills_prompt(evidence_text,
+classification)` instructs the model that "ทักษะที่ไม่เกี่ยวข้องกับสาขาวิชาของหลักสูตร
+ห้ามเสนอ" without ever telling it which field the program is in. The builder gains
+`field_th` and `program_name_th` parameters, both sourced from `state["metadata"]`, so the
+instruction becomes answerable. A skill the model
 judges unrelated to the field of study (a job posting asking for a driving licence in a
 Computer Science program) is kept but marked, not silently dropped: the designer sees it at
 the checkpoint and can promote it.
