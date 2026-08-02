@@ -7,9 +7,9 @@ from loguru import logger
 
 from curriculum_agent.models import BLOOM_ORDER, BloomLevel, ExtractedSkill, KSECCategory
 
-# Project policy: 6-10 main Needs, which become 6-10 main PLOs one-to-one.
+# Project policy: at least 6 main Needs, which become main PLOs one-to-one.
+# No upper cap — every core group clustering finds becomes its own Need.
 MIN_NEEDS = 6
-MAX_NEEDS = 10
 
 _WS_RE = re.compile(r"\s+")
 _BLOOM_RANK = {level: i for i, level in enumerate(BLOOM_ORDER)}
@@ -87,44 +87,3 @@ def dedupe_with_bloom_max(
     groups = [by_norm[k] for k in ordered]
     blooms = {display[k]: merge_bloom([skills[i].bloom_level for i in by_norm[k]]) for k in ordered}
     return names, groups, blooms
-
-
-def allocate_quota(
-    group_counts: dict[KSECCategory, int],
-    bucket_demand: dict[KSECCategory, float],
-    cap: int = MAX_NEEDS,
-) -> dict[KSECCategory, int]:
-    """Decide how many Needs each KSEC bucket may keep, totalling at most `cap`.
-
-    Shares are allocated by group count rather than demand so a bucket holding
-    many distinct capabilities is not squeezed out by one bucket holding a single
-    very high-demand capability; demand only breaks ties. Every non-empty bucket
-    keeps at least one Need. That is always satisfiable here: there are at most
-    five buckets and `cap` is 10.
-    """
-    active = {b: n for b, n in group_counts.items() if n > 0}
-    if not active:
-        return {}
-    total = sum(active.values())
-    if total <= cap:
-        return dict(active)
-
-    if len(active) > cap:  # unreachable with 5 buckets and cap 10; guard anyway
-        raise ValueError(f"cannot keep {len(active)} buckets within cap {cap}")
-
-    target = {b: max(1, (cap * n) // total) for b, n in active.items()}
-
-    while sum(target.values()) > cap:
-        shrinkable = [b for b in target if target[b] > 1]
-        victim = min(shrinkable, key=lambda b: bucket_demand.get(b, 0.0))
-        target[victim] -= 1
-
-    while sum(target.values()) < cap:
-        growable = [b for b in target if target[b] < active[b]]
-        if not growable:
-            break
-        winner = max(growable, key=lambda b: bucket_demand.get(b, 0.0))
-        target[winner] += 1
-
-    logger.debug(f"Need quota: {total} groups → {target} (cap {cap})")
-    return target

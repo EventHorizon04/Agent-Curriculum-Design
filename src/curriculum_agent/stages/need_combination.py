@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 from curriculum_agent.data.repositories import NeedRepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.llm import complete_heavy, complete_light
+from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
     BloomLevel,
     ExtractedSkill,
@@ -16,17 +16,11 @@ from curriculum_agent.models import (
     Need,
     StakeholderType,
 )
-from curriculum_agent.prompts.cluster_skills import build_merge_to_target_prompt
 from curriculum_agent.prompts.summarize_need import build_summarize_need_prompt
 from curriculum_agent.stages.demand import WEIGHTED_CLASSES, compute_demand_score
-from curriculum_agent.stages.llm_clustering import (
-    MergeGroupsResponse,
-    cluster_skill_names,
-    validate_assignments,
-)
+from curriculum_agent.stages.llm_clustering import cluster_skill_names, validate_assignments
 from curriculum_agent.stages.need_grouping import (
     MIN_NEEDS,
-    allocate_quota,
     bucket_by_ksec,
     dedupe_with_bloom_max,
     merge_bloom,
@@ -107,103 +101,8 @@ async def _build_groups(
     return groups
 
 
-def _fuse(members: list[_Group]) -> _Group:
-    """Combine several groups of the same KSEC bucket into one.
-
-    Union rather than selection: a dropped group would take its evidence out of
-    the pipeline, breaking the traceability the programme is assessed on.
-    """
-    head = members[0]
-    skill_ids: list[str] = []
-    skill_names: list[str] = []
-    evidence: set[str] = set()
-    for g in members:
-        skill_ids.extend(g.skill_ids)
-        skill_names.extend(g.skill_names)
-        evidence |= set(g.evidence_ids)
-    return head.model_copy(
-        update={
-            "skill_ids": skill_ids,
-            "skill_names": skill_names,
-            "evidence_ids": sorted(evidence),
-            "bloom_level": merge_bloom([g.bloom_level for g in members]),
-            "demand_score": max(g.demand_score for g in members),
-            "is_optional": all(g.is_optional for g in members),
-        }
-    )
-
-
-def _fuse_by_demand(bucket: list[_Group], limit: int) -> list[_Group]:
-    """Fallback merge: fold the lowest-demand groups into the highest-demand ones.
-
-    Used only when the LLM merge fails or returns the wrong group count. Purely
-    arithmetic, so it always terminates at exactly `limit` groups.
-    """
-    ranked = sorted(bucket, key=lambda g: g.demand_score, reverse=True)
-    keep, surplus = ranked[:limit], ranked[limit:]
-    for i, extra in enumerate(surplus):
-        target = i % limit
-        keep[target] = _fuse([keep[target], extra])
-    return keep
-
-
-async def _merge_bucket(bucket: list[_Group], limit: int, ksec: KSECCategory) -> list[_Group]:
-    """Reduce one bucket to `limit` groups, preferring a semantic merge.
-
-    The heavy model decides which groups mean the same thing — that judgement is
-    the reason this stage merges instead of truncating. Its output is validated
-    for exactly-once coverage and for hitting the target count; anything else
-    falls back to demand-ranked fusion so the stage cannot stall.
-    """
-    if len(bucket) <= limit:
-        return bucket
-
-    labels = [g.skill_names[0] for g in bucket]
-    try:
-        result = await complete_heavy(
-            MergeGroupsResponse,
-            build_merge_to_target_prompt(labels, limit),
-            temperature=0,
-        )
-        merged = validate_assignments([("", g) for g in result.groups], labels)
-        if len(merged) == limit:
-            return [_fuse([bucket[i] for i in indices]) for _, indices in merged]
-        logger.warning(
-            f"{ksec.value} merge returned {len(merged)} groups, expected {limit} — "
-            "falling back to demand-ranked fusion"
-        )
-    except Exception as exc:
-        logger.warning(f"{ksec.value} merge call failed ({exc}) — falling back to demand ranking")
-
-    return _fuse_by_demand(bucket, limit)
-
-
-async def _apply_quota(groups: list[_Group]) -> list[_Group]:
-    """Reduce core groups to the 6-10 policy, one bucket at a time.
-
-    Optional (want-dominant) groups are exempt from the count, matching the
-    project's optional-PLO rule, so only core groups are merged. Merging never
-    crosses buckets, which is what keeps every Need single-tagged.
-    """
-    core = [g for g in groups if not g.is_optional]
-    optional = [g for g in groups if g.is_optional]
-
-    counts: dict[KSECCategory, int] = {}
-    demand: dict[KSECCategory, float] = {}
-    for g in core:
-        counts[g.ksec] = counts.get(g.ksec, 0) + 1
-        demand[g.ksec] = demand.get(g.ksec, 0.0) + g.demand_score
-
-    quota = allocate_quota(counts, demand)
-    kept: list[_Group] = []
-    for ksec, limit in quota.items():
-        in_bucket = [g for g in core if g.ksec == ksec]
-        kept.extend(await _merge_bucket(in_bucket, limit, ksec))
-    return kept + optional
-
-
 async def run(state: AgentState) -> AgentState:
-    """Stage 3b: distil extracted skills into 6-10 market-demand Needs."""
+    """Stage 3b: distil extracted skills into at least 6 market-demand Needs."""
     program_id = state.get("program_id", "unknown")
     classified = state.get("classified_evidence", [])
     # Optional designer guidance for this run; absent on a plain re-run.
@@ -229,7 +128,6 @@ async def run(state: AgentState) -> AgentState:
     total_req_need = sum(1 for c in classification_by_evidence.values() if c in WEIGHTED_CLASSES)
 
     groups = await _build_groups(skills, classified, classification_by_evidence, total_req_need)
-    groups = await _apply_quota(groups)
 
     evidence_text_by_id = {
         str(d["evidence_id"]): str(d.get("raw_text_th", ""))
@@ -277,8 +175,8 @@ async def run(state: AgentState) -> AgentState:
     core_count = sum(1 for n in needs if not n.is_optional)
     if core_count < MIN_NEEDS:
         logger.warning(
-            f"need_combination produced only {core_count} core Needs (policy is {MIN_NEEDS}-10) — "
-            "the designer must add more at the review checkpoint"
+            f"need_combination produced only {core_count} core Needs (policy is at least "
+            f"{MIN_NEEDS}) — the designer must add more at the review checkpoint"
         )
 
     # Replace, don't accumulate — need_id is a fresh uuid per run and the

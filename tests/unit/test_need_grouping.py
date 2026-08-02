@@ -6,8 +6,6 @@ import pytest
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory
 from curriculum_agent.stages.need_grouping import (
-    MAX_NEEDS,
-    allocate_quota,
     bucket_by_ksec,
     dedupe_with_bloom_max,
     merge_bloom,
@@ -102,77 +100,3 @@ def test_dedupe_with_blank_name_reports_skip():
         mock_logger.warning.assert_called_once()
         call_args = mock_logger.warning.call_args[0][0]
         assert call_args == "dedupe_with_bloom_max: skipped 2 blank/whitespace-only name(s)"
-
-
-def test_quota_passthrough_when_already_within_cap():
-    counts = {KSECCategory.SS: 4, KSECCategory.GS: 3}
-    quota = allocate_quota(counts, {KSECCategory.SS: 0.8, KSECCategory.GS: 0.4})
-    assert quota == counts
-
-
-def test_quota_caps_total_at_max_needs():
-    counts = {KSECCategory.SS: 12, KSECCategory.GS: 6, KSECCategory.K: 4}
-    demand = {KSECCategory.SS: 0.9, KSECCategory.GS: 0.5, KSECCategory.K: 0.2}
-    quota = allocate_quota(counts, demand)
-    assert sum(quota.values()) == MAX_NEEDS
-
-
-def test_quota_keeps_every_non_empty_bucket_alive():
-    # One dominant bucket must not squeeze the others out — the generic/specific
-    # balance the programme needs depends on every bucket surviving.
-    counts = {
-        KSECCategory.SS: 30,
-        KSECCategory.GS: 1,
-        KSECCategory.K: 1,
-        KSECCategory.C: 1,
-        KSECCategory.E: 1,
-    }
-    demand = {
-        KSECCategory.SS: 0.95,
-        KSECCategory.GS: 0.1,
-        KSECCategory.K: 0.1,
-        KSECCategory.C: 0.05,
-        KSECCategory.E: 0.05,
-    }
-    quota = allocate_quota(counts, demand)
-    assert sum(quota.values()) == MAX_NEEDS
-    assert all(v >= 1 for v in quota.values())
-
-
-def test_quota_never_exceeds_available_groups_in_a_bucket():
-    # Note: this test passes even without the growth cap in allocate_quota because the
-    # growth the inputs require happens to coincide with that bucket's actual limit.
-    # test_quota_shrink_loop_caps_initial_excess is what actually pins the growth cap.
-    counts = {KSECCategory.SS: 11, KSECCategory.GS: 2}
-    demand = {KSECCategory.SS: 0.2, KSECCategory.GS: 0.9}
-    quota = allocate_quota(counts, demand)
-    assert quota[KSECCategory.GS] <= 2
-    assert sum(quota.values()) == MAX_NEEDS
-
-
-def test_quota_shrink_loop_caps_initial_excess():
-    # Initial max(1, ...) allocation can exceed cap with unbalanced bucket sizes.
-    # This test ensures the shrink loop corrects it.
-    counts = {
-        KSECCategory.SS: 1,
-        KSECCategory.GS: 1,
-        KSECCategory.K: 1,
-        KSECCategory.C: 1,
-        KSECCategory.E: 56,  # Dominates; initial alloc would be 1+1+1+1+9=13
-    }
-    demand = {
-        KSECCategory.SS: 0.1,
-        KSECCategory.GS: 0.1,
-        KSECCategory.K: 0.1,
-        KSECCategory.C: 0.1,
-        KSECCategory.E: 0.9,
-    }
-    quota = allocate_quota(counts, demand)
-    assert sum(quota.values()) == MAX_NEEDS
-    assert all(v >= 1 for v in quota.values())
-
-
-def test_quota_ignores_empty_buckets():
-    counts = {KSECCategory.SS: 12, KSECCategory.GS: 0}
-    quota = allocate_quota(counts, {KSECCategory.SS: 0.9, KSECCategory.GS: 0.0})
-    assert KSECCategory.GS not in quota

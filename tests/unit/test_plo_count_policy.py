@@ -4,13 +4,12 @@ from unittest.mock import AsyncMock, patch
 
 from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetadata
 from curriculum_agent.stages import plo_synthesis as ps
-from curriculum_agent.stages.need_grouping import MAX_NEEDS, MIN_NEEDS
+from curriculum_agent.stages.need_grouping import MIN_NEEDS
 
 
-def test_policy_bounds_come_from_need_grouping():
-    """The 6-10 count policy now lives in need_grouping, not as local constants here."""
+def test_policy_bound_comes_from_need_grouping():
+    """The minimum-count policy now lives in need_grouping, not as a local constant here."""
     assert ps.MIN_NEEDS == MIN_NEEDS == 6
-    assert ps.MAX_NEEDS == MAX_NEEDS == 10
 
 
 def _need(nid: str) -> Need:
@@ -82,7 +81,7 @@ async def test_run_warns_when_core_plo_count_is_below_policy(
     ]
     assert len(policy_warnings) == 1
     assert "2 core PLOs" in policy_warnings[0]
-    assert "6-10" in policy_warnings[0]
+    assert "6" in policy_warnings[0]
 
 
 async def test_run_does_not_warn_when_core_plo_count_is_within_policy(
@@ -101,6 +100,29 @@ async def test_run_does_not_warn_when_core_plo_count_is_within_policy(
         )
 
     assert len(state["plos"]) == 6
+    policy_warnings = [
+        call.args[0] for call in mock_logger.warning.call_args_list if "core PLOs" in call.args[0]
+    ]
+    assert policy_warnings == []
+
+
+async def test_run_does_not_warn_above_the_old_ten_cap(
+    program_metadata: ProgramMetadata,
+):
+    """No upper cap: 12 core PLOs (above the removed MAX_NEEDS=10) must not warn."""
+    needs = [_need(f"N{i}") for i in range(1, 13)]
+    p1, p2, p3 = _patch_llm(needs)
+
+    with p1, p2, p3, patch.object(ps, "logger") as mock_logger:
+        state = await ps.run(
+            {
+                "program_id": "cs-test",
+                "metadata": program_metadata.model_dump(mode="json"),
+                "needs": [n.model_dump(mode="json") for n in needs],
+            }
+        )
+
+    assert len(state["plos"]) == 12
     policy_warnings = [
         call.args[0] for call in mock_logger.warning.call_args_list if "core PLOs" in call.args[0]
     ]

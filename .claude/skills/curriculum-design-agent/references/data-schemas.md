@@ -143,10 +143,10 @@ class Need(BaseModel):
 
 - Only **requirement + need** evidence carries weight (unclassified counts as need); **want evidence contributes zero**.
 - `score = min(freq * 0.6 + breadth * 0.4, 1.0)` where `freq` = weighted-evidence count / total requirement+need evidence, `breadth` = stakeholder-group coverage ratio.
-- A group whose want-evidence count exceeds its requirement+need count gets `is_optional=True` — it feeds the optional PLO pass, not the main 6–10 set.
+- A group whose want-evidence count exceeds its requirement+need count gets `is_optional=True` — it feeds the optional PLO pass, not the main core set.
 - `classification_coverage` records the per-classification evidence counts for checkpoint display.
 
-**6–10 quota:** enforced upstream of PLO synthesis. `need_combination` merges each KSEC bucket's candidate groups down to a per-bucket quota (`allocate_quota` in `stages/need_grouping.py`, `MIN_NEEDS=6` / `MAX_NEEDS=10`, shares proportional to group count, demand breaks ties) so the program ends with 6–10 core Needs before a single PLO is drafted. PLO synthesis then maps one Need to one PLO (see below), so the same 6–10 count carries through unchanged. Optional (want-dominant) Needs are exempt from the quota, same as optional PLOs.
+**Floor, no cap:** `need_combination` no longer merges core groups down to a quota — every core group clustering finds within a KSEC bucket becomes its own Need. `MIN_NEEDS=6` in `stages/need_grouping.py` is a floor only: if the program ends with fewer than 6 core Needs, `need_combination` logs a policy warning (and `plo_synthesis` logs its own if the resulting core PLO count is still short) for the designer to address at the checkpoint. PLO synthesis then maps one Need to one PLO (see below), so whatever core count `need_combination` produces carries through unchanged. Optional (want-dominant) Needs are exempt from the floor, same as optional PLOs.
 
 ## Stage 4: PLO (plo_synthesis) — cognitive-only, one Need → one PLO
 
@@ -195,7 +195,7 @@ class PLO(BaseModel):
     smart_retry_count: int = 0  # SMART hard-fail fix attempts consumed (max 3)
     smart_escalated: bool = False  # still hard-failing after retries → human repair
     soft_flags: list[str] = []  # non-blocking review flags: "S_object", "A_level", "R_alignment"
-    is_optional: bool = False  # PLO from want-dominant Need(s), exempt from 6-10 count
+    is_optional: bool = False  # PLO from want-dominant Need(s), exempt from the core-Need count
 ```
 
 **One Need → one PLO, with a designer escape hatch.** `stages/plo_synthesis.run()` drafts exactly one PLO per Need — a single focused LLM call each, not a batch call over all Needs. A designer can also merge several Needs into one PLO via `POST /programs/{id}/plos/from-needs`, which calls the same `synthesize_from_needs()` function with more than one Need; that function is shared by both paths so both get identical SMART enforcement and evidence handling. When multiple Needs feed one PLO, `is_subject_specific` is true if *any* contributing Need is SS, and `is_optional` is true only if *every* contributing Need is optional.

@@ -12,8 +12,8 @@ An AI agent helping Thai higher-education curriculum designers produce programs 
 1. **Intake** — program metadata (field, degree level, duration, vision, professional council)
 2. **Stakeholder needs** — collect evidence from job postings, professional standards, alumni feedback, มคอ.1; classify each item need/requirement/want (community/parent evidence is always `want`, decided in pure code; every other type goes to an LLM choosing need/requirement)
 3. **Skill extraction** — grounded LLM extraction per evidence item: each skill carries a verbatim quote (`evidence_span_th`) verified to actually occur in its source evidence; ungrounded skills are dropped
-4. **Need combination** — group extracted skills into 6–10 core Needs (plus optional want-based Needs), one KSEC tag per Need, grouping and merging always within a single KSEC bucket, never across. Shares one human-review checkpoint with stage 3 — the designer reviews raw skills and distilled Needs together
-5. **PLO synthesis** — one focused LLM call per Need, mapping 6–10 Needs to 6–10 SMART PLOs one-to-one, plus a designer-driven endpoint to merge several Needs into one PLO; an optional non-blocking pass produces supplementary PLOs from want-based Needs
+4. **Need combination** — group extracted skills into core Needs (at least 6, no upper cap, plus optional want-based Needs), one KSEC tag per Need, grouping and merging always within a single KSEC bucket, never across. Shares one human-review checkpoint with stage 3 — the designer reviews raw skills and distilled Needs together
+5. **PLO synthesis** — one focused LLM call per Need, mapping each core Need to one SMART PLO one-to-one (at least 6, no upper cap), plus a designer-driven endpoint to merge several Needs into one PLO; an optional non-blocking pass produces supplementary PLOs from want-based Needs
 6. **PLO report** — classify PLOs generic vs specific for designer review and export
 
 **The agent's scope ends at PLO.** OBE chain is PLO → YLO → CLO, but YLO/CLO are faculty work. If asked to generate YLOs or CLOs, surface the scope boundary before complying.
@@ -30,7 +30,7 @@ Don't rely on memory of these rules — read the file before generating PLO cont
 
 Agents without this skill reliably make these mistakes. Check every learning-outcome output against:
 
-1. **Exactly 6–10 main PLOs, enforced on Needs before synthesis.** `need_combination` merges each KSEC bucket down to a quota so the program already has 6–10 core Needs before PLO synthesis runs; synthesis then maps one Need to one PLO, so the count carries through unchanged. Optional PLOs synthesized from want-based Needs (`is_optional=True`) are exempt from this count.
+1. **At least 6 main PLOs, no upper cap.** `need_combination` no longer merges core groups down to a quota — every core group clustering finds becomes its own Need, and PLO synthesis then maps one Need to one PLO, so the count carries through unchanged. A core count below 6 logs a policy warning for the designer to address at the checkpoint. Optional PLOs synthesized from want-based Needs (`is_optional=True`) are exempt from this count.
 2. **One Bloom action verb per outcome statement.** "ออกแบบและพัฒนา" or "อธิบายและประยุกต์ใช้" = two verbs = reject. Two verbs allowed only at adjacent Bloom levels, and prefer one.
 3. **Every PLO carries evidence.** `source_need_ids` / `source_evidence_ids` non-empty. A PLO drafted "from general knowledge" without stakeholder evidence is a fabrication that fails accreditation — don't produce one, even as a placeholder.
 4. **Forbidden words** in any outcome statement: รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. Replace with observable verbs (เข้าใจ → อธิบาย/วิเคราะห์).

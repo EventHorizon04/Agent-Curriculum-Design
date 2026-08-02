@@ -35,12 +35,6 @@ interface PLO {
   is_optional: boolean
 }
 
-interface NeedSummary {
-  need_id: string
-  statement_th: string
-  statement_en: string | null
-}
-
 const METHOD_LABEL: Record<string, string> = {
   ksec: 'field',
   llm: 'LLM',
@@ -61,7 +55,6 @@ function effectiveClass(p: PLO): 'generic' | 'specific' {
 export default function PloReport() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
-  const [needs, setNeeds] = useState<NeedSummary[]>([])
   const [view, setView] = useState<'list' | 'matrix'>('list')
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
@@ -72,12 +65,8 @@ export default function PloReport() {
     setLoading(true)
     setError('')
     try {
-      const [ploRes, needRes] = await Promise.all([
-        api.get<PLO[]>(`/programs/${programId}/plos/`),
-        api.get<NeedSummary[]>(`/programs/${programId}/needs/`),
-      ])
-      setPlos(ploRes.data)
-      setNeeds(needRes.data)
+      const res = await api.get<PLO[]>(`/programs/${programId}/plos/`)
+      setPlos(res.data)
     } catch {
       setError('โหลดข้อมูลไม่สำเร็จ')
     } finally {
@@ -130,9 +119,6 @@ export default function PloReport() {
   const optionalPlos = plos.filter(p => p.is_optional)
   const generic = mainPlos.filter(p => effectiveClass(p) === 'generic')
   const specific = mainPlos.filter(p => effectiveClass(p) === 'specific')
-  const referencedNeeds = needs.filter(n =>
-    mainPlos.some(p => p.source_need_ids.includes(n.need_id))
-  )
 
   return (
     <div className="max-w-5xl mx-auto py-8 px-4">
@@ -199,7 +185,7 @@ export default function PloReport() {
               <ReportGroup title="Specific Skills" plos={specific} onFlip={flip} />
             </div>
           ) : (
-            <ReportMatrix plos={mainPlos} needs={referencedNeeds} />
+            <ReportMatrix plos={mainPlos} onFlip={flip} />
           )}
 
           {optionalPlos.length > 0 && (
@@ -208,7 +194,7 @@ export default function PloReport() {
                 PLO เสริม (จากความต้องการประเภท want)
               </h2>
               <p className="text-xs text-amber-700 mb-4">
-                รายการเหล่านี้ไม่นับใน PLO หลัก 6-10 ข้อ — เลือกใช้ได้ตามดุลยพินิจของหลักสูตร
+                รายการเหล่านี้ไม่นับใน PLO หลัก — เลือกใช้ได้ตามดุลยพินิจของหลักสูตร
               </p>
               <div className="space-y-3">
                 {optionalPlos.map(p => (
@@ -315,47 +301,56 @@ function ReportGroup({
   )
 }
 
-function ReportMatrix({ plos, needs }: { plos: PLO[]; needs: NeedSummary[] }) {
-  if (needs.length === 0) {
-    return <p className="text-gray-400 text-sm">ไม่มี Need ที่ PLO อ้างอิง</p>
+function ReportMatrix({ plos, onFlip }: { plos: PLO[]; onFlip: (p: PLO) => void }) {
+  if (plos.length === 0) {
+    return <p className="text-gray-400 text-sm">ไม่มี PLO</p>
   }
   return (
     <div className="overflow-x-auto border border-gray-200 rounded-xl">
-      <table className="text-sm border-collapse">
+      <table className="w-full text-sm border-collapse">
         <thead>
           <tr className="bg-gray-50">
-            <th className="sticky left-0 bg-gray-50 text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200">
-              PLO / Class
+            <th className="text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200">
+              PLO
             </th>
-            {needs.map(n => (
-              <th
-                key={n.need_id}
-                className="px-3 py-2 font-medium text-gray-500 border-b border-gray-200 whitespace-nowrap text-xs"
-                title={n.statement_th}
-              >
-                {n.statement_en ?? n.statement_th}
-              </th>
-            ))}
+            <th className="px-3 py-2 font-semibold text-teal-700 border-b border-gray-200 text-center w-32">
+              Generic
+            </th>
+            <th className="px-3 py-2 font-semibold text-indigo-700 border-b border-gray-200 text-center w-32">
+              Specific
+            </th>
           </tr>
         </thead>
         <tbody>
-          {plos.map(p => (
-            <tr key={p.plo_id} className="hover:bg-gray-50">
-              <td className="sticky left-0 bg-white hover:bg-gray-50 px-3 py-2 border-b border-gray-100 whitespace-nowrap">
-                <div className="flex items-center gap-1.5">
-                  <span className="font-mono text-xs text-gray-600">{p.plo_id}</span>
-                  <ClassBadge value={effectiveClass(p)} />
-                </div>
-              </td>
-              {needs.map(n => (
-                <td key={n.need_id} className="px-3 py-2 border-b border-gray-100 text-center">
-                  {p.source_need_ids.includes(n.need_id)
-                    ? <span className="text-green-600 font-bold">✓</span>
+          {plos.map(p => {
+            const cls = effectiveClass(p)
+            return (
+              <tr key={p.plo_id} className="hover:bg-gray-50">
+                <td className="px-3 py-2 border-b border-gray-100 max-w-md">
+                  <span className="font-mono text-xs text-gray-400 mr-2">{p.plo_id}</span>
+                  <span className="text-gray-800">{p.statement_th}</span>
+                </td>
+                <td
+                  onClick={() => cls !== 'generic' && onFlip(p)}
+                  className={`px-3 py-2 border-b border-gray-100 text-center ${cls !== 'generic' ? 'cursor-pointer' : ''}`}
+                  title={cls !== 'generic' ? 'เปลี่ยนเป็น generic' : undefined}
+                >
+                  {cls === 'generic'
+                    ? <span className="text-teal-600 font-bold">✓</span>
                     : <span className="text-gray-200">·</span>}
                 </td>
-              ))}
-            </tr>
-          ))}
+                <td
+                  onClick={() => cls !== 'specific' && onFlip(p)}
+                  className={`px-3 py-2 border-b border-gray-100 text-center ${cls !== 'specific' ? 'cursor-pointer' : ''}`}
+                  title={cls !== 'specific' ? 'เปลี่ยนเป็น specific' : undefined}
+                >
+                  {cls === 'specific'
+                    ? <span className="text-indigo-600 font-bold">✓</span>
+                    : <span className="text-gray-200">·</span>}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
       </table>
     </div>

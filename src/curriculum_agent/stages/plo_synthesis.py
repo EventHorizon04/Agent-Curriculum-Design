@@ -18,7 +18,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
-from curriculum_agent.stages.need_grouping import MAX_NEEDS, MIN_NEEDS
+from curriculum_agent.stages.need_grouping import MIN_NEEDS
 from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
@@ -331,9 +331,9 @@ async def run(state: AgentState) -> AgentState:
                 logger.warning(f"  {plo_id} not produced — its number stays unused")
 
     core = sum(1 for p in plos if not p.is_optional)
-    if not MIN_NEEDS <= core <= MAX_NEEDS:
+    if core < MIN_NEEDS:
         logger.warning(
-            f"Stage 4 produced {core} core PLOs, outside the {MIN_NEEDS}-{MAX_NEEDS} policy — "
+            f"Stage 4 produced {core} core PLOs, below the {MIN_NEEDS} minimum policy — "
             "need_combination should have enforced this; review at the checkpoint"
         )
 

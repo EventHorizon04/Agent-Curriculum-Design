@@ -115,31 +115,14 @@ Pair with the `_ClassifyResult` Pydantic model (`classification: Literal["need",
 
 ## need_combination: skill-name clustering and merging
 
-**Purpose:** group extracted-skill *names* (already deduped and bucketed by KSEC — see `data-schemas.md`) into candidate Needs, then merge candidate groups down to the 6–10 quota. Both operations are index-based: the model assigns/merges numeric indices into a name list, never rewrites the names themselves, so `stages/llm_clustering.py`'s `validate_assignments()` can enforce "every index exactly once" in pure code afterward.
+**Purpose:** group extracted-skill *names* (already deduped and bucketed by KSEC — see `data-schemas.md`) into candidate Needs. No downstream quota merge: every candidate group a bucket produces becomes its own Need. Index-based: the model assigns numeric indices into a name list, never rewrites the names themselves, so `stages/llm_clustering.py`'s `validate_assignments()` can enforce "every index exactly once" in pure code afterward.
 
 **Model:** heavy (`complete_heavy`) — this is a reasoning-over-labels task, not a light-model classification
 
-**File:** `prompts/cluster_skills.py` — three builders:
+**File:** `prompts/cluster_skills.py` — two builders:
 
 - `build_cluster_skills_prompt(skill_names)` — first-pass grouping of a batch of skill names by meaning, returns `{clusters: [{label_th, member_indices}]}`.
 - `build_merge_clusters_prompt(cluster_labels)` — merges same-meaning cluster labels produced across multiple first-pass batches, returns `{groups: [[index, ...]]}`.
-- `build_merge_to_target_prompt(cluster_labels, target_count)` — merges groups within one KSEC bucket down to an exact target count (the 6–10 quota mechanism); used by `_merge_bucket` in `stages/need_combination.py`, with a demand-ranked pure-code fallback (`_fuse_by_demand`) if the model returns the wrong count or fails outright.
-
-```
-คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ทักษะแรงงาน
-รายการต่อไปนี้คือชื่อกลุ่มทักษะภายในหมวดสมรรถนะเดียวกัน
-จงรวมกลุ่มที่มีความหมายใกล้เคียงกันเข้าด้วยกัน ให้เหลือ {target_count} กลุ่มพอดี
-
-กติกา:
-- ผลลัพธ์ต้องมี {target_count} group พอดี ไม่มากไม่น้อยกว่านี้
-- ทุก index ต้องปรากฏใน groups ครั้งเดียวเท่านั้น ห้ามตกหล่น ห้ามซ้ำ
-- ห้ามใช้ index ที่ไม่มีในรายการ
-- เลือกรวมกลุ่มที่ทำงานลักษณะเดียวกันหรือใช้ทักษะร่วมกันก่อน
-  ห้ามรวมกลุ่มที่ไม่เกี่ยวข้องกันเพียงเพื่อให้ครบจำนวน
-
-ตอบเป็น JSON object:
-{ groups: [ [index ของกลุ่มที่ควรรวมเข้าด้วยกัน] ] }
-```
 
 Because clustering and merging both run *inside* one KSEC bucket (bucketing happens before any of this in `stages/need_grouping.py`), no prompt here ever needs to ask the model to keep KSEC tags apart — it structurally cannot see skills from a different bucket.
 
@@ -179,7 +162,7 @@ If this call fails, `stages/need_combination.py` falls back to a plain comma-joi
 
 ## Stage 5 (plo_synthesis): one Need → one PLO (the most important prompt)
 
-**Purpose:** restate one or more market Needs (already 6–10 core, post-`need_combination`) as a single graduate-side PLO. Called once per Need by the stage loop (list of length 1), and reused by the designer-driven `POST /programs/{id}/plos/from-needs` endpoint with a longer list when the designer chooses to merge several Needs into one PLO — same function, same rules, whether it's 1 Need or several.
+**Purpose:** restate one or more market Needs (already at least 6 core, no upper cap, post-`need_combination`) as a single graduate-side PLO. Called once per Need by the stage loop (list of length 1), and reused by the designer-driven `POST /programs/{id}/plos/from-needs` endpoint with a longer list when the designer chooses to merge several Needs into one PLO — same function, same rules, whether it's 1 Need or several.
 
 **Model:** heavy (`complete_heavy`) — config-switchable to a proprietary model per project policy, never hardcoded
 
@@ -278,6 +261,6 @@ Skill clusters ที่เกี่ยวข้อง: {summary_block}
 
 **Keep Need summaries short.** PLO synthesis passes each Need's statement, KSEC tag, Bloom level, and frequency/demand — not full evidence text. Summarize in ≤200 tokens; the full evidence chain stays in the database, the prompt only needs the gist.
 
-**The 6–10 range is enforced upstream, not by asking nicely.** PLO synthesis never asks the model for "6 to 10 PLOs" — it calls the per-Need prompt once per Need, one PLO out per Need in. The 6–10 count is guaranteed by `need_combination`'s quota (`allocate_quota` in `stages/need_grouping.py`) before synthesis ever runs. If a prompt anywhere asks an LLM to directly produce "a set of 6–10 X", that's a regression to the old batch-synthesis design — don't reintroduce it.
+**The floor is enforced upstream, not by asking nicely.** PLO synthesis never asks the model for a target PLO count — it calls the per-Need prompt once per Need, one PLO out per Need in. There is no upper cap: every core group `need_combination` finds becomes a Need, and one Need becomes one PLO. A core count below `MIN_NEEDS` (6) only logs a policy warning for the designer to address at the checkpoint. If a prompt anywhere asks an LLM to directly produce "a set of N PLOs", that's a regression to the old batch-synthesis design — don't reintroduce it.
 
 **Never let a clustering/merge prompt cross a KSEC bucket.** Every skill-name clustering and merge call in `need_combination` is invoked per-bucket by the caller (`stages/need_grouping.py`'s `bucket_by_ksec`) — the prompt itself never receives skills from more than one KSEC tag at a time. If you add a new grouping prompt, bucket before you call it; don't rely on prompt wording to keep tags apart, since a model asked nicely can still mix them and there is no downstream check that would catch it.

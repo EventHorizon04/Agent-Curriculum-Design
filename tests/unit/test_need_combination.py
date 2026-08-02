@@ -147,99 +147,26 @@ async def test_empty_skills_yields_no_needs(monkeypatch: pytest.MonkeyPatch):
     assert state["needs"] == []
 
 
-def _group(name: str, demand: float, eid: str) -> nc._Group:
-    return nc._Group(
-        ksec=KSECCategory.SS,
-        skill_ids=[f"S-{name}"],
-        evidence_ids=[eid],
-        skill_names=[name],
-        bloom_level=BloomLevel.APPLY,
-        demand_score=demand,
-        is_optional=False,
-        classification_coverage={"need": 1},
-        stakeholder_coverage={"employer": 1},
-    )
+async def test_no_upper_cap_on_core_needs(monkeypatch: pytest.MonkeyPatch):
+    """One KSEC bucket producing more than the old 10-Need cap must not be merged down.
 
-
-def test_fuse_unions_evidence_and_takes_max_bloom():
-    a = _group("a", 0.4, "E1")
-    b = _group("b", 0.9, "E2").model_copy(update={"bloom_level": BloomLevel.CREATE})
-    fused = nc._fuse([a, b])
-    assert set(fused.evidence_ids) == {"E1", "E2"}
-    assert fused.bloom_level is BloomLevel.CREATE
-    assert fused.demand_score == 0.9
-    assert sorted(fused.skill_ids) == ["S-a", "S-b"]
-
-
-def test_fuse_by_demand_hits_the_limit_and_keeps_all_evidence():
-    bucket = [_group(f"g{i}", i / 10, f"E{i}") for i in range(7)]
-    fused = nc._fuse_by_demand(bucket, 3)
-    assert len(fused) == 3
-    all_evidence = {e for g in fused for e in g.evidence_ids}
-    assert all_evidence == {f"E{i}" for i in range(7)}
-
-
-async def test_merge_bucket_falls_back_when_llm_returns_wrong_count(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    bucket = [_group(f"g{i}", i / 10, f"E{i}") for i in range(5)]
-    all_skill_ids = {sid for g in bucket for sid in g.skill_ids}
-    all_evidence_ids = {eid for g in bucket for eid in g.evidence_ids}
-
-    async def bad_merge(model, messages, **kw):  # noqa: ANN001, ANN003
-        return nc.MergeGroupsResponse(groups=[[0, 1, 2, 3, 4]])  # 1 group, asked for 2
-
-    monkeypatch.setattr(nc, "complete_heavy", bad_merge)
-    merged = await nc._merge_bucket(bucket, 2, KSECCategory.SS)
-    assert len(merged) == 2
-    # A fallback that truncates the ranked list instead of fusing (`return
-    # ranked[:limit]`) still yields the right count here but silently drops
-    # the surplus groups' evidence — exactly the traceability bug `_fuse`
-    # exists to prevent. Every input id must survive into the output.
-    assert {sid for g in merged for sid in g.skill_ids} == all_skill_ids
-    assert {eid for g in merged for eid in g.evidence_ids} == all_evidence_ids
-
-
-async def test_merge_bucket_falls_back_when_llm_raises(monkeypatch: pytest.MonkeyPatch):
-    bucket = [_group(f"g{i}", i / 10, f"E{i}") for i in range(4)]
-    all_skill_ids = {sid for g in bucket for sid in g.skill_ids}
-    all_evidence_ids = {eid for g in bucket for eid in g.evidence_ids}
-
-    async def boom(model, messages, **kw):  # noqa: ANN001, ANN003
-        raise RuntimeError("model unavailable")
-
-    monkeypatch.setattr(nc, "complete_heavy", boom)
-    merged = await nc._merge_bucket(bucket, 2, KSECCategory.SS)
-    assert len(merged) == 2
-    # Same traceability pin as the wrong-count test above: a truncating
-    # fallback would still land on the right count while dropping evidence.
-    assert {sid for g in merged for sid in g.skill_ids} == all_skill_ids
-    assert {eid for g in merged for eid in g.evidence_ids} == all_evidence_ids
-
-
-async def test_merge_bucket_uses_llm_grouping_when_count_matches(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    # Demand scores are deliberately distinct (no ties). Demand-ranked fusion
-    # (_fuse_by_demand) would keep the two highest-demand groups ("a" 0.9 and
-    # "c" 0.8) and fold the surplus into them by rank — pairing a-with-d and
-    # c-with-b. The mocked LLM instead returns a-with-b and c-with-d, a
-    # pairing demand-ranked fusion would never choose, so this test only
-    # passes if the LLM grouping path actually ran. Do not "simplify" these
-    # scores back to a tie — that lets the fallback produce the same shape
-    # and hides a mutation that always skips the LLM path.
-    bucket = [
-        _group("a", 0.9, "E-a"),
-        _group("b", 0.1, "E-b"),
-        _group("c", 0.8, "E-c"),
-        _group("d", 0.2, "E-d"),
+    Project policy dropped MAX_NEEDS: every core group clustering finds becomes its
+    own Need, regardless of how many that is.
+    """
+    many_skills = [_skill(f"ทักษะที่ {i}", KSECCategory.SS, f"S{i}", "E1") for i in range(15)]
+    evidence = [
+        {"evidence_id": "E1", "classification": "requirement", "stakeholder_type": "employer"}
     ]
 
-    async def good_merge(model, messages, **kw):  # noqa: ANN001, ANN003
-        return nc.MergeGroupsResponse(groups=[[0, 1], [2, 3]])  # a+b, c+d
+    _patch_llm(monkeypatch)  # clusters each name into its own singleton
+    _patch_repo(monkeypatch)
 
-    monkeypatch.setattr(nc, "complete_heavy", good_merge)
-    merged = await nc._merge_bucket(bucket, 2, KSECCategory.SS)
-    assert len(merged) == 2
-    actual_pairs = {frozenset(g.skill_names) for g in merged}
-    assert actual_pairs == {frozenset({"a", "b"}), frozenset({"c", "d"})}
+    state = await nc.run(
+        {
+            "program_id": "cs-test",
+            "classified_evidence": evidence,
+            "extracted_skills": [s.model_dump(mode="json") for s in many_skills],
+        }
+    )
+
+    assert len(state["needs"]) == 15

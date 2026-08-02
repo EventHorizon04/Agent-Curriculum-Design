@@ -13,7 +13,7 @@ This agent is responsible for everything up to and including PLO. YLO/CLO requir
 
 ## Hierarchy of learning outcomes (context)
 
-- **PLO (Program Learning Outcome)** — what every graduate can do at graduation. 6–10 statements (per project policy — see SKILL.md). Covers both subject-specific and generic competencies.
+- **PLO (Program Learning Outcome)** — what every graduate can do at graduation. At least 6 statements, no upper cap (per project policy — see SKILL.md). Covers both subject-specific and generic competencies.
 - **YLO (Year Learning Outcome)** — end of each academic year. PLO = Σ YLO over years. *Out of agent scope.*
 - **CLO (Course Learning Outcome)** — end of a specific course. *Out of agent scope.*
 - **LLO (Lesson Learning Outcome)** — single-class-session level. *Out of agent scope.*
@@ -185,7 +185,7 @@ Before marking a PLO set final (hand-off to faculty for YLO/BCD work), verify:
 
 1. PLOs trace back to stakeholder needs (evidence trail intact — every PLO has non-empty `source_need_ids`)
 2. Each PLO passes the full SMART validation checklist above (no outstanding hard-fails; soft-flags reviewed by the designer)
-3. 6–10 PLOs, mix of subject-specific and generic
+3. At least 6 PLOs (no upper cap), mix of subject-specific and generic
 4. PLOs align with the program's stated objectives and the university/faculty vision
 5. PLOs differentiate this program from peer programs in the same field
 6. No forbidden words; one action verb per statement

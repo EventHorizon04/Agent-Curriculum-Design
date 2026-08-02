@@ -40,28 +40,3 @@ def build_merge_clusters_prompt(cluster_labels: list[str]) -> list[dict[str, str
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-
-
-def build_merge_to_target_prompt(
-    cluster_labels: list[str], target_count: int
-) -> list[dict[str, str]]:
-    """Merge semantically-close groups until exactly `target_count` remain."""
-    system = (
-        "คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ทักษะแรงงาน\n"
-        "รายการต่อไปนี้คือชื่อกลุ่มทักษะภายในหมวดสมรรถนะเดียวกัน "
-        f"จงรวมกลุ่มที่มีความหมายใกล้เคียงกันเข้าด้วยกัน ให้เหลือ {target_count} กลุ่มพอดี\n\n"
-        "กติกา:\n"
-        f"- ผลลัพธ์ต้องมี {target_count} group พอดี ไม่มากไม่น้อยกว่านี้\n"
-        "- ทุก index ต้องปรากฏใน groups ครั้งเดียวเท่านั้น ห้ามตกหล่น ห้ามซ้ำ\n"
-        "- ห้ามใช้ index ที่ไม่มีในรายการ\n"
-        "- เลือกรวมกลุ่มที่ทำงานลักษณะเดียวกันหรือใช้ทักษะร่วมกันก่อน "
-        "ห้ามรวมกลุ่มที่ไม่เกี่ยวข้องกันเพียงเพื่อให้ครบจำนวน\n\n"
-        "ตอบเป็น JSON object:\n"
-        "{ groups: [ [index ของกลุ่มที่ควรรวมเข้าด้วยกัน] ] }"
-    )
-    numbered = "\n".join(f"{i}: {label}" for i, label in enumerate(cluster_labels))
-    user = f"รายการกลุ่มทักษะ (index: ชื่อกลุ่ม):\n{numbered}"
-    return [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user},
-    ]
