@@ -4,10 +4,10 @@ from curriculum_agent.prompts.designer_note import NOTE_POLICY_TH, append_note
 
 _KSEC_LABEL_TH = {
     "K": "ความรู้",
-    "GS": "ทักษะทั่วไป",
-    "SS": "ทักษะเฉพาะสาขา",
-    "C": "คุณลักษณะบุคคล",
+    "S": "ทักษะ",
+    "EC": "คุณธรรมจริยธรรมและคุณลักษณะบุคคล",
     "E": "คุณธรรมจริยธรรม",
+    "C": "คุณลักษณะบุคคล",
 }
 
 

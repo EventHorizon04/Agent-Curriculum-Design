@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -17,13 +16,19 @@ from curriculum_agent.models import (
     StakeholderType,
 )
 from curriculum_agent.prompts.summarize_need import build_summarize_need_prompt
-from curriculum_agent.stages.demand import WEIGHTED_CLASSES, compute_demand_score
+from curriculum_agent.stages.demand import (
+    classification_coverage,
+    compute_demand_score,
+    is_optional_group,
+    total_evidence_weight,
+)
 from curriculum_agent.stages.llm_clustering import cluster_skill_names, validate_assignments
 from curriculum_agent.stages.need_grouping import (
     MIN_NEEDS,
     bucket_by_ksec,
     dedupe_with_bloom_max,
     merge_bloom,
+    resolve_need_ksec,
 )
 
 
@@ -44,30 +49,20 @@ class _Group(BaseModel):
     is_optional: bool
     classification_coverage: dict[str, int]
     stakeholder_coverage: dict[str, int]
-
-
-def _stakeholder_coverage(
-    evidence_ids: list[str], classified: list[dict[str, Any]]
-) -> dict[str, int]:
-    coverage: dict[str, int] = {}
-    wanted = set(evidence_ids)
-    for item in classified:
-        if item.get("evidence_id") in wanted:
-            stype = str(item.get("stakeholder_type", "employer"))
-            coverage[stype] = coverage.get(stype, 0) + 1
-    return coverage
+    stakeholder_types: list[StakeholderType]
 
 
 async def _build_groups(
     skills: list[ExtractedSkill],
-    classified: list[dict[str, Any]],
-    classification_by_evidence: dict[str, str],
-    total_req_need: int,
+    stakeholder_type_by_evidence: dict[str, str],
 ) -> list[_Group]:
     """Cluster within each KSEC bucket and score every resulting group.
 
-    Bucketing before clustering is what guarantees a group never mixes tags.
+    Bucketing before clustering is what guarantees a group never mixes tags; E and
+    C share the EC bucket, and resolve_need_ksec hands back E or C when a group
+    turns out to be purely one of them.
     """
+    total_weight = total_evidence_weight(stakeholder_type_by_evidence)
     groups: list[_Group] = []
     for ksec, bucket in bucket_by_ksec(skills).items():
         names, index_groups, bloom_by_name = dedupe_with_bloom_max(bucket)
@@ -81,21 +76,28 @@ async def _build_groups(
             member_positions = sorted({p for ni in name_indices for p in index_groups[ni]})
             members = [bucket[p] for p in member_positions]
             evidence_ids = sorted({m.source_evidence_id for m in members})
-            stk_coverage = _stakeholder_coverage(evidence_ids, classified)
-            demand, is_optional, cls_coverage = compute_demand_score(
-                evidence_ids, stk_coverage, total_req_need, classification_by_evidence
-            )
+            cls_coverage = classification_coverage([m.classification for m in members])
+            stk_coverage: dict[str, int] = {}
+            for m in members:
+                key = m.source_stakeholder_type.value
+                stk_coverage[key] = stk_coverage.get(key, 0) + 1
+            # Enum declaration order puts external groups before internal ones,
+            # which is the order the report shows them in.
+            present = {m.source_stakeholder_type for m in members}
             groups.append(
                 _Group(
-                    ksec=ksec,
+                    ksec=resolve_need_ksec(members),
                     skill_ids=[m.skill_id for m in members],
                     evidence_ids=evidence_ids,
                     skill_names=[names[ni] for ni in name_indices],
                     bloom_level=merge_bloom([bloom_by_name[names[ni]] for ni in name_indices]),
-                    demand_score=demand,
-                    is_optional=is_optional,
+                    demand_score=compute_demand_score(
+                        evidence_ids, stakeholder_type_by_evidence, total_weight
+                    ),
+                    is_optional=is_optional_group(cls_coverage),
                     classification_coverage=cls_coverage,
                     stakeholder_coverage=stk_coverage,
+                    stakeholder_types=[t for t in StakeholderType if t in present],
                 )
             )
     return groups
@@ -120,14 +122,13 @@ async def run(state: AgentState) -> AgentState:
         state["current_stage"] = "need_combination"
         return state
 
-    classification_by_evidence = {
-        str(d["evidence_id"]): str(d.get("classification", "unclassified"))
+    stakeholder_type_by_evidence = {
+        str(d["evidence_id"]): str(d.get("stakeholder_type", "employer"))
         for d in classified
         if d.get("evidence_id")
     }
-    total_req_need = sum(1 for c in classification_by_evidence.values() if c in WEIGHTED_CLASSES)
 
-    groups = await _build_groups(skills, classified, classification_by_evidence, total_req_need)
+    groups = await _build_groups(skills, stakeholder_type_by_evidence)
 
     evidence_text_by_id = {
         str(d["evidence_id"]): str(d.get("raw_text_th", ""))
@@ -164,6 +165,7 @@ async def run(state: AgentState) -> AgentState:
                     for k, v in group.stakeholder_coverage.items()
                     if k in StakeholderType._value2member_map_
                 },
+                source_stakeholder_types=group.stakeholder_types,
                 freq=len(group.skill_ids),
                 demand_score=group.demand_score,
                 is_optional=group.is_optional,
