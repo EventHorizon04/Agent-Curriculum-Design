@@ -34,7 +34,7 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
     async def _generate() -> AsyncGenerator[str, None]:
         repo = EvidenceRepository()
         items = await repo.list_by_program(program_id)
-        to_classify = [e for e in items if e.classification == "unclassified"]
+        to_classify = items
         total = len(to_classify)
 
         yield f"data: {json.dumps({'status': 'started', 'total': total})}\n\n"

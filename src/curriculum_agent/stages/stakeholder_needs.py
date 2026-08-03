@@ -22,26 +22,35 @@ def classify_evidence_type(stakeholder_type: StakeholderType) -> EvidenceClassif
     return "requirement" if stakeholder_type in REQUIREMENT_TYPES else "general"
 
 
+async def classify_single(evidence: StakeholderEvidence) -> StakeholderEvidence:
+    """Classify one evidence item. Used by the stage and the SSE endpoint.
+
+    Async only to keep the endpoint's call site unchanged — there is no I/O left
+    to await now that the classification is a lookup.
+    """
+    return evidence.model_copy(
+        update={"classification": classify_evidence_type(evidence.stakeholder_type)}
+    )
+
+
 async def run(state: AgentState) -> AgentState:
-    """Stage 1: classify unclassified evidence, persist to Postgres."""
+    """Stage 1: derive every evidence item's class from its stakeholder type.
+
+    Every item is reclassified on every run, not just the previously unclassified
+    ones: the class is now derived from the type, so a stored value that disagrees
+    is stale data to correct rather than a human judgement to preserve.
+    """
     raw = state.get("raw_evidence", [])
-    all_items = [StakeholderEvidence.model_validate(d) for d in raw]
+    items = [StakeholderEvidence.model_validate(d) for d in raw]
+    logger.info(f"Stage 1: classifying {len(items)} evidence items")
 
-    to_classify = [e for e in all_items if e.classification == "unclassified"]
-    already_done = [e for e in all_items if e.classification != "unclassified"]
-    logger.info(f"Stage 1: {len(to_classify)} to classify, {len(already_done)} already classified")
+    classified = [await classify_single(e) for e in items]
+    requirements = sum(1 for e in classified if e.classification == "requirement")
+    logger.info(f"Stage 1: {requirements} requirement, {len(classified) - requirements} general")
 
-    newly_classified: list[StakeholderEvidence] = []
-    for evidence in to_classify:
-        updated = await classify_single(evidence)
-        newly_classified.append(updated)
-        logger.debug(f"  {updated.evidence_id}: {updated.source_name} → {updated.classification}")
+    if classified:
+        await EvidenceRepository().bulk_insert(classified)
 
-    if newly_classified:
-        repo = EvidenceRepository()
-        await repo.bulk_insert(newly_classified)
-
-    all_classified = already_done + newly_classified
-    state["classified_evidence"] = [e.model_dump(mode="json") for e in all_classified]
+    state["classified_evidence"] = [e.model_dump(mode="json") for e in classified]
     state["current_stage"] = "stakeholder_needs"
     return state
