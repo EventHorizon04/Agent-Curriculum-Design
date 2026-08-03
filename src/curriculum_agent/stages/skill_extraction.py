@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 import uuid
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError, field_validator
@@ -14,6 +14,7 @@ from curriculum_agent.data.repositories import LLMCacheRepository, SkillReposito
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
+    SKILL_KSEC,
     BloomLevel,
     ExtractedSkill,
     KSECCategory,
@@ -79,6 +80,19 @@ class _SkillItem(BaseModel):
 
 class _ExtractedSkillsResponse(BaseModel):
     skills: list[_SkillItem]
+
+
+# `_SkillItem.ksec_category` is the actual enforcement of the SKILL_KSEC
+# invariant documented in models.py (a skill carries K/S/E/C, never the
+# Need-level EC) — this asserts the two cannot silently drift apart, the same
+# guard shape `prompts/summarize_need.py` uses for `_KSEC_LABEL_TH`.
+_skill_ksec_literal = set(get_args(_SkillItem.model_fields["ksec_category"].annotation))
+_expected_skill_ksec = {c.value for c in SKILL_KSEC}
+if _skill_ksec_literal != _expected_skill_ksec:
+    raise AssertionError(
+        f"_SkillItem.ksec_category {sorted(_skill_ksec_literal)} has drifted from "
+        f"models.SKILL_KSEC {sorted(_expected_skill_ksec)}"
+    )
 
 
 def _extraction_contract_fingerprint() -> str:

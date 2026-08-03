@@ -48,7 +48,7 @@ class _Group(BaseModel):
     demand_score: float
     is_optional: bool
     classification_coverage: dict[str, int]
-    stakeholder_coverage: dict[str, int]
+    stakeholder_coverage: dict[StakeholderType, int]
     stakeholder_types: list[StakeholderType]
 
 
@@ -77,9 +77,9 @@ async def _build_groups(
             members = [bucket[p] for p in member_positions]
             evidence_ids = sorted({m.source_evidence_id for m in members})
             cls_coverage = classification_coverage([m.classification for m in members])
-            stk_coverage: dict[str, int] = {}
+            stk_coverage: dict[StakeholderType, int] = {}
             for m in members:
-                key = m.source_stakeholder_type.value
+                key = m.source_stakeholder_type
                 stk_coverage[key] = stk_coverage.get(key, 0) + 1
             # Enum declaration order puts external groups before internal ones,
             # which is the order the report shows them in.
@@ -160,11 +160,7 @@ async def run(state: AgentState) -> AgentState:
                 bloom_level=group.bloom_level,
                 member_skill_ids=group.skill_ids,
                 source_evidence_ids=group.evidence_ids,
-                stakeholder_coverage={
-                    StakeholderType(k): v
-                    for k, v in group.stakeholder_coverage.items()
-                    if k in StakeholderType._value2member_map_
-                },
+                stakeholder_coverage=group.stakeholder_coverage,
                 source_stakeholder_types=group.stakeholder_types,
                 freq=len(group.skill_ids),
                 demand_score=group.demand_score,

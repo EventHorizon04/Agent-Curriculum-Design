@@ -87,7 +87,6 @@ def test_plo_new_field_defaults() -> None:
         program_id="p1",
         statement_th="วิเคราะห์ข้อมูลด้วยเทคนิคทางสถิติได้",
         bloom_level=BloomLevel.ANALYZE,
-        is_subject_specific=True,
         action_verb_th="วิเคราะห์",
         smart_check=SMARTCheck(
             specific=True, measurable=True, achievable=True, relevant=True, timely=True
@@ -108,7 +107,6 @@ def test_escalated_plo_may_carry_forbidden_word() -> None:
         program_id="p1",
         statement_th="เข้าใจหลักการวิเคราะห์ข้อมูล",  # forbidden word, but escalated
         bloom_level=BloomLevel.ANALYZE,
-        is_subject_specific=True,
         action_verb_th="วิเคราะห์",
         smart_check=SMARTCheck(
             specific=True, measurable=False, achievable=True, relevant=True, timely=True
@@ -128,7 +126,6 @@ def test_escalated_plo_still_requires_evidence() -> None:
             program_id="p1",
             statement_th="เข้าใจหลักการวิเคราะห์ข้อมูล",
             bloom_level=BloomLevel.ANALYZE,
-            is_subject_specific=True,
             action_verb_th="วิเคราะห์",
             smart_check=SMARTCheck(
                 specific=True, measurable=False, achievable=True, relevant=True, timely=True

@@ -4,6 +4,17 @@ Revision ID: b7c4e1a9f052
 Revises: 8b207d0426c3
 Create Date: 2026-08-02 00:00:00.000000
 
+Note on needs.classification_coverage (deliberately not touched here):
+    Before this migration, classification_coverage counted evidence items by
+    the old evidence-level vocabulary (need/want/unclassified per evidence
+    item). After it, need_combination counts member *skills* by the new
+    SkillClassification vocabulary (requirement/need/want/unclassified). This
+    migration does not backfill existing rows to the new vocabulary — there is
+    no failure mode, since the column is typed dict[str, int] on both sides
+    and need_combination overwrites every row wholesale on its next run (see
+    need_combination.delete_by_program). A pre-existing row's counts are simply
+    not comparable to a post-migration row's counts until that program is
+    re-run; a future reader should not assume they are.
 """
 from __future__ import annotations
 
