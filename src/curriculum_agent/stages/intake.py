@@ -11,9 +11,48 @@ from curriculum_agent.models import (
     IscedSuggestion,
     MetadataExtractionResult,
     ProgramMetadata,
+    StakeholderEvidence,
+    StakeholderType,
 )
 from curriculum_agent.prompts.extract_metadata import build_extract_metadata_prompt
 from curriculum_agent.prompts.suggest_isced import build_suggest_isced_prompt
+
+# (attribute on ProgramMetadata, evidence-id suffix, Thai source_name).
+# The suffix makes the id deterministic, which is what lets a second intake run
+# upsert over the first instead of accumulating a duplicate set.
+INSTITUTIONAL_FIELDS: tuple[tuple[str, str, str], ...] = (
+    ("vision_th", "vision", "วิสัยทัศน์"),
+    ("mission_th", "mission", "พันธกิจ"),
+    ("philosophy_th", "philosophy", "ปรัชญาหลักสูตร"),
+    ("institutional_identity_th", "identity", "อัตลักษณ์สถาบัน"),
+    ("student_identity_th", "studentidentity", "อัตลักษณ์บัณฑิต"),
+)
+
+
+def build_institutional_evidence(metadata: ProgramMetadata) -> list[StakeholderEvidence]:
+    """Turn the program's own direction statements into requirement evidence.
+
+    These are mandatory inputs to a Thai program's PLOs, but until now they were
+    prompt context only — so a PLO that exists because the faculty's vision demands
+    it had no evidence to point at, and "every PLO traces to evidence" was quietly
+    false for that case.
+    """
+    items: list[StakeholderEvidence] = []
+    for attr, suffix, source_name in INSTITUTIONAL_FIELDS:
+        value = getattr(metadata, attr, None)
+        if not value or not value.strip():
+            continue
+        items.append(
+            StakeholderEvidence(
+                evidence_id=f"{metadata.program_id}-{suffix}",
+                program_id=metadata.program_id,
+                stakeholder_type=StakeholderType.INSTITUTIONAL_DIRECTION,
+                source_name=source_name,
+                raw_text_th=value.strip(),
+                classification="requirement",
+            )
+        )
+    return items
 
 
 async def run(state: AgentState) -> AgentState:
@@ -28,6 +67,12 @@ async def run(state: AgentState) -> AgentState:
     await program_repo.upsert(metadata)
 
     evidence_repo = EvidenceRepository()
+
+    institutional = build_institutional_evidence(metadata)
+    if institutional:
+        await evidence_repo.bulk_insert(institutional)
+        logger.info(f"Intake: wrote {len(institutional)} institutional-direction evidence items")
+
     evidence_items = await evidence_repo.list_by_program(metadata.program_id)
     logger.info(f"Intake: loaded {len(evidence_items)} evidence items for classification")
 

@@ -68,6 +68,10 @@ async def test_full_graph_runs_and_stops_at_interrupt(
             new=AsyncMock(return_value=evidence_models),
         ),
         patch(
+            "curriculum_agent.stages.intake.EvidenceRepository.bulk_insert",
+            new_callable=AsyncMock,
+        ),
+        patch(
             "curriculum_agent.stages.stakeholder_needs.complete_light",
             new_callable=AsyncMock,
             return_value=_EVIDENCE_CLASSIFY,
