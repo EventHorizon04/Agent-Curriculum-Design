@@ -239,3 +239,39 @@ def test_delete_program_requires_api_key_when_configured(monkeypatch) -> None:
     resp = client.delete("/programs/computer-science")
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.json()}"
     assert resp.json()["detail"] == "API key ไม่ถูกต้องหรือไม่ได้ระบุ"
+
+
+def test_suggest_isced_route_is_gone() -> None:
+    resp = client.post(
+        "/programs/suggest-isced",
+        json={
+            "name_th": "วิทยาการคอมพิวเตอร์",
+            "name_en": "Computer Science",
+            "field": "CS",
+        },
+    )
+    # The dynamic GET/DELETE "/{program_id}" routes still match this path
+    # structurally, so Starlette answers "method not allowed" (405) rather than
+    # "not found" (404) once the POST route itself is gone.
+    assert resp.status_code == 405
+
+
+def test_extract_metadata_route_is_gone() -> None:
+    resp = client.post("/programs/extract-metadata", files={"file": ("a.pdf", b"x")})
+    assert resp.status_code == 405
+
+
+def test_intake_stage_exports_only_run() -> None:
+    """The stage kept helpers for two features that no longer exist, plus a
+    conversion whose source fields are gone."""
+    from curriculum_agent.stages import intake
+
+    for name in (
+        "suggest_isced",
+        "extract_metadata_from_text",
+        "build_institutional_evidence",
+        "INSTITUTIONAL_FIELDS",
+        "grounding_ratio",
+        "low_grounding_fields",
+    ):
+        assert not hasattr(intake, name), f"{name} should have been deleted"

@@ -1,31 +1,17 @@
 from __future__ import annotations
 
-import asyncio
-import os
 import re
-import tempfile
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
-from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 
-from curriculum_agent.api.deps import enforce_llm_rate_limit, require_api_key
+from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import ProgramRepository
-from curriculum_agent.models import (
-    IscedSuggestion,
-    MetadataExtractionResult,
-    ProgramCreateRequest,
-    ProgramMetadata,
-    ProgramSummary,
-)
-from curriculum_agent.stages.intake import extract_metadata_from_text, suggest_isced
+from curriculum_agent.models import ProgramCreateRequest, ProgramMetadata, ProgramSummary
 
 router = APIRouter()
 
-_ALLOWED_EXTENSIONS = {".pdf", ".docx", ".doc", ".txt"}
-_MAX_FILE_BYTES = 10 * 1024 * 1024
-_MIN_TEXT_CHARS = 50
 _MAX_ID_ATTEMPTS = 5
 
 
@@ -70,85 +56,6 @@ async def create_program(req: ProgramCreateRequest, request: Request) -> Program
         config={"configurable": {"thread_id": metadata.program_id}},
     )
     return metadata
-
-
-@router.post(
-    "/extract-metadata",
-    response_model=MetadataExtractionResult,
-    dependencies=[Depends(require_api_key), Depends(enforce_llm_rate_limit)],
-)
-async def extract_metadata(file: UploadFile) -> MetadataExtractionResult:
-    """Parse an uploaded university document and LLM-extract intake prefill fields.
-
-    Stateless: the file is parsed in a temp location and discarded — nothing
-    is persisted. Runs before any program exists, so no program_id involved.
-    """
-    suffix = os.path.splitext(file.filename or "")[1].lower()
-    if suffix not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=422, detail="รองรับเฉพาะไฟล์ PDF, DOCX, TXT")
-
-    # Reject oversize uploads BEFORE buffering the body into memory, using the
-    # size Starlette's multipart parser already tracked. Belt-and-braces: still
-    # re-check len(content) below in case `file.size` is absent.
-    if file.size and file.size > _MAX_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="ไฟล์ต้องไม่เกิน 10 MB")
-
-    content = await file.read()
-    if len(content) > _MAX_FILE_BYTES:
-        raise HTTPException(status_code=413, detail="ไฟล์ต้องไม่เกิน 10 MB")
-
-    # Lazy import: unstructured is heavy and only needed on this endpoint —
-    # keep it out of API startup and test collection.
-    from curriculum_agent.parsers.tika_parser import parse_file
-
-    tmp_path = ""
-    try:
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp.write(content)
-            tmp_path = tmp.name
-        try:
-            text = await asyncio.to_thread(parse_file, tmp_path)
-        except Exception as exc:
-            logger.warning(f"Document parse failed ({file.filename}): {exc}")
-            raise HTTPException(status_code=422, detail="อ่านเนื้อหาจากไฟล์ไม่ได้") from exc
-        if len(text.strip()) < _MIN_TEXT_CHARS:
-            raise HTTPException(status_code=422, detail="อ่านเนื้อหาจากไฟล์ไม่ได้")
-        try:
-            return await extract_metadata_from_text(text)
-        except Exception as exc:
-            logger.error(f"Metadata extraction failed: {exc}")
-            raise HTTPException(
-                status_code=502, detail="สกัดข้อมูลไม่สำเร็จ กรุณาลองใหม่หรือกรอกเอง"
-            ) from exc
-    finally:
-        if tmp_path:
-            try:
-                os.unlink(tmp_path)
-            except OSError as exc:
-                logger.warning(f"Temp file cleanup failed ({tmp_path}): {exc}")
-
-
-class SuggestIscedRequest(BaseModel):
-    name_th: str = Field(min_length=1)
-    name_en: str = Field(min_length=1)
-    field: str = Field(min_length=1)
-
-
-@router.post(
-    "/suggest-isced",
-    response_model=IscedSuggestion,
-    dependencies=[Depends(require_api_key), Depends(enforce_llm_rate_limit)],
-)
-async def suggest_isced_route(req: SuggestIscedRequest) -> IscedSuggestion:
-    """Classify into ISCED-F 2013 + suggest standard program names.
-
-    Stateless: no program_id involved, nothing persisted.
-    """
-    try:
-        return await suggest_isced(req.name_th, req.name_en, req.field)
-    except Exception as exc:
-        logger.error(f"ISCED suggestion failed: {exc}")
-        raise HTTPException(status_code=502, detail="จำแนก ISCED ไม่สำเร็จ กรุณาลองใหม่") from exc
 
 
 @router.get("/", response_model=list[ProgramSummary])
