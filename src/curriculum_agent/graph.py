@@ -124,7 +124,7 @@ def review_plos(state: AgentState) -> AgentState:
 
 
 def review_plo_report(state: AgentState) -> AgentState:
-    payload = interrupt("Stage 5 complete — review/edit PLO generic-specific classification")
+    payload = interrupt("Stage 5 complete — review the assembled PLO report before export")
     if isinstance(payload, dict):
         return {**state, **payload}
     return state

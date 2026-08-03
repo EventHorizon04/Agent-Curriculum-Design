@@ -117,12 +117,26 @@ async def test_trace_returns_404_for_unknown_need(
 async def test_run_rejects_program_without_evidence(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
         needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[])
     )
     response = await client.post("/programs/cs-test/needs/run")
     assert response.status_code == 422
     assert "evidence" in response.json()["detail"]
+
+
+async def test_run_returns_404_for_missing_program(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Mirrors plos.py's run_plo_synthesis: a missing program is a 404 looked up
+    before anything else, not a 422 blaming the evidence."""
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
+    )
+    response = await client.post("/programs/unknown-program/needs/run")
+    assert response.status_code == 404
 
 
 async def test_from_needs_rejects_fewer_than_two_needs(
@@ -239,6 +253,7 @@ async def test_needs_run_carries_the_note_into_the_stage_state(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     seen: dict[str, object] = {}
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
         needs_route.EvidenceRepository,
         "list_by_program",
@@ -257,6 +272,7 @@ async def test_needs_run_still_works_with_no_body_at_all(
 ):
     """The live frontend posts no body. That must keep working."""
     seen: dict[str, object] = {}
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
         needs_route.EvidenceRepository,
         "list_by_program",
@@ -282,6 +298,63 @@ async def test_needs_run_rejects_an_over_length_note(
         "/programs/cs-test/needs/run", json={"note_th": "ก" * (NOTE_MAX_CHARS + 1)}
     )
     assert response.status_code == 422
+
+
+async def test_needs_run_passes_program_field_into_extraction_prompt(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Pins the Important-1 fix: run_need_pipeline must load the program and put
+    its metadata into the pipeline state, or skill_extraction.run falls back to
+    `metadata = state.get("metadata") or {}` and field_th resolves to "" for
+    every program on this route — silently starving the is_field_relevant
+    judgment of the one fact it needs.
+
+    Asserting only that the state dict carries a "metadata" key would not catch
+    that regression (a state with metadata={} still has the key); this asserts
+    on the actual prompt messages built for the model, which is where the
+    finding says the value must land.
+    """
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_evidence()]),
+    )
+
+    captured: dict[str, object] = {}
+
+    async def fake_complete_light(response_model, messages, **kwargs):
+        captured["messages"] = messages
+        return skill_extraction._ExtractedSkillsResponse(
+            skills=[
+                skill_extraction._SkillItem(
+                    skill_name_th="วิเคราะห์ข้อมูลขนาดใหญ่",
+                    ksec_category="S",
+                    bloom_level="analyze",
+                    evidence_span_th=_evidence().raw_text_th,
+                    confidence=0.9,
+                )
+            ]
+        )
+
+    fake_cache = AsyncMock()
+    fake_cache.get = AsyncMock(return_value=None)
+    fake_cache.set = AsyncMock()
+
+    async def fake_needs(state):
+        return {**state, "needs": [], "dropped_ungrounded_count": 0}
+
+    with (
+        patch.object(skill_extraction, "LLMCacheRepository", return_value=fake_cache),
+        patch.object(skill_extraction, "complete_light", side_effect=fake_complete_light),
+        patch.object(skill_extraction, "SkillRepository", return_value=AsyncMock()),
+        patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
+    ):
+        response = await client.post("/programs/cs-test/needs/run")
+
+    assert response.status_code == 200, response.text
+    user_message = captured["messages"][1]["content"]
+    assert _program().field in user_message
 
 
 async def test_plos_run_carries_the_note_into_the_stage_state(

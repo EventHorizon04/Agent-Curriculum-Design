@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
+    ProgramRepository,
     SkillRepository,
 )
 from curriculum_agent.graph import AgentState
@@ -78,6 +79,10 @@ async def run_need_pipeline(
     from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
     from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
 
+    metadata = await ProgramRepository().get(program_id)
+    if metadata is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+
     evidence_items = await EvidenceRepository().list_by_program(program_id)
     if not evidence_items:
         raise HTTPException(
@@ -87,6 +92,7 @@ async def run_need_pipeline(
 
     state: AgentState = {
         "program_id": program_id,
+        "metadata": metadata.model_dump(mode="json"),
         "classified_evidence": [e.model_dump(mode="json") for e in evidence_items],
     }
     # Set only when there is a note: AgentState is total=False, so an absent key
