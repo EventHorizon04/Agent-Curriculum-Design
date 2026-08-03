@@ -8,7 +8,7 @@ from curriculum_agent.graph import AgentState, review_stakeholder_needs
 
 def test_review_merges_designer_edits() -> None:
     """interrupt() payload must be merged into state, not discarded."""
-    edited_evidence = [{"evidence_id": "E1", "classification": "need"}]
+    edited_evidence = [{"evidence_id": "E1", "classification": "general"}]
     initial_state: AgentState = {
         "program_id": "test",
         "classified_evidence": [{"evidence_id": "E1", "classification": "unclassified"}],
@@ -26,7 +26,7 @@ def test_review_returns_state_unchanged_when_no_payload() -> None:
     """If interrupt() returns non-dict (e.g. None), state must be returned as-is."""
     initial_state: AgentState = {
         "program_id": "test",
-        "classified_evidence": [{"evidence_id": "E1", "classification": "need"}],
+        "classified_evidence": [{"evidence_id": "E1", "classification": "general"}],
     }
 
     with patch("curriculum_agent.graph.interrupt", return_value=None):

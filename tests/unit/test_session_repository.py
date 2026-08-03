@@ -23,10 +23,15 @@ def session_info() -> SessionInfo:
     )
 
 
-@pytest.mark.asyncio
 async def test_create_returns_session_info(session_info):
     repo = SessionRepository()
     mock_session = AsyncMock()
+    # SessionRepository.create calls db.add(...) synchronously; on a bare
+    # AsyncMock that call itself returns an unawaited coroutine object
+    # (a real RuntimeWarning at test teardown), even though nothing here
+    # awaits it. Pin add() to a plain MagicMock so the mock's shape matches
+    # the real sync Session.add.
+    mock_session.add = MagicMock()
     mock_ctx = MagicMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -39,7 +44,6 @@ async def test_create_returns_session_info(session_info):
     mock_session.commit.assert_awaited_once()
 
 
-@pytest.mark.asyncio
 async def test_set_status_calls_update():
     repo = SessionRepository()
     mock_session = AsyncMock()
@@ -56,7 +60,6 @@ async def test_set_status_calls_update():
     mock_session.commit.assert_awaited_once()
 
 
-@pytest.mark.asyncio
 async def test_set_suspended_sets_stage_and_message():
     repo = SessionRepository()
     mock_session = AsyncMock()

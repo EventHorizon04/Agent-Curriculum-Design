@@ -31,10 +31,8 @@ def _draft(nid: str) -> ps._PLODraft:
         plo_id=f"PLO-{nid}",
         statement_th=f"วิเคราะห์งาน {nid} เพื่อเสนอแนวทางแก้ปัญหาได้",
         bloom_level=BloomLevel.ANALYZE,
-        is_subject_specific=True,
         action_verb_th="วิเคราะห์",
         source_need_ids=[nid],
-        source_evidence_ids=[f"E-{nid}"],
         rationale_th="ตรงกับความต้องการของตลาด",
     )
 

@@ -24,7 +24,6 @@ def _draft_for(need: Need) -> _PLODraft:
         plo_id=f"PLO-{need.need_id}",
         statement_th=f"ออกแบบและพัฒนาระบบสารสนเทศสำหรับงาน {need.need_id} ได้อย่างมีประสิทธิภาพ",
         bloom_level=BloomLevel.CREATE,
-        is_subject_specific=True,
         action_verb_th="ออกแบบ",
         source_need_ids=[need.need_id],
         rationale_th=f"ทักษะที่นายจ้างต้องการลำดับที่ {need.need_id}",

@@ -23,6 +23,19 @@ class PLOTrace(BaseModel):
     evidence: list[StakeholderEvidence]
 
 
+class PLOReportResponse(BaseModel):
+    """The assembled checkpoint payload from plo_report.run's `state["report"]`.
+
+    A typed model rather than `list[PLO]` so `counts` and `needs_by_id` — the
+    two fields plo_report.py assembles for the drill-down view — actually leave
+    the graph through the route, instead of being computed and then discarded.
+    """
+
+    plos: list[PLO]
+    counts: dict[str, int]
+    needs_by_id: dict[str, Need]
+
+
 @router.get("/", response_model=list[PLO])
 async def list_plos(program_id: str) -> list[PLO]:
     return await _repo.list_by_program(program_id)
@@ -75,8 +88,8 @@ async def run_plo_synthesis(program_id: str, body: DesignerNoteRequest | None = 
     return [PLO.model_validate(p) for p in result_state.get("plos", [])]
 
 
-@router.post("/report/run", response_model=list[PLO])
-async def run_plo_report(program_id: str) -> list[PLO]:
+@router.post("/report/run", response_model=PLOReportResponse)
+async def run_plo_report(program_id: str) -> PLOReportResponse:
     from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
 
     plos = await _repo.list_by_program(program_id)
@@ -91,7 +104,12 @@ async def run_plo_report(program_id: str) -> list[PLO]:
         "plos": [p.model_dump(mode="json") for p in plos],
     }
     result_state = await run(state)
-    return [PLO.model_validate(p) for p in result_state.get("plos", [])]
+    report = result_state["report"]
+    return PLOReportResponse(
+        plos=[PLO.model_validate(p) for p in report["plos"]],
+        counts=report["counts"],
+        needs_by_id={k: Need.model_validate(v) for k, v in report["needs_by_id"].items()},
+    )
 
 
 class MergeNeedsRequest(DesignerNoteRequest):

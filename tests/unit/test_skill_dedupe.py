@@ -186,7 +186,7 @@ async def test_need_combination_clears_previous_needs_before_inserting(
         {
             "program_id": "prog-1",
             "classified_evidence": [
-                {"evidence_id": "E1", "classification": "need", "stakeholder_type": "employer"}
+                {"evidence_id": "E1", "classification": "general", "stakeholder_type": "employer"}
             ],
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
         }

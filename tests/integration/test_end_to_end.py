@@ -7,22 +7,16 @@ import pytest
 from curriculum_agent.graph import AgentState, build_graph
 from curriculum_agent.models import (
     ProgramMetadata,
-    SMARTCheck,
     StakeholderEvidence,
     StakeholderType,
 )
 
-_SMART_PASS = SMARTCheck(
-    specific=True, measurable=True, achievable=True, relevant=True, timely=True
-)
-
-_SKILL_RESP = type("_ExtractedSkillsResponse", (), {"skills": []})()
-
-# _CLUSTER_RESP and _PLO_DRAFTS used to stand in for the deleted SkillCluster
-# naming/classification step and its downstream PLO drafts. The single test in
-# this file stops at the review_evidence interrupt, before skill extraction,
-# need_combination, or PLO synthesis ever run, so neither constant was ever
-# read — they were deleted rather than reshaped to the Need-based pipeline.
+# _CLUSTER_RESP, _PLO_DRAFTS, _SMART_PASS and _SKILL_RESP used to stand in for
+# the deleted SkillCluster naming/classification step, its downstream PLO
+# drafts, and skill extraction's LLM response. The single test in this file
+# stops at the review_evidence interrupt, before skill extraction,
+# need_combination, or PLO synthesis ever run, so none of these constants was
+# ever read — they were deleted rather than reshaped to the Need-based pipeline.
 #
 # stakeholder_needs.run no longer calls an LLM either: evidence classification
 # is now a pure lookup from stakeholder_type (see classify_evidence_type), so

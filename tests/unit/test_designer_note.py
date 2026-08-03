@@ -174,7 +174,7 @@ async def test_need_combination_forwards_the_note_to_the_summarize_prompt(
             "program_id": "p1",
             "designer_note": NOTE,
             "classified_evidence": [
-                {"evidence_id": "E1", "classification": "need", "stakeholder_type": "employer"}
+                {"evidence_id": "E1", "classification": "general", "stakeholder_type": "employer"}
             ],
             "extracted_skills": [skill.model_dump(mode="json")],
         }

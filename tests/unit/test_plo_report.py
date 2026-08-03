@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -22,7 +22,7 @@ def _need(nid: str, ksec: KSECCategory = KSECCategory.S) -> Need:
     )
 
 
-def _plo(pid: str, need_ids: list[str], *, optional: bool = False) -> PLO:
+def _plo(pid: str, need_ids: list[str], *, optional: bool = False, escalated: bool = False) -> PLO:
     return PLO(
         plo_id=pid,
         program_id="cs-test",
@@ -36,20 +36,32 @@ def _plo(pid: str, need_ids: list[str], *, optional: bool = False) -> PLO:
         source_evidence_ids=[f"E-{n}" for n in need_ids],
         rationale_th="ตรงกับความต้องการของตลาด",
         is_optional=optional,
+        smart_escalated=escalated,
     )
 
 
 async def test_run_assembles_without_calling_an_llm(monkeypatch: pytest.MonkeyPatch):
     """The stage no longer classifies, so it must not reach the network at all."""
     monkeypatch.setattr(pr.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1")]))
-    monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
+    bulk_insert = AsyncMock()
+    monkeypatch.setattr(pr.PLORepository, "bulk_insert", bulk_insert)
 
-    state = await pr.run(
-        {"program_id": "cs-test", "plos": [_plo("PLO1", ["N1"]).model_dump(mode="json")]}
-    )
+    plo_dict = _plo("PLO1", ["N1"]).model_dump(mode="json")
+    state = await pr.run({"program_id": "cs-test", "plos": [plo_dict]})
 
     assert state["report"]["counts"]["total"] == 1
     assert state["report"]["needs_by_id"]["N1"]["ksec_category"] == "S"
+
+    # The stage still persists the (unchanged) PLOs on every run — that write is
+    # what keeps a checkpoint replay idempotent even if the resumed state's PLOs
+    # were never actually committed. Deleting the bulk_insert call or the
+    # state["plos"] assignment below must not leave this test green.
+    bulk_insert.assert_awaited_once()
+    # Identity, not just equality: the input list already equals the
+    # reconstructed one by value (nothing mutates it), so an `==` check would
+    # stay green even if the `state["plos"] = report["plos"]` assignment were
+    # deleted. `is` only holds if that assignment actually ran.
+    assert state["plos"] is state["report"]["plos"]
 
 
 async def test_report_counts_split_core_and_optional(monkeypatch: pytest.MonkeyPatch):
@@ -69,6 +81,47 @@ async def test_report_counts_split_core_and_optional(monkeypatch: pytest.MonkeyP
     )
 
     assert state["report"]["counts"] == {"total": 2, "core": 1, "optional": 1, "escalated": 0}
+
+
+async def test_report_counts_surface_escalated_plos(monkeypatch: pytest.MonkeyPatch):
+    """`escalated` exists to surface repair work at the checkpoint — pin it
+    against a set that actually contains one, not just the all-zero case."""
+    monkeypatch.setattr(
+        pr.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1"), _need("N2")])
+    )
+    monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
+
+    state = await pr.run(
+        {
+            "program_id": "cs-test",
+            "plos": [
+                _plo("PLO1", ["N1"]).model_dump(mode="json"),
+                _plo("PLO2", ["N2"], escalated=True).model_dump(mode="json"),
+            ],
+        }
+    )
+
+    assert state["report"]["counts"] == {"total": 2, "core": 2, "optional": 0, "escalated": 1}
+    # Escalated PLOs must stay visible, never dropped from the assembled set.
+    assert {p["plo_id"] for p in state["report"]["plos"]} == {"PLO1", "PLO2"}
+
+
+async def test_unresolved_need_id_logs_a_warning_naming_the_plo(monkeypatch: pytest.MonkeyPatch):
+    """A PLO citing a Need id the repository doesn't have would otherwise ship
+    an untraceable, silently incomplete drill-down. This is the report stage's
+    replacement for what the old classification path surfaced as
+    method="fallback" — there is no classification step left to carry that
+    signal, so the warning is the whole mechanism now."""
+    monkeypatch.setattr(pr.NeedRepository, "list_by_program", AsyncMock(return_value=[]))
+    monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
+
+    with patch.object(pr, "logger") as mock_logger:
+        await pr.run(
+            {"program_id": "cs-test", "plos": [_plo("PLO1", ["ghost"]).model_dump(mode="json")]}
+        )
+
+    warnings = [call.args[0] for call in mock_logger.warning.call_args_list]
+    assert any("PLO1" in w and "ghost" in w for w in warnings)
 
 
 async def test_run_without_plos_is_an_error(monkeypatch: pytest.MonkeyPatch):

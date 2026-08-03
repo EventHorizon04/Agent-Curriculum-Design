@@ -26,7 +26,6 @@ def make_plo(**overrides) -> dict:
         "program_id": "cs-test",
         "statement_th": "ออกแบบระบบซอฟต์แวร์ขนาดใหญ่ได้",
         "bloom_level": BloomLevel.CREATE,
-        "is_subject_specific": True,
         "action_verb_th": "ออกแบบ",
         "smart_check": SMART_PASS,
         "source_need_ids": ["C1"],

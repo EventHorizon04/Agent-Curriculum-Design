@@ -23,7 +23,6 @@ _METADATA = {
 }
 
 
-@pytest.mark.asyncio
 async def test_run_raises_when_no_needs() -> None:
     """Stage 4 must raise ValueError before hitting LLM when Needs is empty."""
     state: AgentState = {
@@ -35,7 +34,6 @@ async def test_run_raises_when_no_needs() -> None:
         await run(state)
 
 
-@pytest.mark.asyncio
 async def test_run_raises_when_needs_missing() -> None:
     """Stage 4 must raise ValueError when the needs key is missing."""
     state: AgentState = {
