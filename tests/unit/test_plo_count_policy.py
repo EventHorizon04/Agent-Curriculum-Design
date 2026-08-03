@@ -17,7 +17,7 @@ def _need(nid: str) -> Need:
         need_id=nid,
         program_id="cs-test",
         statement_th=f"สามารถทำงาน {nid} ตามที่ตลาดต้องการ",
-        ksec_category=KSECCategory.SS,
+        ksec_category=KSECCategory.S,
         bloom_level=BloomLevel.ANALYZE,
         member_skill_ids=[f"S-{nid}"],
         source_evidence_ids=[f"E-{nid}"],

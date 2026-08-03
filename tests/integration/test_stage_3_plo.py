@@ -38,7 +38,7 @@ def needs() -> list[Need]:
             need_id=f"N{i}",
             program_id="cs-test",
             statement_th=f"สามารถทำงานสารสนเทศลำดับที่ {i} ได้",
-            ksec_category="SS",
+            ksec_category="S",
             bloom_level=BloomLevel.CREATE,
             member_skill_ids=[f"S{i}"],
             source_evidence_ids=[f"E{i}"],

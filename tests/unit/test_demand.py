@@ -78,6 +78,19 @@ def test_empty_program_scores_zero_rather_than_dividing_by_zero():
     assert compute_demand_score(["E1"], {}, 0.0) == 0.0
 
 
+def test_score_is_capped_at_one():
+    """A caller-supplied total_weight smaller than the named subset's own weight
+    must still clamp to 1.0 rather than reporting more than "all of it".
+
+    total_weight is normally the sum over every evidence item in the program, so
+    the named subset can never outweigh it in practice — but nothing stops a
+    caller from passing a stale or mismatched total, and the clamp is what keeps
+    that mistake from producing a demand score above 1.0.
+    """
+    types = {"E1": "employer", "E2": "employer", "E3": "employer"}  # 3 * 0.6 = 1.8 named
+    assert compute_demand_score(["E1", "E2", "E3"], types, 1.0) == 1.0
+
+
 def test_a_want_heavy_group_is_optional():
     assert is_optional_group({"want": 3, "need": 1, "requirement": 1}) is True
 

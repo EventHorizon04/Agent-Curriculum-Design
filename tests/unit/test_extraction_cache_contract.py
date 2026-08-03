@@ -171,7 +171,7 @@ async def test_old_contract_cache_entry_is_re_extracted_not_raised(
             se._SkillItem(
                 skill_name_th="วิเคราะห์ข้อมูลขนาดใหญ่",
                 skill_name_en="Data Analysis",
-                ksec_category="SS",
+                ksec_category="S",
                 bloom_level="analyze",
                 evidence_span_th="วิเคราะห์ข้อมูลขนาดใหญ่เพื่อสนับสนุนการตัดสินใจ",
                 confidence=0.9,

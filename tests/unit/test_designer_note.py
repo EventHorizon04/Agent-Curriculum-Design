@@ -31,7 +31,7 @@ def _need() -> Need:
         need_id="N1",
         program_id="p1",
         statement_th="ตลาดต้องการผู้ที่วิเคราะห์ข้อมูลขนาดใหญ่ได้",
-        ksec_category=KSECCategory.SS,
+        ksec_category=KSECCategory.S,
         bloom_level=BloomLevel.ANALYZE,
         member_skill_ids=["S1"],
         source_evidence_ids=["E1"],
@@ -77,7 +77,7 @@ def test_append_note_adds_a_headed_block_after_the_original_content():
 
 
 def test_need_prompt_puts_the_note_in_the_user_message_only():
-    messages = build_summarize_need_prompt(["วิเคราะห์ข้อมูล"], ["ตัวอย่าง evidence"], "SS", note_th=NOTE)
+    messages = build_summarize_need_prompt(["วิเคราะห์ข้อมูล"], ["ตัวอย่าง evidence"], "S", note_th=NOTE)
     assert NOTE in messages[1]["content"]
     assert NOTE_HEADER_TH in messages[1]["content"]
     # The note is data the model is given, not policy it is bound by.
@@ -85,7 +85,7 @@ def test_need_prompt_puts_the_note_in_the_user_message_only():
 
 
 def test_need_prompt_without_a_note_has_no_guidance_block():
-    messages = build_summarize_need_prompt(["วิเคราะห์ข้อมูล"], ["ตัวอย่าง evidence"], "SS")
+    messages = build_summarize_need_prompt(["วิเคราะห์ข้อมูล"], ["ตัวอย่าง evidence"], "S")
     assert NOTE_HEADER_TH not in messages[1]["content"]
 
 
@@ -97,8 +97,8 @@ def test_need_prompt_system_text_is_identical_with_and_without_a_note():
     llm_clustering._clustering_contract_fingerprint). A system message that
     changed with the input would make such a fingerprint meaningless.
     """
-    with_note = build_summarize_need_prompt(["x"], [], "SS", note_th=NOTE)
-    without = build_summarize_need_prompt(["x"], [], "SS")
+    with_note = build_summarize_need_prompt(["x"], [], "S", note_th=NOTE)
+    without = build_summarize_need_prompt(["x"], [], "S")
     assert NOTE_POLICY_TH in without[0]["content"]
     assert with_note[0]["content"] == without[0]["content"]
 
@@ -160,10 +160,11 @@ async def test_need_combination_forwards_the_note_to_the_summarize_prompt(
         skill_id="S1",
         program_id="p1",
         skill_name_th="วิเคราะห์ข้อมูลขนาดใหญ่",
-        ksec_category=KSECCategory.SS,
+        ksec_category=KSECCategory.S,
         bloom_level=BloomLevel.ANALYZE,
         evidence_span_th="ต้องวิเคราะห์ข้อมูลขนาดใหญ่ได้",
         source_evidence_id="E1",
+        source_stakeholder_type="employer",
         extraction_method="llm",
         confidence=0.9,
         importance_score=0.5,

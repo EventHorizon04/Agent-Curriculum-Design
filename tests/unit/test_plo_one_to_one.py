@@ -8,7 +8,7 @@ from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetad
 from curriculum_agent.stages import plo_synthesis as ps
 
 
-def _need(nid: str, optional: bool = False, ksec_category: KSECCategory = KSECCategory.SS) -> Need:
+def _need(nid: str, optional: bool = False, ksec_category: KSECCategory = KSECCategory.S) -> Need:
     return Need(
         need_id=nid,
         program_id="cs-test",
@@ -222,67 +222,6 @@ async def test_synthesize_returns_none_when_the_model_fails(
 async def test_synthesize_rejects_an_empty_need_list(program_metadata: ProgramMetadata):
     with pytest.raises(ValueError, match="at least one Need"):
         await ps.synthesize_from_needs(program_metadata, [], "cs-test", set(), "PLO1")
-
-
-async def test_mixed_ss_and_gs_needs_yields_subject_specific_plo(
-    program_metadata: ProgramMetadata, monkeypatch: pytest.MonkeyPatch
-):
-    """Ensure the is_subject_specific predicate uses any(), not all().
-
-    When one Need is SS and one is GS, the PLO must stay subject-specific.
-    The draft schema no longer carries is_subject_specific at all, so there is
-    nothing for the model to contradict — the value can only come from the Needs.
-    """
-
-    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SingleDraftResponse(plo=_draft("N1"))
-
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
-    monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
-
-    plo = await ps.synthesize_from_needs(
-        program_metadata,
-        [_need("N1", ksec_category=KSECCategory.SS), _need("N2", ksec_category=KSECCategory.GS)],
-        "cs-test",
-        {"N1", "N2"},
-        "PLO1",
-    )
-
-    assert plo is not None
-    assert plo.is_subject_specific is True
-
-
-async def test_all_generic_needs_yield_non_subject_specific_plo(
-    program_metadata: ProgramMetadata, monkeypatch: pytest.MonkeyPatch
-):
-    """When no Need is subject-specific, the PLO should not be subject-specific."""
-
-    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SingleDraftResponse(plo=_draft("N1"))
-
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
-    monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
-
-    plo = await ps.synthesize_from_needs(
-        program_metadata,
-        [_need("N1", ksec_category=KSECCategory.GS), _need("N2", ksec_category=KSECCategory.GS)],
-        "cs-test",
-        {"N1", "N2"},
-        "PLO1",
-    )
-
-    assert plo is not None
-    assert plo.is_subject_specific is False
 
 
 async def test_run_skips_failed_need_and_emits_rest(

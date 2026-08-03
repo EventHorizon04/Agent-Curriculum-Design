@@ -25,7 +25,7 @@ def _need() -> Need:
         need_id="N1",
         program_id="cs-test",
         statement_th="สามารถวิเคราะห์ข้อมูลขนาดใหญ่เพื่อหา insight ทางธุรกิจ",
-        ksec_category=KSECCategory.SS,
+        ksec_category=KSECCategory.S,
         bloom_level=BloomLevel.ANALYZE,
         member_skill_ids=["S1"],
         source_evidence_ids=["E1"],
@@ -39,10 +39,11 @@ def _skill() -> ExtractedSkill:
         skill_id="S1",
         program_id="cs-test",
         skill_name_th="วิเคราะห์ข้อมูลขนาดใหญ่",
-        ksec_category=KSECCategory.SS,
+        ksec_category=KSECCategory.S,
         bloom_level=BloomLevel.ANALYZE,
         evidence_span_th="ต้องวิเคราะห์ข้อมูลขนาดใหญ่ได้",
         source_evidence_id="E1",
+        source_stakeholder_type="employer",
         extraction_method="llm",
         confidence=0.9,
         importance_score=0.75,
@@ -87,7 +88,7 @@ async def test_list_needs_returns_repository_rows(
     assert response.status_code == 200
     body = response.json()
     assert [n["need_id"] for n in body] == ["N1"]
-    assert body[0]["ksec_category"] == "SS"
+    assert body[0]["ksec_category"] == "S"
 
 
 async def test_list_skills_exposes_span_and_importance(
@@ -184,7 +185,7 @@ def _evidence() -> StakeholderEvidence:
         stakeholder_type="employer",
         source_name="JD",
         raw_text_th="ต้องการผู้ที่วิเคราะห์ข้อมูลขนาดใหญ่ได้",
-        classification="need",
+        classification="general",
     )
 
 
@@ -218,7 +219,7 @@ def _stub_need_stages(seen: dict[str, object]):
             skills=[
                 skill_extraction._SkillItem(
                     skill_name_th="วิเคราะห์ข้อมูลขนาดใหญ่",
-                    ksec_category="SS",
+                    ksec_category="S",
                     bloom_level="analyze",
                     evidence_span_th=_evidence().raw_text_th,
                     confidence=0.9,

@@ -16,13 +16,18 @@ async def test_cache_hit_skips_extraction_llm_call():
     # The contract fingerprint is part of the key on purpose: it is what stops a
     # payload cached under an older response schema from being replayed. Import it
     # rather than restating it, so this test cannot drift from the code again.
+    # field_th/program_name_th are empty strings here because `state` carries no
+    # "metadata" key — see skill_extraction.run's `metadata = state.get("metadata")
+    # or {}` fallback — and both are part of the key alongside the contract
+    # fingerprint (Task 8).
     cache_key = hashlib.sha256(
-        f"{text_slice}\x00need\x00{settings.light_model}\x00{_EXTRACTION_CONTRACT}".encode()
+        f"{text_slice}\x00general\x00{settings.light_model}"
+        f"\x00{_EXTRACTION_CONTRACT}\x00\x00".encode()
     ).hexdigest()
 
     cached_json = (
         '{"skills": [{"skill_name_th": "Python", "skill_name_en": "Python",'
-        ' "ksec_category": "SS", "bloom_level": "apply",'
+        ' "ksec_category": "S", "bloom_level": "apply",'
         ' "evidence_span_th": "ต้องการผู้เชี่ยวชาญด้าน Python", "confidence": 0.9}]}'
     )
 
@@ -33,7 +38,7 @@ async def test_cache_hit_skips_extraction_llm_call():
         "source_name": "Test",
         "raw_text_th": text,
         "collected_at": "2026-01-01T00:00:00",
-        "classification": "need",
+        "classification": "general",
         "metadata": {},
     }
 

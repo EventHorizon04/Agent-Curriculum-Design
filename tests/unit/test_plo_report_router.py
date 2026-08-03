@@ -21,7 +21,6 @@ def _plo(**overrides) -> PLO:
         program_id="p1",
         statement_th="ออกแบบและพัฒนาระบบซอฟต์แวร์",
         bloom_level=BloomLevel.CREATE,
-        is_subject_specific=True,
         action_verb_th="ออกแบบ",
         smart_check=_SMART,
         source_need_ids=["c1"],
@@ -32,24 +31,6 @@ def _plo(**overrides) -> PLO:
     return PLO(**base)
 
 
-def test_report_run_returns_classified_plos():
-    classified = _plo(classification="specific", classification_method="ksec")
-
-    async def fake_run(state):
-        return {"plos": [classified.model_dump(mode="json")]}
-
-    with (
-        patch("curriculum_agent.api.routes.plos._repo") as mock_repo,
-        patch("curriculum_agent.stages.plo_report.run", side_effect=fake_run),
-    ):
-        mock_repo.list_by_program = AsyncMock(return_value=[_plo()])
-        resp = client.post("/programs/p1/plos/report/run")
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body[0]["classification"] == "specific"
-
-
 def test_report_run_422_when_no_plos():
     with patch("curriculum_agent.api.routes.plos._repo") as mock_repo:
         mock_repo.list_by_program = AsyncMock(return_value=[])
@@ -57,27 +38,23 @@ def test_report_run_422_when_no_plos():
     assert resp.status_code == 422
 
 
-def test_put_sets_method_manual_and_syncs_specific_flag():
-    """Human flips to generic → method becomes manual, is_subject_specific False."""
-    existing = _plo(is_subject_specific=True)
-    edited = _plo(is_subject_specific=True, classification="generic")  # client may send stale flag
+def test_report_run_returns_the_assembled_plos():
+    """The stage no longer classifies; the route still returns the PLO set it
+    assembled, unchanged, for the designer's checkpoint."""
+    plo = _plo()
 
-    captured: dict = {}
+    async def fake_run(state):
+        return {"plos": state["plos"]}
 
-    async def capture_insert(plos):
-        captured["plo"] = plos[0]
-
-    with patch("curriculum_agent.api.routes.plos._repo") as mock_repo:
-        mock_repo.list_by_program = AsyncMock(return_value=[existing])
-        mock_repo.bulk_insert = AsyncMock(side_effect=capture_insert)
-        resp = client.put(
-            "/programs/p1/plos/PLO1",
-            json=edited.model_dump(mode="json"),
-        )
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as mock_repo,
+        patch("curriculum_agent.stages.plo_report.run", side_effect=fake_run),
+    ):
+        mock_repo.list_by_program = AsyncMock(return_value=[plo])
+        resp = client.post("/programs/p1/plos/report/run")
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["classification"] == "generic"
-    assert body["classification_method"] == "manual"
-    assert body["is_subject_specific"] is False
-    assert captured["plo"].is_subject_specific is False
+    assert len(body) == 1
+    assert body[0]["plo_id"] == "PLO1"
+    assert "classification" not in body[0]

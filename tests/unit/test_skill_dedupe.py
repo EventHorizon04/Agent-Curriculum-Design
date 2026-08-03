@@ -28,7 +28,7 @@ def _evidence(eid: str, text: str) -> dict[str, object]:
         "source_name": "JD",
         "raw_text_th": text,
         "collected_at": "2026-01-01T00:00:00",
-        "classification": "need",
+        "classification": "general",
         "metadata": {},
     }
 
@@ -36,7 +36,7 @@ def _evidence(eid: str, text: str) -> dict[str, object]:
 def _item(name: str, bloom: str) -> se._SkillItem:
     return se._SkillItem(
         skill_name_th=name,
-        ksec_category="SS",
+        ksec_category="S",
         bloom_level=bloom,
         evidence_span_th=_SPAN,
         confidence=0.9,
@@ -146,6 +146,7 @@ def _skill(name: str, ksec: KSECCategory, sid: str, eid: str) -> ExtractedSkill:
         bloom_level=BloomLevel.APPLY,
         evidence_span_th=_SPAN,
         source_evidence_id=eid,
+        source_stakeholder_type="employer",
         extraction_method="llm",
         confidence=0.9,
         importance_score=0.5,
@@ -180,7 +181,7 @@ async def test_need_combination_clears_previous_needs_before_inserting(
         AsyncMock(side_effect=lambda rows: order.append("insert")),
     )
 
-    skills = [_skill("เขียนโปรแกรมเว็บ", KSECCategory.SS, "S1", "E1")]
+    skills = [_skill("เขียนโปรแกรมเว็บ", KSECCategory.S, "S1", "E1")]
     await nc.run(
         {
             "program_id": "prog-1",

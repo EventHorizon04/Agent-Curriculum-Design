@@ -16,12 +16,6 @@ _SMART_PASS = SMARTCheck(
     specific=True, measurable=True, achievable=True, relevant=True, timely=True
 )
 
-_EVIDENCE_CLASSIFY = type(
-    "_ClassifyResult",
-    (),
-    {"classification": "need", "classification_rationale_th": "ข้อมูลทดสอบ"},
-)()
-
 _SKILL_RESP = type("_ExtractedSkillsResponse", (), {"skills": []})()
 
 # _CLUSTER_RESP and _PLO_DRAFTS used to stand in for the deleted SkillCluster
@@ -29,6 +23,10 @@ _SKILL_RESP = type("_ExtractedSkillsResponse", (), {"skills": []})()
 # this file stops at the review_evidence interrupt, before skill extraction,
 # need_combination, or PLO synthesis ever run, so neither constant was ever
 # read — they were deleted rather than reshaped to the Need-based pipeline.
+#
+# stakeholder_needs.run no longer calls an LLM either: evidence classification
+# is now a pure lookup from stakeholder_type (see classify_evidence_type), so
+# there is nothing left to mock for that stage beyond its repository write.
 
 
 @pytest.fixture
@@ -70,11 +68,6 @@ async def test_full_graph_runs_and_stops_at_interrupt(
         patch(
             "curriculum_agent.stages.intake.EvidenceRepository.bulk_insert",
             new_callable=AsyncMock,
-        ),
-        patch(
-            "curriculum_agent.stages.stakeholder_needs.complete_light",
-            new_callable=AsyncMock,
-            return_value=_EVIDENCE_CLASSIFY,
         ),
         patch(
             "curriculum_agent.stages.stakeholder_needs.EvidenceRepository.bulk_insert",
