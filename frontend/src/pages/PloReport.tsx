@@ -89,6 +89,7 @@ export default function PloReport() {
   const [plos, setPlos] = useState<PLO[]>([])
   const [needsById, setNeedsById] = useState<Record<string, NeedSummary>>({})
   const [counts, setCounts] = useState<ReportCounts>({ total: 0, core: 0, optional: 0, escalated: 0 })
+  const [exporting, setExporting] = useState(false)
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
@@ -126,6 +127,30 @@ export default function PloReport() {
       setError(msg ?? 'รัน PLO Report ไม่สำเร็จ')
     } finally {
       setRunning(false)
+    }
+  }, [programId])
+
+  // Fetched as a blob through the api client rather than linked with a plain
+  // anchor, so a 422 or 501 surfaces as an error message here instead of
+  // navigating the designer to a raw JSON body.
+  const exportMatrix = useCallback(async () => {
+    if (!programId) return
+    setExporting(true)
+    setError('')
+    try {
+      const res = await api.get(`/programs/${programId}/plos/export/matrix.xlsx`, {
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(res.data as Blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `plo-matrix-${programId}.xlsx`
+      link.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError('ส่งออก Excel ไม่สำเร็จ')
+    } finally {
+      setExporting(false)
     }
   }, [programId])
 
@@ -185,6 +210,33 @@ export default function PloReport() {
               )}
               <button onClick={runReport} className="text-xs text-gray-400 hover:text-blue-600 underline">
                 Re-run
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={exportMatrix}
+                disabled={exporting}
+                className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
+              >
+                {exporting ? 'กำลังส่งออก...' : 'ส่งออก Excel'}
+              </button>
+              {/* The CHECO and มคอ.2 exporters are stubs; their routes answer 501.
+                  Shown disabled so the designer knows the outputs are planned
+                  rather than missing. */}
+              <button
+                disabled
+                title="อยู่ระหว่างพัฒนา"
+                className="cursor-not-allowed rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-400"
+              >
+                CHECO (เร็วๆ นี้)
+              </button>
+              <button
+                disabled
+                title="อยู่ระหว่างพัฒนา"
+                className="cursor-not-allowed rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-400"
+              >
+                มคอ.2 (เร็วๆ นี้)
               </button>
             </div>
           </div>

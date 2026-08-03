@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
 
 from curriculum_agent.api.deps import require_api_key
@@ -10,6 +12,7 @@ from curriculum_agent.data.repositories import (
     PLORepository,
     ProgramRepository,
 )
+from curriculum_agent.exporters.excel_matrix import export_matrix_xlsx
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import PLO, DesignerNoteRequest, Need, StakeholderEvidence
 
@@ -39,6 +42,56 @@ class PLOReportResponse(BaseModel):
 @router.get("/", response_model=list[PLO])
 async def list_plos(program_id: str) -> list[PLO]:
     return await _repo.list_by_program(program_id)
+
+
+# Declared before the `/{plo_id}/...` routes so the literal path wins the match
+# and no request for an export is read as a PLO id.
+@router.get("/export/matrix.xlsx")
+async def export_plo_matrix(program_id: str) -> Response:
+    """Download the PLO set as an Excel workbook.
+
+    The Needs are loaded alongside the PLOs because the competency domain lives on
+    the Need — a PLO carries no KSEC tag of its own.
+    """
+    plos = await _repo.list_by_program(program_id)
+    if not plos:
+        raise HTTPException(
+            status_code=422,
+            detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
+        )
+
+    needs = await NeedRepository().list_by_program(program_id)
+    payload = export_matrix_xlsx(plos, {n.need_id: n for n in needs})
+
+    return Response(
+        content=payload,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="plo-matrix-{program_id}.xlsx"'},
+    )
+
+
+@router.get("/export/checo")
+async def export_plo_checo(program_id: str) -> dict[str, Any]:
+    """CHECO 1.6 export — not implemented yet.
+
+    `exporters/checo.py` is a stub that raises NotImplementedError, so this
+    answers 501 rather than letting that surface as a 500 the designer cannot act
+    on. The route exists now so the UI and the contract are settled; filling in
+    the template population is separate work.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail="ส่งออก CHECO ยังไม่พร้อมใช้งาน — อยู่ระหว่างพัฒนา",
+    )
+
+
+@router.get("/export/mko2")
+async def export_plo_mko2(program_id: str) -> dict[str, Any]:
+    """มคอ.2 export — not implemented yet. Same reasoning as the CHECO route."""
+    raise HTTPException(
+        status_code=501,
+        detail="ส่งออก มคอ.2 ยังไม่พร้อมใช้งาน — อยู่ระหว่างพัฒนา",
+    )
 
 
 @router.get("/{plo_id}/trace", response_model=PLOTrace)
