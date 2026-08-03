@@ -95,17 +95,22 @@ class BloomLevel(StrEnum):
     CREATE = "create"
 
 
-# TQF/มคอ. competency domains collapsed to five tags, used to pre-tag every
-# ExtractedSkill for eventual มคอ.2/CHECO mapping. The skill domain is split by
-# specificity so `is_subject_specific` is absorbed here rather than kept as a
-# separate field that could disagree with the tag. This is NOT a Bloom domain —
-# it is orthogonal to bloom_level, and a skill may be SS at Bloom `analyze`.
+# TQF/มคอ. competency domains, used to pre-tag every ExtractedSkill for eventual
+# มคอ.2/CHECO mapping. NOT a Bloom domain — orthogonal to bloom_level.
+#
+# A skill carries K, S, E or C. A Need carries those plus EC, the umbrella tag
+# for a group whose members mix ethics and character; grouping produces it, and
+# E or C survive as standalone Need tags when a group is unambiguously one.
 class KSECCategory(StrEnum):
     K = "K"  # ความรู้
-    GS = "GS"  # ทักษะทั่วไป (generic/transferable)
-    SS = "SS"  # ทักษะเฉพาะสาขา (subject-specific)
-    C = "C"  # คุณลักษณะบุคคล
+    S = "S"  # ทักษะ
+    EC = "EC"  # คุณธรรมจริยธรรมและคุณลักษณะบุคคล — displayed "E|C"
     E = "E"  # คุณธรรมจริยธรรม
+    C = "C"  # คุณลักษณะบุคคล
+
+
+# The tags an ExtractedSkill may carry. EC is Need-level only.
+SKILL_KSEC = frozenset({KSECCategory.K, KSECCategory.S, KSECCategory.E, KSECCategory.C})
 
 
 # Words forbidden in PLO statements (Thai). Cause SMART measurable to fail.
@@ -262,6 +267,15 @@ class ExtractedSkill(BaseModel):
     # Verified against the evidence text in pure code — see is_grounded().
     evidence_span_th: str = Field(min_length=1)
     source_evidence_id: str
+    # Provenance kept for the UI: a designer reviewing a grouped Need can see
+    # which stakeholders it came from without another query.
+    source_stakeholder_type: StakeholderType
+    # Decided in code after every evidence item is extracted — see
+    # skill_extraction.classify_skills.
+    classification: SkillClassification = "unclassified"
+    # Set by the extraction model: does this belong to the program's field at
+    # all? A False here yields `unclassified` unless the skill is mandated.
+    is_field_relevant: bool = True
     extraction_method: Literal["llm", "manual"]
     confidence: float = Field(ge=0, le=1)
     # Per-skill-name demand, computed before grouping. Orders the raw-skill table.
@@ -287,6 +301,8 @@ class Need(BaseModel):
     member_skill_ids: list[str] = Field(min_length=1)
     source_evidence_ids: list[str] = Field(min_length=1)
     stakeholder_coverage: dict[StakeholderType, int] = Field(default_factory=dict)
+    # Distinct source stakeholder types, external first (enum declaration order).
+    source_stakeholder_types: list[StakeholderType] = Field(default_factory=list)
     # Raw mention count: len(member_skill_ids). Explainable to a designer in a
     # way the weighted score is not.
     freq: int = Field(ge=1)
@@ -320,7 +336,6 @@ class PLO(BaseModel):
     # Cognitive only. The agent stops at PLO, and psychomotor/affective level
     # scales belong to the faculty's YLO/CLO work, not here.
     bloom_level: BloomLevel
-    is_subject_specific: bool
     action_verb_th: str
     smart_check: SMARTCheck
     source_need_ids: list[str]
@@ -328,9 +343,6 @@ class PLO(BaseModel):
     rationale_th: str
     distinctive_feature_th: str | None = None
     version: int = 1
-    classification: Literal["generic", "specific"] | None = None
-    classification_method: Literal["ksec", "llm", "manual", "fallback"] | None = None
-    classification_rationale_th: str | None = None
     smart_retry_count: int = 0
     smart_escalated: bool = False
     soft_flags: list[str] = Field(default_factory=list)

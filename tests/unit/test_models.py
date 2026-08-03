@@ -243,11 +243,11 @@ def test_program_summary_with_session_fields() -> None:
 
 
 def test_ksec_category_has_five_values_with_skill_split():
-    assert {c.value for c in KSECCategory} == {"K", "GS", "SS", "C", "E"}
+    assert {c.value for c in KSECCategory} == {"K", "S", "EC", "E", "C"}
 
 
-def test_ksec_category_rejects_mixed_and_bare_s():
-    for bad in ("mixed", "S"):
+def test_ksec_category_rejects_mixed_and_split_tags():
+    for bad in ("mixed", "SS", "GS"):
         with pytest.raises(ValueError):
             KSECCategory(bad)
 
@@ -261,10 +261,11 @@ def _skill_kwargs(**overrides: object) -> dict[str, object]:
         "skill_id": "S1",
         "program_id": "cs-test",
         "skill_name_th": "วิเคราะห์ข้อมูลขนาดใหญ่",
-        "ksec_category": KSECCategory.SS,
+        "ksec_category": KSECCategory.S,
         "bloom_level": BloomLevel.ANALYZE,
         "evidence_span_th": "ต้องวิเคราะห์ข้อมูลขนาดใหญ่ได้",
         "source_evidence_id": "E1",
+        "source_stakeholder_type": StakeholderType.EMPLOYER,
         "extraction_method": "llm",
         "confidence": 0.9,
         "importance_score": 0.5,
@@ -275,7 +276,7 @@ def _skill_kwargs(**overrides: object) -> dict[str, object]:
 
 def test_extracted_skill_accepts_full_tag_set():
     skill = ExtractedSkill(**_skill_kwargs())
-    assert skill.ksec_category is KSECCategory.SS
+    assert skill.ksec_category is KSECCategory.S
     assert skill.bloom_level is BloomLevel.ANALYZE
 
 
@@ -301,7 +302,7 @@ def _need_kwargs(**overrides: object) -> dict[str, object]:
         "need_id": "N1",
         "program_id": "cs-test",
         "statement_th": "สามารถวิเคราะห์ข้อมูลขนาดใหญ่เพื่อหา insight ทางธุรกิจ",
-        "ksec_category": KSECCategory.SS,
+        "ksec_category": KSECCategory.S,
         "bloom_level": BloomLevel.ANALYZE,
         "member_skill_ids": ["S1", "S2"],
         "source_evidence_ids": ["E1"],
@@ -387,3 +388,31 @@ def test_deleted_stakeholder_types_are_gone():
         {"accreditation_body", "university", "subject_benchmark", "peer_program"}
     )
     assert len(values) == 15
+
+
+def test_ksec_has_no_ss_or_gs():
+    from curriculum_agent.models import KSECCategory
+
+    values = {c.value for c in KSECCategory}
+    assert values == {"K", "S", "EC", "E", "C"}
+
+
+def test_a_skill_may_not_carry_the_ec_umbrella_tag():
+    """EC is a Need-level tag produced by bucketing; a skill mention is
+    always specifically E or C."""
+    from curriculum_agent.models import SKILL_KSEC, KSECCategory
+
+    assert KSECCategory.EC not in SKILL_KSEC
+    assert SKILL_KSEC == {KSECCategory.K, KSECCategory.S, KSECCategory.E, KSECCategory.C}  # noqa: SIM300
+
+
+def test_plo_no_longer_carries_a_specificity_flag():
+    from curriculum_agent.models import PLO
+
+    for gone in (
+        "is_subject_specific",
+        "classification",
+        "classification_method",
+        "classification_rationale_th",
+    ):
+        assert gone not in PLO.model_fields

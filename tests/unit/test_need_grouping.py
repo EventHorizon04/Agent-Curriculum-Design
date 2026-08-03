@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 import pytest
 
-from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory
+from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages.need_grouping import (
     bucket_by_ksec,
     dedupe_with_bloom_max,
@@ -14,7 +14,7 @@ from curriculum_agent.stages.need_grouping import (
 
 def _skill(
     name: str,
-    ksec: KSECCategory = KSECCategory.SS,
+    ksec: KSECCategory = KSECCategory.S,
     bloom: BloomLevel = BloomLevel.APPLY,
     skill_id: str = "S1",
 ) -> ExtractedSkill:
@@ -26,6 +26,7 @@ def _skill(
         bloom_level=bloom,
         evidence_span_th=name,
         source_evidence_id="E1",
+        source_stakeholder_type=StakeholderType.EMPLOYER,
         extraction_method="llm",
         confidence=0.9,
         importance_score=0.5,
@@ -34,20 +35,24 @@ def _skill(
 
 def test_bucket_by_ksec_never_mixes_tags():
     skills = [
-        _skill("เขียนโปรแกรม", KSECCategory.SS, skill_id="S1"),
-        _skill("ทำงานเป็นทีม", KSECCategory.GS, skill_id="S2"),
+        _skill("เขียนโปรแกรม", KSECCategory.S, skill_id="S1"),
+        _skill("ทำงานเป็นทีม", KSECCategory.K, skill_id="S2"),
         _skill("จรรยาบรรณวิชาชีพ", KSECCategory.E, skill_id="S3"),
         _skill("โครงสร้างข้อมูล", KSECCategory.K, skill_id="S4"),
     ]
     buckets = bucket_by_ksec(skills)
     for ksec, members in buckets.items():
-        assert {m.ksec_category for m in members} == {ksec}
+        member_tags = {m.ksec_category for m in members}
+        if ksec == KSECCategory.EC:
+            assert member_tags <= {KSECCategory.E, KSECCategory.C}
+        else:
+            assert member_tags == {ksec}
     assert sum(len(v) for v in buckets.values()) == len(skills)
 
 
 def test_bucket_by_ksec_omits_empty_buckets():
-    buckets = bucket_by_ksec([_skill("เขียนโปรแกรม", KSECCategory.SS)])
-    assert set(buckets) == {KSECCategory.SS}
+    buckets = bucket_by_ksec([_skill("เขียนโปรแกรม", KSECCategory.S)])
+    assert set(buckets) == {KSECCategory.S}
 
 
 def test_merge_bloom_takes_the_higher_level():
@@ -100,3 +105,55 @@ def test_dedupe_with_blank_name_reports_skip():
         mock_logger.warning.assert_called_once()
         call_args = mock_logger.warning.call_args[0][0]
         assert call_args == "dedupe_with_bloom_max: skipped 2 blank/whitespace-only name(s)"
+
+
+def test_ethics_and_character_share_one_ec_bucket():
+    from curriculum_agent.models import KSECCategory
+    from curriculum_agent.stages.need_grouping import bucket_by_ksec
+
+    skills = [
+        _skill("จรรยาบรรณวิชาชีพ", KSECCategory.E, skill_id="S1"),
+        _skill("ความรับผิดชอบต่อหน้าที่", KSECCategory.C, skill_id="S2"),
+        _skill("เขียนโปรแกรม", KSECCategory.S, skill_id="S3"),
+    ]
+    buckets = bucket_by_ksec(skills)
+    assert set(buckets) == {KSECCategory.EC, KSECCategory.S}
+    assert len(buckets[KSECCategory.EC]) == 2
+
+
+def test_need_tag_is_e_when_every_member_is_e():
+    from curriculum_agent.models import KSECCategory
+    from curriculum_agent.stages.need_grouping import resolve_need_ksec
+
+    members = [
+        _skill("จรรยาบรรณวิชาชีพ", KSECCategory.E, skill_id="S1"),
+        _skill("ความซื่อสัตย์ในวิชาชีพ", KSECCategory.E, skill_id="S2"),
+    ]
+    assert resolve_need_ksec(members) is KSECCategory.E
+
+
+def test_need_tag_is_c_when_every_member_is_c():
+    from curriculum_agent.models import KSECCategory
+    from curriculum_agent.stages.need_grouping import resolve_need_ksec
+
+    members = [_skill("ความรับผิดชอบต่อหน้าที่", KSECCategory.C, skill_id="S1")]
+    assert resolve_need_ksec(members) is KSECCategory.C
+
+
+def test_need_tag_is_ec_when_members_mix_ethics_and_character():
+    from curriculum_agent.models import KSECCategory
+    from curriculum_agent.stages.need_grouping import resolve_need_ksec
+
+    members = [
+        _skill("จรรยาบรรณวิชาชีพ", KSECCategory.E, skill_id="S1"),
+        _skill("ความรับผิดชอบต่อหน้าที่", KSECCategory.C, skill_id="S2"),
+    ]
+    assert resolve_need_ksec(members) is KSECCategory.EC
+
+
+def test_need_tag_of_a_non_ec_bucket_is_the_member_tag():
+    from curriculum_agent.models import KSECCategory
+    from curriculum_agent.stages.need_grouping import resolve_need_ksec
+
+    members = [_skill("เขียนโปรแกรม", KSECCategory.S, skill_id="S1")]
+    assert resolve_need_ksec(members) is KSECCategory.S

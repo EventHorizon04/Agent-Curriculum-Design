@@ -27,17 +27,45 @@ def normalize_need_name(name: str) -> str:
     return _WS_RE.sub(" ", name.strip()).lower()
 
 
+# E and C skills are clustered together: a Need about professional conduct is
+# routinely both, and forcing the split at grouping time produces two thin Needs
+# that a designer immediately merges by hand. The raw tags survive on the member
+# skills, so resolve_need_ksec can still hand back a standalone E or C.
+_EC_MEMBERS = {KSECCategory.E, KSECCategory.C}
+
+
 def bucket_by_ksec(skills: list[ExtractedSkill]) -> dict[KSECCategory, list[ExtractedSkill]]:
     """Split skills into one bucket per KSEC tag, omitting empty buckets.
 
-    Clustering runs inside a bucket and merging never crosses buckets, so a Need
-    can never contain two different tags. This is what makes "tags must not mix"
-    a structural guarantee instead of a rule someone has to remember.
+    E and C skills land in a single EC bucket; everything else buckets by its own
+    tag. Clustering runs inside a bucket and merging never crosses buckets, so a
+    Need can never contain two different tags. This is what makes "tags must not
+    mix" a structural guarantee instead of a rule someone has to remember.
     """
     buckets: dict[KSECCategory, list[ExtractedSkill]] = {}
     for skill in skills:
-        buckets.setdefault(skill.ksec_category, []).append(skill)
+        key = KSECCategory.EC if skill.ksec_category in _EC_MEMBERS else skill.ksec_category
+        buckets.setdefault(key, []).append(skill)
     return buckets
+
+
+def resolve_need_ksec(members: list[ExtractedSkill]) -> KSECCategory:
+    """The tag a Need carries, given the skills that formed it.
+
+    An all-ethics group is tagged E and an all-character group C, so a program
+    with a distinct ethics outcome can show one in its มคอ.2 table. A mixed group
+    keeps the EC umbrella. Non-EC buckets are single-tag by construction.
+    """
+    if not members:
+        raise ValueError("resolve_need_ksec requires at least one member skill")
+    tags = {m.ksec_category for m in members}
+    if tags <= _EC_MEMBERS:
+        return tags.pop() if len(tags) == 1 else KSECCategory.EC
+    if len(tags) != 1:
+        raise ValueError(
+            f"a Need's members must share one KSEC tag, got {sorted(t.value for t in tags)}"
+        )
+    return tags.pop()
 
 
 def merge_bloom(levels: Iterable[BloomLevel]) -> BloomLevel:
