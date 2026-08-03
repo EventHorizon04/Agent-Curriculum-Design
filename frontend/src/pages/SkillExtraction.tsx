@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
-import SkillTable, { type EvidenceMeta, type SkillRow } from './components/SkillTable'
+import SkillsByStakeholder, {
+  type EvidenceMeta,
+  type SkillRow,
+} from './components/SkillsByStakeholder'
 import NeedCard, { type NeedRow } from './components/NeedCard'
 import DesignerNote from './components/DesignerNote'
 
@@ -159,7 +162,11 @@ export default function SkillExtraction() {
           </div>
 
           {tab === 'skills' ? (
-            <SkillTable skills={skills} evidenceById={evidenceById} droppedCount={droppedCount} />
+            <SkillsByStakeholder
+              skills={skills}
+              evidenceById={evidenceById}
+              droppedCount={droppedCount}
+            />
           ) : needs.length === 0 ? (
             <p className="py-8 text-center text-sm text-gray-400">ยังไม่มี Need — รัน Skill Extraction ก่อน</p>
           ) : (

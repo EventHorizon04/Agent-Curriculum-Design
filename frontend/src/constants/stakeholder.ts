@@ -42,6 +42,20 @@ export const STAKEHOLDER_GROUPS: { label: string; types: string[] }[] = [
 export const stakeholderLabel = (value: string): string =>
   STAKEHOLDER_LABELS[value] ?? value
 
+// Mirrors REQUIREMENT_TYPES in src/curriculum_agent/models.py: สภาวิชาชีพ sets
+// legally binding practice requirements and the institution's own direction
+// binds the program it governs, so evidence from either is classified
+// `requirement` in code. Everything else carries demand signal, not mandate.
+// Kept in the same order as STAKEHOLDER_GROUPS so requirement sources sort first
+// within their group without a second ordering rule.
+export const REQUIREMENT_STAKEHOLDER_TYPES = new Set([
+  'professional_council',
+  'institutional_direction',
+])
+
+export const isRequirementStakeholder = (value: string): boolean =>
+  REQUIREMENT_STAKEHOLDER_TYPES.has(value)
+
 export const KSEC_LABEL: Record<string, string> = {
   K: 'K · ความรู้',
   S: 'S · ทักษะ',
