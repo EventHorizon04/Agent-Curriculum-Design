@@ -31,6 +31,21 @@ STAKEHOLDER_TYPE_BACKFILL = {
 KSEC_BACKFILL = {"SS": "S", "GS": "S"}
 
 
+def _remap_stakeholder_coverage(coverage: dict[str, int]) -> dict[str, int]:
+    """Collapse deleted stakeholder_type keys into their replacement.
+
+    A row can legitimately already hold both a deleted key and its
+    replacement (e.g. "accreditation_body" and "professional_council"); the
+    counts must sum rather than one overwriting the other, since these are
+    mention counts and losing one understates the Need's coverage.
+    """
+    remapped: dict[str, int] = {}
+    for key, count in coverage.items():
+        new_key = STAKEHOLDER_TYPE_BACKFILL.get(key, key)
+        remapped[new_key] = remapped.get(new_key, 0) + count
+    return remapped
+
+
 def upgrade() -> None:
     op.add_column("skills", sa.Column("source_stakeholder_type", sa.String(50),
                                       nullable=False, server_default="employer"))
@@ -50,6 +65,36 @@ def upgrade() -> None:
         op.execute(
             sa.text("UPDATE evidence SET stakeholder_type = :new WHERE stakeholder_type = :old")
             .bindparams(new=new, old=old)
+        )
+
+    # needs.stakeholder_coverage is a pre-existing JSONB dict[str, int] written
+    # verbatim by need_combination and never re-derived from evidence on read.
+    # Need.stakeholder_coverage validates its keys as StakeholderType, so a row
+    # whose dict still carries a deleted key raises ValidationError inside
+    # NeedRepository.list_by_program — the same failure mode this migration
+    # exists to prevent, one table over. Only rows containing a deleted key are
+    # rewritten; the remap sums colliding counts rather than overwriting, since
+    # a row may already hold both a deleted key and its replacement.
+    connection = op.get_bind()
+    deleted_keys = tuple(STAKEHOLDER_TYPE_BACKFILL)
+    select_stmt = (
+        sa.text(
+            "SELECT need_id, stakeholder_coverage FROM needs n "
+            "WHERE EXISTS ("
+            "  SELECT 1 FROM jsonb_object_keys(n.stakeholder_coverage) k "
+            "  WHERE k IN :deleted_keys"
+            ")"
+        )
+        .bindparams(sa.bindparam("deleted_keys", expanding=True))
+        .columns(need_id=sa.String(), stakeholder_coverage=JSONB())
+    )
+    rows = connection.execute(select_stmt, {"deleted_keys": deleted_keys}).fetchall()
+    for need_id, coverage in rows:
+        new_coverage = _remap_stakeholder_coverage(coverage)
+        connection.execute(
+            sa.text("UPDATE needs SET stakeholder_coverage = :cov WHERE need_id = :id")
+            .bindparams(sa.bindparam("cov", type_=JSONB())),
+            {"cov": new_coverage, "id": need_id},
         )
 
     # Evidence classes collapse to requirement/general. `requirement` rows keep
@@ -83,4 +128,6 @@ def downgrade() -> None:
     op.drop_column("skills", "classification")
     op.drop_column("skills", "source_stakeholder_type")
     # The old taxonomy and the SS/GS split are not restorable — the information
-    # that distinguished them is gone. Rows keep their new values.
+    # that distinguished them is gone. Rows keep their new values. This also
+    # covers needs.stakeholder_coverage: once colliding counts are summed under
+    # the replacement key, which portion came from which deleted key is lost.
