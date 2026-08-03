@@ -11,7 +11,6 @@ from curriculum_agent.llm import complete_heavy, complete_light
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
-    KSECCategory,
     Need,
     ProgramMetadata,
     SMARTCheck,
@@ -68,7 +67,7 @@ def synthesis_order(needs: list[Need]) -> list[Need]:
 class _PLODraft(BaseModel):
     """Intermediate schema for LLM output before SMART check is added.
 
-    Carries only what the model is genuinely deciding. Three fields it used to
+    Carries only what the model is genuinely deciding. Two fields it used to
     declare are facts the code owns, and asking for them invited the model to
     contradict the data:
 
@@ -78,7 +77,6 @@ class _PLODraft(BaseModel):
       one row while the run reported success.
     - `source_evidence_ids`: the prompt never showed the model any evidence ids,
       so it invented them and the trail pointed nowhere.
-    - `is_subject_specific`: derived from the contributing Needs' KSEC tags.
 
     Keep it that way. A field the code computes does not belong in the contract.
     """
@@ -270,9 +268,6 @@ async def synthesize_from_needs(
         statement_th=draft.statement_th,
         statement_en=draft.statement_en,
         bloom_level=draft.bloom_level,
-        # Specific when any contributing Need is subject-specific: a PLO covering
-        # a domain capability stays domain-specific even if merged with a generic one.
-        is_subject_specific=any(n.ksec_category is KSECCategory.SS for n in needs),
         action_verb_th=draft.action_verb_th,
         smart_check=outcome.smart_check,
         # draft.source_need_ids was pinned to authoritative_need_ids inside

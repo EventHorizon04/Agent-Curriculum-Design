@@ -1,70 +1,25 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any
 
 from loguru import logger
-from pydantic import BaseModel
 
 from curriculum_agent.data.repositories import NeedRepository, PLORepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.llm import complete_light
-from curriculum_agent.models import PLO, KSECCategory, Need
-from curriculum_agent.prompts.plo_classify import build_plo_classify_prompt
-
-# specific_fraction thresholds for the field-based decision; the open interval
-# (LO, HI) is treated as ambiguous and routed to the LLM fallback.
-_SPECIFIC_HI = 0.67
-_SPECIFIC_LO = 0.33
-
-
-class _ClassificationResult(BaseModel):
-    classification: Literal["generic", "specific"]
-    rationale_th: str
-
-
-def _need_summary(n: Need) -> str:
-    return f"{n.statement_en or n.statement_th} (ksec={n.ksec_category.value})"
-
-
-async def _classify_one(plo: PLO, needs_by_id: dict[str, Need]) -> tuple[str, str, str]:
-    """Return (classification, method, rationale_th) for a single PLO."""
-    resolved = [needs_by_id[cid] for cid in plo.source_need_ids if cid in needs_by_id]
-
-    if resolved:
-        n_specific = sum(1 for n in resolved if n.ksec_category is KSECCategory.SS)
-        fraction = n_specific / len(resolved)
-        rationale = (
-            f"{n_specific}/{len(resolved)} source Needs เป็น subject-specific (SS) "
-            f"(fraction {fraction:.2f})"
-        )
-        if fraction >= _SPECIFIC_HI:
-            return "specific", "ksec", rationale
-        if fraction <= _SPECIFIC_LO:
-            return "generic", "ksec", rationale
-
-    # Ambiguous fraction, or no resolvable Needs → LLM fallback.
-    need_summaries = [_need_summary(n) for n in resolved]
-    messages = build_plo_classify_prompt(plo.statement_th, plo.bloom_level.value, need_summaries)
-    try:
-        result = await complete_light(_ClassificationResult, messages)
-        return result.classification, "llm", result.rationale_th
-    except Exception as exc:
-        # One LLM hiccup must degrade this PLO, not abort the whole report stage
-        # and discard classifications already completed for other PLOs. "generic"
-        # is the conservative default: it never overclaims subject-specificity
-        # without evidence. method="fallback" and the rationale keep the fallback
-        # visible to the designer instead of silently masquerading as a real
-        # classification.
-        logger.warning(f"PLO classification failed for {plo.plo_id}: {exc}")
-        return (
-            "generic",
-            "fallback",
-            "จำแนกอัตโนมัติไม่สำเร็จ (ใช้ค่าเริ่มต้น generic ชั่วคราว) กรุณาตรวจสอบและแก้ไขด้วยตนเอง",
-        )
+from curriculum_agent.models import PLO
 
 
 async def run(state: AgentState) -> AgentState:
-    """PLO Report stage: classify each PLO as generic/specific (method D)."""
+    """PLO Report stage: assemble the reviewable report and persist the PLOs.
+
+    This stage used to classify each PLO generic vs specific. That split came from
+    the SS/GS KSEC tags, which no longer exist — a PLO's competency domain is the
+    KSEC tag of the Needs behind it, and the report shows that directly instead of
+    reducing it to a binary. No LLM call remains here.
+
+    The stage keeps its own checkpoint: synthesis produces outcomes, and this is
+    where a designer reviews the finished set and exports it.
+    """
     program_id = state.get("program_id", "unknown")
     plo_dicts = state.get("plos", [])
     if not plo_dicts:
@@ -74,26 +29,30 @@ async def run(state: AgentState) -> AgentState:
 
     plos = [PLO.model_validate(d) for d in plo_dicts]
     needs = await NeedRepository().list_by_program(program_id)
-    needs_by_id = {n.need_id: n for n in needs}
 
-    logger.info(f"PLO report: classifying {len(plos)} PLOs (generic/specific)")
+    core = sum(1 for p in plos if not p.is_optional)
+    escalated = sum(1 for p in plos if p.smart_escalated)
+    logger.info(
+        f"PLO report: {len(plos)} PLOs ({core} core, {len(plos) - core} optional, "
+        f"{escalated} escalated for repair)"
+    )
 
-    classified: list[PLO] = []
-    for plo in plos:
-        classification, method, rationale = await _classify_one(plo, needs_by_id)
-        classified.append(
-            plo.model_copy(
-                update={
-                    "classification": classification,
-                    "classification_method": method,
-                    "classification_rationale_th": rationale,
-                    "is_subject_specific": classification == "specific",
-                }
-            )
-        )
+    report: dict[str, Any] = {
+        "plos": [p.model_dump(mode="json") for p in plos],
+        # Keyed for drill-down: the page resolves each PLO's source_need_ids
+        # against this rather than issuing a request per outcome.
+        "needs_by_id": {n.need_id: n.model_dump(mode="json") for n in needs},
+        "counts": {
+            "total": len(plos),
+            "core": core,
+            "optional": len(plos) - core,
+            "escalated": escalated,
+        },
+    }
 
-    await PLORepository().bulk_insert(classified)
+    await PLORepository().bulk_insert(plos)
 
-    state["plos"] = [p.model_dump(mode="json") for p in classified]
+    state["plos"] = report["plos"]
+    state["report"] = report
     state["current_stage"] = "plo_report"
     return state

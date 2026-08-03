@@ -156,10 +156,6 @@ async def update_plo(program_id: str, plo_id: str, plo: PLO) -> PLO:
         raise HTTPException(status_code=404, detail="PLO not found")
 
     update_fields: dict[str, object] = {"version": match.version + 1, "program_id": program_id}
-    if plo.classification is not None:
-        # Human edit is the source of truth: mark manual and force the flag to match.
-        update_fields["classification_method"] = "manual"
-        update_fields["is_subject_specific"] = plo.classification == "specific"
     updated = plo.model_copy(update=update_fields)
     await _repo.bulk_insert([updated])
     return updated

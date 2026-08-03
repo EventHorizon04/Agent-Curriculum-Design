@@ -45,6 +45,9 @@ class AgentState(TypedDict, total=False):
     # Stage 3
     plos: list[dict[str, Any]]
 
+    # Stage 3 report — assembled by plo_report, keyed for designer drill-down.
+    report: dict[str, Any]
+
     current_stage: str
     checkpoint_status: Literal["pending", "approved", "needs_revision"]
     designer_notes: str
