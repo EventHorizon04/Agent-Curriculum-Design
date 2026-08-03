@@ -11,16 +11,74 @@ from curriculum_agent.data.isced import get_detailed_field
 # ----------------------------- Enums -----------------------------
 
 
+class StakeholderGroup(StrEnum):
+    """Whether a stakeholder speaks from outside the institution or inside it.
+
+    External input describes the labour market the graduate enters; internal
+    input describes what the institution intends to be. Both matter, and the
+    demand weighting treats them differently — external requirement input
+    outranks internal, and both outrank ordinary opinion.
+    """
+
+    EXTERNAL = "external"
+    INTERNAL = "internal"
+
+
 class StakeholderType(StrEnum):
-    EMPLOYER = "employer"
-    ALUMNI = "alumni"
-    PROFESSIONAL_COUNCIL = "professional_council"
-    ACCREDITATION_BODY = "accreditation_body"
-    UNIVERSITY = "university"
-    COMMUNITY = "community"
-    PARENT = "parent"
-    SUBJECT_BENCHMARK = "subject_benchmark"
-    PEER_PROGRAM = "peer_program"
+    # --- external ---
+    PROFESSIONAL_COUNCIL = "professional_council"  # สภาวิชาชีพ
+    EMPLOYER = "employer"  # ผู้ใช้บัณฑิต / ผู้ประกอบการ
+    INDUSTRY = "industry"  # ภาคอุตสาหกรรม
+    ALUMNI = "alumni"  # ศิษย์เก่า
+    EXPERT = "expert"  # ผู้ทรงคุณวุฒิ
+    COMMUNITY = "community"  # ชุมชนและสังคม
+    PARTNER_INSTITUTION = "partner_institution"  # สถาบันคู่ความร่วมมือ
+    APPLICANT = "applicant"  # ผู้สมัครเรียน
+    PARENT = "parent"  # ผู้ปกครอง
+    # --- internal ---
+    # One voice (the institution's) expressed across several documents; which
+    # document a row came from lives in StakeholderEvidence.source_name.
+    INSTITUTIONAL_DIRECTION = "institutional_direction"  # vision/mission/identity
+    ADMINISTRATOR = "administrator"  # ผู้บริหาร
+    PROGRAM_COMMITTEE = "program_committee"  # คณะกรรมการหลักสูตร
+    FACULTY = "faculty"  # อาจารย์
+    STUDENT = "student"  # ผู้เรียน
+    SUPPORT_STAFF = "support_staff"  # บุคลากรสายสนับสนุน
+
+
+_EXTERNAL_TYPES = frozenset(
+    {
+        StakeholderType.PROFESSIONAL_COUNCIL,
+        StakeholderType.EMPLOYER,
+        StakeholderType.INDUSTRY,
+        StakeholderType.ALUMNI,
+        StakeholderType.EXPERT,
+        StakeholderType.COMMUNITY,
+        StakeholderType.PARTNER_INSTITUTION,
+        StakeholderType.APPLICANT,
+        StakeholderType.PARENT,
+    }
+)
+
+# The only mapping from type to group. Nothing else may hardcode the split —
+# the demand weight table and the UI grouping both read from here.
+STAKEHOLDER_GROUP: dict[StakeholderType, StakeholderGroup] = {
+    t: (StakeholderGroup.EXTERNAL if t in _EXTERNAL_TYPES else StakeholderGroup.INTERNAL)
+    for t in StakeholderType
+}
+
+# สภาวิชาชีพ sets legally binding practice requirements; the institution's own
+# vision/mission/identity is a mandate it has committed to. Both are
+# ข้อกำหนดที่ต้องมี. Every other type carries demand signal, not mandate.
+REQUIREMENT_TYPES = frozenset(
+    {StakeholderType.PROFESSIONAL_COUNCIL, StakeholderType.INSTITUTIONAL_DIRECTION}
+)
+
+# Evidence carries a mandate or it does not — a two-value vocabulary, decided in
+# code from the stakeholder type. need/want/unclassified moved to the skill,
+# where the cross-evidence frequency that decides them is actually visible.
+EvidenceClassification = Literal["requirement", "general"]
+SkillClassification = Literal["requirement", "need", "want", "unclassified"]
 
 
 # Bloom's Taxonomy (cognitive domain) is the only learning-domain scale the
@@ -182,7 +240,7 @@ class StakeholderEvidence(BaseModel):
     raw_text_th: str
     raw_text_en: str | None = None
     collected_at: datetime = Field(default_factory=datetime.utcnow)
-    classification: Literal["need", "requirement", "want", "unclassified"] = "unclassified"
+    classification: EvidenceClassification = "general"
     classification_rationale_th: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 

@@ -357,3 +357,33 @@ def test_designer_note_strips_before_measuring_length():
     """
     padded = "ก" * NOTE_MAX_CHARS + "    "
     assert DesignerNoteRequest(note_th=padded).note_th == "ก" * NOTE_MAX_CHARS
+
+
+# ---- Stakeholder taxonomy (Task 1) --------------------------------------
+
+
+def test_every_stakeholder_type_has_a_group():
+    """A type added without a STAKEHOLDER_GROUP entry must fail loudly here,
+    not default silently to internal at the weight table."""
+    from curriculum_agent.models import STAKEHOLDER_GROUP, StakeholderType
+
+    assert set(STAKEHOLDER_GROUP) == set(StakeholderType)
+
+
+def test_external_and_internal_membership():
+    from curriculum_agent.models import STAKEHOLDER_GROUP, StakeholderGroup, StakeholderType
+
+    assert STAKEHOLDER_GROUP[StakeholderType.EMPLOYER] is StakeholderGroup.EXTERNAL
+    assert STAKEHOLDER_GROUP[StakeholderType.PROFESSIONAL_COUNCIL] is StakeholderGroup.EXTERNAL
+    assert STAKEHOLDER_GROUP[StakeholderType.FACULTY] is StakeholderGroup.INTERNAL
+    assert STAKEHOLDER_GROUP[StakeholderType.INSTITUTIONAL_DIRECTION] is StakeholderGroup.INTERNAL
+
+
+def test_deleted_stakeholder_types_are_gone():
+    from curriculum_agent.models import StakeholderType
+
+    values = {t.value for t in StakeholderType}
+    assert values.isdisjoint(
+        {"accreditation_body", "university", "subject_benchmark", "peer_program"}
+    )
+    assert len(values) == 15
