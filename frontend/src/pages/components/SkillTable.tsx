@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from 'react'
+import { classStyle, ksecColor, ksecLabel, stakeholderLabel } from '../../constants/stakeholder'
 
 export interface SkillRow {
   skill_id: string
@@ -8,6 +9,8 @@ export interface SkillRow {
   bloom_level: string
   evidence_span_th: string
   source_evidence_id: string
+  source_stakeholder_type: string
+  classification: string
 }
 
 export interface EvidenceMeta {
@@ -16,23 +19,7 @@ export interface EvidenceMeta {
   classification: string
 }
 
-type SortKey = 'skill_name_th' | 'bloom_level' | 'ksec_category' | 'classification'
-
-const KSEC_LABEL: Record<string, string> = {
-  K: 'K · ความรู้',
-  GS: 'GS · ทักษะทั่วไป',
-  SS: 'SS · ทักษะเฉพาะสาขา',
-  C: 'C · คุณลักษณะ',
-  E: 'E · จริยธรรม',
-}
-
-const KSEC_COLOR: Record<string, string> = {
-  K: 'bg-sky-100 text-sky-800',
-  GS: 'bg-teal-100 text-teal-800',
-  SS: 'bg-emerald-100 text-emerald-800',
-  C: 'bg-amber-100 text-amber-800',
-  E: 'bg-rose-100 text-rose-800',
-}
+type SortKey = 'skill_name_th' | 'bloom_level' | 'ksec_category' | 'stakeholder' | 'classification'
 
 const BLOOM_TH: Record<string, string> = {
   remember: 'จำได้ (Remember)',
@@ -43,18 +30,12 @@ const BLOOM_TH: Record<string, string> = {
   create: 'สร้างสรรค์ (Create)',
 }
 
-const CLASS_COLOR: Record<string, string> = {
-  requirement: 'bg-green-100 text-green-700',
-  need: 'bg-blue-100 text-blue-700',
-  want: 'bg-amber-100 text-amber-700',
-  unclassified: 'bg-gray-100 text-gray-500',
-}
-
 const COLUMNS: { key: SortKey; label: string; numeric?: boolean }[] = [
   { key: 'skill_name_th', label: 'Skill' },
   { key: 'bloom_level', label: "Bloom's" },
   { key: 'ksec_category', label: 'KSEC' },
-  { key: 'classification', label: 'Stakeholder class' },
+  { key: 'stakeholder', label: 'ที่มา' },
+  { key: 'classification', label: 'Class' },
 ]
 
 export default function SkillTable({
@@ -72,9 +53,7 @@ export default function SkillTable({
 
   const sorted = useMemo(() => {
     const value = (s: SkillRow): string | number =>
-      sortKey === 'classification'
-        ? (evidenceById[s.source_evidence_id]?.classification ?? '')
-        : (s[sortKey] as string | number)
+      sortKey === 'stakeholder' ? s.source_stakeholder_type : (s[sortKey] as string | number)
     return [...skills].sort((a, b) => {
       const av = value(a)
       const bv = value(b)
@@ -83,7 +62,7 @@ export default function SkillTable({
         : String(av).localeCompare(String(bv), 'th')
       return asc ? cmp : -cmp
     })
-  }, [skills, sortKey, asc, evidenceById])
+  }, [skills, sortKey, asc])
 
   const toggleSort = (key: SortKey) => {
     if (key === sortKey) setAsc(!asc)
@@ -159,13 +138,16 @@ export default function SkillTable({
                       {BLOOM_TH[s.bloom_level] ?? s.bloom_level}
                     </td>
                     <td className="px-3 py-2">
-                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${KSEC_COLOR[s.ksec_category] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {KSEC_LABEL[s.ksec_category] ?? s.ksec_category}
+                      <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${ksecColor(s.ksec_category)}`}>
+                        {ksecLabel(s.ksec_category)}
                       </span>
                     </td>
+                    <td className="px-3 py-2 text-xs text-gray-600">
+                      {stakeholderLabel(s.source_stakeholder_type)}
+                    </td>
                     <td className="px-3 py-2">
-                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${CLASS_COLOR[ev?.classification ?? 'unclassified']}`}>
-                        {ev?.classification ?? 'unclassified'}
+                      <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${classStyle(s.classification).cls}`}>
+                        {classStyle(s.classification).label}
                       </span>
                     </td>
                   </tr>

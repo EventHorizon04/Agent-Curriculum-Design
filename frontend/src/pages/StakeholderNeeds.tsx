@@ -2,24 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { useProgram } from '../hooks/useProgram'
-
-const STAKEHOLDER_LABELS: Record<string, string> = {
-  employer:            'นายจ้าง',
-  alumni:              'ศิษย์เก่า',
-  professional_council:'สภาวิชาชีพ',
-  accreditation_body:  'หน่วยงานประเมิน',
-  university:          'มหาวิทยาลัย',
-  community:           'ชุมชน',
-  subject_benchmark:   'มาตรฐานสาขา',
-  peer_program:        'หลักสูตรเทียบเคียง',
-}
-
-const CLASS_STYLE: Record<string, { label: string; cls: string }> = {
-  need:         { label: 'ความต้องการ',  cls: 'bg-green-100 text-green-700' },
-  requirement:  { label: 'ข้อกำหนด',     cls: 'bg-blue-100 text-blue-700' },
-  want:         { label: 'ความปรารถนา', cls: 'bg-yellow-100 text-yellow-700' },
-  unclassified: { label: 'ยังไม่จำแนก', cls: 'bg-gray-100 text-gray-500' },
-}
+import { STAKEHOLDER_GROUPS, classStyle, stakeholderLabel } from '../constants/stakeholder'
 
 interface EvidenceItem {
   evidence_id: string
@@ -288,8 +271,12 @@ export default function StakeholderNeeds() {
                   value={stakeholderType} onChange={e => setStakeholderType(e.target.value)}
                   className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {Object.entries(STAKEHOLDER_LABELS).map(([v, l]) => (
-                    <option key={v} value={v}>{l}</option>
+                  {STAKEHOLDER_GROUPS.map(g => (
+                    <optgroup key={g.label} label={g.label}>
+                      {g.types.map(t => (
+                        <option key={t} value={t}>{stakeholderLabel(t)}</option>
+                      ))}
+                    </optgroup>
                   ))}
                 </select>
               </div>
@@ -413,8 +400,8 @@ export default function StakeholderNeeds() {
           ) : (
             <div className="space-y-2">
               {items.map(item => {
-                const cs = CLASS_STYLE[item.classification] ?? CLASS_STYLE.unclassified
-                const typeLabel = STAKEHOLDER_LABELS[item.stakeholder_type] ?? item.stakeholder_type
+                const cs = classStyle(item.classification)
+                const typeLabel = stakeholderLabel(item.stakeholder_type)
                 return (
                   <details
                     key={item.evidence_id}

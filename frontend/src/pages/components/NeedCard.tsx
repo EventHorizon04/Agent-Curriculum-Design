@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import api from '../../api/client'
+import { ksecColor, ksecLabel, stakeholderLabel } from '../../constants/stakeholder'
 
 export interface NeedRow {
   need_id: string
@@ -9,6 +10,7 @@ export interface NeedRow {
   bloom_level: string
   member_skill_ids: string[]
   source_evidence_ids: string[]
+  source_stakeholder_types: string[]
   freq: number
   demand_score: number
   is_optional: boolean
@@ -19,14 +21,6 @@ interface NeedTrace {
   need: NeedRow
   skills: { skill_id: string; skill_name_th: string; bloom_level: string }[]
   evidence: { evidence_id: string; source_name: string; classification: string }[]
-}
-
-const KSEC_LABEL: Record<string, string> = {
-  K: 'K · ความรู้',
-  GS: 'GS · ทักษะทั่วไป',
-  SS: 'SS · ทักษะเฉพาะสาขา',
-  C: 'C · คุณลักษณะ',
-  E: 'E · จริยธรรม',
 }
 
 export default function NeedCard({ programId, need }: { programId: string; need: NeedRow }) {
@@ -60,14 +54,19 @@ export default function NeedCard({ programId, need }: { programId: string; need:
         )}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
-        <span className="rounded bg-gray-100 px-1.5 py-0.5">
-          {KSEC_LABEL[need.ksec_category] ?? need.ksec_category}
+        <span className={`rounded px-1.5 py-0.5 ${ksecColor(need.ksec_category)}`}>
+          {ksecLabel(need.ksec_category)}
         </span>
         <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-indigo-800">
           {need.bloom_level}
         </span>
+        {need.source_stakeholder_types.map(t => (
+          <span key={t} className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">
+            {stakeholderLabel(t)}
+          </span>
+        ))}
         <span title="จำนวนครั้งที่ถูกกล่าวถึง">Freq {need.freq}</span>
-        <span title="คะแนนถ่วงน้ำหนักตามความถี่และความกว้างของ stakeholder">
+        <span title="สัดส่วนน้ำหนักของหลักฐานที่กล่าวถึงความต้องการนี้">
           Demand {(need.demand_score * 100).toFixed(0)}%
         </span>
         <button

@@ -2,60 +2,93 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
-
-interface SMARTCheck {
-  specific: boolean
-  measurable: boolean
-  achievable: boolean
-  relevant: boolean
-  timely: boolean
-  notes_th: string | null
-}
+import { ksecColor, ksecLabel, stakeholderLabel, classStyle } from '../constants/stakeholder'
 
 interface PLO {
   plo_id: string
-  program_id: string
   statement_th: string
   statement_en: string | null
   bloom_level: string
-  is_subject_specific: boolean
-  action_verb_th: string
-  smart_check: SMARTCheck
   source_need_ids: string[]
-  source_evidence_ids: string[]
   rationale_th: string
-  distinctive_feature_th: string | null
-  version: number
-  classification: 'generic' | 'specific' | null
-  classification_method: 'ksec' | 'llm' | 'manual' | null
-  classification_rationale_th: string | null
   smart_retry_count: number
   smart_escalated: boolean
   soft_flags: string[]
   is_optional: boolean
 }
 
-const METHOD_LABEL: Record<string, string> = {
-  ksec: 'field',
-  llm: 'LLM',
-  manual: 'manual',
+interface NeedSummary {
+  need_id: string
+  ksec_category: string
 }
 
-const METHOD_COLOR: Record<string, string> = {
-  ksec: 'bg-gray-100 text-gray-600',
-  llm: 'bg-blue-100 text-blue-700',
-  manual: 'bg-amber-100 text-amber-700',
+interface ReportCounts {
+  total: number
+  core: number
+  optional: number
+  escalated: number
 }
 
-function effectiveClass(p: PLO): 'generic' | 'specific' {
-  if (p.classification) return p.classification
-  return p.is_subject_specific ? 'specific' : 'generic'
+interface PLOReportResponse {
+  plos: PLO[]
+  counts: ReportCounts
+  needs_by_id: Record<string, NeedSummary>
+}
+
+interface TraceNeed {
+  need_id: string
+  statement_th: string
+  statement_en: string | null
+  ksec_category: string
+  bloom_level: string
+  demand_score: number
+  source_evidence_ids: string[]
+}
+
+interface TraceEvidence {
+  evidence_id: string
+  source_name: string
+  stakeholder_type: string
+  classification: string
+  raw_text_th: string
+}
+
+interface PLOTrace {
+  plo: PLO
+  clusters: TraceNeed[]
+  evidence: TraceEvidence[]
+}
+
+const BLOOM_LABEL: Record<string, string> = {
+  remember: 'Remember',
+  understand: 'Understand',
+  apply: 'Apply',
+  analyze: 'Analyze',
+  evaluate: 'Evaluate',
+  create: 'Create',
+}
+
+const SOFT_FLAG_TH: Record<string, string> = {
+  S_object: 'กรรมของกริยากว้างเกินไป',
+  A_level: 'ระดับ Bloom อาจสูง/ต่ำเกินไป',
+  R_alignment: 'อาจไม่สอดคล้องวิสัยทัศน์',
+}
+
+function countsFrom(plos: PLO[]): ReportCounts {
+  const core = plos.filter((p) => !p.is_optional).length
+  return {
+    total: plos.length,
+    core,
+    optional: plos.length - core,
+    escalated: plos.filter((p) => p.smart_escalated).length,
+  }
 }
 
 export default function PloReport() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
-  const [view, setView] = useState<'list' | 'matrix'>('list')
+  const [needsById, setNeedsById] = useState<Record<string, NeedSummary>>({})
+  const [counts, setCounts] = useState<ReportCounts>({ total: 0, core: 0, optional: 0, escalated: 0 })
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
@@ -65,8 +98,13 @@ export default function PloReport() {
     setLoading(true)
     setError('')
     try {
-      const res = await api.get<PLO[]>(`/programs/${programId}/plos/`)
-      setPlos(res.data)
+      const [ploRes, needRes] = await Promise.all([
+        api.get<PLO[]>(`/programs/${programId}/plos/`),
+        api.get<NeedSummary[]>(`/programs/${programId}/needs/`),
+      ])
+      setPlos(ploRes.data)
+      setNeedsById(Object.fromEntries(needRes.data.map((n) => [n.need_id, n])))
+      setCounts(countsFrom(ploRes.data))
     } catch {
       setError('โหลดข้อมูลไม่สำเร็จ')
     } finally {
@@ -79,8 +117,10 @@ export default function PloReport() {
     setRunning(true)
     setError('')
     try {
-      const res = await api.post<PLO[]>(`/programs/${programId}/plos/report/run`)
-      setPlos(res.data)
+      const res = await api.post<PLOReportResponse>(`/programs/${programId}/plos/report/run`)
+      setPlos(res.data.plos)
+      setCounts(res.data.counts)
+      setNeedsById(res.data.needs_by_id)
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setError(msg ?? 'รัน PLO Report ไม่สำเร็จ')
@@ -91,21 +131,6 @@ export default function PloReport() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
-  const flip = async (p: PLO) => {
-    const next = effectiveClass(p) === 'specific' ? 'generic' : 'specific'
-    const body: PLO = {
-      ...p,
-      classification: next,
-      is_subject_specific: next === 'specific',
-    }
-    try {
-      const res = await api.put<PLO>(`/programs/${programId}/plos/${p.plo_id}`, body)
-      setPlos(prev => prev.map(x => (x.plo_id === p.plo_id ? res.data : x)))
-    } catch {
-      setError('สลับประเภทไม่สำเร็จ')
-    }
-  }
-
   if (!programId) {
     return (
       <div className="max-w-2xl mx-auto py-16 text-center">
@@ -115,17 +140,12 @@ export default function PloReport() {
     )
   }
 
-  const mainPlos = plos.filter(p => !p.is_optional)
-  const optionalPlos = plos.filter(p => p.is_optional)
-  const generic = mainPlos.filter(p => effectiveClass(p) === 'generic')
-  const specific = mainPlos.filter(p => effectiveClass(p) === 'specific')
-
   return (
-    <div className="max-w-5xl mx-auto py-8 px-4">
+    <div className="max-w-4xl mx-auto py-8 px-4">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 mb-1">Stage 5: PLO Report</h1>
         <p className="text-gray-500 text-sm">
-          จำแนก PLO เป็นทักษะทั่วไป (generic) หรือเฉพาะสาขา (specific) — ตรวจสอบและแก้ไขได้
+          รายงาน PLO ฉบับสมบูรณ์ พร้อมที่มาของแต่ละรายการ — ตรวจสอบก่อนส่งออก
         </p>
         <p className="text-xs text-gray-400 mt-1 font-mono">{programId}</p>
       </div>
@@ -139,13 +159,13 @@ export default function PloReport() {
       ) : running ? (
         <div className="text-center py-20">
           <div className="text-4xl mb-4 animate-spin">⚙️</div>
-          <p className="text-gray-600 font-medium mb-1">กำลังจำแนก PLO...</p>
+          <p className="text-gray-600 font-medium mb-1">กำลังประมวลผล PLO Report...</p>
         </div>
       ) : plos.length === 0 ? (
         <div className="text-center py-20">
           <div className="text-5xl mb-4">🗂️</div>
           <p className="text-gray-500 text-lg font-medium mb-1">ยังไม่มี PLO</p>
-          <p className="text-gray-400 text-sm mb-6">รัน PLO Synthesis ก่อน แล้วกลับมาจำแนกที่นี่</p>
+          <p className="text-gray-400 text-sm mb-6">รัน PLO Synthesis ก่อน แล้วกลับมาสร้างรายงานที่นี่</p>
           <button
             onClick={runReport}
             className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-medium"
@@ -156,75 +176,24 @@ export default function PloReport() {
       ) : (
         <>
           <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
-            <div className="flex items-center gap-4 text-sm text-gray-500">
-              <span><b className="text-gray-700">{generic.length}</b> generic</span>
-              <span><b className="text-gray-700">{specific.length}</b> specific</span>
+            <div className="flex gap-4 text-sm text-gray-600">
+              <span><b className="text-gray-700">{counts.total}</b> ทั้งหมด</span>
+              <span><b className="text-gray-700">{counts.core}</b> หลัก</span>
+              <span><b className="text-gray-700">{counts.optional}</b> เสริม</span>
+              {counts.escalated > 0 && (
+                <span className="text-amber-700"><b>{counts.escalated}</b> ต้องแก้ไข</span>
+              )}
               <button onClick={runReport} className="text-xs text-gray-400 hover:text-blue-600 underline">
                 Re-run
               </button>
             </div>
-            <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-              <button
-                onClick={() => setView('list')}
-                className={`text-sm px-3 py-1 rounded-md ${view === 'list' ? 'bg-white shadow-sm font-medium' : 'text-gray-500'}`}
-              >
-                List
-              </button>
-              <button
-                onClick={() => setView('matrix')}
-                className={`text-sm px-3 py-1 rounded-md ${view === 'matrix' ? 'bg-white shadow-sm font-medium' : 'text-gray-500'}`}
-              >
-                Matrix
-              </button>
-            </div>
           </div>
 
-          {view === 'list' ? (
-            <div className="space-y-8">
-              <ReportGroup title="Generic Skills" plos={generic} onFlip={flip} />
-              <ReportGroup title="Specific Skills" plos={specific} onFlip={flip} />
-            </div>
-          ) : (
-            <ReportMatrix plos={mainPlos} onFlip={flip} />
-          )}
-
-          {optionalPlos.length > 0 && (
-            <div className="mt-8 border border-amber-200 rounded-xl p-5 bg-amber-50/40">
-              <h2 className="text-sm font-semibold text-amber-800 uppercase tracking-wide mb-1">
-                PLO เสริม (จากความต้องการประเภท want)
-              </h2>
-              <p className="text-xs text-amber-700 mb-4">
-                รายการเหล่านี้ไม่นับใน PLO หลัก — เลือกใช้ได้ตามดุลยพินิจของหลักสูตร
-              </p>
-              <div className="space-y-3">
-                {optionalPlos.map(p => (
-                  <div key={p.plo_id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-                    <div className="flex items-start gap-3">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                          <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded">{p.plo_id}</span>
-                          <ClassBadge value={effectiveClass(p)} />
-                          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
-                            เสริม
-                          </span>
-                        </div>
-                        <p className="text-gray-900 font-medium leading-relaxed">{p.statement_th}</p>
-                        {p.rationale_th && (
-                          <p className="text-gray-500 text-sm mt-1 italic">{p.rationale_th}</p>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => flip(p)}
-                        className="shrink-0 text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 text-gray-600"
-                      >
-                        → {effectiveClass(p) === 'specific' ? 'generic' : 'specific'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          <div className="space-y-3">
+            {plos.map((p) => (
+              <PLOCard key={p.plo_id} plo={p} programId={programId} needsById={needsById} />
+            ))}
+          </div>
 
           <div className="mt-8 text-sm text-gray-500 border-t border-gray-100 pt-4">
             เมื่อตรวจสอบเสร็จ ไปที่{' '}
@@ -237,122 +206,144 @@ export default function PloReport() {
   )
 }
 
-function ClassBadge({ value }: { value: 'generic' | 'specific' }) {
-  return (
-    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-      value === 'specific' ? 'bg-indigo-100 text-indigo-700' : 'bg-teal-100 text-teal-700'
-    }`}>
-      {value}
-    </span>
-  )
-}
-
-function ReportGroup({
-  title,
-  plos,
-  onFlip,
+function PLOCard({
+  plo: p,
+  programId,
+  needsById,
 }: {
-  title: string
-  plos: PLO[]
-  onFlip: (p: PLO) => void
+  plo: PLO
+  programId: string
+  needsById: Record<string, NeedSummary>
 }) {
+  const [traceOpen, setTraceOpen] = useState(false)
+
+  const ksecTags = [...new Set(
+    p.source_need_ids.map((id) => needsById[id]?.ksec_category).filter((c): c is string => Boolean(c)),
+  )]
+
   return (
-    <div>
-      <h2 className="text-sm font-semibold text-gray-600 uppercase tracking-wide mb-3">
-        {title} ({plos.length})
-      </h2>
-      {plos.length === 0 ? (
-        <p className="text-gray-400 text-sm">— ไม่มี —</p>
-      ) : (
-        <div className="space-y-3">
-          {plos.map(p => {
-            const cls = effectiveClass(p)
-            return (
-              <div key={p.plo_id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-                <div className="flex items-start gap-3">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                      <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded">{p.plo_id}</span>
-                      <ClassBadge value={cls} />
-                      {p.classification_method && (
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${METHOD_COLOR[p.classification_method]}`}>
-                          {METHOD_LABEL[p.classification_method]}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-gray-900 font-medium leading-relaxed">{p.statement_th}</p>
-                    {p.classification_rationale_th && (
-                      <p className="text-gray-500 text-sm mt-1 italic">{p.classification_rationale_th}</p>
-                    )}
-                  </div>
-                  <button
-                    onClick={() => onFlip(p)}
-                    className="shrink-0 text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 text-gray-600"
-                  >
-                    → {cls === 'specific' ? 'generic' : 'specific'}
-                  </button>
-                </div>
-              </div>
-            )
-          })}
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+      <div className="flex items-center gap-2 flex-wrap mb-2">
+        <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded">{p.plo_id}</span>
+        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">
+          {BLOOM_LABEL[p.bloom_level] ?? p.bloom_level}
+        </span>
+        {ksecTags.map((cat) => (
+          <span key={cat} className={`text-xs px-2 py-0.5 rounded-full font-medium ${ksecColor(cat)}`}>
+            {ksecLabel(cat)}
+          </span>
+        ))}
+        {p.is_optional && (
+          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+            เสริม
+          </span>
+        )}
+      </div>
+
+      {p.smart_escalated && (
+        <div className="mb-2 rounded-lg bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
+          ไม่ผ่าน SMART หลัง retry {p.smart_retry_count} ครั้ง — ต้องแก้ด้วยมือ
         </div>
       )}
+
+      {p.soft_flags.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-1">
+          {p.soft_flags.map((f) => (
+            <span key={f} className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
+              {SOFT_FLAG_TH[f] ?? f}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <p className="text-gray-900 font-medium leading-relaxed">{p.statement_th}</p>
+      {p.statement_en && (
+        <p className="text-gray-400 text-sm mt-1 italic">{p.statement_en}</p>
+      )}
+      {p.rationale_th && (
+        <p className="text-gray-500 text-sm mt-2 leading-relaxed">{p.rationale_th}</p>
+      )}
+
+      <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4 text-xs text-gray-400">
+        <span>{p.source_need_ids.length} needs</span>
+        <button
+          onClick={() => setTraceOpen((v) => !v)}
+          aria-expanded={traceOpen}
+          className="ml-auto text-xs text-blue-500 hover:text-blue-700 font-medium transition-colors flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+        >
+          {traceOpen ? '▲ ซ่อนที่มา' : '▼ ดูที่มา'}
+        </button>
+      </div>
+      {traceOpen && <TracePanel programId={programId} ploId={p.plo_id} />}
     </div>
   )
 }
 
-function ReportMatrix({ plos, onFlip }: { plos: PLO[]; onFlip: (p: PLO) => void }) {
-  if (plos.length === 0) {
-    return <p className="text-gray-400 text-sm">ไม่มี PLO</p>
-  }
+function TracePanel({ programId, ploId }: { programId: string; ploId: string }) {
+  const [trace, setTrace] = useState<PLOTrace | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api.get<PLOTrace>(`/programs/${programId}/plos/${ploId}/trace`)
+      .then((r) => setTrace(r.data))
+      .catch(() => setError('โหลด trace ไม่สำเร็จ'))
+      .finally(() => setLoading(false))
+  }, [programId, ploId])
+
+  if (loading) return <div className="py-4 text-center text-sm text-gray-400">กำลังโหลด trace...</div>
+  if (error) return <div className="py-3 text-sm text-red-600">{error}</div>
+  if (!trace) return null
+
   return (
-    <div className="overflow-x-auto border border-gray-200 rounded-xl">
-      <table className="w-full text-sm border-collapse">
-        <thead>
-          <tr className="bg-gray-50">
-            <th className="text-left px-3 py-2 font-semibold text-gray-600 border-b border-gray-200">
-              PLO
-            </th>
-            <th className="px-3 py-2 font-semibold text-teal-700 border-b border-gray-200 text-center w-32">
-              Generic
-            </th>
-            <th className="px-3 py-2 font-semibold text-indigo-700 border-b border-gray-200 text-center w-32">
-              Specific
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {plos.map(p => {
-            const cls = effectiveClass(p)
-            return (
-              <tr key={p.plo_id} className="hover:bg-gray-50">
-                <td className="px-3 py-2 border-b border-gray-100 max-w-md">
-                  <span className="font-mono text-xs text-gray-400 mr-2">{p.plo_id}</span>
-                  <span className="text-gray-800">{p.statement_th}</span>
-                </td>
-                <td
-                  onClick={() => cls !== 'generic' && onFlip(p)}
-                  className={`px-3 py-2 border-b border-gray-100 text-center ${cls !== 'generic' ? 'cursor-pointer' : ''}`}
-                  title={cls !== 'generic' ? 'เปลี่ยนเป็น generic' : undefined}
-                >
-                  {cls === 'generic'
-                    ? <span className="text-teal-600 font-bold">✓</span>
-                    : <span className="text-gray-200">·</span>}
-                </td>
-                <td
-                  onClick={() => cls !== 'specific' && onFlip(p)}
-                  className={`px-3 py-2 border-b border-gray-100 text-center ${cls !== 'specific' ? 'cursor-pointer' : ''}`}
-                  title={cls !== 'specific' ? 'เปลี่ยนเป็น specific' : undefined}
-                >
-                  {cls === 'specific'
-                    ? <span className="text-indigo-600 font-bold">✓</span>
-                    : <span className="text-gray-200">·</span>}
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
+    <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
+      <div>
+        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+          Needs ({trace.clusters.length})
+        </h4>
+        <div className="space-y-2">
+          {trace.clusters.map((c) => (
+            <div key={c.need_id} className="bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-gray-800 leading-snug">{c.statement_th}</p>
+                  {c.statement_en && (
+                    <p className="text-xs text-gray-400 italic">{c.statement_en}</p>
+                  )}
+                </div>
+                <span className="shrink-0 text-xs font-mono bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600">
+                  {(c.demand_score * 100).toFixed(0)}%
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mt-1.5">
+                {c.source_evidence_ids.length} evidence ·{' '}
+                <span className={`rounded px-1 ${ksecColor(c.ksec_category)}`}>{ksecLabel(c.ksec_category)}</span>
+                {' '}· {c.bloom_level}
+              </p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+          Evidence ({trace.evidence.length})
+        </h4>
+        <div className="space-y-2">
+          {trace.evidence.map((e) => (
+            <div key={e.evidence_id} className="bg-white rounded-lg px-3 py-2.5 border border-gray-100">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-medium text-gray-700">{e.source_name}</span>
+                <span className="text-xs text-gray-400">{stakeholderLabel(e.stakeholder_type)}</span>
+                <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${classStyle(e.classification).cls}`}>
+                  {classStyle(e.classification).label}
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 leading-relaxed line-clamp-3">{e.raw_text_th}</p>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

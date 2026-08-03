@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import DesignerNote from './components/DesignerNote'
+import { classStyle, stakeholderLabel } from '../constants/stakeholder'
 
 interface SMARTCheck {
   specific: boolean
@@ -19,7 +20,6 @@ interface PLO {
   statement_th: string
   statement_en: string | null
   bloom_level: string
-  is_subject_specific: boolean
   action_verb_th: string
   smart_check: SMARTCheck
   source_need_ids: string[]
@@ -27,9 +27,6 @@ interface PLO {
   rationale_th: string
   distinctive_feature_th: string | null
   version: number
-  classification: 'generic' | 'specific' | null
-  classification_method: 'ksec' | 'llm' | 'manual' | null
-  classification_rationale_th: string | null
   smart_retry_count: number
   smart_escalated: boolean
   soft_flags: string[]
@@ -283,22 +280,6 @@ export default function PloSynthesis() {
   )
 }
 
-const CLASSIFICATION_COLOR: Record<string, string> = {
-  need: 'bg-blue-100 text-blue-700',
-  requirement: 'bg-green-100 text-green-700',
-  want: 'bg-amber-100 text-amber-700',
-  unclassified: 'bg-gray-100 text-gray-500',
-}
-
-const STAKEHOLDER_LABEL: Record<string, string> = {
-  employer: 'นายจ้าง',
-  alumni: 'ศิษย์เก่า',
-  student: 'นักศึกษา',
-  faculty: 'อาจารย์',
-  professional_council: 'สภาวิชาชีพ',
-  community: 'ชุมชน',
-}
-
 function TracePanel({ programId, ploId }: { programId: string; ploId: string }) {
   const [trace, setTrace] = useState<PLOTrace | null>(null)
   const [loading, setLoading] = useState(true)
@@ -354,9 +335,9 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
             <div key={e.evidence_id} className="bg-white rounded-lg px-3 py-2.5 border border-gray-100">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-medium text-gray-700">{e.source_name}</span>
-                <span className="text-xs text-gray-400">{STAKEHOLDER_LABEL[e.stakeholder_type] ?? e.stakeholder_type}</span>
-                <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${CLASSIFICATION_COLOR[e.classification] ?? 'bg-gray-100 text-gray-500'}`}>
-                  {e.classification}
+                <span className="text-xs text-gray-400">{stakeholderLabel(e.stakeholder_type)}</span>
+                <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${classStyle(e.classification).cls}`}>
+                  {classStyle(e.classification).label}
                 </span>
               </div>
               <p className="text-xs text-gray-600 leading-relaxed line-clamp-3">{e.raw_text_th}</p>
@@ -414,11 +395,6 @@ function PLOCard({
             <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">
               {BLOOM_LABEL[p.bloom_level] ?? p.bloom_level}
             </span>
-            {p.is_subject_specific && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-700 font-medium">
-                subject-specific
-              </span>
-            )}
             <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
               smartPassed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
             }`}>
