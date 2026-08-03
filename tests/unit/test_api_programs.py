@@ -261,6 +261,18 @@ def test_extract_metadata_route_is_gone() -> None:
     assert resp.status_code == 405
 
 
+def test_programs_module_has_no_leftover_isced_or_metadata_symbols() -> None:
+    """The 405 checks above only pin "POST here is unhandled" — that stays true
+    even if the handler comes back under a different verb or path. Assert
+    against the module namespace too, the same way test_intake_stage_exports_only_run
+    does for the stage module, so a re-registered handler or leftover request
+    model would fail this test regardless of which route it's mounted on."""
+    from curriculum_agent.api.routes import programs
+
+    for name in ("suggest_isced_route", "SuggestIscedRequest", "extract_metadata"):
+        assert not hasattr(programs, name), f"{name} should have been deleted"
+
+
 def test_intake_stage_exports_only_run() -> None:
     """The stage kept helpers for two features that no longer exist, plus a
     conversion whose source fields are gone."""
