@@ -95,3 +95,14 @@ async def test_two_spellings_of_one_skill_get_the_same_importance_score():
     expected_score = compute_demand_score(["E1", "E2"], stakeholder_type_by_evidence, total)
     assert by_name["Python"] == expected_score
     assert expected_score > 0
+
+    # classify_skills's contract states every raw skill whose name normalises the
+    # same receives the same class. Both evidence items here are "general" and
+    # there are 2 distinct evidence ids naming the skill, so both spellings must
+    # come back "need" — not just the one matching classify_skills's internal
+    # first-spelling-seen key verbatim (a bug caught here: a run()-level lookup
+    # keyed on the raw stripped name rather than the normalised name would find
+    # the "Python" entry and miss "python", silently defaulting it to
+    # "unclassified").
+    classification_by_name = {s["skill_name_th"]: s["classification"] for s in skills}
+    assert classification_by_name["Python"] == classification_by_name["python"] == "need"

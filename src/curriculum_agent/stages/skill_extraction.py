@@ -18,6 +18,7 @@ from curriculum_agent.models import (
     ExtractedSkill,
     KSECCategory,
     StakeholderEvidence,
+    StakeholderType,
 )
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.stages.demand import compute_demand_score, total_evidence_weight
@@ -58,9 +59,10 @@ def is_grounded(span_th: str, evidence_text: str) -> bool:
 class _SkillItem(BaseModel):
     skill_name_th: str = Field(min_length=1)
     skill_name_en: str | None = None
-    ksec_category: Literal["K", "GS", "SS", "C", "E"]
+    ksec_category: Literal["K", "S", "E", "C"]
     bloom_level: Literal["remember", "understand", "apply", "analyze", "evaluate", "create"]
     evidence_span_th: str = Field(min_length=_MIN_SPAN_CHARS)
+    is_field_relevant: bool = True
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
 
     @field_validator("skill_name_th", "evidence_span_th", mode="before")
@@ -98,6 +100,67 @@ def _extraction_contract_fingerprint() -> str:
 _EXTRACTION_CONTRACT = _extraction_contract_fingerprint()
 
 
+def classify_skills(
+    raw_skills: list[dict[str, Any]],
+    evidence_class_by_id: dict[str, str],
+) -> dict[str, str]:
+    """Classify every extracted skill name, once the whole corpus is in hand.
+
+    Returns a mapping from *display* skill name to SkillClassification. Names are
+    matched after normalize_need_name, the same normaliser dedupe_with_bloom_max
+    uses to collapse duplicates into one Need — two spellings that end up in the
+    same Need therefore also share a class here.
+
+    Runs after the extraction loop by necessity: need vs want is decided by how
+    many distinct evidence items name a skill, which is not knowable while the
+    corpus is still being read.
+
+    Precedence, highest first:
+      1. named by requirement evidence  → requirement
+      2. name matches such a skill      → requirement
+      3. is_field_relevant is False     → unclassified
+      4. named by >1 evidence item      → need
+      5. otherwise                      → want
+
+    Rules 1-2 outrank 3 on purpose: a สภาวิชาชีพ mandate or the faculty's own
+    vision stays in the pipeline whatever the extraction model thought of its
+    field fit. Dropping it would be the code overruling a legal requirement.
+    """
+    eids_by_name: dict[str, set[str]] = {}
+    relevant_by_name: dict[str, bool] = {}
+    display_by_name: dict[str, str] = {}
+    requirement_names: set[str] = set()
+
+    for skill in raw_skills:
+        name = str(skill["skill_name_th"])
+        norm = normalize_need_name(name)
+        if not norm:
+            continue
+        eid = str(skill["evidence_id"])
+        eids_by_name.setdefault(norm, set()).add(eid)
+        display_by_name.setdefault(norm, name.strip())
+        # Any mention judged on-field keeps the name on-field: one model call
+        # calling it off-field does not outvote another that did not.
+        relevant_by_name[norm] = relevant_by_name.get(norm, False) or bool(
+            skill.get("is_field_relevant", True)
+        )
+        if evidence_class_by_id.get(eid, "general") == "requirement":
+            requirement_names.add(norm)
+
+    classified: dict[str, str] = {}
+    for norm, eids in eids_by_name.items():
+        display = display_by_name[norm]
+        if norm in requirement_names:
+            classified[display] = "requirement"
+        elif not relevant_by_name[norm]:
+            classified[display] = "unclassified"
+        elif len(eids) > 1:
+            classified[display] = "need"
+        else:
+            classified[display] = "want"
+    return classified
+
+
 def _compute_skill_importance(
     raw_skills: list[dict[str, Any]],
     stakeholder_type_by_evidence: dict[str, str],
@@ -131,6 +194,7 @@ async def run(state: AgentState) -> AgentState:
     """
     classified = state.get("classified_evidence", [])
     program_id = state.get("program_id", "unknown")
+    metadata = state.get("metadata") or {}
     logger.info(f"Stage 2: skill_extraction from {len(classified)} evidence items")
 
     # --- Step 1: LLM skill extraction per evidence item (cache-first) ---
@@ -164,7 +228,12 @@ async def run(state: AgentState) -> AgentState:
                 logger.warning(f"Unusable cache entry for {evidence.evidence_id}: {exc}")
 
         if result is None:
-            messages = build_extract_skills_prompt(text_slice, evidence.classification)
+            messages = build_extract_skills_prompt(
+                text_slice,
+                evidence.classification,
+                field_th=str(metadata.get("field", "")),
+                program_name_th=str(metadata.get("name_th", "")),
+            )
             try:
                 result = await complete_light(_ExtractedSkillsResponse, messages)
                 await _cache.set(cache_key, settings.light_model, result.model_dump_json())
@@ -244,13 +313,34 @@ async def run(state: AgentState) -> AgentState:
         state["current_stage"] = "skill_extraction"
         return state
 
-    # --- Step 2: per-skill-name importance, then build ExtractedSkill objects ---
+    # --- Step 2: classify every skill, then build ExtractedSkill objects ---
     stakeholder_type_by_evidence: dict[str, str] = {
         str(d["evidence_id"]): str(d.get("stakeholder_type", "employer"))
         for d in classified
         if d.get("evidence_id")
     }
     importance_by_name = _compute_skill_importance(raw_skills, stakeholder_type_by_evidence)
+
+    evidence_class_by_id: dict[str, str] = {
+        str(d["evidence_id"]): str(d.get("classification", "general"))
+        for d in classified
+        if d.get("evidence_id")
+    }
+    class_by_name = classify_skills(raw_skills, evidence_class_by_id)
+    # class_by_name is keyed by the first spelling classify_skills happened to see
+    # per normalised name; a second evidence item can contribute a differently-
+    # cased/spaced spelling of the same skill into raw_skills (the same scenario
+    # importance_score already handles below via normalize_need_name), so looking
+    # this up by the raw stripped name alone would silently miss it and fall back
+    # to "unclassified" — breaking classify_skills's own contract that every raw
+    # skill whose name normalises the same receives the same class. Re-index by
+    # normalised name once, up front, and look up every skill through it.
+    class_by_norm = {normalize_need_name(name): cls for name, cls in class_by_name.items()}
+
+    counts: dict[str, int] = {}
+    for value in class_by_name.values():
+        counts[value] = counts.get(value, 0) + 1
+    logger.info(f"Stage 2: skill classification {counts}")
 
     extracted: list[ExtractedSkill] = []
     for s in raw_skills:
@@ -265,6 +355,11 @@ async def run(state: AgentState) -> AgentState:
                 bloom_level=BloomLevel(s["bloom_level"]),
                 evidence_span_th=s["evidence_span_th"],
                 source_evidence_id=s["evidence_id"],
+                source_stakeholder_type=StakeholderType(s["stakeholder_type"]),
+                classification=class_by_norm.get(
+                    normalize_need_name(s["skill_name_th"]), "unclassified"
+                ),
+                is_field_relevant=bool(s.get("is_field_relevant", True)),
                 extraction_method="llm",
                 confidence=s.get("confidence", 0.8),
                 importance_score=importance_by_name.get(
