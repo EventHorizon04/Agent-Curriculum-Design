@@ -20,7 +20,7 @@ from curriculum_agent.models import (
     StakeholderEvidence,
 )
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
-from curriculum_agent.stages.demand import WEIGHTED_CLASSES, compute_demand_score
+from curriculum_agent.stages.demand import compute_demand_score, total_evidence_weight
 from curriculum_agent.stages.need_grouping import merge_bloom, normalize_need_name
 
 _WS_RE = re.compile(r"\s+")
@@ -100,36 +100,27 @@ _EXTRACTION_CONTRACT = _extraction_contract_fingerprint()
 
 def _compute_skill_importance(
     raw_skills: list[dict[str, Any]],
-    classified: list[dict[str, Any]],
-    classification_by_evidence: dict[str, str],
-    total_req_need_evidence: int,
+    stakeholder_type_by_evidence: dict[str, str],
 ) -> dict[str, float]:
     """Per-skill-name demand, computed before Need grouping (a later stage).
 
     Same weighting as Need.demand_score (compute_demand_score from
     curriculum_agent.stages.demand), grouped by the same normalised name
-    (normalize_need_name) that need_grouping.dedupe_with_bloom_max later
-    collapses duplicates by — so two spellings of one skill that land in the
-    same Need also get the same importance_score here. Keyed by normalised
-    name; the caller must normalise before looking a score up.
+    (normalize_need_name) that need_grouping.dedupe_with_bloom_max later collapses
+    duplicates by — so two spellings of one skill that land in the same Need also
+    get the same importance_score here. Keyed by normalised name; the caller must
+    normalise before looking a score up.
     """
     eids_by_name: dict[str, set[str]] = {}
     for s in raw_skills:
         norm = normalize_need_name(s["skill_name_th"])
-        eids_by_name.setdefault(norm, set()).add(s["evidence_id"])
+        eids_by_name.setdefault(norm, set()).add(str(s["evidence_id"]))
 
-    scores: dict[str, float] = {}
-    for name, eids in eids_by_name.items():
-        stk_coverage: dict[str, int] = {}
-        for item_dict in classified:
-            if item_dict.get("evidence_id") in eids:
-                stype = item_dict.get("stakeholder_type", "employer")
-                stk_coverage[stype] = stk_coverage.get(stype, 0) + 1
-        score, _, _ = compute_demand_score(
-            list(eids), stk_coverage, total_req_need_evidence, classification_by_evidence
-        )
-        scores[name] = score
-    return scores
+    total = total_evidence_weight(stakeholder_type_by_evidence)
+    return {
+        name: compute_demand_score(sorted(eids), stakeholder_type_by_evidence, total)
+        for name, eids in eids_by_name.items()
+    }
 
 
 async def run(state: AgentState) -> AgentState:
@@ -254,15 +245,12 @@ async def run(state: AgentState) -> AgentState:
         return state
 
     # --- Step 2: per-skill-name importance, then build ExtractedSkill objects ---
-    classification_by_evidence: dict[str, str] = {
-        str(d["evidence_id"]): str(d.get("classification", "unclassified"))
+    stakeholder_type_by_evidence: dict[str, str] = {
+        str(d["evidence_id"]): str(d.get("stakeholder_type", "employer"))
         for d in classified
         if d.get("evidence_id")
     }
-    total_req_need = sum(1 for c in classification_by_evidence.values() if c in WEIGHTED_CLASSES)
-    importance_by_name = _compute_skill_importance(
-        raw_skills, classified, classification_by_evidence, total_req_need
-    )
+    importance_by_name = _compute_skill_importance(raw_skills, stakeholder_type_by_evidence)
 
     extracted: list[ExtractedSkill] = []
     for s in raw_skills:

@@ -22,7 +22,7 @@ def _skill_item(name: str, span: str) -> dict:
     return {
         "skill_name_th": name,
         "skill_name_en": "Python",
-        "ksec_category": "SS",
+        "ksec_category": "S",
         "bloom_level": "apply",
         "evidence_span_th": span,
         "confidence": 0.9,
@@ -45,8 +45,8 @@ async def test_two_spellings_of_one_skill_get_the_same_importance_score():
     span1 = "ต้องการผู้เชี่ยวชาญด้าน Python สำหรับพัฒนาระบบวิเคราะห์ข้อมูล"
     span2 = "หลักสูตรควรปูพื้นฐาน python ให้นักศึกษาก่อนขึ้นปีสาม"
     evidence_dicts = [
-        _evidence("E1", span1, "employer", "need"),
-        _evidence("E2", span2, "university", "requirement"),
+        _evidence("E1", span1, "employer", "general"),
+        _evidence("E2", span2, "faculty", "general"),
     ]
 
     async def fake_extract_skills(response_model, messages, **kw):  # noqa: ANN001, ANN003
@@ -88,13 +88,10 @@ async def test_two_spellings_of_one_skill_get_the_same_importance_score():
     # not just whichever spelling's evidence happened to be grouped alone —
     # proof the two really merged into one group rather than coincidentally
     # landing on equal-but-independent scores.
-    from curriculum_agent.stages.demand import compute_demand_score
+    from curriculum_agent.stages.demand import compute_demand_score, total_evidence_weight
 
-    expected_score, _, _ = compute_demand_score(
-        ["E1", "E2"],
-        {"employer": 1, "faculty": 1},
-        total_req_need_evidence=2,
-        classification_by_evidence={"E1": "need", "E2": "requirement"},
-    )
+    stakeholder_type_by_evidence = {"E1": "employer", "E2": "faculty"}
+    total = total_evidence_weight(stakeholder_type_by_evidence)
+    expected_score = compute_demand_score(["E1", "E2"], stakeholder_type_by_evidence, total)
     assert by_name["Python"] == expected_score
     assert expected_score > 0
