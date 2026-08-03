@@ -1,14 +1,25 @@
 from __future__ import annotations
 
+from curriculum_agent.models import KSECCategory
 from curriculum_agent.prompts.designer_note import NOTE_POLICY_TH, append_note
 
-_KSEC_LABEL_TH = {
+_KSEC_LABEL_TH: dict[str, str] = {
     "K": "ความรู้",
     "S": "ทักษะ",
     "EC": "คุณธรรมจริยธรรมและคุณลักษณะบุคคล",
     "E": "คุณธรรมจริยธรรม",
     "C": "คุณลักษณะบุคคล",
 }
+
+# A plain dict has no structural link to KSECCategory, so nothing stops the two
+# from drifting apart the next time the enum gains, loses, or renames a member.
+# This assertion is what turns that drift into an import-time crash instead of
+# a label that silently falls back to the raw code below — it is what makes
+# the .get(...) fallback provably unreachable for every real KSECCategory
+# value, not just today's five.
+_uncovered_ksec = {c.value for c in KSECCategory} - set(_KSEC_LABEL_TH)
+if _uncovered_ksec:
+    raise AssertionError(f"_KSEC_LABEL_TH is missing label(s) for: {sorted(_uncovered_ksec)}")
 
 
 def build_summarize_need_prompt(
