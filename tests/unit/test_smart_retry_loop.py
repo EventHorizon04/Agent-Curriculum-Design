@@ -14,16 +14,11 @@ META = ProgramMetadata(
     duration_years=4,
     faculty="วิทยาศาสตร์",
     university="ม.ทดสอบ",
-    vision_th="ผลิตบัณฑิตคุณภาพ",
-    mission_th="พันธกิจของหลักสูตร",
-    philosophy_th="ปรัชญาของหลักสูตร",
     program_goals_th=["เป้าหมายหลักสูตรที่ 1"],
     program_objectives_th=["obj"],
 )
 
-_SOFT_OK = ps._SmartSoftJudge(
-    specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-)
+_SOFT_OK = ps._SmartSoftJudge()  # every verdict defaults True
 
 
 def _draft(statement: str, verb: str = "วิเคราะห์", needs: list[str] | None = None) -> ps._PLODraft:
@@ -38,7 +33,9 @@ def _draft(statement: str, verb: str = "วิเคราะห์", needs: lis
 
 async def test_clean_draft_passes_without_retry():
     with patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)):
-        out = await ps._ensure_smart(_draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], "PLO1")
+        out = await ps._ensure_smart(
+            _draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], ["ตลาดต้องการ"], "PLO1"
+        )
     assert out.retry_count == 0
     assert out.escalated is False
     assert out.smart_check.passed
@@ -56,7 +53,7 @@ async def test_hard_fail_retries_with_criterion_and_escalates():
         patch.object(ps, "complete_heavy", side_effect=fake_heavy),
         patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)),
     ):
-        out = await ps._ensure_smart(bad, {"c1"}, META, ["c1"], "PLO1")
+        out = await ps._ensure_smart(bad, {"c1"}, META, ["c1"], ["ตลาดต้องการ"], "PLO1")
 
     assert out.retry_count == 3
     assert out.escalated is True
@@ -68,14 +65,16 @@ async def test_soft_fail_flags_without_blocking():
     judge = ps._SmartSoftJudge(
         specific_object_ok=True,
         achievable_ok=False,
-        relevant_alignment_ok=False,
+        relevant_needs_ok=False,
         notes_th="ระดับสูงไป",
     )
     with patch.object(ps, "complete_light", AsyncMock(return_value=judge)):
-        out = await ps._ensure_smart(_draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], "PLO1")
+        out = await ps._ensure_smart(
+            _draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], ["ตลาดต้องการ"], "PLO1"
+        )
     assert out.escalated is False
-    assert set(out.soft_flags) == {"A_level", "R_alignment"}
-    assert out.smart_check.passed  # soft fails never block
+    assert set(out.soft_flags) == {"A_level", "R_needs"}
+    assert out.smart_check.passed is False  # soft fails reach SMARTCheck but never escalate
 
 
 async def test_gate_judges_authoritative_need_ids_not_the_models_echo():
@@ -101,7 +100,12 @@ async def test_gate_judges_authoritative_need_ids_not_the_models_echo():
         patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)),
     ):
         out = await ps._ensure_smart(
-            bad, {"c1"}, META, authoritative_need_ids=["c1"], plo_id="PLO1"
+            bad,
+            {"c1"},
+            META,
+            authoritative_need_ids=["c1"],
+            need_statements_th=["ตลาดต้องการ"],
+            plo_id="PLO1",
         )
 
     assert out.retry_count == 0
@@ -148,3 +152,77 @@ async def test_note_reaches_the_draft_prompt_but_never_a_fix_prompt():
     for i, fix in enumerate(calls[1:], start=1):
         joined = "".join(m["content"] for m in fix)
         assert note not in joined, f"fix attempt {i} leaked the note into a repair prompt"
+
+
+async def test_a_soft_failure_reaches_smart_check_without_escalating():
+    """SMARTCheck.achievable and .timely were hardcoded True and the judge's
+    verdicts never reached SMARTCheck at all, so `passed` reported success for a
+    flagged PLO. A soft failure must show in SMARTCheck and still not escalate."""
+    judge = ps._SmartSoftJudge(measurable_ok=False, notes_th="ประเมินด้วยเครื่องมือใดไม่ชัด")
+
+    with patch.object(ps, "complete_light", AsyncMock(return_value=judge)):
+        out = await ps._ensure_smart(
+            _draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], ["ตลาดต้องการ"], "PLO1"
+        )
+
+    assert out.smart_check.measurable is False
+    assert out.smart_check.passed is False
+    assert out.escalated is False
+    assert "M_assessable" in out.soft_flags
+
+
+async def test_a_judge_exception_leaves_every_soft_verdict_true():
+    """An LLM hiccup must degrade toward 'not flagged' rather than falsely flagging
+    sound work."""
+    with patch.object(ps, "complete_light", AsyncMock(side_effect=RuntimeError("boom"))):
+        out = await ps._ensure_smart(
+            _draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], ["ตลาดต้องการ"], "PLO1"
+        )
+
+    assert out.soft_flags == []
+    assert out.smart_check.achievable is True
+    assert out.smart_check.timely is True
+
+
+async def test_soft_criteria_never_escalate_even_when_all_five_fail():
+    """Escalation reads hard-check failures alone — an immutable project rule."""
+    judge = ps._SmartSoftJudge(
+        specific_object_ok=False,
+        measurable_ok=False,
+        achievable_ok=False,
+        relevant_needs_ok=False,
+        time_bound_ok=False,
+    )
+
+    with patch.object(ps, "complete_light", AsyncMock(return_value=judge)):
+        out = await ps._ensure_smart(
+            _draft("วิเคราะห์ข้อมูลทางสถิติได้"), {"c1"}, META, ["c1"], ["ตลาดต้องการ"], "PLO1"
+        )
+
+    assert out.escalated is False
+    assert out.retry_count == 0
+    assert sorted(out.soft_flags) == sorted(
+        ["S_object", "M_assessable", "A_level", "R_needs", "T_horizon"]
+    )
+
+
+async def test_the_needs_statements_reach_the_judge_prompt():
+    """R is judged against the Needs the PLO cites, so the statements must travel
+    from synthesize_from_needs into the prompt."""
+    seen: list[list[dict[str, str]]] = []
+
+    async def capture(model, messages, **kw):  # noqa: ANN001, ANN003
+        seen.append(messages)
+        return ps._SmartSoftJudge()
+
+    with patch.object(ps, "complete_light", side_effect=capture):
+        await ps._ensure_smart(
+            _draft("วิเคราะห์ข้อมูลทางสถิติได้"),
+            {"c1"},
+            META,
+            ["c1"],
+            ["ตลาดต้องการผู้ที่วิเคราะห์ข้อมูลขนาดใหญ่ได้"],
+            "PLO1",
+        )
+
+    assert "ตลาดต้องการผู้ที่วิเคราะห์ข้อมูลขนาดใหญ่ได้" in seen[0][1]["content"]

@@ -14,6 +14,7 @@ from curriculum_agent.models import (
     Need,
     ProgramMetadata,
     SMARTCheck,
+    StakeholderType,
 )
 from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
@@ -101,9 +102,14 @@ class _SingleDraftResponse(BaseModel):
 
 
 class _SmartSoftJudge(BaseModel):
-    specific_object_ok: bool
-    achievable_ok: bool
-    relevant_alignment_ok: bool
+    """The light model's soft verdicts. Every field defaults true so a failed judge
+    call degrades toward 'not flagged' rather than flagging sound work."""
+
+    specific_object_ok: bool = True
+    measurable_ok: bool = True
+    achievable_ok: bool = True
+    relevant_needs_ok: bool = True
+    time_bound_ok: bool = True
     notes_th: str | None = None
 
 
@@ -142,6 +148,7 @@ async def _ensure_smart(
     known_need_ids: set[str],
     metadata: ProgramMetadata,
     authoritative_need_ids: list[str],
+    need_statements_th: list[str],
     plo_id: str,
 ) -> _SmartOutcome:
     """Hard fails → per-PLO retry (max _MAX_RETRIES) naming the criterion; soft fails → flags.
@@ -182,31 +189,40 @@ async def _ensure_smart(
         )
 
     soft_flags: list[str] = []
-    notes: str | None = None
+    judge = _SmartSoftJudge()
     try:
         judge = await complete_light(
             _SmartSoftJudge,
             build_smart_soft_judge_prompt(
-                draft.statement_th, metadata.vision_th, metadata.degree_level
+                draft.statement_th,
+                metadata.degree_level,
+                metadata.duration_years,
+                need_statements_th,
             ),
         )
-        notes = judge.notes_th
-        if not judge.specific_object_ok:
-            soft_flags.append("S_object")
-        if not judge.achievable_ok:
-            soft_flags.append("A_level")
-        if not judge.relevant_alignment_ok:
-            soft_flags.append("R_alignment")
     except Exception as exc:
+        # Keep the all-true default: a hiccup must not manufacture soft flags.
         logger.warning(f"  Soft judge failed for PLO {plo_id}: {exc}")
 
+    for ok, flag in (
+        (judge.specific_object_ok, "S_object"),
+        (judge.measurable_ok, "M_assessable"),
+        (judge.achievable_ok, "A_level"),
+        (judge.relevant_needs_ok, "R_needs"),
+        (judge.time_bound_ok, "T_horizon"),
+    ):
+        if not ok:
+            soft_flags.append(flag)
+
+    # Soft verdicts reach SMARTCheck so `passed` stops reporting success for a
+    # flagged outcome. They still do not escalate — that reads `fails` alone.
     smart = SMARTCheck(
-        specific=HardCriterion.S_VERB not in fails,
-        measurable=HardCriterion.M_FORBIDDEN not in fails,
-        achievable=True,
-        relevant=HardCriterion.R_EVIDENCE not in fails,
-        timely=True,
-        notes_th=notes,
+        specific=HardCriterion.S_VERB not in fails and judge.specific_object_ok,
+        measurable=HardCriterion.M_FORBIDDEN not in fails and judge.measurable_ok,
+        achievable=judge.achievable_ok,
+        relevant=HardCriterion.R_EVIDENCE not in fails and judge.relevant_needs_ok,
+        timely=judge.time_bound_ok,
+        notes_th=judge.notes_th,
     )
     return _SmartOutcome(
         draft=draft,
@@ -253,7 +269,12 @@ async def synthesize_from_needs(
 
     authoritative_need_ids = [n.need_id for n in needs]
     outcome = await _ensure_smart(
-        response.plo, known_need_ids, metadata, authoritative_need_ids, plo_id
+        response.plo,
+        known_need_ids,
+        metadata,
+        authoritative_need_ids,
+        [n.statement_th for n in needs],
+        plo_id,
     )
     draft = outcome.draft
 
@@ -330,6 +351,14 @@ async def run(state: AgentState) -> AgentState:
         logger.warning(
             f"Stage 4 produced {core} core PLOs, below the {MIN_NEEDS} minimum policy — "
             "need_combination should have enforced this; review at the checkpoint"
+        )
+
+    if not any(
+        StakeholderType.INSTITUTIONAL_DIRECTION in n.source_stakeholder_types for n in needs
+    ):
+        logger.warning(
+            "no PLO traces to the institution's own direction — add วิสัยทัศน์/พันธกิจ "
+            "evidence at the Stakeholder Needs stage, or accept at the checkpoint"
         )
 
     await PLORepository().bulk_insert(plos)

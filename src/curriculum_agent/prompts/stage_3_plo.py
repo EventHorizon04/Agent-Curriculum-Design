@@ -42,8 +42,7 @@ def build_plo_from_need_prompt(
     )
     user = (
         f"หลักสูตร: {metadata.name_th} ({metadata.degree_level}, {metadata.duration_years} ปี)\n"
-        f"สาขา: {metadata.field}\n"
-        f"วิสัยทัศน์: {metadata.vision_th}\n\n"
+        f"สาขา: {metadata.field}\n\n"
         f"{need_block}"
     )
     return [

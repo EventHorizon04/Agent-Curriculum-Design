@@ -2,7 +2,13 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
-from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetadata
+from curriculum_agent.models import (
+    BloomLevel,
+    KSECCategory,
+    Need,
+    ProgramMetadata,
+    StakeholderType,
+)
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages.need_grouping import MIN_NEEDS
 
@@ -46,9 +52,7 @@ def _patch_llm(needs: list[Need]):
         return ps._SingleDraftResponse(plo=drafts[nid])
 
     async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
+        return ps._SmartSoftJudge()
 
     return (
         patch.object(ps, "complete_heavy", fake_heavy),
@@ -125,3 +129,46 @@ async def test_run_does_not_warn_above_the_old_ten_cap(
         call.args[0] for call in mock_logger.warning.call_args_list if "core PLOs" in call.args[0]
     ]
     assert policy_warnings == []
+
+
+async def test_warns_when_no_plo_traces_to_the_institution(
+    program_metadata: ProgramMetadata,
+):
+    """Institutional coverage is a property of the PLO set, not of each PLO, so it
+    is checked once after synthesis rather than flagged nine times."""
+    needs = [_need(f"N{i}") for i in range(1, 7)]  # none carry institutional_direction
+    p1, p2, p3 = _patch_llm(needs)
+
+    with p1, p2, p3, patch.object(ps, "logger") as mock_logger:
+        await ps.run(
+            {
+                "program_id": "cs-test",
+                "metadata": program_metadata.model_dump(mode="json"),
+                "needs": [n.model_dump(mode="json") for n in needs],
+            }
+        )
+
+    warnings = [c.args[0] for c in mock_logger.warning.call_args_list if "institution" in c.args[0]]
+    assert len(warnings) == 1
+
+
+async def test_does_not_warn_when_a_need_carries_institutional_direction(
+    program_metadata: ProgramMetadata,
+):
+    needs = [_need(f"N{i}") for i in range(1, 7)]
+    needs[0] = needs[0].model_copy(
+        update={"source_stakeholder_types": [StakeholderType.INSTITUTIONAL_DIRECTION]}
+    )
+    p1, p2, p3 = _patch_llm(needs)
+
+    with p1, p2, p3, patch.object(ps, "logger") as mock_logger:
+        await ps.run(
+            {
+                "program_id": "cs-test",
+                "metadata": program_metadata.model_dump(mode="json"),
+                "needs": [n.model_dump(mode="json") for n in needs],
+            }
+        )
+
+    warnings = [c.args[0] for c in mock_logger.warning.call_args_list if "institution" in c.args[0]]
+    assert warnings == []
