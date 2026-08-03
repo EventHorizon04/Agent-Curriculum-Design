@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import pytest
 
-from curriculum_agent.models import StakeholderType
+from curriculum_agent.models import REQUIREMENT_TYPES, StakeholderType
+from curriculum_agent.stages import demand
 from curriculum_agent.stages.demand import (
     classification_coverage,
     compute_demand_score,
@@ -21,6 +22,17 @@ def test_the_four_weight_tiers():
 
 def test_every_stakeholder_type_has_a_weight():
     assert all(evidence_weight(t) > 0 for t in StakeholderType)
+
+
+def test_the_requirement_tier_matches_models_requirement_types():
+    """_REQUIREMENT_WEIGHT's key set must track models.REQUIREMENT_TYPES exactly.
+
+    Nothing else ties the two together: a third requirement type added there
+    without a matching entry here would silently score the 0.6/0.4 opinion tier
+    instead of the mandate tier, with no import error or test failure to catch
+    it — this assertion is that guard.
+    """
+    assert set(demand._REQUIREMENT_WEIGHT.keys()) == REQUIREMENT_TYPES
 
 
 def test_the_professional_council_outweighs_a_single_employer():

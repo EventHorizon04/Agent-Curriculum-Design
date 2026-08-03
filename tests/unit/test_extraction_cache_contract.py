@@ -104,6 +104,53 @@ async def test_cache_key_actually_incorporates_the_contract(monkeypatch: pytest.
     assert seen[0] != seen[1], "cache key ignores the contract fingerprint"
 
 
+async def test_cache_key_incorporates_program_metadata(monkeypatch: pytest.MonkeyPatch):
+    """Two programs in different fields ingesting the same source text must not
+    share a cache entry.
+
+    `field_th`/`program_name_th` go into the *user* message per call (Task 8), but
+    `_EXTRACTION_CONTRACT` deliberately hashes only the system message — it does
+    not vary per program, so it cannot carry this. Without the metadata in the
+    key itself, two programs ingesting the same สภาวิชาชีพ standard or the same
+    scraped job posting (identical first 1200 chars, identical `classification`)
+    would collide, and the second program would be served the first program's
+    cached skills — whose `is_field_relevant` was judged against the *other*
+    field. Same metadata must still hit the same entry, or every cache-hit path
+    the other tests in this module pin would break.
+    """
+    seen: list[str] = []
+
+    async def capture(self, key: str):  # noqa: ANN001, ANN202
+        seen.append(key)
+        return None
+
+    monkeypatch.setattr(se.LLMCacheRepository, "get", capture)
+    monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
+    monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
+    monkeypatch.setattr(se, "complete_light", AsyncMock(side_effect=RuntimeError("no LLM")))
+
+    metadata_cs = {"field": "วิทยาการคอมพิวเตอร์", "name_th": "หลักสูตรวิทยาการคอมพิวเตอร์"}
+    metadata_nursing = {"field": "พยาบาลศาสตร์", "name_th": "หลักสูตรพยาบาลศาสตร์"}
+
+    await se.run(
+        {"program_id": "cs-test", "classified_evidence": [_EVIDENCE], "metadata": metadata_cs}
+    )
+    await se.run(
+        {
+            "program_id": "cs-test",
+            "classified_evidence": [_EVIDENCE],
+            "metadata": metadata_nursing,
+        }
+    )
+    await se.run(
+        {"program_id": "cs-test", "classified_evidence": [_EVIDENCE], "metadata": metadata_cs}
+    )
+
+    assert len(seen) == 3
+    assert seen[0] != seen[1], "cache key ignores program metadata (field/name)"
+    assert seen[0] == seen[2], "identical metadata must still hit the same cache entry"
+
+
 async def test_old_contract_cache_entry_is_re_extracted_not_raised(
     monkeypatch: pytest.MonkeyPatch,
 ):

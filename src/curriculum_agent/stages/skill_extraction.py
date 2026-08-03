@@ -21,7 +21,11 @@ from curriculum_agent.models import (
     StakeholderType,
 )
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
-from curriculum_agent.stages.demand import compute_demand_score, total_evidence_weight
+from curriculum_agent.stages.demand import (
+    classification_coverage,
+    compute_demand_score,
+    total_evidence_weight,
+)
 from curriculum_agent.stages.need_grouping import merge_bloom, normalize_need_name
 
 _WS_RE = re.compile(r"\s+")
@@ -195,6 +199,8 @@ async def run(state: AgentState) -> AgentState:
     classified = state.get("classified_evidence", [])
     program_id = state.get("program_id", "unknown")
     metadata = state.get("metadata") or {}
+    field_th = str(metadata.get("field", ""))
+    program_name_th = str(metadata.get("name_th", ""))
     logger.info(f"Stage 2: skill_extraction from {len(classified)} evidence items")
 
     # --- Step 1: LLM skill extraction per evidence item (cache-first) ---
@@ -209,9 +215,17 @@ async def run(state: AgentState) -> AgentState:
         evidence = StakeholderEvidence.model_validate(item_dict)
 
         text_slice = evidence.raw_text_th[:1200]
+        # field_th/program_name_th are in the key, not just the fingerprint: the
+        # fingerprint intentionally covers only the schema-and-instructions
+        # contract (see _extraction_contract_fingerprint), which does not vary per
+        # program, while these two go into the *user* message per call. Without
+        # them here, two programs in different fields ingesting the same source
+        # text (same สภาวิชาชีพ standard, same scraped posting) would share a
+        # cache entry, and the second program would be served skills whose
+        # is_field_relevant was judged against the first program's field.
         cache_key = hashlib.sha256(
             f"{text_slice}\x00{evidence.classification}\x00{settings.light_model}"
-            f"\x00{_EXTRACTION_CONTRACT}".encode()
+            f"\x00{_EXTRACTION_CONTRACT}\x00{field_th}\x00{program_name_th}".encode()
         ).hexdigest()
 
         result: _ExtractedSkillsResponse | None = None
@@ -231,8 +245,8 @@ async def run(state: AgentState) -> AgentState:
             messages = build_extract_skills_prompt(
                 text_slice,
                 evidence.classification,
-                field_th=str(metadata.get("field", "")),
-                program_name_th=str(metadata.get("name_th", "")),
+                field_th=field_th,
+                program_name_th=program_name_th,
             )
             try:
                 result = await complete_light(_ExtractedSkillsResponse, messages)
@@ -314,18 +328,20 @@ async def run(state: AgentState) -> AgentState:
         return state
 
     # --- Step 2: classify every skill, then build ExtractedSkill objects ---
-    stakeholder_type_by_evidence: dict[str, str] = {
-        str(d["evidence_id"]): str(d.get("stakeholder_type", "employer"))
-        for d in classified
-        if d.get("evidence_id")
-    }
-    importance_by_name = _compute_skill_importance(raw_skills, stakeholder_type_by_evidence)
+    # One pass over `classified` building both per-evidence lookups: the split
+    # into two identically-guarded loops was an artefact of Tasks 7 and 8 landing
+    # separately, not a deliberate choice.
+    stakeholder_type_by_evidence: dict[str, str] = {}
+    evidence_class_by_id: dict[str, str] = {}
+    for d in classified:
+        eid = d.get("evidence_id")
+        if not eid:
+            continue
+        eid = str(eid)
+        stakeholder_type_by_evidence[eid] = str(d.get("stakeholder_type", "employer"))
+        evidence_class_by_id[eid] = str(d.get("classification", "general"))
 
-    evidence_class_by_id: dict[str, str] = {
-        str(d["evidence_id"]): str(d.get("classification", "general"))
-        for d in classified
-        if d.get("evidence_id")
-    }
+    importance_by_name = _compute_skill_importance(raw_skills, stakeholder_type_by_evidence)
     class_by_name = classify_skills(raw_skills, evidence_class_by_id)
     # class_by_name is keyed by the first spelling classify_skills happened to see
     # per normalised name; a second evidence item can contribute a differently-
@@ -337,10 +353,9 @@ async def run(state: AgentState) -> AgentState:
     # normalised name once, up front, and look up every skill through it.
     class_by_norm = {normalize_need_name(name): cls for name, cls in class_by_name.items()}
 
-    counts: dict[str, int] = {}
-    for value in class_by_name.values():
-        counts[value] = counts.get(value, 0) + 1
-    logger.info(f"Stage 2: skill classification {counts}")
+    logger.info(
+        f"Stage 2: skill classification {classification_coverage(list(class_by_name.values()))}"
+    )
 
     extracted: list[ExtractedSkill] = []
     for s in raw_skills:

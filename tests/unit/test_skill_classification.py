@@ -38,10 +38,34 @@ def test_off_field_skill_is_unclassified():
 
 
 def test_requirement_beats_a_want_frequency_of_one():
-    """A mandate does not become optional because few sources repeated it."""
-    result = classify_skills([_raw("จรรยาบรรณวิชาชีพ", "E1")], {"E1": "requirement"})
+    """A mandate does not become optional because few sources repeated it.
+
+    Distinguishes rule 1 (requirement wins) from rule 4 (frequency -> need): a
+    second, non-requirement evidence item also names the skill, so a
+    frequency-only reading would say "need" — the requirement evidence must
+    still win.
+    """
+    result = classify_skills(
+        [_raw("จรรยาบรรณวิชาชีพ", "E1"), _raw("จรรยาบรรณวิชาชีพ", "E2")],
+        {"E1": "requirement", "E2": "general"},
+    )
 
     assert result["จรรยาบรรณวิชาชีพ"] == "requirement"
+
+
+def test_is_field_relevant_is_or_aggregated_across_mentions():
+    """One mention judged on-field keeps the name on-field even if another
+    mention of the same skill was judged off-field — the OR in classify_skills'
+    aggregation, not the last mention seen or an AND, decides this."""
+    result = classify_skills(
+        [
+            _raw("การเขียนโปรแกรม", "E1", relevant=True),
+            _raw("การเขียนโปรแกรม", "E2", relevant=False),
+        ],
+        {"E1": "general", "E2": "general"},
+    )
+
+    assert result["การเขียนโปรแกรม"] == "need"
 
 
 def test_requirement_beats_an_off_field_verdict():
