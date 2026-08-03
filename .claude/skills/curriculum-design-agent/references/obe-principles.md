@@ -13,7 +13,7 @@ This agent is responsible for everything up to and including PLO. YLO/CLO requir
 
 ## Hierarchy of learning outcomes (context)
 
-- **PLO (Program Learning Outcome)** — what every graduate can do at graduation. At least 6 statements, no upper cap (per project policy — see SKILL.md). Covers both subject-specific and generic competencies.
+- **PLO (Program Learning Outcome)** — what every graduate can do at graduation. At least 6 statements, no upper cap (per project policy — see SKILL.md). Spans more than one KSEC domain (`K`/`S`/`EC`/`E`/`C`), not clustered in just one.
 - **YLO (Year Learning Outcome)** — end of each academic year. PLO = Σ YLO over years. *Out of agent scope.*
 - **CLO (Course Learning Outcome)** — end of a specific course. *Out of agent scope.*
 - **LLO (Lesson Learning Outcome)** — single-class-session level. *Out of agent scope.*
