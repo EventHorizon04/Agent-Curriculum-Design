@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import DesignerNote from './components/DesignerNote'
-import { classStyle, stakeholderLabel } from '../constants/stakeholder'
+import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 
 interface SMARTCheck {
   specific: boolean
@@ -318,7 +318,7 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
                 </span>
               </div>
               <p className="text-xs text-gray-400 mt-1.5">
-                {c.source_evidence_ids.length} evidence · {c.ksec_category} · {c.bloom_level}
+                {c.source_evidence_ids.length} evidence · {ksecLabel(c.ksec_category)} · {c.bloom_level}
               </p>
             </div>
           ))}
