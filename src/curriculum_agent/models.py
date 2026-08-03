@@ -146,11 +146,6 @@ class ProgramCreateRequest(BaseModel):
     duration_years: int = Field(ge=1, le=8)
     faculty: str
     university: str
-    vision_th: str
-    mission_th: str = Field(min_length=1)
-    philosophy_th: str = Field(min_length=1)
-    institutional_identity_th: str | None = None
-    student_identity_th: str | None = None
     professional_council: str | None = None
     accreditation_body: str | None = None
     subject_benchmark_ref: str | None = None
@@ -168,15 +163,14 @@ class ProgramMetadata(ProgramCreateRequest):
     program_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
     # Entity model deserializes persisted rows verbatim, including legacy rows
-    # backfilled by migration a845ef6ab4f6 with ""/[]; input-time non-empty
+    # backfilled by migration a845ef6ab4f6 with []; input-time non-empty
     # enforcement lives on ProgramCreateRequest only.
-    mission_th: str
-    philosophy_th: str
     program_goals_th: list[str]
 
     # Entity model deserializes persisted rows verbatim, including any future
     # legacy code no longer in the taxonomy; input-time membership enforcement
-    # lives on ProgramCreateRequest only (same boundary rule as F1's mission_th).
+    # lives on ProgramCreateRequest only (same boundary rule as program_goals_th
+    # above).
     @model_validator(mode="after")
     def _validate_isced_code(self) -> ProgramMetadata:
         return self
@@ -195,49 +189,6 @@ class ProgramSummary(BaseModel):
     created_at: datetime
     current_stage: str | None = None
     session_status: str | None = None
-
-
-class ExtractedMetadata(BaseModel):
-    """LLM-extracted university metadata from an uploaded document.
-
-    Every field is None when the document does not state it — the
-    extraction prompt forbids fabrication.
-    """
-
-    vision_th: str | None = None
-    mission_th: str | None = None
-    institutional_identity_th: str | None = None
-    student_identity_th: str | None = None
-
-
-class MetadataExtractionResult(ExtractedMetadata):
-    """What the prefill endpoint returns: the extracted values plus a warning list.
-
-    Separate from `ExtractedMetadata` on purpose. That model is the LLM's response
-    contract, and adding a field there would mean asking the model to grade its own
-    output — the same mistake that had it inventing PLO ids and evidence trails.
-    The grade is computed in code, so it lives on the API model only.
-
-    `low_grounding_fields` names the fields whose text has little character overlap
-    with the source document. The extraction prompt permits paraphrase, so weak
-    overlap is a prompt for the designer to check rather than proof of invention —
-    these are surfaced in the intake form, never dropped.
-    """
-
-    low_grounding_fields: list[str] = Field(default_factory=list)
-
-
-class SuggestedName(BaseModel):
-    name_th: str
-    name_en: str
-
-
-class IscedSuggestion(BaseModel):
-    isced_code: str
-    field_name_en: str
-    field_name_th: str
-    rationale_th: str
-    suggested_names: list[SuggestedName] = Field(min_length=1, max_length=3)
 
 
 # --------------------------- Stage 1 -----------------------------

@@ -149,9 +149,6 @@ def _valid_create_kwargs() -> dict:
         "duration_years": 4,
         "faculty": "วิศวกรรมศาสตร์",
         "university": "มหาวิทยาลัยทดสอบ",
-        "vision_th": "วิสัยทัศน์",
-        "mission_th": "พันธกิจ",
-        "philosophy_th": "ปรัชญา",
         "program_goals_th": ["เป้าหมายที่ 1"],
         "program_objectives_th": ["วัตถุประสงค์ที่ 1"],
     }
@@ -159,22 +156,14 @@ def _valid_create_kwargs() -> dict:
 
 def test_program_create_request_valid() -> None:
     req = ProgramCreateRequest(**_valid_create_kwargs())
-    assert req.mission_th == "พันธกิจ"
-    assert req.institutional_identity_th is None
+    assert req.name_th == "วิทยาการคอมพิวเตอร์"
+    assert req.program_goals_th == ["เป้าหมายที่ 1"]
 
 
 def test_program_metadata_inherits_and_adds_program_id() -> None:
     meta = ProgramMetadata(program_id="cs-1", **_valid_create_kwargs())
     assert meta.program_id == "cs-1"
-    assert meta.philosophy_th == "ปรัชญา"
-
-
-@pytest.mark.parametrize("empty_field", ["mission_th", "philosophy_th"])
-def test_empty_required_text_rejected(empty_field: str) -> None:
-    kwargs = _valid_create_kwargs()
-    kwargs[empty_field] = ""
-    with pytest.raises(ValidationError):
-        ProgramCreateRequest(**kwargs)
+    assert meta.program_goals_th == ["เป้าหมายที่ 1"]
 
 
 def test_empty_program_goals_rejected() -> None:
@@ -186,16 +175,63 @@ def test_empty_program_goals_rejected() -> None:
 
 def test_program_metadata_accepts_legacy_backfilled_row() -> None:
     """Regression guard: rows backfilled by migration a845ef6ab4f6 with
-    ""/[] for mission_th/philosophy_th/program_goals_th must still
-    deserialize via ProgramMetadata (e.g. ProgramRepository.get())."""
+    [] for program_goals_th must still deserialize via ProgramMetadata
+    (e.g. ProgramRepository.get())."""
     kwargs = _valid_create_kwargs()
-    kwargs["mission_th"] = ""
-    kwargs["philosophy_th"] = ""
     kwargs["program_goals_th"] = []
     meta = ProgramMetadata(program_id="cs-legacy", **kwargs)
-    assert meta.mission_th == ""
-    assert meta.philosophy_th == ""
     assert meta.program_goals_th == []
+
+
+def test_program_models_no_longer_carry_institutional_metadata():
+    """The institution's direction lives in the evidence table now — a second copy
+    on the program row would be a source of truth nobody keeps consistent."""
+    from curriculum_agent.models import ProgramCreateRequest, ProgramMetadata
+
+    gone = (
+        "vision_th",
+        "mission_th",
+        "philosophy_th",
+        "institutional_identity_th",
+        "student_identity_th",
+    )
+    for field in gone:
+        assert field not in ProgramCreateRequest.model_fields
+        assert field not in ProgramMetadata.model_fields
+
+
+def test_removed_model_classes_are_gone():
+    import curriculum_agent.models as models
+
+    for name in (
+        "ExtractedMetadata",
+        "MetadataExtractionResult",
+        "IscedSuggestion",
+        "SuggestedName",
+    ):
+        assert not hasattr(models, name), f"{name} should have been deleted"
+
+
+def test_isced_code_is_still_validated_against_the_taxonomy():
+    """The suggestion feature is gone but the code is still typed by hand, so the
+    guard against an off-taxonomy value matters more, not less."""
+    import pytest
+
+    from curriculum_agent.models import ProgramCreateRequest
+
+    with pytest.raises(ValueError, match="ISCED"):
+        ProgramCreateRequest(
+            name_th="วิทยาการคอมพิวเตอร์",
+            name_en="Computer Science",
+            field="Computer Science",
+            isced_code="9999",
+            degree_level="bachelor",
+            duration_years=4,
+            faculty="วิทยาศาสตร์",
+            university="ทดสอบ",
+            program_goals_th=["ผลิตบัณฑิตที่ทำงานได้"],
+            program_objectives_th=["พัฒนาทักษะการเขียนโปรแกรม"],
+        )
 
 
 # ---- ProgramSummary (Task 1: program history) ---------------------------
