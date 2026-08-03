@@ -42,7 +42,7 @@ def test_the_qualification_level_and_duration_reach_the_prompt() -> None:
     built = _built()
 
     assert "bachelor" in built
-    assert "4" in built
+    assert "4 ปี" in built
 
 
 def test_vision_appears_nowhere() -> None:
@@ -52,9 +52,13 @@ def test_vision_appears_nowhere() -> None:
 
 
 def test_measurable_asks_about_real_assessment_not_just_wording() -> None:
+    """Pin the measurable_ok line itself, not the shared preamble — "ประเมิน"
+    alone also occurs in "SMART ประเมิน 5 ข้อ" and would pass regardless of
+    what measurable_ok says."""
     system = build_smart_soft_judge_prompt("PLO", "bachelor", 4, _NEEDS)[0]["content"]
 
-    assert "ประเมิน" in system
+    assert "เครื่องมือทางการศึกษา" in system
+    assert "ยังไม่นับว่าวัดได้" in system
 
 
 def test_time_bound_defaults_to_true_in_the_instruction() -> None:
