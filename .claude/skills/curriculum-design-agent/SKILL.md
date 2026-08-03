@@ -9,12 +9,12 @@ description: Use when working on any component of this curriculum design agent �
 
 An AI agent helping Thai higher-education curriculum designers produce programs meeting MHESI standards and OBE principles. 6-stage pipeline, human-in-the-loop at every stage boundary except one shared checkpoint (see stage 3/4 below):
 
-1. **Intake** — program metadata (field, degree level, duration, vision, professional council)
-2. **Stakeholder needs** — collect evidence from job postings, professional standards, alumni feedback, มคอ.1; classify each item need/requirement/want (community/parent evidence is always `want`, decided in pure code; every other type goes to an LLM choosing need/requirement)
-3. **Skill extraction** — grounded LLM extraction per evidence item: each skill carries a verbatim quote (`evidence_span_th`) verified to actually occur in its source evidence; ungrounded skills are dropped
-4. **Need combination** — group extracted skills into core Needs (at least 6, no upper cap, plus optional want-based Needs), one KSEC tag per Need, grouping and merging always within a single KSEC bucket, never across. Shares one human-review checkpoint with stage 3 — the designer reviews raw skills and distilled Needs together
+1. **Intake** — program metadata (field, degree level, duration, vision, mission, philosophy, identity, professional council). Also turns the program's own vision/mission/philosophy/identity statements into `requirement` evidence, so a PLO the institution's own direction demands has something to trace to.
+2. **Stakeholder needs** — collect evidence from job postings, professional standards, alumni feedback, มคอ.1, and 15 stakeholder types split external/internal (`STAKEHOLDER_GROUP`); classify each evidence item `requirement`/`general` — a pure code lookup from `StakeholderType` (`classify_evidence_type`), no LLM call. `need`/`want`/`unclassified` is not decided here at all — see stage 3.
+3. **Skill extraction** — grounded LLM extraction per evidence item: each skill carries a verbatim quote (`evidence_span_th`) verified to actually occur in its source evidence, plus an `is_field_relevant` judgement from the same call; ungrounded skills are dropped. After the whole corpus is extracted, `classify_skills` assigns each skill name `requirement`/`need`/`want`/`unclassified` in pure code, since that classification depends on cross-evidence frequency
+4. **Need combination** — group extracted skills into core Needs (at least 6, no upper cap, plus optional want-based Needs), one KSEC tag per Need, grouping and merging always within a single KSEC bucket (`K`, `S`, `EC`), never across. Shares one human-review checkpoint with stage 3 — the designer reviews raw skills and distilled Needs together
 5. **PLO synthesis** — one focused LLM call per Need, mapping each core Need to one SMART PLO one-to-one (at least 6, no upper cap), plus a designer-driven endpoint to merge several Needs into one PLO; an optional non-blocking pass produces supplementary PLOs from want-based Needs
-6. **PLO report** — classify PLOs generic vs specific for designer review and export
+6. **PLO report** — no classification. Assembles the reviewable report (every PLO with its Bloom level, KSEC tag, SMART soft flags, escalation status, evidence drill-down) and exports CHECO/มคอ.2
 
 **The agent's scope ends at PLO.** OBE chain is PLO → YLO → CLO, but YLO/CLO are faculty work. If asked to generate YLOs or CLOs, surface the scope boundary before complying.
 
@@ -35,8 +35,7 @@ Agents without this skill reliably make these mistakes. Check every learning-out
 3. **Every PLO carries evidence.** `source_need_ids` / `source_evidence_ids` non-empty. A PLO drafted "from general knowledge" without stakeholder evidence is a fabrication that fails accreditation — don't produce one, even as a placeholder.
 4. **Forbidden words** in any outcome statement: รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. Replace with observable verbs (เข้าใจ → อธิบาย/วิเคราะห์).
 5. **Every PLO passes all five SMART checks before it leaves PLO synthesis.** S (one Bloom verb + named, non-generic object), M (no forbidden word), and R-evidence (non-empty trail) are **hard fails** that trigger the SMART retry loop (max 3 attempts, retry prompt names the violated criterion). A (Bloom level plausible for qualification/resources) and R-alignment (vision/mission fit) are **soft fails** that surface as human-review flags, not blockers. Full rubric with Thai definitions and pass/fail examples in `references/obe-principles.md` — implement any `SMARTValidator` against that file, don't re-derive from memory.
-6. **Balance:** 60–70% subject-specific, 30–40% generic PLOs.
-7. **Thai is primary** for all student-facing statements. Code and comments in English.
+6. **Thai is primary** for all student-facing statements. Code and comments in English.
 
 ## Coding patterns
 

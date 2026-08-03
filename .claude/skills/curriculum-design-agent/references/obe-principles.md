@@ -93,7 +93,7 @@ Hard-fails trigger the automatic retry loop (bounded — max 3 attempts before e
 
 ## K/S/E/C vs Bloom domain — do not conflate
 
-`ExtractedSkill.ksec_category` / `Need.ksec_category` (see `data-schemas.md`) is a **TQF/มคอ. compliance tag**, not a Bloom domain. It is a 5-way collapse of มคอ.'s domains: K=ความรู้, GS=ทักษะทั่วไป (generic/transferable), SS=ทักษะเฉพาะสาขา (subject-specific), C=คุณลักษณะบุคคล, E=คุณธรรมจริยธรรม. มคอ.'s ทักษะ domain is split into GS and SS here rather than kept as one `S` tag with a separate `is_subject_specific` boolean bolted on — a skill or Need has exactly one KSEC tag, so there is no "mixed" value and no way for the specificity flag to disagree with the tag. It exists to make eventual มคอ.2/CHECO domain mapping traceable back to the skill level, and is orthogonal to `bloom_level` (the cognitive-scale tag below) — a skill can be `ksec_category=SS` at any Bloom level, e.g. "วิเคราะห์ข้อมูลเชิงสถิติ" is `analyze` and `SS` at the same time. Don't try to derive one field from the other.
+`ExtractedSkill.ksec_category` / `Need.ksec_category` (see `data-schemas.md`) is a **TQF/มคอ. compliance tag**, not a Bloom domain. K=ความรู้, S=ทักษะ, C=คุณลักษณะบุคคล, E=คุณธรรมจริยธรรม — a skill carries exactly one of these four. A Need also carries `EC`, an umbrella tag produced when its member skills mix `E` and `C` (an all-`E` or all-`C` group still resolves to the standalone `E`/`C` tag). There is no "mixed" value for a skill and no separate specificity flag bolted on — a skill or Need has exactly one KSEC tag. It exists to make eventual มคอ.2/CHECO domain mapping traceable back to the skill level, and is orthogonal to `bloom_level` (the cognitive-scale tag below) — a skill can be `ksec_category=S` at any Bloom level, e.g. "วิเคราะห์ข้อมูลเชิงสถิติ" is `analyze` and `S` at the same time. Don't try to derive one field from the other.
 
 ## Bloom's Taxonomy — three learning domains (agent models only the first)
 
@@ -170,14 +170,9 @@ Example progression for "ผู้เรียนปฏิบัติงาน�
 - Organization: "ตัดสินใจในสถานการณ์ที่มีข้อขัดแย้งทางจรรยาบรรณโดยใช้หลักการทางวิชาชีพได้"
 - Characterization: "ดำเนินงานทางวิชาชีพโดยยึดถือจรรยาบรรณเป็นแนวปฏิบัติประจำได้อย่างสม่ำเสมอ"
 
-## Subject-specific vs generic outcomes
+## Outcome coverage across KSEC domains
 
-Every program needs BOTH:
-
-- **Subject-specific outcomes** — competencies unique to the field (e.g. "design a packaging system that respects intellectual property rights" for a packaging design program)
-- **Generic / transferable outcomes** — competencies any graduate should have (problem-solving, communication, collaboration, lifelong learning, ethical practice, digital literacy)
-
-A program with only subject-specific PLOs fails AUN-QA review. A program with only generic PLOs fails to differentiate from other fields. Aim for roughly 60–70% subject-specific, 30–40% generic.
+Every program needs outcomes spanning more than one competency domain — a PLO set sitting entirely in `K` (knowledge) fails AUN-QA review for lacking breadth, and one that never reaches `EC`/`E`/`C` skips the profession's ethical/character expectations มคอ. requires. There is no longer a computed generic/specific split or a target ratio for it: that classification (and the `SS`/`GS` KSEC tags it depended on) has been removed from the design — see `data-schemas.md`. Checking outcome breadth now means looking at the KSEC tags (`K`/`S`/`EC`/`E`/`C`) of the Needs behind the PLO set, not measuring a percentage.
 
 ## PLO readiness checklist
 
@@ -185,7 +180,7 @@ Before marking a PLO set final (hand-off to faculty for YLO/BCD work), verify:
 
 1. PLOs trace back to stakeholder needs (evidence trail intact — every PLO has non-empty `source_need_ids`)
 2. Each PLO passes the full SMART validation checklist above (no outstanding hard-fails; soft-flags reviewed by the designer)
-3. At least 6 PLOs (no upper cap), mix of subject-specific and generic
+3. At least 6 PLOs (no upper cap), spanning more than one KSEC domain
 4. PLOs align with the program's stated objectives and the university/faculty vision
 5. PLOs differentiate this program from peer programs in the same field
 6. No forbidden words; one action verb per statement

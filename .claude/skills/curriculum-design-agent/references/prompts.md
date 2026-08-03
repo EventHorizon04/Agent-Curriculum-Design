@@ -8,13 +8,13 @@ Every prompt template below is mirrored 1:1 in `src/curriculum_agent/prompts/` �
 |---|---|---|
 | `extract_metadata.py` | `stages/intake.py` | Extract vision/mission/identity from an uploaded document |
 | `suggest_isced.py` | `stages/intake.py` | Suggest ISCED-F 2013 code + program names |
-| `classify_evidence.py` | `stages/stakeholder_needs.py` | Classify evidence need/requirement/unclassified (want is pure code) |
-| `extract_skills.py` | `stages/skill_extraction.py` | Grounded skill extraction with KSEC + Bloom tagging |
+| `extract_skills.py` | `stages/skill_extraction.py` | Grounded skill extraction with KSEC + Bloom tagging + field-relevance judgement |
 | `cluster_skills.py` | `stages/llm_clustering.py`, `stages/need_combination.py` | Group/merge skill names by meaning (index-based) |
 | `summarize_need.py` | `stages/need_combination.py` | Turn one skill group into one market-demand sentence (a Need) |
 | `stage_3_plo.py` | `stages/plo_synthesis.py` | Draft one PLO from one or more Needs |
 | `smart_validator.py` | `stages/plo_synthesis.py` | Soft SMART judge (S-object / A-level / R-alignment only — hard checks are pure code) |
-| `plo_classify.py` | `stages/plo_report.py` | LLM fallback for generic/specific PLO classification |
+
+There is no `classify_evidence.py` or `plo_classify.py`. Evidence classification (`requirement`/`general`) is a pure code lookup from `StakeholderType` — see `stages/stakeholder_needs.py`'s `classify_evidence_type`, no prompt involved. `plo_report` no longer classifies PLOs generic vs specific — it assembles and exports only, also with no LLM call.
 
 All prompts assume:
 - LLM is Thai-capable (Typhoon, Qwen) or proprietary (Claude, GPT-4o)
@@ -42,41 +42,19 @@ Always include rules. The model will drift toward generic English-academic style
 
 ---
 
-## Stage 2: Stakeholder needs classification
+## Stakeholder evidence classification: no prompt
 
-**Purpose:** classify each piece of stakeholder evidence. `want` is deliberately **not** an LLM option — `COMMUNITY`/`PARENT` evidence is assigned `want` in pure code (`WANT_ONLY_TYPES` in `stages/stakeholder_needs.py`) before this prompt ever runs; every other stakeholder type is sent to the LLM, which can only choose between `need`, `requirement`, and `unclassified`.
-
-**Model:** light (Typhoon 8B / Qwen 7B)
-
-**File:** `prompts/classify_evidence.py` — `build_classify_evidence_prompt(evidence)`
-
-```
-คุณเป็นผู้เชี่ยวชาญด้านการออกแบบหลักสูตร OBE ตามมาตรฐาน MHESI
-จงจัดประเภทข้อมูลความต้องการจากผู้มีส่วนได้ส่วนเสียออกเป็น 1 ประเภท:
-- requirement: ข้อกำหนด/มาตรฐานที่ต้องปฏิบัติตาม (compliance) บังคับต้องมี
-- need: ความต้องการของตลาดที่ทำให้หลักสูตรทันสมัยและตรงงานจริง
-- unclassified: ข้อมูลที่ไม่ชัดเจนพอที่จะจัดประเภท
-
-ตอบเป็น JSON object ที่มี field:
-  classification: string (requirement|need|unclassified)
-  classification_rationale_th: string (เหตุผลสั้น ๆ ภาษาไทย ไม่เกิน 2 ประโยค)
-
-แหล่งที่มา: {source_name} ({stakeholder_type})
-ข้อความ: {raw_text_th}
-(EN) {raw_text_en}   # only if present
-```
-
-Pair with the `_ClassifyResult` Pydantic model (`classification: Literal["need", "requirement", "unclassified"]`, `classification_rationale_th: str`).
+Evidence classification (`requirement` vs `general`) is decided entirely in code, from the `StakeholderType` alone — `classify_evidence_type` in `stages/stakeholder_needs.py`. `PROFESSIONAL_COUNCIL` and `INSTITUTIONAL_DIRECTION` are `requirement`; every other type is `general`. There is no LLM call and no prompt at this stage — the previous design asked a light model to judge each item `need`/`requirement`/`unclassified`, which was both a cost per item and the wrong question: a mandate is a property of who is speaking, not of how they phrased it. `need`/`want`/`unclassified` classification happens later, per skill — see `extract_skills.py` below and `classify_skills` in `stages/skill_extraction.py`.
 
 ---
 
 ## Stage 3: Skill extraction from raw evidence (grounded)
 
-**Purpose:** extract structured, evidence-grounded skill mentions from one piece of evidence. Runs per evidence item, cache-first (keyed on a text slice + classification + model).
+**Purpose:** extract structured, evidence-grounded skill mentions from one piece of evidence. Runs per evidence item, cache-first (keyed on a text slice + classification + model + program field/name).
 
 **Model:** light (Typhoon 8B / Qwen 7B) — `complete_light`
 
-**File:** `prompts/extract_skills.py` — `build_extract_skills_prompt(evidence_text, classification)`
+**File:** `prompts/extract_skills.py` — `build_extract_skills_prompt(evidence_text, classification, field_th="", program_name_th="")`
 
 ```
 คุณเป็นผู้เชี่ยวชาญวิเคราะห์ทักษะจากข้อความ
@@ -90,24 +68,30 @@ Pair with the `_ClassifyResult` Pydantic model (`classification: Literal["need",
   ห้ามเรียบเรียงใหม่ ห้ามแต่งเพิ่ม ถ้าไม่มีข้อความรองรับ ห้ามเสนอทักษะนั้น
 - evidence_span_th ต้องเป็นวลีที่สมบูรณ์ ยาวอย่างน้อยประมาณ 12 ตัวอักษร
   คัดลอกตรงตัวจาก evidence ห้ามตัดมาเป็นเศษคำหรืออักขระเดี่ยว ๆ
-- ทักษะที่ไม่เกี่ยวข้องกับสาขาวิชาของหลักสูตร ห้ามเสนอ
+- ทักษะที่อ่านแล้วไม่เข้าข่ายสาขาวิชาของหลักสูตรเลย ให้คงไว้แต่ตั้ง
+  is_field_relevant = false ห้ามตัดทิ้งเอง ผู้ออกแบบหลักสูตรจะเป็นผู้ตัดสิน
 
 ตอบเป็น JSON object: { skills: [ {
   skill_name_th: วลีทักษะภาษาไทย,
   skill_name_en: ชื่อภาษาอังกฤษมาตรฐาน (เช่น 'Data Analysis') ห้ามเว้นว่าง,
-  ksec_category: K|GS|SS|C|E — K=ความรู้, GS=ทักษะทั่วไป,
-  SS=ทักษะเฉพาะสาขา, C=คุณลักษณะบุคคล, E=คุณธรรมจริยธรรม
+  ksec_category: K|S|E|C — K=ความรู้, S=ทักษะ,
+  E=คุณธรรมจริยธรรม, C=คุณลักษณะบุคคล
   (เลือกได้เพียงค่าเดียว ห้ามตอบว่าผสมกัน),
   bloom_level: remember|understand|apply|analyze|evaluate|create
   — ระดับ Bloom ด้าน Cognitive เท่านั้น,
   evidence_span_th: ข้อความที่คัดลอกตรงตัวจาก evidence,
+  is_field_relevant: true|false — ทักษะนี้อยู่ในขอบเขตของสาขาวิชาหรือไม่,
   confidence: 0.0-1.0
 } ] }
 สกัดไม่เกิน 8 ทักษะต่อข้อความ เน้นทักษะที่วัดได้จริง
 
 [ประเภทหลักฐาน: {classification}]
+[หลักสูตร: {program_name_th}]   # only if present
+[สาขาวิชา: {field_th}]          # only if present
 {evidence_text}
 ```
+
+`field_th` and `program_name_th` (sourced from `state["metadata"]`) are what make the "no off-field skills" rule answerable — without them the model was told to exclude off-field skills without being told what the field was. A skill judged off-field is kept with `is_field_relevant=false`, never silently dropped — the designer sees it at the checkpoint and can promote it. `classification` (`requirement`/`need`/`want`/`unclassified`) is not part of this prompt's output at all: it is computed afterward, in pure code, by `classify_skills` once every evidence item in the program has been extracted (see `data-schemas.md` for the precedence rules).
 
 `evidence_span_th` is not trusted on the model's word: the caller (`stages/skill_extraction.py`) re-checks every span against the actual evidence text with `is_grounded()` and drops any skill whose quote is too short (< 12 chars) or doesn't literally occur in the source. This is the one place in the pipeline where a prompt instruction ("copy verbatim, don't invent") is backed by a pure-code verification instead of trusted outright.
 
@@ -194,7 +178,7 @@ need_id: {need_id}
 ความถี่ที่ถูกกล่าวถึง: {freq} ครั้ง (demand {demand_score})
 ```
 
-`plo_id`, `source_evidence_ids` and `is_subject_specific` are deliberately absent from the draft schema. Each is computed in code: the id by `format_plo_id`/`next_plo_id`, the evidence trail as the union of the contributing Needs' own verified `source_evidence_ids`, and the specificity flag from those Needs' KSEC tags. Asking the model for any of them invited it to contradict the data — it answered "PLO1" for every Need (collapsing a whole set into one upserted row) and invented evidence ids that pointed nowhere. Program context (`{field}`, `{degree_level}`, `{vision_th}` from `ProgramMetadata`) is included in the real prompt; see the file for the exact block.
+`plo_id` and `source_evidence_ids` are deliberately absent from the draft schema. Each is computed in code: the id by `format_plo_id`/`next_plo_id`, the evidence trail as the union of the contributing Needs' own verified `source_evidence_ids`. Asking the model for either invited it to contradict the data — it answered "PLO1" for every Need (collapsing a whole set into one upserted row) and invented evidence ids that pointed nowhere. Program context (`{field}`, `{degree_level}`, `{vision_th}` from `ProgramMetadata`) is included in the real prompt; see the file for the exact block.
 
 Both templates take an optional `note_th`. When present it is appended to the **user** message under `ข้อกำหนดเพิ่มเติมจากผู้ออกแบบหลักสูตร:`; the system message carries an unconditional line saying the note guides wording and does not override the rules above it. See `prompts/designer_note.py`.
 
@@ -226,26 +210,9 @@ The hard-fail retry loop this soft judge sits alongside is code, not a prompt: `
 
 ---
 
-## PLO generic/specific classification (plo_report)
+## plo_report: no prompt
 
-**Purpose:** the plo_report stage's generic-vs-specific call for each PLO. Method D: first try a pure-code decision from the KSEC mix of the PLO's source Needs (fraction of SS among resolved Needs — ≥0.67 → specific, ≤0.33 → generic); only the ambiguous middle band falls through to this LLM prompt.
-
-**Model:** light (`complete_light`)
-
-**File:** `prompts/plo_classify.py` — `build_plo_classify_prompt(statement_th, bloom_level, cluster_summaries)` (the `cluster_summaries` parameter name predates the Need rename in the code and is stale, but the argument it's actually given is a list of Need summaries — see `_need_summary()` in `stages/plo_report.py`)
-
-```
-คุณเป็นผู้เชี่ยวชาญ OBE ทำหน้าที่จำแนกประเภทของ PLO
-ว่าเป็น 'generic' (ทักษะทั่วไปที่ถ่ายโอนข้ามสาขาได้ เช่น การสื่อสาร
-การคิดวิเคราะห์ การทำงานเป็นทีม) หรือ 'specific'
-(ทักษะ/ความรู้เฉพาะสาขาหรือวิชาชีพ)
-ตอบเป็น JSON ที่มี field 'classification' (ค่า 'generic' หรือ 'specific')
-และ 'rationale_th' (เหตุผลสั้น ๆ เป็นภาษาไทย)
-
-PLO statement: {statement_th}
-Bloom level: {bloom_level}
-Skill clusters ที่เกี่ยวข้อง: {summary_block}
-```
+`plo_report` no longer classifies PLOs generic vs specific — that call read the fraction of `SS`-tagged Needs behind a PLO, and the `SS`/`GS` KSEC split it depended on no longer exists. The stage is pure assembly and export now: it loads each PLO's source Needs, resolves the evidence trail, and puts the assembled report (every PLO with its Bloom level, KSEC tag, SMART soft flags, escalation status, evidence drill-down) into state — no LLM call.
 
 ---
 
