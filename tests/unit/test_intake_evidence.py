@@ -100,10 +100,10 @@ async def test_written_rows_reach_state_so_the_load_must_run_after_the_write(
     loaded evidence before writing the institutional rows, the vision/mission/philosophy
     rows this test just wrote would be missing from state for the next stage to see.
 
-    `list_by_program`'s side_effect returns whatever `bulk_insert` was last called
-    with, so this only produces the vision row in `raw_evidence` if the write already
-    happened by the time the load runs — an order-sensitive stand-in for a real
-    database read, unlike a constant `return_value=[]`.
+    `fake_list_by_program` returns whatever `fake_bulk_insert` last recorded, so this
+    only produces the vision row in `raw_evidence` if the write already happened by
+    the time the load runs — an order-sensitive stand-in for a real database read,
+    unlike a constant `return_value=[]`.
     """
     monkeypatch.setattr(intake.ProgramRepository, "upsert", AsyncMock())
     written_holder: list[object] = []
