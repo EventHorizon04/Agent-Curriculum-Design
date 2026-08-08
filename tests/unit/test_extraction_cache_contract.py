@@ -163,6 +163,9 @@ async def test_old_contract_cache_entry_is_re_extracted_not_raised(
         se.LLMCacheRepository, "get", AsyncMock(return_value=("stub-model", _OLD_CONTRACT_PAYLOAD))
     )
     monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
+    # This is the only test here that reaches the persistence tail of `run`, so
+    # it is the only one that needs the replace-then-insert pair stubbed out.
+    monkeypatch.setattr(se.SkillRepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
     monkeypatch.setattr(se.settings, "light_model", "stub-model")
 
