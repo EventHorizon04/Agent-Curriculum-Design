@@ -56,7 +56,7 @@ async def complete_light(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """Typhoon 2 8B — fast, used for classification and SMART validation."""
+    """Light model used for classification and SMART validation."""
     return await _get_client().chat.completions.create(
         model=settings.light_model,
         response_model=response_model,
@@ -73,7 +73,7 @@ async def complete_heavy(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """Qwen 2.5 14B/32B — used for PLO synthesis."""
+    """Heavy model used for PLO synthesis."""
     return await _get_client().chat.completions.create(
         model=settings.heavy_model,
         response_model=response_model,

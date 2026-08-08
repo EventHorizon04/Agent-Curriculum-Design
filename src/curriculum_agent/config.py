@@ -3,8 +3,15 @@ from __future__ import annotations
 import urllib.parse
 from typing import Literal
 
-from pydantic import computed_field
+from pydantic import computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Model names to fall back on when LIGHT_MODEL / HEAVY_MODEL are left unset.
+# Keyed by provider so switching LLM_PROVIDER carries the models with it.
+_PROVIDER_DEFAULT_MODEL: dict[str, str] = {
+    "ollama": "gemma4:31b-cloud",
+    "openrouter": "meta-llama/llama-3.3-70b-instruct",
+}
 
 
 class Settings(BaseSettings):
@@ -14,7 +21,7 @@ class Settings(BaseSettings):
 
     # "ollama" (default, open-source, local) or "openrouter" (paid, hosted).
     # Config-switchable per project rule — never hardcode a paid provider.
-    llm_provider: Literal["ollama", "openrouter"] = "openrouter"
+    llm_provider: Literal["ollama", "openrouter"] = "ollama"
     ollama_base_url: str = "http://localhost:11434"
     # No trailing /v1 — the OpenAI client path is appended once, in llm.py.
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -25,8 +32,11 @@ class Settings(BaseSettings):
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: str = "minioadmin_dev"
-    light_model: str = "meta-llama/llama-3.3-70b-instruct"
-    heavy_model: str = "meta-llama/llama-3.3-70b-instruct"
+    # Empty means "unset" — _apply_provider_model_defaults fills these in from
+    # llm_provider. They cannot carry a literal default here: a class-body
+    # branch on llm_provider would be frozen at import time and ignore .env.
+    light_model: str = ""
+    heavy_model: str = ""
     # REST API auth secret (require_api_key). None disables auth (dev default).
     api_key: str | None = None
     # Sent as the OpenAI-client api_key when talking to local Ollama. Ollama
@@ -35,6 +45,15 @@ class Settings(BaseSettings):
     # value — "ollama" is just a non-empty placeholder the client requires.
     llm_api_key: str = "ollama"
     llm_rate_limit_per_minute: int = 5
+
+    @model_validator(mode="after")
+    def _apply_provider_model_defaults(self) -> Settings:
+        fallback = _PROVIDER_DEFAULT_MODEL[self.llm_provider]
+        if not self.light_model:
+            self.light_model = fallback
+        if not self.heavy_model:
+            self.heavy_model = fallback
+        return self
 
     @computed_field  # type: ignore[prop-decorator]
     @property
