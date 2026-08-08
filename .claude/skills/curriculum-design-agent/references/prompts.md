@@ -6,15 +6,13 @@ Every prompt template below is mirrored 1:1 in `src/curriculum_agent/prompts/` �
 
 | Prompt file | Used by | Purpose |
 |---|---|---|
-| `extract_metadata.py` | `stages/intake.py` | Extract vision/mission/identity from an uploaded document |
-| `suggest_isced.py` | `stages/intake.py` | Suggest ISCED-F 2013 code + program names |
 | `extract_skills.py` | `stages/skill_extraction.py` | Grounded skill extraction with KSEC + Bloom tagging + field-relevance judgement |
 | `cluster_skills.py` | `stages/llm_clustering.py`, `stages/need_combination.py` | Group/merge skill names by meaning (index-based) |
 | `summarize_need.py` | `stages/need_combination.py` | Turn one skill group into one market-demand sentence (a Need) |
 | `stage_3_plo.py` | `stages/plo_synthesis.py` | Draft one PLO from one or more Needs |
-| `smart_validator.py` | `stages/plo_synthesis.py` | Soft SMART judge (S-object / A-level / R-alignment only — hard checks are pure code) |
+| `smart_validator.py` | `stages/plo_synthesis.py` | Soft SMART judge (five verdicts — hard checks are pure code) |
 
-There is no `classify_evidence.py` or `plo_classify.py`. Evidence classification (`requirement`/`general`) is a pure code lookup from `StakeholderType` — see `stages/stakeholder_needs.py`'s `classify_evidence_type`, no prompt involved. `plo_report` no longer classifies PLOs generic vs specific — it assembles and exports only, also with no LLM call.
+There is no `extract_metadata.py` or `suggest_isced.py` either: intake collects program metadata the designer types, with no document upload and no LLM-suggested ISCED code. There is no `classify_evidence.py` or `plo_classify.py`. Evidence classification (`requirement`/`general`) is a pure code lookup from `StakeholderType` — see `stages/stakeholder_needs.py`'s `classify_evidence_type`, no prompt involved. `plo_report` no longer classifies PLOs generic vs specific — it assembles and exports only, also with no LLM call.
 
 All prompts assume:
 - LLM is Thai-capable (Typhoon, Qwen) or proprietary (Claude, GPT-4o)
@@ -178,7 +176,7 @@ need_id: {need_id}
 ความถี่ที่ถูกกล่าวถึง: {freq} ครั้ง (demand {demand_score})
 ```
 
-`plo_id` and `source_evidence_ids` are deliberately absent from the draft schema. Each is computed in code: the id by `format_plo_id`/`next_plo_id`, the evidence trail as the union of the contributing Needs' own verified `source_evidence_ids`. Asking the model for either invited it to contradict the data — it answered "PLO1" for every Need (collapsing a whole set into one upserted row) and invented evidence ids that pointed nowhere. Program context (`{field}`, `{degree_level}`, `{vision_th}` from `ProgramMetadata`) is included in the real prompt; see the file for the exact block.
+`plo_id` and `source_evidence_ids` are deliberately absent from the draft schema. Each is computed in code: the id by `format_plo_id`/`next_plo_id`, the evidence trail as the union of the contributing Needs' own verified `source_evidence_ids`. Asking the model for either invited it to contradict the data — it answered "PLO1" for every Need (collapsing a whole set into one upserted row) and invented evidence ids that pointed nowhere. Program context (`{name_th}`, `{degree_level}`, `{duration_years}`, `{field}` from `ProgramMetadata`) is included in the real prompt; see the file for the exact block. There is no `{vision_th}` — the vision reaches synthesis as evidence behind a Need, not as a metadata field.
 
 Both templates take an optional `note_th`. When present it is appended to the **user** message under `ข้อกำหนดเพิ่มเติมจากผู้ออกแบบหลักสูตร:`; the system message carries an unconditional line saying the note guides wording and does not override the rules above it. See `prompts/designer_note.py`.
 
@@ -188,23 +186,31 @@ Every draft this prompt produces goes through the SMART hard-check retry loop (b
 
 ## SMART soft judge prompt
 
-**Purpose:** the S/M/R **hard** criteria (one Bloom verb present, no forbidden word, non-empty evidence trail) are never checked by an LLM at all — they are pure code in `stages/smart_rules.py` (`hard_failures()`), because they're mechanically checkable and a model is a slower, less reliable way to check them. This prompt covers only the three **soft** criteria that genuinely need judgement: S-object quality, A-level plausibility, R-alignment with vision. Its output becomes `PLO.soft_flags` for human review — it never blocks or retries.
+**Purpose:** the S/M/R **hard** criteria (one Bloom verb present, no forbidden word, non-empty evidence trail) are never checked by an LLM at all — they are pure code in `stages/smart_rules.py` (`hard_failures()`), because they're mechanically checkable and a model is a slower, less reliable way to check them. This prompt covers the five **soft** verdicts that genuinely need judgement. Its output becomes `PLO.soft_flags` for human review *and* is mapped onto the matching `SMARTCheck` fields — it never blocks or retries.
 
 **Model:** light (`complete_light`)
 
-**File:** `prompts/smart_validator.py` — `build_smart_soft_judge_prompt(statement_th, vision_th, degree_level)`
+**File:** `prompts/smart_validator.py` — `build_smart_soft_judge_prompt(statement_th, degree_level, duration_years, need_statements_th)`
 
 ```
-คุณเป็นผู้ตรวจสอบคุณภาพ PLO ประเมิน 3 ข้อ ตอบเป็น JSON:
-specific_object_ok: กรรมของกริยาเจาะจง (ไม่ใช่คำกว้างเช่น 'ความรู้' 'ทักษะที่จำเป็น')
-achievable_ok: ระดับ Bloom เหมาะกับระดับปริญญา
-relevant_alignment_ok: สอดคล้องกับวิสัยทัศน์หลักสูตร
+คุณเป็นผู้ตรวจสอบคุณภาพ PLO ตามเกณฑ์ SMART ประเมิน 5 ข้อ ตอบเป็น JSON:
+specific_object_ok: กรรมของกริยาเจาะจง ระบุพฤติกรรม/ทักษะ/สมรรถนะที่ชัดเจน ไม่ใช่คำกว้างเช่น 'ความรู้' 'ทักษะที่จำเป็น'
+measurable_ok: สังเกตได้ และประเมินได้จริงด้วยเครื่องมือทางการศึกษา (ข้อสอบ ชิ้นงาน การปฏิบัติ แฟ้มผลงาน) — การไม่มีคำห้ามยังไม่นับว่าวัดได้
+achievable_ok: ระดับ Bloom สมเหตุสมผลกับระดับคุณวุฒิ และบรรลุได้ภายในระยะเวลาหลักสูตร
+relevant_needs_ok: ตอบสนองความต้องการของผู้มีส่วนได้ส่วนเสียที่อ้างถึงจริง และสะท้อนสมรรถนะที่ตลาดแรงงานต้องการ
+time_bound_ok: ค่าเริ่มต้นเป็น true — PLO ถือว่าบรรลุ 'เมื่อสิ้นสุดหลักสูตร' โดยปริยาย ให้ตอบ false เฉพาะเมื่อข้อความระบุกรอบเวลาอื่นที่ขัดกัน เช่น 'ภายในปีที่ 2'
 notes_th: เหตุผลสั้นๆ สำหรับข้อที่ไม่ผ่าน
 
 PLO: {statement_th}
-ระดับปริญญา: {degree_level}
-วิสัยทัศน์: {vision_th}
+ระดับคุณวุฒิ: {degree_level}
+ระยะเวลาหลักสูตร: {duration_years} ปี
+Need ที่อ้างถึง:
+- {need_statements_th…}
 ```
+
+`vision_th` does not appear here, and no argument replaces it. R's institutional component is settled structurally — `plo_synthesis.run` checks `Need.source_stakeholder_types` for `institutional_direction` across the whole set and warns once at program level. Asking the judge to compare each PLO against a vision string produced a flag on every PLO in a set, which told the designer nothing.
+
+`measurable_ok` is deliberately a *different question* from the M hard check: the hard check only scans for forbidden words, and a statement can clear that list while still naming nothing an instrument could observe.
 
 The hard-fail retry loop this soft judge sits alongside is code, not a prompt: `stages/plo_synthesis.py`'s `_ensure_smart()` calls `hard_failures()`, and on a hard fail re-prompts the PLO-drafting model (`_build_fix_prompt`) naming the specific violated criterion, up to 3 attempts, before setting `smart_escalated=True`. See `obe-principles.md` for the full hard/soft rubric.
 

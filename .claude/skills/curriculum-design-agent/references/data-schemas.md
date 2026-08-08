@@ -33,23 +33,22 @@ class ProgramMetadata(BaseModel):
     name_th: str
     name_en: str
     field: str  # e.g. "Computer Science", "Packaging Design"
+    isced_code: str | None = None  # ISCED-F 2013 detailed code, hand-typed, validated against the taxonomy
     degree_level: Literal["bachelor", "master", "doctoral"]
     duration_years: int = Field(ge=1, le=8)
     faculty: str
     university: str
-    vision_th: str  # university/faculty vision
-    mission_th: str
-    philosophy_th: str  # ปรัชญาหลักสูตร
-    institutional_identity_th: str | None = None  # อัตลักษณ์สถาบัน
-    student_identity_th: str | None = None  # อัตลักษณ์บัณฑิต if defined
     professional_council: str | None = None  # e.g. "สภาวิศวกร"
     accreditation_body: str | None = None  # e.g. "AUN-QA", "ABET" — program metadata only, unrelated to StakeholderType
     subject_benchmark_ref: str | None = None  # มคอ.1 reference — program metadata only, unrelated to StakeholderType
     program_objectives_th: list[str]  # วัตถุประสงค์ของหลักสูตร
+    program_goals_th: list[str]  # เป้าหมายของหลักสูตร (non-empty on ProgramCreateRequest)
     created_at: datetime
 ```
 
-`vision_th`, `mission_th`, `philosophy_th`, `institutional_identity_th`, and `student_identity_th` are the program's own direction. Intake (`build_institutional_evidence` in `stages/intake.py`) converts each non-empty one into a `StakeholderEvidence` row — `stakeholder_type=INSTITUTIONAL_DIRECTION`, `classification="requirement"` — with a deterministic id (`f"{program_id}-vision"`, etc.) so a re-run after the designer edits the vision replaces that row instead of duplicating it. This is what makes "every PLO traces to evidence" hold even for a PLO the institution's own vision demands, which previously had nothing to point at.
+**The institution's own direction is not metadata.** `vision_th`, `mission_th`, `philosophy_th`, `institutional_identity_th`, and `student_identity_th` were fields here and are gone — along with `build_institutional_evidence`, which converted them into evidence rows at intake. The designer now records those statements directly at stage 2 as `StakeholderEvidence` with `stakeholder_type=INSTITUTIONAL_DIRECTION` (`classification="requirement"`, derived in code like every other type). One home for a statement, not two, and the evidence trail works the same way for the institution's voice as for any other stakeholder's. Whether the program covered it at all is a program-level check in `plo_synthesis.run`, not a field's presence.
+
+`isced_code` is typed by the designer and validated against the ISCED-F 2013 taxonomy (`data/isced.py`) on `ProgramCreateRequest` only — `ProgramMetadata` overrides that validator to a no-op so a persisted row whose code later left the taxonomy still deserializes. There is no LLM code suggestion and no document upload at intake.
 
 ## Stage 2: Stakeholder evidence
 
@@ -219,11 +218,13 @@ class BloomLevel(str, Enum):
     CREATE = "create"
 
 class SMARTCheck(BaseModel):
-    specific: bool
-    measurable: bool
-    achievable: bool
-    relevant: bool
-    timely: bool
+    # Each field combines its hard check (pure code) with the matching soft
+    # verdict from the light-model judge — none of these are hardcoded True.
+    specific: bool   # S_VERB not failed AND judge.specific_object_ok
+    measurable: bool # M_FORBIDDEN not failed AND judge.measurable_ok
+    achievable: bool # judge.achievable_ok (no hard counterpart)
+    relevant: bool   # R_EVIDENCE not failed AND judge.relevant_needs_ok
+    timely: bool     # judge.time_bound_ok (no hard counterpart, defaults true)
     notes_th: str | None = None  # rationale or what fails
 
 class PLO(BaseModel):
@@ -243,7 +244,7 @@ class PLO(BaseModel):
     version: int = 1
     smart_retry_count: int = 0  # SMART hard-fail fix attempts consumed (max 3)
     smart_escalated: bool = False  # still hard-failing after retries → human repair
-    soft_flags: list[str] = []  # non-blocking review flags: "S_object", "A_level", "R_alignment"
+    soft_flags: list[str] = []  # non-blocking: "S_object", "M_assessable", "A_level", "R_needs", "T_horizon"
     is_optional: bool = False  # PLO from want-dominant Need(s), exempt from the core-Need count
 ```
 

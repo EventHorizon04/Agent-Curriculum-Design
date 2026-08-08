@@ -98,9 +98,6 @@ def sample_metadata() -> ProgramMetadata:
         duration_years=4,
         faculty="วิศวกรรมศาสตร์",
         university="มหาวิทยาลัยทดสอบ",
-        vision_th="มุ่งผลิตบัณฑิตที่มีความเชี่ยวชาญด้านเทคโนโลยี",
-        mission_th="พันธกิจของหลักสูตร",
-        philosophy_th="ปรัชญาของหลักสูตร",
         program_goals_th=["เป้าหมายหลักสูตรที่ 1"],
         program_objectives_th=["ผลิตบัณฑิตที่มีทักษะด้านซอฟต์แวร์"],
     )

@@ -39,8 +39,8 @@ Every PLO must satisfy all five SMART dimensions **before it leaves the PLO synt
 **คำนิยาม:** ผลลัพธ์ที่ระบุจะต้องสามารถสังเกตเห็นได้ (Observable) และสามารถประเมินผลเชิงประจักษ์ได้จริงด้วยเครื่องมือการประเมินทางการศึกษา ทั้งในเชิงปริมาณหรือเชิงคุณภาพ
 
 **Validation rule:**
-- The action verb must map to an assessable behavior — ask "could a rubric, exam, project, or portfolio review actually score this?" If not, reject.
-- Automatically reject any PLO containing a forbidden unmeasurable word (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก — see [Forbidden words](#forbidden-words-in-plo-statements-thai-context)), since these describe internal mental states rather than observable output.
+- **[hard]** Automatically reject any PLO containing a forbidden unmeasurable word (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก — see [Forbidden words](#forbidden-words-in-plo-statements-thai-context)), since these describe internal mental states rather than observable output.
+- **[soft]** The action verb must map to an assessable behavior — ask "could a rubric, exam, project, or portfolio review actually score this?" The absence of a forbidden word is *not* evidence of this; a statement can clear the word list and still name nothing a real instrument could observe.
 - Prefer statements where the assessment method is implicit in the verb itself (e.g. "ออกแบบ" → design review; "วิเคราะห์" → case analysis; "นำเสนอ" → presentation rubric).
 
 **ไม่ผ่าน:** "เข้าใจหลักการเขียนโปรแกรมเชิงวัตถุ" — "เข้าใจ" ประเมินไม่ได้โดยตรง
@@ -62,9 +62,12 @@ Every PLO must satisfy all five SMART dimensions **before it leaves the PLO synt
 
 **คำนิยาม:** ผลลัพธ์การเรียนรู้ต้องมีความเชื่อมโยงและตอบสนองต่อความต้องการของผู้มีส่วนได้ส่วนเสีย (Stakeholder Needs) สะท้อนสมรรถนะทางวิชาชีพที่ตลาดแรงงานต้องการ รวมถึงสอดคล้องกับวิสัยทัศน์และพันธกิจของสถาบัน
 
+R has **three components**, checked three different ways:
+
 **Validation rule:**
-- Every PLO must carry a non-empty `source_need_ids`/`source_evidence_ids` evidence trail pointing back to at least one `Need` and one `StakeholderEvidence` record (per `references/data-schemas.md`). A PLO with an empty evidence trail is a hard reject — this is the same rule as "Every PLO carries evidence" in SKILL.md.
-- Check semantic alignment between the PLO statement and the program's stated vision/mission text (embedding similarity threshold, or LLM-judged alignment) — flag low-similarity PLOs for human review.
+- **[hard] Evidence trail.** Every PLO must carry a non-empty `source_need_ids`/`source_evidence_ids` evidence trail pointing back to at least one `Need` and one `StakeholderEvidence` record (per `references/data-schemas.md`). A PLO with an empty evidence trail is a hard reject — this is the same rule as "Every PLO carries evidence" in SKILL.md.
+- **[soft] Answers the Needs it cites.** The judge reads the PLO statement against the Needs' own statements (`need_statements_th`) and asks whether it actually responds to them — a trail that resolves is not the same as a statement that answers.
+- **[structural] Institutional direction.** The institution's vision/mission is *evidence*, not metadata: it enters at stage 2 as `stakeholder_type=institutional_direction`. Coverage is therefore settled by looking at `Need.source_stakeholder_types` across the synthesized set, not by comparing the PLO text to a vision string. `plo_synthesis.run` logs one program-level warning when no Need behind any PLO carries that type. Do not reintroduce a per-PLO text-similarity check against `vision_th` — it fired on every PLO in a set and said nothing actionable.
 
 **ไม่ผ่าน:** PLO ที่ไม่มี `source_need_ids` อ้างอิงถึงหลักฐานผู้มีส่วนได้ส่วนเสียใด ๆ (ถือเป็น fabricated PLO)
 **ผ่าน:** PLO ที่ตรวจสอบย้อนกลับได้ถึง job posting, มคอ.1, หรือ feedback จากศิษย์เก่าที่บันทึกไว้
@@ -74,22 +77,33 @@ Every PLO must satisfy all five SMART dimensions **before it leaves the PLO synt
 **คำนิยาม:** มีการกำหนดเงื่อนไขของเวลาไว้อย่างชัดเจนว่าผู้เรียนจะสามารถบรรลุผลลัพธ์หรือแสดงสมรรถนะเหล่านี้ได้เมื่อใด ซึ่งในบริบทของ PLO หมายถึง "เมื่อสิ้นสุดกระบวนการศึกษาในหลักสูตร"
 
 **Validation rule:**
-- A PLO's implicit time frame is always "at graduation" — this doesn't need to be restated in every sentence, but the Bloom level chosen must be reachable by graduation given the program's duration (4 years bachelor, 2 years master's, etc.). This is effectively a cross-check with Achievable.
+- **[soft, defaults to pass]** A PLO's implicit time frame is always "at graduation", so silence about time is *correct* — never flag a statement for omitting a horizon. The verdict fails only when the statement commits to a conflicting one ("ภายในปีที่ 2").
+- The Bloom level chosen must still be reachable by graduation given the program's duration (4 years bachelor, 2 years master's, etc.) — that part is a cross-check with Achievable and lives there.
 - (Year-tagged time frames and Bloom monotonicity across years apply to YLO, which is out of this agent's scope — relevant only if faculty ask for guidance during hand-off.)
 
 **ผ่าน:** PLO ที่ระดับ Bloom บรรลุได้จริงภายในระยะเวลาหลักสูตร
 
 ### SMART validation checklist (automatable, for the synthesis retry loop)
 
-Run in this order; on any hard-fail, send the PLO back to the LLM with the specific violated criterion named in the retry prompt (not a generic "try again"):
+Three hard checks are pure code (`stages/smart_rules.py`). On any hard-fail, send the PLO back to the LLM with the specific violated criterion named in the retry prompt (not a generic "try again"):
 
-1. **[S, hard]** Exactly one recognized Bloom verb present, applied to a non-generic, named object.
-2. **[M, hard]** No forbidden unmeasurable word present (รู้ / จำ / เข้าใจ / ซาบซึ้ง / ตระหนัก / ศรัทธา / รัก).
-3. **[R, hard]** `source_need_ids` evidence trail is non-empty and resolves to a real `Need`/`StakeholderEvidence` record.
-4. **[A, soft/flag]** Bloom level is plausible for the qualification level and program resources — flag for human review rather than auto-reject.
-5. **[R, soft/flag]** Semantic alignment with program vision/mission above threshold — flag for human review if low.
+1. **[S_VERB, hard]** Exactly one recognized Bloom verb present in the statement.
+2. **[M_FORBIDDEN, hard]** No forbidden unmeasurable word present (รู้ / จำ / เข้าใจ / ซาบซึ้ง / ตระหนัก / ศรัทธา / รัก).
+3. **[R_EVIDENCE, hard]** `source_need_ids` evidence trail is non-empty and resolves to a real `Need`/`StakeholderEvidence` record.
 
-Hard-fails trigger the automatic retry loop (bounded — max 3 attempts before escalating to human review). Soft-fails surface as warnings in the human-in-the-loop checkpoint UI, not block the pipeline.
+Five soft verdicts come from one light-model judge call (`prompts/smart_validator.py`, `build_smart_soft_judge_prompt`). None of them block:
+
+| Verdict | Asks |
+|---|---|
+| `specific_object_ok` | Is the verb's object specific — not "ความรู้", not "ทักษะที่จำเป็น"? |
+| `measurable_ok` | Observable *and* assessable with a real instrument (exam, artefact, performance, portfolio)? |
+| `achievable_ok` | Is the Bloom level plausible for `degree_level` and reachable within `duration_years`? |
+| `relevant_needs_ok` | Does the statement actually answer the Needs it cites? |
+| `time_bound_ok` | Defaults true; fails only on a conflicting horizon. |
+
+Hard-fails trigger the automatic retry loop (bounded — max 3 attempts, then `smart_escalated=True` and the PLO is kept for human repair, never dropped). Soft verdicts land in `soft_flags` (`S_object`, `M_assessable`, `A_level`, `R_needs`, `T_horizon`) **and** in the matching `SMARTCheck` field, so `SMARTCheck.passed` stops reporting success for a flagged outcome. When the judge call itself fails, every soft verdict defaults true and a warning is logged — an LLM hiccup degrades toward "not flagged" rather than falsely flagging sound work.
+
+R's institutional component is not in this list: it is checked once per program from `Need.source_stakeholder_types`, as described under R above.
 
 ## K/S/E/C vs Bloom domain — do not conflate
 

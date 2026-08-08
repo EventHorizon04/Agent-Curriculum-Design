@@ -19,9 +19,6 @@ VALID_PROGRAM = {
     "duration_years": 4,
     "faculty": "Engineering",
     "university": "Test University",
-    "vision_th": "ผลิตบัณฑิต",
-    "mission_th": "พันธกิจ",
-    "philosophy_th": "ปรัชญา",
     "program_goals_th": ["เป้าหมาย 1"],
     "program_objectives_th": ["objective 1"],
 }

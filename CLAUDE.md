@@ -8,6 +8,8 @@ AI agent that helps Thai higher-education curriculum designers produce programs 
 
 Stakeholder needs no longer calls an LLM: evidence classification (`requirement` vs `general`) is a pure code lookup from `StakeholderType`. `need`/`want`/`unclassified` classification moved to the skill level, decided in `skill_extraction` once the whole corpus is in hand — see `stages/stakeholder_needs.py` and `stages/skill_extraction.py`.
 
+Intake collects **program metadata only** — the fields the designer types, validated and stored. It has no document upload, no LLM-extracted prefill, and no ISCED code suggestion. The institution's vision/mission/philosophy/identity is recorded at stakeholder needs as evidence (`stakeholder_type=institutional_direction`), not as program fields.
+
 **Current state:** Proof-of-concept implemented. All modules under `src/`, Docker DB services, React UI, FastAPI backend, test suite, migrations, and exporters are in place. The codebase matches the design below — read existing code before adding new files.
 
 ## Skill
@@ -18,7 +20,7 @@ The `curriculum-design-agent` skill (`.claude/skills/curriculum-design-agent/`) 
 
 - **Language:** Python 3.11+, dependency management via `uv`
 - **Agent:** LangGraph (state machine with `interrupt` for HITL)
-- **LLM:** Ollama running **natively on the host** (no Ollama container) serving Typhoon 2 8B (light) + Qwen 2.5 7B/14B (heavy). Dual-model pattern — see `src/curriculum_agent/llm.py`
+- **LLM:** provider-switchable via `LLM_PROVIDER` — `ollama` (default, running **natively on the host**, no container) or `openrouter`. `LIGHT_MODEL`/`HEAVY_MODEL` default per provider (`_PROVIDER_DEFAULT_MODEL` in `config.py`) and are overridable in `.env`. Dual-model pattern — see `src/curriculum_agent/llm.py`
 - **Structured output:** Instructor + Pydantic v2 (no hand-parsing JSON). The `openai` package is a dependency because Instructor uses OpenAI-compatible API to talk to Ollama — not for the OpenAI cloud service.
 - **Clustering:** LLM-based (heavy model) — no embeddings/KeyBERT/Qdrant on this branch; see docs/superpowers/specs/2026-07-18-llm-only-pipeline-design.md
 - **Storage:** PostgreSQL (structured), MinIO (raw files)
@@ -31,9 +33,11 @@ The `curriculum-design-agent` skill (`.claude/skills/curriculum-design-agent/`) 
 # First-time setup
 cp .env.example .env        # edit LIGHT_MODEL / HEAVY_MODEL if needed
 
-# Pull models (Ollama runs natively on the host)
-ollama pull scb10x/typhoon2-8b-instruct
-ollama pull qwen2.5:7b      # or :14b if VRAM >= 8GB
+# Models (Ollama runs natively on the host). The defaults are ":cloud"-tagged,
+# authenticated by the host's own session rather than by an API key:
+ollama signin
+# Running fully local instead? Pull the model and set it in .env:
+# ollama pull qwen2.5:7b    # or :14b if VRAM >= 8GB
 
 # Install dev dependencies
 uv sync --all-extras
@@ -95,7 +99,7 @@ These are project decisions. If a request conflicts with one, surface the confli
 2. **Every PLO must trace to evidence.** `source_need_ids` and `source_evidence_ids` are non-empty. Evidence itself only carries `requirement`/`general`; `need`/`want`/`unclassified` is decided per skill (`ExtractedSkill.classification`) once every evidence item is extracted, since frequency is a cross-evidence property. Pydantic validators enforce the non-empty trail; do not weaken them.
 3. **Forbidden words in PLO statements:** รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. The Pydantic model rejects these (exception: a PLO with `smart_escalated=True` is kept for human repair) — do not bypass.
 4. **One Bloom action verb per outcome.** Two verbs allowed only if at adjacent levels.
-5. **SMART gate on every synthesized PLO.** Hard criteria (S verb-in-statement, M no-forbidden-word, R evidence-resolves) drive an automated retry loop (max 3, criterion named in the retry prompt) — an unfixed PLO is marked `smart_escalated` for human repair, never silently dropped. Soft criteria (S object quality, A level plausibility, R vision alignment) become `soft_flags` for human review and never block.
+5. **SMART gate on every synthesized PLO.** Hard criteria (S verb-in-statement, M no-forbidden-word, R evidence-resolves) drive an automated retry loop (max 3, criterion named in the retry prompt) — an unfixed PLO is marked `smart_escalated` for human repair, never silently dropped. Five soft verdicts (S object quality, M assessability, A level plausibility, R answers-its-Needs, T horizon) become `soft_flags` **and** set the matching `SMARTCheck` field, so `passed` means what it says; they never block.
 6. **At least 6 main PLOs per program, mapped one-to-one from main Needs — no upper cap.** `need_combination` no longer merges core groups down to a quota; every core group clustering finds within a KSEC bucket becomes its own Need, and PLO synthesis then drafts exactly one PLO per Need. A core count below 6 (`MIN_NEEDS` in `stages/need_grouping.py`) logs a policy warning for the designer to address at the checkpoint. Optional PLOs synthesized from want-based Needs (`is_optional=True`) are exempt from this count.
 7. **Human-in-the-loop at every stage boundary — except one shared checkpoint.** Stages never auto-chain into the next without checkpoint approval; the one exception is skill_extraction → need_combination, which run back-to-back and share a single checkpoint after need_combination so the designer reviews raw skills and distilled Needs together.
 8. **Open-source LLM by default.** Paid APIs (Claude, GPT-4o) are config-switchable for synthesis stages but never hardcoded.
@@ -114,7 +118,8 @@ src/curriculum_agent/
                           plo_report (+ smart_rules)
   data/                ← repositories, postgres, minio_store
   scrapers/            ← per-site job scrapers
-  parsers/             ← document parsers (Tika, มคอ.1)
+  parsers/             ← document parsers (มคอ.1; the Tika parser went with
+                          the intake document upload)
   exporters/           ← CHECO, มคอ.2, Excel matrix
   api/                 ← FastAPI routes
 frontend/              ← React UI (one page per stage + Pipeline)
@@ -145,6 +150,14 @@ tests/integration/     ← LLM mocked, full stages
 - **Requirement wins.** A skill named by สภาวิชาชีพ or by the program's own
   vision stays `requirement` even when the extraction model marked it off-field.
   Do not reorder those precedence rules.
+- **The institution's direction is evidence, not metadata.** Vision, mission,
+  philosophy, and both identity statements are recorded at stakeholder needs
+  under `stakeholder_type=institutional_direction` — they are not
+  `ProgramMetadata` fields, and intake does not convert them into evidence
+  anymore. It follows that R's institutional component is a program-level
+  check on `Need.source_stakeholder_types`, not a per-PLO text comparison
+  against a vision string: the old similarity flag fired on every PLO in a set
+  and told the designer nothing. Don't re-add `vision_th` to a prompt.
 - **Test Pydantic validators before integration tests.** They're the cheapest, most important guardrail. If a validator is wrong, every downstream test is suspect.
 - **Don't `git push` model files.** Ollama models live on the host. `.env` files with API keys are gitignored — keep it that way.
 - **Don't refactor the OBE flow to "save a stage."** Re-adding YLO/CLO generation, or collapsing plo_synthesis and plo_report, breaks the scope decision and CHECO compliance.
