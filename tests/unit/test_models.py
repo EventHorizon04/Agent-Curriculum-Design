@@ -166,11 +166,19 @@ def test_program_metadata_inherits_and_adds_program_id() -> None:
     assert meta.program_goals_th == ["เป้าหมายที่ 1"]
 
 
-def test_empty_program_goals_rejected() -> None:
+def test_goals_and_objectives_are_optional() -> None:
+    """Intake stopped collecting them — the form asks for the program's place in
+    the institution and nothing else. Both stay on the model so existing rows
+    keep their content and CHECO 1.5 has somewhere to read from, but a create
+    request that omits them is valid."""
     kwargs = _valid_create_kwargs()
-    kwargs["program_goals_th"] = []
-    with pytest.raises(ValidationError):
-        ProgramCreateRequest(**kwargs)
+    del kwargs["program_goals_th"]
+    del kwargs["program_objectives_th"]
+
+    req = ProgramCreateRequest(**kwargs)
+
+    assert req.program_goals_th == []
+    assert req.program_objectives_th == []
 
 
 def test_program_metadata_accepts_legacy_backfilled_row() -> None:

@@ -8,7 +8,7 @@ AI agent that helps Thai higher-education curriculum designers produce programs 
 
 Stakeholder needs no longer calls an LLM: evidence classification (`requirement` vs `general`) is a pure code lookup from `StakeholderType`. `need`/`want`/`unclassified` classification moved to the skill level, decided in `skill_extraction` once the whole corpus is in hand — see `stages/stakeholder_needs.py` and `stages/skill_extraction.py`.
 
-Intake collects **program metadata only** — the fields the designer types, validated and stored. It has no document upload, no LLM-extracted prefill, and no ISCED code suggestion. The institution's vision/mission/philosophy/identity is recorded at stakeholder needs as evidence (`stakeholder_type=institutional_direction`), not as program fields.
+Intake collects **program metadata only** — the fields the designer types, validated and stored. The form is ordered largest-unit-first (มหาวิทยาลัย → คณะ → สาขาวิชา/ภาควิชา) and then the program's own name, degree level, and duration. It has no document upload, no LLM-extracted prefill, and no ISCED code suggestion; program goals and objectives are no longer collected either, and both default to `[]` on the model rather than being dropped, so persisted content survives and CHECO 1.5 keeps its source. The institution's vision/mission/philosophy/identity is recorded at stakeholder needs as evidence (`stakeholder_type=institutional_direction`), not as program fields.
 
 **Current state:** Proof-of-concept implemented. All modules under `src/`, Docker DB services, React UI, FastAPI backend, test suite, migrations, and exporters are in place. The codebase matches the design below — read existing code before adding new files.
 

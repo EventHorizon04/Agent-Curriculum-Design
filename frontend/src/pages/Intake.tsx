@@ -10,22 +10,19 @@ const DEGREE_OPTIONS = [
 ]
 
 interface FormState {
+  university: string
+  faculty: string
+  field: string
   name_th: string
   name_en: string
-  field: string
   degree_level: string
   duration_years: number
-  faculty: string
-  university: string
-  objectives_raw: string
-  goals_raw: string
 }
 
 const INITIAL: FormState = {
-  name_th: '', name_en: '', field: '',
+  university: '', faculty: '', field: '',
+  name_th: '', name_en: '',
   degree_level: 'bachelor', duration_years: 4,
-  faculty: '', university: '',
-  objectives_raw: '', goals_raw: '',
 }
 
 export default function Intake() {
@@ -49,36 +46,23 @@ export default function Intake() {
     setSuccess('')
 
     const required: (keyof FormState)[] = [
-      'name_th', 'name_en', 'field',
-      'faculty', 'university', 'objectives_raw', 'goals_raw',
+      'university', 'faculty', 'field', 'name_th', 'name_en',
     ]
     if (required.some(k => !String(form[k]).trim())) {
       setError('กรุณากรอกข้อมูลที่มีเครื่องหมาย * ให้ครบถ้วน')
       return
     }
 
-    const objectives = form.objectives_raw
-      .split('\n')
-      .map(l => l.trim())
-      .filter(Boolean)
-
-    const goals = form.goals_raw
-      .split('\n')
-      .map(l => l.trim())
-      .filter(Boolean)
-
     setLoading(true)
     try {
       const resp = await api.post('/programs/', {
+        university: form.university,
+        faculty: form.faculty,
+        field: form.field,
         name_th: form.name_th,
         name_en: form.name_en,
-        field: form.field,
         degree_level: form.degree_level,
         duration_years: Number(form.duration_years),
-        faculty: form.faculty,
-        university: form.university,
-        program_objectives_th: objectives,
-        program_goals_th: goals,
       })
       const newId = resp.data.program_id
       setProgramId(newId)
@@ -132,14 +116,35 @@ export default function Intake() {
       )}
 
       <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5">
+        <Field
+          label="มหาวิทยาลัย / สถาบัน *"
+          hint="หน่วยงานใหญ่สุด"
+          name="university" value={form.university} onChange={handleChange}
+          placeholder="จุฬาลงกรณ์มหาวิทยาลัย"
+        />
+
+        <Field
+          label="คณะ *"
+          hint="หน่วยงานหลักที่แบ่งตามศาสตร์"
+          name="faculty" value={form.faculty} onChange={handleChange}
+          placeholder="คณะรัฐศาสตร์"
+        />
+
+        <Field
+          label="สาขาวิชา / ภาควิชา *"
+          hint="แขนงวิชาเฉพาะด้าน"
+          name="field" value={form.field} onChange={handleChange}
+          placeholder="ความสัมพันธ์ระหว่างประเทศ"
+        />
+
+        <hr className="border-gray-100" />
+
         <div className="grid grid-cols-2 gap-4">
           <Field label="ชื่อหลักสูตร (ภาษาไทย) *" name="name_th" value={form.name_th} onChange={handleChange} />
           <Field label="ชื่อหลักสูตร (ภาษาอังกฤษ) *" name="name_en" value={form.name_en} onChange={handleChange} />
         </div>
 
-        <Field label="สาขาวิชา *" name="field" value={form.field} onChange={handleChange} placeholder="Computer Science" />
-
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">ระดับปริญญา</label>
             <select
@@ -161,33 +166,6 @@ export default function Intake() {
               className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
-          <Field label="มหาวิทยาลัย *" name="university" value={form.university} onChange={handleChange} />
-        </div>
-
-        <Field label="คณะ *" name="faculty" value={form.faculty} onChange={handleChange} />
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            วัตถุประสงค์หลักสูตร *{' '}
-            <span className="text-gray-400 font-normal">(แต่ละรายการ 1 บรรทัด)</span>
-          </label>
-          <textarea
-            name="objectives_raw" rows={4} value={form.objectives_raw} onChange={handleChange}
-            placeholder={"1. ผลิตบัณฑิตที่มีความรู้...\n2. พัฒนาทักษะด้าน..."}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            เป้าหมายหลักสูตร *{' '}
-            <span className="text-gray-400 font-normal">(แต่ละรายการ 1 บรรทัด)</span>
-          </label>
-          <textarea
-            name="goals_raw" rows={4} value={form.goals_raw} onChange={handleChange}
-            placeholder={"1. ผลิตบัณฑิตที่ตอบสนองความต้องการ...\n2. ส่งเสริมการเรียนรู้ตลอดชีวิต..."}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          />
         </div>
 
         <button
@@ -202,17 +180,21 @@ export default function Intake() {
 }
 
 function Field({
-  label, name, value, onChange, placeholder,
+  label, name, value, onChange, placeholder, hint,
 }: {
   label: string
   name: string
   value: string
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void
   placeholder?: string
+  hint?: string
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">{label}</label>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {label}
+        {hint && <span className="text-gray-400 font-normal ml-2">— {hint}</span>}
+      </label>
       <input
         type="text" name={name} value={value} onChange={onChange} placeholder={placeholder}
         className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"

@@ -41,8 +41,10 @@ class ProgramMetadata(BaseModel):
     professional_council: str | None = None  # e.g. "สภาวิศวกร"
     accreditation_body: str | None = None  # e.g. "AUN-QA", "ABET" — program metadata only, unrelated to StakeholderType
     subject_benchmark_ref: str | None = None  # มคอ.1 reference — program metadata only, unrelated to StakeholderType
-    program_objectives_th: list[str]  # วัตถุประสงค์ของหลักสูตร
-    program_goals_th: list[str]  # เป้าหมายของหลักสูตร (non-empty on ProgramCreateRequest)
+    # Both default to []: intake stopped collecting them. Persisted rows keep
+    # whatever they already hold, and CHECO 1.5 still reads program_objectives_th.
+    program_objectives_th: list[str] = []
+    program_goals_th: list[str] = []
     created_at: datetime
 ```
 

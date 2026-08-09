@@ -149,8 +149,12 @@ class ProgramCreateRequest(BaseModel):
     professional_council: str | None = None
     accreditation_body: str | None = None
     subject_benchmark_ref: str | None = None
-    program_objectives_th: list[str]
-    program_goals_th: list[str] = Field(min_length=1)
+    # Intake no longer collects either — the form covers the program's place in
+    # the institution and nothing else. They stay on the model so persisted rows
+    # keep their content and CHECO 1.5 has a field to read, and so a client that
+    # does supply them is still accepted.
+    program_objectives_th: list[str] = []
+    program_goals_th: list[str] = []
 
     @model_validator(mode="after")
     def _validate_isced_code(self) -> ProgramCreateRequest:
@@ -162,15 +166,10 @@ class ProgramCreateRequest(BaseModel):
 class ProgramMetadata(ProgramCreateRequest):
     program_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
-    # Entity model deserializes persisted rows verbatim, including legacy rows
-    # backfilled by migration a845ef6ab4f6 with []; input-time non-empty
-    # enforcement lives on ProgramCreateRequest only.
-    program_goals_th: list[str]
 
     # Entity model deserializes persisted rows verbatim, including any future
     # legacy code no longer in the taxonomy; input-time membership enforcement
-    # lives on ProgramCreateRequest only (same boundary rule as program_goals_th
-    # above).
+    # lives on ProgramCreateRequest only.
     @model_validator(mode="after")
     def _validate_isced_code(self) -> ProgramMetadata:
         return self
