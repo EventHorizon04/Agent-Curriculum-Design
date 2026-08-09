@@ -13,7 +13,6 @@ interface FormState {
   name_th: string
   name_en: string
   field: string
-  isced_code: string
   degree_level: string
   duration_years: number
   faculty: string
@@ -23,7 +22,7 @@ interface FormState {
 }
 
 const INITIAL: FormState = {
-  name_th: '', name_en: '', field: '', isced_code: '',
+  name_th: '', name_en: '', field: '',
   degree_level: 'bachelor', duration_years: 4,
   faculty: '', university: '',
   objectives_raw: '', goals_raw: '',
@@ -74,7 +73,6 @@ export default function Intake() {
         name_th: form.name_th,
         name_en: form.name_en,
         field: form.field,
-        isced_code: form.isced_code.trim() || null,
         degree_level: form.degree_level,
         duration_years: Number(form.duration_years),
         faculty: form.faculty,
@@ -139,10 +137,7 @@ export default function Intake() {
           <Field label="ชื่อหลักสูตร (ภาษาอังกฤษ) *" name="name_en" value={form.name_en} onChange={handleChange} />
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="สาขาวิชา *" name="field" value={form.field} onChange={handleChange} placeholder="Computer Science" />
-          <Field label="รหัส ISCED-F" name="isced_code" value={form.isced_code} onChange={handleChange} placeholder="0613" />
-        </div>
+        <Field label="สาขาวิชา *" name="field" value={form.field} onChange={handleChange} placeholder="Computer Science" />
 
         <div className="grid grid-cols-3 gap-4">
           <div>
