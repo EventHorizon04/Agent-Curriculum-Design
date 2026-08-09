@@ -66,8 +66,11 @@ uv run mypy src/
 # Frontend lint & build
 cd frontend && npm run lint && npm run build
 
-# Run API manually (against Docker services) if not using start-dev.ps1
-uv run uvicorn curriculum_agent.api.main:app --reload
+# Run API manually (against Docker services) if not using start-dev.ps1.
+# Go through the package entrypoint, not the uvicorn CLI — on Windows the CLI
+# creates its event loop before importing the app, and psycopg rejects the
+# ProactorEventLoop that results. API_HOST / API_PORT / API_RELOAD configure it.
+API_RELOAD=true uv run python -m curriculum_agent.api
 ```
 
 ## Seed data

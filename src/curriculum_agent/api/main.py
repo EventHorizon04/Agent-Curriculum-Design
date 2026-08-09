@@ -15,13 +15,34 @@ from curriculum_agent.api.routes import evidence, needs, plos, programs, session
 from curriculum_agent.config import settings
 from curriculum_agent.graph import build_graph
 
-# psycopg3 (AsyncPostgresSaver) requires SelectorEventLoop on Windows
+# psycopg3 (AsyncPostgresSaver) requires SelectorEventLoop on Windows. This line
+# only takes effect when the app is imported before a loop exists — see the guard
+# in lifespan() and the __main__ entrypoint for the case where it doesn't.
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
+def _require_compatible_event_loop() -> None:
+    """Fail at the door rather than 40 frames deep inside psycopg.
+
+    The policy above is set at import time, which is too late if the server built
+    its loop first — the failure then surfaces as an InterfaceError from a
+    connection attempt, which reads like a database problem and isn't one.
+    """
+    if sys.platform != "win32":
+        return
+    if isinstance(asyncio.get_running_loop(), asyncio.ProactorEventLoop):
+        raise RuntimeError(
+            "The API is running on a ProactorEventLoop, but psycopg needs a "
+            "SelectorEventLoop. Start the server with "
+            "`uv run python -m curriculum_agent.api`, which sets the event loop "
+            "policy before uvicorn creates its loop."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _require_compatible_event_loop()
     logger.info("Starting up — initialising Postgres checkpointer")
 
     async with await psycopg.AsyncConnection.connect(

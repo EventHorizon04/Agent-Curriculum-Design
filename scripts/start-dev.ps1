@@ -67,9 +67,15 @@ if ($LASTEXITCODE -ne 0) { Write-Fail "Migration failed" }
 Write-Ok "Migrations applied"
 
 # --- 6. Start uvicorn in background ---
+# Launched through the package entrypoint, not the uvicorn CLI: on Windows the
+# CLI builds its event loop before importing the app, leaving psycopg with a
+# ProactorEventLoop it refuses to use. See src/curriculum_agent/api/__main__.py.
 Write-Step "Starting FastAPI (uvicorn)..."
+$env:API_HOST = "0.0.0.0"
+$env:API_PORT = "8000"
+$env:API_RELOAD = "true"
 $proc = Start-Process -FilePath "uv" `
-    -ArgumentList "run", "uvicorn", "curriculum_agent.api.main:app", "--reload", "--host", "0.0.0.0", "--port", "8000" `
+    -ArgumentList "run", "python", "-m", "curriculum_agent.api" `
     -PassThru -NoNewWindow
 $proc.Id | Out-File -FilePath ".uvicorn.pid" -Encoding utf8
 Write-Ok "uvicorn started (PID $($proc.Id))"
