@@ -138,8 +138,11 @@ BLOOM_ORDER = [
 
 
 class ProgramCreateRequest(BaseModel):
-    name_th: str
-    name_en: str
+    # Intake identifies a program by where it sits — university, faculty, field.
+    # The names stay for programs created before that change, and for any client
+    # that still supplies one; nothing requires them.
+    name_th: str = ""
+    name_en: str = ""
     field: str
     isced_code: str | None = None
     degree_level: Literal["bachelor", "master", "doctoral"]
@@ -182,8 +185,10 @@ class ProgramSummary(BaseModel):
     """
 
     program_id: str
-    name_th: str
-    name_en: str
+    name_th: str = ""
+    name_en: str = ""
+    field: str = ""
+    faculty: str = ""
     degree_level: str
     created_at: datetime
     current_stage: str | None = None

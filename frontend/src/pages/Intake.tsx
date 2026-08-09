@@ -13,15 +13,12 @@ interface FormState {
   university: string
   faculty: string
   field: string
-  name_th: string
-  name_en: string
   degree_level: string
   duration_years: number
 }
 
 const INITIAL: FormState = {
   university: '', faculty: '', field: '',
-  name_th: '', name_en: '',
   degree_level: 'bachelor', duration_years: 4,
 }
 
@@ -45,9 +42,7 @@ export default function Intake() {
     setError('')
     setSuccess('')
 
-    const required: (keyof FormState)[] = [
-      'university', 'faculty', 'field', 'name_th', 'name_en',
-    ]
+    const required: (keyof FormState)[] = ['university', 'faculty', 'field']
     if (required.some(k => !String(form[k]).trim())) {
       setError('กรุณากรอกข้อมูลที่มีเครื่องหมาย * ให้ครบถ้วน')
       return
@@ -59,14 +54,12 @@ export default function Intake() {
         university: form.university,
         faculty: form.faculty,
         field: form.field,
-        name_th: form.name_th,
-        name_en: form.name_en,
         degree_level: form.degree_level,
         duration_years: Number(form.duration_years),
       })
       const newId = resp.data.program_id
       setProgramId(newId)
-      setSuccess(`บันทึกหลักสูตร "${form.name_th}" สำเร็จ (รหัส: ${newId})`)
+      setSuccess(`บันทึกหลักสูตร "${form.field}" สำเร็จ (รหัส: ${newId})`)
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status: number; data: unknown } }
       if (axiosErr.response) {
@@ -138,11 +131,6 @@ export default function Intake() {
         />
 
         <hr className="border-gray-100" />
-
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="ชื่อหลักสูตร (ภาษาไทย) *" name="name_th" value={form.name_th} onChange={handleChange} />
-          <Field label="ชื่อหลักสูตร (ภาษาอังกฤษ) *" name="name_en" value={form.name_en} onChange={handleChange} />
-        </div>
 
         <div className="grid grid-cols-2 gap-4">
           <div>

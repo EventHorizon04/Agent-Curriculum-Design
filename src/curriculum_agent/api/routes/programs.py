@@ -21,9 +21,15 @@ def _slugify(text: str) -> str:
     return s or "program"
 
 
-async def _generate_program_id(name_en: str, repo: ProgramRepository) -> str:
-    """Slug from name_en, with -2, -3, ... suffix on collision."""
-    base = _slugify(name_en)
+async def _generate_program_id(field: str, repo: ProgramRepository) -> str:
+    """Slug from the field of study, with -2, -3, ... suffix on collision.
+
+    Intake stopped collecting a program name, so the field is what is left to
+    build a readable id from. A Thai field slugs to "program" (_slugify keeps
+    ASCII only) and the suffix carries the distinction — unlovely, but stable
+    and collision-free, which is what the id has to be.
+    """
+    base = _slugify(field)
     candidate = base
     n = 2
     while await repo.exists(candidate):
@@ -37,7 +43,7 @@ async def create_program(req: ProgramCreateRequest, request: Request) -> Program
     repo = ProgramRepository()
     metadata: ProgramMetadata | None = None
     for _ in range(_MAX_ID_ATTEMPTS):
-        program_id = await _generate_program_id(req.name_en, repo)
+        program_id = await _generate_program_id(req.field, repo)
         candidate = ProgramMetadata(program_id=program_id, **req.model_dump())
         try:
             await repo.insert(candidate)

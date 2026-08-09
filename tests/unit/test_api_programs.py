@@ -12,9 +12,7 @@ from curriculum_agent.api.routes.programs import _slugify
 client = TestClient(app)
 
 VALID_PROGRAM = {
-    "name_th": "วิทยาการคอมพิวเตอร์",
-    "name_en": "Computer Science",
-    "field": "CS",
+    "field": "Computer Science",
     "degree_level": "bachelor",
     "duration_years": 4,
     "faculty": "Engineering",
@@ -67,7 +65,38 @@ def test_create_program_generates_slug_id(monkeypatch) -> None:
             headers={"X-API-Key": "secret-key"},
         )
     assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.json()}"
+    # Intake stopped asking for a program name, so the id comes from the field.
     assert resp.json()["program_id"] == "computer-science"
+
+
+def test_create_program_id_falls_back_when_the_field_is_thai(monkeypatch) -> None:
+    """_slugify keeps ASCII only, so a Thai field slugs to "program". The
+    collision suffix is what keeps those distinguishable — assert it engages
+    rather than pretending Thai fields produce readable ids."""
+    import curriculum_agent.config as cfg
+    from curriculum_agent.api.main import app as _app
+
+    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    with (
+        patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
+        patch.object(_app.state, "graph", mock_graph, create=True),
+    ):
+        mock_repo = AsyncMock()
+        mock_repo.insert = AsyncMock()
+        mock_repo.exists = AsyncMock(side_effect=[True, False])  # "program" taken
+        mock_repo_cls.return_value = mock_repo
+
+        resp = client.post(
+            "/programs/",
+            json={**VALID_PROGRAM, "field": "ความสัมพันธ์ระหว่างประเทศ"},
+            headers={"X-API-Key": "secret-key"},
+        )
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.json()}"
+    assert resp.json()["program_id"] == "program-2"
 
 
 def test_create_program_collision_appends_suffix(monkeypatch) -> None:

@@ -30,10 +30,12 @@ from datetime import datetime
 class ProgramMetadata(BaseModel):
     """Set in Stage 1 (Intake). The fixed context all later stages reference."""
     program_id: str
-    name_th: str
-    name_en: str
-    field: str  # e.g. "Computer Science", "Packaging Design"
-    isced_code: str | None = None  # ISCED-F 2013 detailed code, hand-typed, validated against the taxonomy
+    # A program is identified by university/faculty/field. The names remain for
+    # rows created before intake dropped them, and default to "" otherwise.
+    name_th: str = ""
+    name_en: str = ""
+    field: str  # e.g. "Computer Science", "ความสัมพันธ์ระหว่างประเทศ"
+    isced_code: str | None = None  # ISCED-F 2013 detailed code, validated against the taxonomy
     degree_level: Literal["bachelor", "master", "doctoral"]
     duration_years: int = Field(ge=1, le=8)
     faculty: str
@@ -50,7 +52,9 @@ class ProgramMetadata(BaseModel):
 
 **The institution's own direction is not metadata.** `vision_th`, `mission_th`, `philosophy_th`, `institutional_identity_th`, and `student_identity_th` were fields here and are gone — along with `build_institutional_evidence`, which converted them into evidence rows at intake. The designer now records those statements directly at stage 2 as `StakeholderEvidence` with `stakeholder_type=INSTITUTIONAL_DIRECTION` (`classification="requirement"`, derived in code like every other type). One home for a statement, not two, and the evidence trail works the same way for the institution's voice as for any other stakeholder's. Whether the program covered it at all is a program-level check in `plo_synthesis.run`, not a field's presence.
 
-`isced_code` is typed by the designer and validated against the ISCED-F 2013 taxonomy (`data/isced.py`) on `ProgramCreateRequest` only — `ProgramMetadata` overrides that validator to a no-op so a persisted row whose code later left the taxonomy still deserializes. There is no LLM code suggestion and no document upload at intake.
+`isced_code` is validated against the ISCED-F 2013 taxonomy (`data/isced.py`) on `ProgramCreateRequest` only — `ProgramMetadata` overrides that validator to a no-op so a persisted row whose code later left the taxonomy still deserializes. Intake has no input for it, no LLM suggestion, and no document upload.
+
+**`program_id` comes from `field`.** With no program name to slug, `_generate_program_id` slugs the field of study and appends `-2`, `-3`, … on collision. `_slugify` keeps ASCII only, so a Thai field yields `program`, `program-2`, … — readable ids are a nice-to-have, uniqueness is not. Anything showing a program to a human should fall back through name → field → id; `ProgramSummary` carries `field` and `faculty` for exactly that.
 
 ## Stage 2: Stakeholder evidence
 

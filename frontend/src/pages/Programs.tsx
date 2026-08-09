@@ -7,10 +7,18 @@ interface ProgramSummary {
   program_id: string
   name_th: string
   name_en: string
+  field: string
+  faculty: string
   degree_level: string
   created_at: string
   current_stage: string | null
   session_status: string | null
+}
+
+/** Programs created before intake dropped the name field still have one; the
+ *  rest are identified by their field of study. */
+function programLabel(p: ProgramSummary): string {
+  return p.name_th || p.field || p.program_id
 }
 
 const STAGE_ROUTES: Record<string, string> = {
@@ -79,7 +87,7 @@ export default function Programs() {
 
   const handleDelete = async (e: React.MouseEvent, p: ProgramSummary) => {
     e.stopPropagation()
-    if (!window.confirm(`ลบหลักสูตร "${p.name_th}" ทั้งหมด? ข้อมูลจะหายถาวรและกู้คืนไม่ได้`)) {
+    if (!window.confirm(`ลบหลักสูตร "${programLabel(p)}" ทั้งหมด? ข้อมูลจะหายถาวรและกู้คืนไม่ได้`)) {
       return
     }
     try {
@@ -137,9 +145,11 @@ export default function Programs() {
                 className="border-b cursor-pointer hover:bg-gray-50"
               >
                 <td className="py-2 pr-4">
-                  <div className="font-medium">{p.name_th}</div>
+                  <div className="font-medium">{programLabel(p)}</div>
                   <div className="text-xs text-gray-400">
-                    {p.name_en} · {p.program_id}
+                    {[p.faculty, p.name_en].filter(Boolean).join(' · ')}
+                    {(p.faculty || p.name_en) && ' · '}
+                    {p.program_id}
                   </div>
                 </td>
                 <td className="py-2 pr-4">{DEGREE_LABELS[p.degree_level] ?? p.degree_level}</td>

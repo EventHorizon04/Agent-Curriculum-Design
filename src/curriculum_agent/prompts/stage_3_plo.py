@@ -41,7 +41,11 @@ def build_plo_from_need_prompt(
         for n in needs
     )
     user = (
-        f"หลักสูตร: {metadata.name_th} ({metadata.degree_level}, {metadata.duration_years} ปี)\n"
+        # Programs created after intake dropped the name field carry none, so
+        # fall back to the faculty — the model still needs to know whose program
+        # this is, and "หลักสูตร: (bachelor, 4 ปี)" tells it nothing.
+        f"หลักสูตร: {metadata.name_th or metadata.faculty} "
+        f"({metadata.degree_level}, {metadata.duration_years} ปี)\n"
         f"สาขา: {metadata.field}\n\n"
         f"{need_block}"
     )

@@ -166,6 +166,19 @@ def test_program_metadata_inherits_and_adds_program_id() -> None:
     assert meta.program_goals_th == ["เป้าหมายที่ 1"]
 
 
+def test_program_names_are_optional() -> None:
+    """Intake no longer asks for a program name — the institution, faculty, and
+    field identify it. The columns stay for programs created before the change."""
+    kwargs = _valid_create_kwargs()
+    del kwargs["name_th"]
+    del kwargs["name_en"]
+
+    req = ProgramCreateRequest(**kwargs)
+
+    assert req.name_th == ""
+    assert req.name_en == ""
+
+
 def test_goals_and_objectives_are_optional() -> None:
     """Intake stopped collecting them — the form asks for the program's place in
     the institution and nothing else. Both stay on the model so existing rows

@@ -106,6 +106,10 @@ class ProgramRepository:
                 program_id=p.program_id,
                 name_th=p.name_th,
                 name_en=p.name_en,
+                # Carried so the history page can label a program that has no
+                # name of its own — intake identifies programs by these now.
+                field=p.field,
+                faculty=p.faculty,
                 degree_level=p.degree_level,
                 created_at=p.created_at,
                 current_stage=(
