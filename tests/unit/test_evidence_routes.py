@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.main import app
@@ -51,7 +52,7 @@ def test_delete_evidence_blocked_by_fk_returns_409() -> None:
 def test_delete_evidence_requires_api_key_when_configured(monkeypatch) -> None:
     import curriculum_agent.config as cfg
 
-    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
     resp = client.delete("/programs/cs-2025/evidence/ev-1")
     assert resp.status_code == 401
 

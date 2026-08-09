@@ -3,7 +3,7 @@ from __future__ import annotations
 import urllib.parse
 from typing import Literal
 
-from pydantic import computed_field, model_validator
+from pydantic import SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Model names to fall back on when LIGHT_MODEL / HEAVY_MODEL are left unset.
@@ -25,25 +25,28 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     # No trailing /v1 — the OpenAI client path is appended once, in llm.py.
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
-    openrouter_api_key: str | None = None
+    # Every credential below is SecretStr, not str: a plain str renders in full
+    # on any repr of this object — a failing assertion, a log line, a debugger
+    # frame. Read one with .get_secret_value() at the point of use.
+    openrouter_api_key: SecretStr | None = None
     postgres_dsn: str = (
         "postgresql+asyncpg://curriculum:curriculum_dev@localhost:5432/curriculum_agent"
     )
     minio_endpoint: str = "localhost:9000"
     minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin_dev"
+    minio_secret_key: SecretStr = SecretStr("minioadmin_dev")
     # Empty means "unset" — _apply_provider_model_defaults fills these in from
     # llm_provider. They cannot carry a literal default here: a class-body
     # branch on llm_provider would be frozen at import time and ignore .env.
     light_model: str = ""
     heavy_model: str = ""
     # REST API auth secret (require_api_key). None disables auth (dev default).
-    api_key: str | None = None
+    api_key: SecretStr | None = None
     # Sent as the OpenAI-client api_key when talking to local Ollama. Ollama
     # ignores it for local models; cloud-tagged models (":cloud") are
     # authenticated via the host's own `ollama signin` session, not this
     # value — "ollama" is just a non-empty placeholder the client requires.
-    llm_api_key: str = "ollama"
+    llm_api_key: SecretStr = SecretStr("ollama")
     # Ceiling on in-flight LLM calls when a stage fans out over a corpus. Sized
     # for hosted providers' rate limits; a local Ollama can take more, but the
     # gain is small when one model serves the calls anyway.

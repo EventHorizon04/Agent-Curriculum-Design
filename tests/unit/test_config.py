@@ -1,6 +1,34 @@
 from __future__ import annotations
 
+import pytest
+
 from curriculum_agent.config import Settings
+
+_SECRETS = {
+    "openrouter_api_key": "sk-or-v1-000000000000000000000000000000000000",
+    "api_key": "rest-admin-secret-value",
+    "minio_secret_key": "minio-secret-value",
+    "llm_api_key": "llm-secret-value",
+}
+
+
+@pytest.mark.parametrize("field_name", sorted(_SECRETS))
+def test_secret_never_renders_in_text(field_name: str) -> None:
+    """A plain str field leaks on every repr — a failing assertion, a log line, a
+    debugger frame. pytest printed the real OpenRouter key into a terminal from
+    an AttributeError on Settings, which is how this test came to exist."""
+    settings = Settings(_env_file=None, **_SECRETS)
+    value = _SECRETS[field_name]
+
+    rendered = f"{settings!r} {settings} {settings.model_dump()} {settings.model_dump_json()}"
+
+    assert value not in rendered
+
+
+def test_secret_value_is_still_readable() -> None:
+    settings = Settings(_env_file=None, **_SECRETS)
+    assert settings.api_key is not None
+    assert settings.api_key.get_secret_value() == _SECRETS["api_key"]
 
 
 def test_postgres_dsn_sync_strips_asyncpg_driver():

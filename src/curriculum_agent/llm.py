@@ -25,8 +25,8 @@ def _api_key() -> str:
     if settings.llm_provider == "openrouter":
         if not settings.openrouter_api_key:
             raise ValueError("llm_provider is 'openrouter' but OPENROUTER_API_KEY is not set")
-        return settings.openrouter_api_key
-    return settings.llm_api_key
+        return settings.openrouter_api_key.get_secret_value()
+    return settings.llm_api_key.get_secret_value()
 
 
 def _extra_body() -> dict[str, Any]:

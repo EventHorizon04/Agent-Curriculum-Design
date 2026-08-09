@@ -4,6 +4,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.main import app
@@ -35,7 +36,7 @@ def test_slugify_empty_fallback() -> None:
 def test_create_program_requires_api_key_when_configured(monkeypatch) -> None:
     import curriculum_agent.config as cfg
 
-    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
     resp = client.post("/programs/", json=VALID_PROGRAM)
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.json()}"
     assert resp.json()["detail"] == "API key ไม่ถูกต้องหรือไม่ได้ระบุ"
@@ -45,7 +46,7 @@ def test_create_program_generates_slug_id(monkeypatch) -> None:
     import curriculum_agent.config as cfg
     from curriculum_agent.api.main import app as _app
 
-    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
     mock_graph.ainvoke = AsyncMock(return_value={})
@@ -76,7 +77,7 @@ def test_create_program_id_falls_back_when_the_field_is_thai(monkeypatch) -> Non
     import curriculum_agent.config as cfg
     from curriculum_agent.api.main import app as _app
 
-    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
     mock_graph.ainvoke = AsyncMock(return_value={})
@@ -103,7 +104,7 @@ def test_create_program_collision_appends_suffix(monkeypatch) -> None:
     import curriculum_agent.config as cfg
     from curriculum_agent.api.main import app as _app
 
-    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
     mock_graph.ainvoke = AsyncMock(return_value={})
@@ -133,7 +134,7 @@ def test_create_program_insert_conflict_retries_with_suffix(monkeypatch) -> None
     import curriculum_agent.config as cfg
     from curriculum_agent.api.main import app as _app
 
-    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
     mock_graph.ainvoke = AsyncMock(return_value={})
@@ -166,7 +167,7 @@ def test_create_program_returns_409_when_attempts_exhausted(monkeypatch) -> None
     import curriculum_agent.config as cfg
     from curriculum_agent.api.main import app as _app
 
-    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
     mock_graph.ainvoke = AsyncMock(return_value={})
@@ -259,7 +260,7 @@ def test_delete_program_not_found() -> None:
 def test_delete_program_requires_api_key_when_configured(monkeypatch) -> None:
     import curriculum_agent.config as cfg
 
-    monkeypatch.setattr(cfg.settings, "api_key", "secret-key")
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
     resp = client.delete("/programs/computer-science")
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.json()}"
     assert resp.json()["detail"] == "API key ไม่ถูกต้องหรือไม่ได้ระบุ"
