@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -225,9 +226,16 @@ async def run(state: AgentState) -> AgentState:
     collapsed_duplicates = 0
     _cache = LLMCacheRepository()
 
-    for item_dict in classified:
-        evidence = StakeholderEvidence.model_validate(item_dict)
+    evidences = [StakeholderEvidence.model_validate(d) for d in classified]
+    # One call per evidence item, in flight together under a ceiling. Awaiting
+    # them one after another costs len(evidence) x per-call latency, which a
+    # hosted provider makes fatal: ~90s per call over fourteen items overruns the
+    # 300s wait_for in api/routes/needs.py several times over.
+    _sem = asyncio.Semaphore(max(1, settings.llm_max_concurrency))
 
+    async def _extract_one(
+        evidence: StakeholderEvidence,
+    ) -> _ExtractedSkillsResponse | None:
         text_slice = evidence.raw_text_th[:1200]
         # field_th/program_name_th are in the key, not just the fingerprint: the
         # fingerprint intentionally covers only the schema-and-instructions
@@ -262,12 +270,22 @@ async def run(state: AgentState) -> AgentState:
                 field_th=field_th,
                 program_name_th=program_name_th,
             )
-            try:
-                result = await complete_light(_ExtractedSkillsResponse, messages)
-                await _cache.set(cache_key, settings.light_model, result.model_dump_json())
-            except Exception as exc:
-                logger.warning(f"LLM skill extraction failed for {evidence.evidence_id}: {exc}")
+            # Only the provider call is rationed; a cache hit above never waited
+            # for a slot it did not need.
+            async with _sem:
+                try:
+                    result = await complete_light(_ExtractedSkillsResponse, messages)
+                    await _cache.set(cache_key, settings.light_model, result.model_dump_json())
+                except Exception as exc:
+                    logger.warning(f"LLM skill extraction failed for {evidence.evidence_id}: {exc}")
+        return result
 
+    # Each item's outcome is its own: _extract_one swallows provider errors into
+    # None, so one bad item cannot take the corpus down. gather preserves input
+    # order, which keeps the run reproducible.
+    results = await asyncio.gather(*(_extract_one(e) for e in evidences))
+
+    for evidence, result in zip(evidences, results, strict=True):
         if result is not None:
             # Collapse repeated names within this one evidence item, keeping the
             # highest Bloom level (same rule as merge_bloom — the lower level is

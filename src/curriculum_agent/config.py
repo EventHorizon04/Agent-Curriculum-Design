@@ -21,7 +21,7 @@ class Settings(BaseSettings):
 
     # "ollama" (default, open-source, local) or "openrouter" (paid, hosted).
     # Config-switchable per project rule — never hardcode a paid provider.
-    llm_provider: Literal["ollama", "openrouter"] = "ollama"
+    llm_provider: Literal["ollama", "openrouter"] = "openrouter"
     ollama_base_url: str = "http://localhost:11434"
     # No trailing /v1 — the OpenAI client path is appended once, in llm.py.
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
@@ -44,6 +44,10 @@ class Settings(BaseSettings):
     # authenticated via the host's own `ollama signin` session, not this
     # value — "ollama" is just a non-empty placeholder the client requires.
     llm_api_key: str = "ollama"
+    # Ceiling on in-flight LLM calls when a stage fans out over a corpus. Sized
+    # for hosted providers' rate limits; a local Ollama can take more, but the
+    # gain is small when one model serves the calls anyway.
+    llm_max_concurrency: int = 5
 
     @model_validator(mode="after")
     def _apply_provider_model_defaults(self) -> Settings:
