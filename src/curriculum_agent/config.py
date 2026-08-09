@@ -44,7 +44,6 @@ class Settings(BaseSettings):
     # authenticated via the host's own `ollama signin` session, not this
     # value — "ollama" is just a non-empty placeholder the client requires.
     llm_api_key: str = "ollama"
-    llm_rate_limit_per_minute: int = 5
 
     @model_validator(mode="after")
     def _apply_provider_model_defaults(self) -> Settings:
