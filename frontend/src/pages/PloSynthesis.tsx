@@ -56,6 +56,8 @@ interface PLOTrace {
   plo: PLO
   clusters: NeedSummary[]
   evidence: StakeholderEvidence[]
+  missing_need_ids: string[]
+  missing_evidence_ids: string[]
 }
 
 const BLOOM_LABEL: Record<string, string> = {
@@ -296,8 +298,23 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
   if (error) return <div className="py-3 text-sm text-red-600">{error}</div>
   if (!trace) return null
 
+  const stale = trace.missing_need_ids.length + trace.missing_evidence_ids.length > 0
+
   return (
     <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
+      {stale && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2.5 text-sm">
+          <p className="font-medium">PLO นี้อ้างข้อมูลที่ไม่มีอยู่แล้ว</p>
+          <p className="text-xs mt-1 leading-relaxed">
+            หาย {trace.missing_need_ids.length} Need
+            {trace.missing_evidence_ids.length > 0 &&
+              ` และ ${trace.missing_evidence_ids.length} หลักฐาน`}
+            {' '}— เกิดจาก PLO ชุดนี้ถูกสร้างก่อนที่ Needs จะถูกสร้างใหม่
+            สังเคราะห์ PLO อีกครั้งเพื่อให้ตรงกับ Needs ปัจจุบัน
+          </p>
+        </div>
+      )}
+
       {/* Needs */}
       <div>
         <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">

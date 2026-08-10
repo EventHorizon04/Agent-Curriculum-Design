@@ -79,13 +79,20 @@ def _patched(needs: list[Need]):
             "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
             new_callable=AsyncMock,
         ),
+        # run() replaces the set rather than upserting into it, so the delete
+        # needs stubbing too or the stage opens a real database connection.
+        patch(
+            "curriculum_agent.stages.plo_synthesis.PLORepository.delete_by_program",
+            new_callable=AsyncMock,
+            return_value=0,
+        ),
     )
 
 
 @pytest.mark.anyio
 async def test_stage_4_produces_one_plo_per_need(state: dict, needs: list[Need]) -> None:
-    p1, p2, p3 = _patched(needs)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patched(needs)
+    with p1, p2, p3, p4:
         result = await run(state)
 
     plos = result["plos"]
@@ -95,8 +102,8 @@ async def test_stage_4_produces_one_plo_per_need(state: dict, needs: list[Need])
 
 @pytest.mark.anyio
 async def test_stage_4_no_forbidden_words(state: dict, needs: list[Need]) -> None:
-    p1, p2, p3 = _patched(needs)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patched(needs)
+    with p1, p2, p3, p4:
         result = await run(state)
 
     from curriculum_agent.models import FORBIDDEN_WORDS_TH
@@ -109,8 +116,8 @@ async def test_stage_4_no_forbidden_words(state: dict, needs: list[Need]) -> Non
 
 @pytest.mark.anyio
 async def test_stage_4_source_need_ids_non_empty(state: dict, needs: list[Need]) -> None:
-    p1, p2, p3 = _patched(needs)
-    with p1, p2, p3:
+    p1, p2, p3, p4 = _patched(needs)
+    with p1, p2, p3, p4:
         result = await run(state)
 
     for plo_dict in result["plos"]:
@@ -122,12 +129,13 @@ async def test_stage_4_source_need_ids_non_empty(state: dict, needs: list[Need])
 
 @pytest.mark.anyio
 async def test_stage_4_smart_validator_called_once_per_need(state: dict, needs: list[Need]) -> None:
-    p1, _, p3 = _patched(needs)
+    p1, _, p3, p4 = _patched(needs)
     soft_judge_mock = AsyncMock(return_value=_SOFT_OK)
     with (
         p1,
         patch("curriculum_agent.stages.plo_synthesis.complete_light", soft_judge_mock),
         p3,
+        p4,
     ):
         result = await run(state)
 

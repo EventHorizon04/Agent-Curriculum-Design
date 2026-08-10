@@ -282,6 +282,24 @@ class NeedRepository:
 
 
 class PLORepository:
+    async def delete_by_program(self, program_id: str) -> int:
+        """Drop every PLO row for a program. Returns the row count removed.
+
+        Needed for the same reason as the Skill and Need equivalents, by a
+        different route. `plo_id` is stable (PLO1..PLOn, OPT1..OPTn), so the
+        upsert in bulk_insert refreshes what a re-run produces again — but a run
+        that yields *fewer* PLOs than the last leaves the surplus behind, and
+        need_combination has already deleted the Needs they cited. The result is
+        a PLO whose trace resolves to nothing.
+        """
+        async with AsyncSessionLocal() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id)),
+            )
+            await session.commit()
+            return result.rowcount
+
     async def bulk_insert(self, plos: list[PLO]) -> None:
         async with AsyncSessionLocal() as session:
             for plo in plos:

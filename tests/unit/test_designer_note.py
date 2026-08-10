@@ -209,6 +209,7 @@ async def test_plo_synthesis_forwards_the_note_to_the_draft_prompt(
             )
         ),
     )
+    monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())
 
     await ps.run(

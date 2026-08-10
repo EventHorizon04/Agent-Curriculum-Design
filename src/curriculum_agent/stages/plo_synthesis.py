@@ -361,7 +361,23 @@ async def run(state: AgentState) -> AgentState:
             "evidence at the Stakeholder Needs stage, or accept at the checkpoint"
         )
 
-    await PLORepository().bulk_insert(plos)
+    # Replace, don't accumulate. plo_id is stable, so the upsert refreshes any
+    # PLO this run produced again — but one the run no longer produces (a Need
+    # that turned optional, or vanished from need_combination's output) would
+    # otherwise survive, citing a Need that no longer exists. The trace endpoint
+    # then resolves it to nothing and the UI shows a PLO with "Needs (0)".
+    #
+    # Skipped when the run produced nothing, matching the guards in
+    # skill_extraction and need_combination: a total synthesis failure must not
+    # destroy the last good set.
+    plo_repo = PLORepository()
+    if plos:
+        removed = await plo_repo.delete_by_program(program_id)
+        if removed:
+            logger.info(f"Replaced {removed} PLO row(s) from a previous run")
+        await plo_repo.bulk_insert(plos)
+    else:
+        logger.warning(f"Stage 4 produced no PLOs for '{program_id}' — previous set left untouched")
     state["plos"] = [p.model_dump(mode="json") for p in plos]
     state["current_stage"] = "plo_synthesis"
     return state

@@ -57,6 +57,7 @@ def _patch_llm(needs: list[Need]):
     return (
         patch.object(ps, "complete_heavy", fake_heavy),
         patch.object(ps, "complete_light", fake_light),
+        patch.object(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0)),
         patch.object(ps.PLORepository, "bulk_insert", AsyncMock()),
     )
 
@@ -66,9 +67,9 @@ async def test_run_warns_when_core_plo_count_is_below_policy(
 ):
     """Fewer than MIN_NEEDS core PLOs must log a policy warning naming the count."""
     needs = [_need(f"N{i}") for i in range(1, 3)]  # 2 < MIN_NEEDS(6)
-    p1, p2, p3 = _patch_llm(needs)
+    p1, p2, p3, p4 = _patch_llm(needs)
 
-    with p1, p2, p3, patch.object(ps, "logger") as mock_logger:
+    with p1, p2, p3, p4, patch.object(ps, "logger") as mock_logger:
         state = await ps.run(
             {
                 "program_id": "cs-test",
@@ -90,9 +91,9 @@ async def test_run_does_not_warn_when_core_plo_count_is_within_policy(
     program_metadata: ProgramMetadata,
 ):
     needs = [_need(f"N{i}") for i in range(1, 7)]  # 6 == MIN_NEEDS, within policy
-    p1, p2, p3 = _patch_llm(needs)
+    p1, p2, p3, p4 = _patch_llm(needs)
 
-    with p1, p2, p3, patch.object(ps, "logger") as mock_logger:
+    with p1, p2, p3, p4, patch.object(ps, "logger") as mock_logger:
         state = await ps.run(
             {
                 "program_id": "cs-test",
@@ -113,9 +114,9 @@ async def test_run_does_not_warn_above_the_old_ten_cap(
 ):
     """No upper cap: 12 core PLOs (above the removed MAX_NEEDS=10) must not warn."""
     needs = [_need(f"N{i}") for i in range(1, 13)]
-    p1, p2, p3 = _patch_llm(needs)
+    p1, p2, p3, p4 = _patch_llm(needs)
 
-    with p1, p2, p3, patch.object(ps, "logger") as mock_logger:
+    with p1, p2, p3, p4, patch.object(ps, "logger") as mock_logger:
         state = await ps.run(
             {
                 "program_id": "cs-test",
@@ -137,9 +138,9 @@ async def test_warns_when_no_plo_traces_to_the_institution(
     """Institutional coverage is a property of the PLO set, not of each PLO, so it
     is checked once after synthesis rather than flagged nine times."""
     needs = [_need(f"N{i}") for i in range(1, 7)]  # none carry institutional_direction
-    p1, p2, p3 = _patch_llm(needs)
+    p1, p2, p3, p4 = _patch_llm(needs)
 
-    with p1, p2, p3, patch.object(ps, "logger") as mock_logger:
+    with p1, p2, p3, p4, patch.object(ps, "logger") as mock_logger:
         await ps.run(
             {
                 "program_id": "cs-test",
@@ -159,9 +160,9 @@ async def test_does_not_warn_when_a_need_carries_institutional_direction(
     needs[0] = needs[0].model_copy(
         update={"source_stakeholder_types": [StakeholderType.INSTITUTIONAL_DIRECTION]}
     )
-    p1, p2, p3 = _patch_llm(needs)
+    p1, p2, p3, p4 = _patch_llm(needs)
 
-    with p1, p2, p3, patch.object(ps, "logger") as mock_logger:
+    with p1, p2, p3, p4, patch.object(ps, "logger") as mock_logger:
         await ps.run(
             {
                 "program_id": "cs-test",

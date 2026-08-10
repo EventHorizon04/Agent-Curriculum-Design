@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from loguru import logger
 from pydantic import BaseModel, Field
 
 from curriculum_agent.api.deps import require_api_key
@@ -24,6 +25,12 @@ class PLOTrace(BaseModel):
     plo: PLO
     clusters: list[Need]
     evidence: list[StakeholderEvidence]
+    # Ids the PLO cites that no longer resolve. An empty `clusters` list on its
+    # own is ambiguous — it reads as "built from no Needs", which the model
+    # forbids — so name the missing ids rather than letting the UI show a
+    # confident zero. Non-empty means the row outlived the Needs behind it.
+    missing_need_ids: list[str] = []
+    missing_evidence_ids: list[str] = []
 
 
 class PLOReportResponse(BaseModel):
@@ -107,10 +114,24 @@ async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     all_needs = await NeedRepository().list_by_program(program_id)
     all_evidence = await EvidenceRepository().list_by_program(program_id)
 
+    clusters = [n for n in all_needs if n.need_id in need_ids]
+    evidence = [e for e in all_evidence if e.evidence_id in evidence_ids]
+
+    missing_needs = sorted(need_ids - {n.need_id for n in clusters})
+    missing_evidence = sorted(evidence_ids - {e.evidence_id for e in evidence})
+    if missing_needs or missing_evidence:
+        logger.warning(
+            f"{plo_id} cites rows that no longer exist: "
+            f"{len(missing_needs)} Need(s), {len(missing_evidence)} evidence item(s) — "
+            "re-run PLO synthesis to rebuild the set against the current Needs"
+        )
+
     return PLOTrace(
         plo=plo,
-        clusters=[n for n in all_needs if n.need_id in need_ids],
-        evidence=[e for e in all_evidence if e.evidence_id in evidence_ids],
+        clusters=clusters,
+        evidence=evidence,
+        missing_need_ids=missing_needs,
+        missing_evidence_ids=missing_evidence,
     )
 
 
