@@ -12,6 +12,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from loguru import logger
 
 from curriculum_agent.api.routes import evidence, needs, plos, programs, sessions
+from curriculum_agent.api.static import mount_frontend
 from curriculum_agent.config import settings
 from curriculum_agent.graph import build_graph
 
@@ -73,7 +74,7 @@ app = FastAPI(title="Curriculum Design Agent", version="0.1.0", lifespan=lifespa
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -89,3 +90,9 @@ app.include_router(sessions.router, prefix="/programs/{program_id}/sessions", ta
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# Registered last on purpose: the mount claims "/" and everything under it, so
+# every router must already be in place or the API disappears behind the bundle.
+if settings.serve_frontend:
+    mount_frontend(app, settings.frontend_dist)
