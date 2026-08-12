@@ -37,6 +37,9 @@ services:
     # belong in a stack that is reachable from outside the machine.
     profiles: ["debug"]
     environment:
+      # Deliberately asymmetric: the email is a login label, not a secret, so
+      # it gets a default; the password does not, so it is required. Don't
+      # "fix" this into a required PGADMIN_EMAIL too.
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@local.com}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?set PGADMIN_PASSWORD in .env}
     ports:
