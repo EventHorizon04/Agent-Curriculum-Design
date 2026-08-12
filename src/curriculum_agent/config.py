@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import urllib.parse
+from pathlib import Path
 from typing import Literal
 
 from pydantic import SecretStr, computed_field, model_validator
@@ -51,6 +52,13 @@ class Settings(BaseSettings):
     # for hosted providers' rate limits; a local Ollama can take more, but the
     # gain is small when one model serves the calls anyway.
     llm_max_concurrency: int = 5
+    # Serve the built React bundle from this process, making the API and the UI
+    # one origin. False in dev, where Vite serves the UI on 5173 and proxies here.
+    serve_frontend: bool = False
+    frontend_dist: Path = Path("frontend/dist")
+    # Was hardcoded in main.py. Same-origin serving needs no entry at all, so the
+    # demo sets this empty; the default keeps the Vite dev server working.
+    cors_origins: list[str] = ["http://localhost:5173"]
 
     @model_validator(mode="after")
     def _apply_provider_model_defaults(self) -> Settings:

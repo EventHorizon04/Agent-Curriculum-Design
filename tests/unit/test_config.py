@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from curriculum_agent.config import Settings
@@ -64,3 +66,25 @@ def test_explicit_models_survive_the_provider_default():
     )
     assert s.light_model == "typhoon2:8b"
     assert s.heavy_model == "qwen2.5:14b"
+
+
+def test_frontend_serving_is_off_by_default():
+    s = Settings(_env_file=None)
+    assert s.serve_frontend is False
+
+
+def test_frontend_dist_defaults_to_the_vite_output_dir():
+    s = Settings(_env_file=None)
+    assert s.frontend_dist == Path("frontend/dist")
+
+
+def test_cors_origins_default_to_the_vite_dev_server():
+    # Dev must keep working unchanged: this is the literal the middleware
+    # used to carry hardcoded in main.py.
+    s = Settings(_env_file=None)
+    assert s.cors_origins == ["http://localhost:5173"]
+
+
+def test_cors_origins_can_be_emptied_for_same_origin_serving():
+    s = Settings(_env_file=None, cors_origins=[])
+    assert s.cors_origins == []
