@@ -3,19 +3,21 @@ from __future__ import annotations
 
 def build_cluster_skills_prompt(skill_names: list[str]) -> list[dict[str, str]]:
     system = (
-        "คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ทักษะแรงงาน\n"
-        "จงจัดกลุ่มทักษะต่อไปนี้ตามความหมายและบริบทการใช้งาน "
-        "ทักษะที่ใช้ในงานลักษณะเดียวกันหรือความหมายใกล้เคียงกันควรอยู่กลุ่มเดียวกัน\n\n"
-        "กติกา:\n"
-        "- ทุก index ต้องถูกจัดเข้ากลุ่มครั้งเดียวเท่านั้น ห้ามซ้ำ ห้ามตกหล่น\n"
-        "- ห้ามใช้ index ที่ไม่มีในรายการ\n"
-        "- จำนวนกลุ่มตามความเหมาะสมของข้อมูล (โดยทั่วไป 4-12 กลุ่ม)\n\n"
-        "ตอบเป็น JSON object:\n"
-        "{ clusters: [ { label_th: ชื่อกลุ่มภาษาไทยสั้นๆ, "
-        "member_indices: [index ของทักษะในกลุ่มนี้] } ] }"
+        "You are an expert in labor skill analysis.\n"
+        "Group the following skills based on their meaning and usage context. "
+        "Skills used in similar roles or with closely related meanings "
+        "should be grouped together.\n\n"
+        "Rules:\n"
+        "- Every index must be assigned to exactly one group (no duplicates, no omissions).\n"
+        "- Do not use indices that are not present in the list.\n"
+        "- Choose an appropriate number of clusters based on the data (typically 4–12 groups).\n"
+        "- label_th MUST be written in Thai, not English — it is shown to Thai users.\n\n"
+        "Respond as a JSON object:\n"
+        '{ "clusters": [ { "label_th": "ชื่อกลุ่มภาษาไทยสั้นๆ", '
+        '"member_indices": [indices of skills in this group] } ] }'
     )
     numbered = "\n".join(f"{i}: {name}" for i, name in enumerate(skill_names))
-    user = f"รายการทักษะ (index: ชื่อทักษะ):\n{numbered}"
+    user = f"List of skills (index: skill_name):\n{numbered}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -24,18 +26,18 @@ def build_cluster_skills_prompt(skill_names: list[str]) -> list[dict[str, str]]:
 
 def build_merge_clusters_prompt(cluster_labels: list[str]) -> list[dict[str, str]]:
     system = (
-        "คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ทักษะแรงงาน\n"
-        "รายการต่อไปนี้คือชื่อกลุ่มทักษะที่ได้จากการจัดกลุ่มทีละชุด "
-        "บางกลุ่มมีความหมายเดียวกันและควรรวมเป็นกลุ่มเดียว\n\n"
-        "กติกา:\n"
-        "- ทุก index ต้องปรากฏใน groups ครั้งเดียวเท่านั้น\n"
-        "- ห้ามใช้ index ที่ไม่มีในรายการ\n"
-        "- กลุ่มที่ไม่ซ้ำกับกลุ่มอื่นให้อยู่เดี่ยวๆ เป็น group ของตัวเอง\n\n"
-        "ตอบเป็น JSON object:\n"
-        "{ groups: [ [index ของกลุ่มที่ควรรวมเข้าด้วยกัน] ] }"
+        "You are an expert in labor skill analysis.\n"
+        "The following list contains skill cluster names generated from batched clustering. "
+        "Some clusters share the same meaning and should be merged into a single cluster.\n\n"
+        "Rules:\n"
+        "- Every index must appear in 'groups' exactly once.\n"
+        "- Do not use indices that are not present in the list.\n"
+        "- A cluster that overlaps with no other stays on its own, as a group of one.\n\n"
+        "Respond as a JSON object:\n"
+        '{ "groups": [ [indices of clusters to be merged] ] }'
     )
     numbered = "\n".join(f"{i}: {label}" for i, label in enumerate(cluster_labels))
-    user = f"รายการกลุ่มทักษะ (index: ชื่อกลุ่ม):\n{numbered}"
+    user = f"List of skill clusters (index: cluster_label):\n{numbered}"
     return [
         {"role": "system", "content": system},
         {"role": "user", "content": user},

@@ -18,6 +18,10 @@ def test_cluster_prompt_numbers_every_skill():
     system = msgs[0]["content"]
     assert "member_indices" in system
     assert "label_th" in system
+    assert "Do not use indices that are not present in the list." in system
+    # the instructions are English but the label reaches a Thai UI, so the
+    # prompt has to say so outright — an English label_th is a silent regression
+    assert "label_th MUST be written in Thai" in system
 
 
 def test_merge_prompt_numbers_every_label():
@@ -29,4 +33,4 @@ def test_merge_prompt_numbers_every_label():
     assert "2: สื่อสาร" in user
     system = msgs[0]["content"]
     assert "groups" in system
-    assert "ห้ามใช้ index ที่ไม่มีในรายการ" in system
+    assert "Do not use indices that are not present in the list." in system
