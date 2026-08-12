@@ -67,3 +67,15 @@ def test_delete_evidence_requires_api_key_when_configured(monkeypatch) -> None:
 # alongside all other unit tests, but the full `uv run pytest` run tears down
 # a pooled connection against an already-closed event loop — a pre-existing
 # test-infra conflict unrelated to this fix.
+
+
+async def test_classify_stream_sets_anti_buffering_headers() -> None:
+    """Calling the route builds the StreamingResponse without touching the DB —
+    the generator body does not run until something iterates it."""
+    from curriculum_agent.api.routes.evidence import classify_evidence_stream
+
+    resp = await classify_evidence_stream("cs-1")
+
+    assert resp.media_type == "text/event-stream"
+    assert resp.headers["cache-control"] == "no-cache"
+    assert resp.headers["x-accel-buffering"] == "no"

@@ -56,7 +56,14 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
 
         yield f"data: {json.dumps({'status': 'done', 'total': total})}\n\n"
 
-    return StreamingResponse(_generate(), media_type="text/event-stream")
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        # Without these, a proxy in front of this process is free to buffer the
+        # whole stream and deliver it on close — the per-item progress the UI
+        # renders would arrive as one burst at the end.
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.delete("/{evidence_id}", status_code=204, dependencies=[Depends(require_api_key)])
