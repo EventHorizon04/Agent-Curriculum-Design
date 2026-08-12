@@ -152,7 +152,7 @@ export default function StakeholderNeeds() {
     setError('')
     try {
       const response = await fetch(
-        `http://localhost:8000/programs/${programId}/evidence/classify-stream`,
+        `/programs/${programId}/evidence/classify-stream`,
         { headers: { 'Accept': 'text/event-stream' } }
       )
       if (!response.ok) { setError(`classify-stream error: ${response.status}`); return }

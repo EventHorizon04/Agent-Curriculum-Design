@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useProgram } from '../hooks/useProgram'
-
-const API = 'http://localhost:8000'
+import api from '../api/client'
 
 type SessionStatus = 'running' | 'suspended' | 'completed' | 'rejected' | 'failed'
 
@@ -71,9 +70,12 @@ function SessionCard({
 
   async function doAction(action: 'approve' | 'reject') {
     setLoading(true)
-    await fetch(`${API}/programs/${programId}/sessions/${session.session_id}/${action}`, {
-      method: 'POST',
-    })
+    try {
+      await api.post(`/programs/${programId}/sessions/${session.session_id}/${action}`)
+    } catch {
+      // Swallow: matches the prior fetch()-based behaviour, which never
+      // checked res.ok here either. onAction() below re-polls regardless.
+    }
     setLoading(false)
     onAction()
   }
@@ -194,8 +196,13 @@ export default function Pipeline() {
 
   async function fetchSessions() {
     if (!programId) return
-    const res = await fetch(`${API}/programs/${programId}/sessions`)
-    if (res.ok) setSessions(await res.json())
+    try {
+      const res = await api.get<Session[]>(`/programs/${programId}/sessions/`)
+      setSessions(res.data)
+    } catch {
+      // Swallow: matches the prior fetch()-based behaviour, which left
+      // `sessions` untouched on a non-ok response.
+    }
   }
 
   function startPolling() {
@@ -223,12 +230,16 @@ export default function Pipeline() {
   async function handleNewRun() {
     if (!programId) return alert('กรุณา intake โปรแกรมก่อน')
     setStarting(true)
-    const res = await fetch(`${API}/programs/${programId}/sessions`, { method: 'POST' })
-    if (res.ok) {
+    try {
+      await api.post(`/programs/${programId}/sessions/`)
       await fetchSessions()
       startPolling()
+    } catch {
+      // Swallow: matches the prior fetch()-based behaviour, which skipped
+      // the refresh/poll on a non-ok response and fell straight to `finally`.
+    } finally {
+      setStarting(false)
     }
-    setStarting(false)
   }
 
   function handleAction() {
