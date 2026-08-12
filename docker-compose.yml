@@ -4,10 +4,14 @@ services:
     container_name: ca-postgres
     environment:
       POSTGRES_USER: curriculum
-      POSTGRES_PASSWORD: curriculum_dev
+      # ":?" stops the stack when the value is missing, instead of starting it on
+      # a default password that is committed to git.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: curriculum_agent
     ports:
-      - "5432:5432"
+      # Loopback only: the API reaches these over localhost, and nothing else
+      # should. The tunnel exposes port 8000 and nothing more.
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
@@ -17,11 +21,11 @@ services:
     container_name: ca-minio
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin_dev
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:?set MINIO_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:?set MINIO_SECRET_KEY in .env}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
     restart: unless-stopped
@@ -29,11 +33,14 @@ services:
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: ca-pgadmin
+    # Behind a profile: it defaulted to admin@local.com / admin and does not
+    # belong in a stack that is reachable from outside the machine.
+    profiles: ["debug"]
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@local.com
-      PGADMIN_DEFAULT_PASSWORD: admin
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@local.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?set PGADMIN_PASSWORD in .env}
     ports:
-      - "5050:80"
+      - "127.0.0.1:5050:80"
     depends_on:
       - postgres
     restart: unless-stopped
