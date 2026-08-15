@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from curriculum_agent.config import Settings
 
@@ -33,14 +34,61 @@ def test_secret_value_is_still_readable() -> None:
     assert settings.api_key.get_secret_value() == _SECRETS["api_key"]
 
 
+def test_dsn_without_the_asyncpg_driver_is_rejected():
+    """A DSN written as plain `postgresql://` resolves to SQLAlchemy's default
+    postgres driver, psycopg2, which this project does not install — so
+    create_async_engine dies with ModuleNotFoundError at import of
+    data/postgres.py. Failing here names the actual mistake instead."""
+    with pytest.raises(ValidationError, match=r"\+asyncpg"):
+        Settings(
+            _env_file=None,
+            postgres_dsn="postgresql://curriculum:pw@localhost:5432/curriculum_agent",
+        )
+
+
+def test_dsn_with_a_different_async_driver_is_rejected():
+    with pytest.raises(ValidationError, match=r"\+asyncpg"):
+        Settings(
+            _env_file=None,
+            postgres_dsn="postgresql+psycopg://curriculum:pw@localhost:5432/curriculum_agent",
+        )
+
+
+def test_rejecting_a_bad_dsn_does_not_echo_the_password():
+    with pytest.raises(ValidationError) as exc:
+        Settings(
+            _env_file=None,
+            postgres_dsn="postgresql://curriculum:hunter2@localhost:5432/curriculum_agent",
+        )
+    assert "hunter2" not in str(exc.value)
+
+
+def test_service_defaults_address_loopback_numerically():
+    """docker-compose publishes these on 127.0.0.1 only, which is IPv4.
+
+    On Windows `getaddrinfo("localhost")` returns ::1 first, and psycopg does
+    not fall back to the IPv4 address the way asyncpg and curl do — it waits
+    on a port nothing is listening on until the connect times out. The symptom
+    is an API that hangs in its lifespan after logging that it is initialising
+    the checkpointer, with no error to read. Spelling the address numerically
+    removes the resolver from the path entirely.
+    """
+    s = Settings(_env_file=None)
+    assert "@127.0.0.1:5432/" in s.postgres_dsn
+    assert "localhost" not in s.postgres_dsn
+    assert s.minio_endpoint == "127.0.0.1:9000"
+
+
 def test_postgres_dsn_sync_strips_asyncpg_driver():
     s = Settings(postgres_dsn="postgresql+asyncpg://user:pass@localhost:5432/mydb")
     assert s.postgres_dsn_sync == "postgresql://user:pass@localhost:5432/mydb"
 
 
-def test_postgres_dsn_sync_unchanged_when_no_asyncpg():
-    s = Settings(postgres_dsn="postgresql://user:pass@localhost:5432/mydb")
-    assert s.postgres_dsn_sync == "postgresql://user:pass@localhost:5432/mydb"
+def test_postgres_dsn_langgraph_keeps_the_psycopg_form():
+    s = Settings(postgres_dsn="postgresql+asyncpg://user:pass@localhost:5432/mydb")
+    assert s.postgres_dsn_langgraph.startswith(
+        "postgresql://user:pass@localhost:5432/mydb?options="
+    )
 
 
 def test_model_defaults_follow_the_ollama_provider():

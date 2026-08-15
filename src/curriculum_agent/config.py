@@ -4,7 +4,7 @@ import urllib.parse
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, computed_field, model_validator
+from pydantic import SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Model names to fall back on when LIGHT_MODEL / HEAVY_MODEL are left unset.
@@ -30,10 +30,16 @@ class Settings(BaseSettings):
     # on any repr of this object — a failing assertion, a log line, a debugger
     # frame. Read one with .get_secret_value() at the point of use.
     openrouter_api_key: SecretStr | None = None
+    # Must name the asyncpg driver — see _require_asyncpg_driver.
+    # 127.0.0.1, not localhost: compose publishes these on the IPv4 loopback
+    # only, while getaddrinfo("localhost") hands back ::1 first on Windows.
+    # asyncpg and curl fall back to the IPv4 address; psycopg does not, so a
+    # "localhost" DSN leaves the API hanging in its lifespan with nothing to
+    # read. Spelling it numerically keeps the resolver out of the path.
     postgres_dsn: str = (
-        "postgresql+asyncpg://curriculum:curriculum_dev@localhost:5432/curriculum_agent"
+        "postgresql+asyncpg://curriculum:curriculum_dev@127.0.0.1:5432/curriculum_agent"
     )
-    minio_endpoint: str = "localhost:9000"
+    minio_endpoint: str = "127.0.0.1:9000"
     minio_access_key: str = "minioadmin"
     minio_secret_key: SecretStr = SecretStr("minioadmin_dev")
     # Empty means "unset" — _apply_provider_model_defaults fills these in from
@@ -59,6 +65,29 @@ class Settings(BaseSettings):
     # Was hardcoded in main.py. Same-origin serving needs no entry at all, so the
     # demo sets this empty; the default keeps the Vite dev server working.
     cors_origins: list[str] = ["http://localhost:5173"]
+
+    @field_validator("postgres_dsn")
+    @classmethod
+    def _require_asyncpg_driver(cls, dsn: str) -> str:
+        """Reject a DSN that does not name asyncpg.
+
+        `postgresql://` is a valid URL that SQLAlchemy resolves to its default
+        postgres driver, psycopg2 — which this project does not install. The
+        engine in data/postgres.py is built at import time, so the mistake
+        surfaces as `ModuleNotFoundError: No module named 'psycopg2'` from
+        inside a dialect file, which reads as a broken install rather than a
+        one-word typo in .env. The sync and langgraph DSNs are derived from
+        this one by dropping the driver, so asking for it here costs nothing.
+
+        The message never quotes the DSN: it carries the password.
+        """
+        if not dsn.startswith("postgresql+asyncpg://"):
+            raise ValueError(
+                "POSTGRES_DSN must start with 'postgresql+asyncpg://'. A plain "
+                "'postgresql://' URL resolves to psycopg2, which is not installed; "
+                "psycopg3 gets its own DSN from postgres_dsn_sync."
+            )
+        return dsn
 
     @model_validator(mode="after")
     def _apply_provider_model_defaults(self) -> Settings:
