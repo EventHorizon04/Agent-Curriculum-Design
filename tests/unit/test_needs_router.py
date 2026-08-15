@@ -419,3 +419,138 @@ async def test_from_needs_passes_the_note_to_synthesis(
 
     assert response.status_code == 502
     assert captured["note_th"] == NOTE
+
+
+# --- split re-run: skills-only and combine-only entry points ---------------
+
+
+async def test_skills_run_does_not_invoke_need_combination(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """The whole point of the split: re-extracting skills must leave the stored
+    Needs alone. If this route ever chained into need_combination again, a
+    designer who wanted only fresh skills would silently lose their reviewed
+    Needs."""
+    called = False
+
+    async def fake_needs(state):
+        nonlocal called
+        called = True
+        return state
+
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
+    )
+    cache_patch, complete_patch, repo_patch, _ = _stub_need_stages({})
+    with (
+        cache_patch,
+        complete_patch,
+        repo_patch,
+        patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
+    ):
+        response = await client.post("/programs/cs-test/needs/skills/run")
+
+    assert response.status_code == 200, response.text
+    assert called is False
+    assert response.json()["skills"][0]["skill_name_th"] == "วิเคราะห์ข้อมูลขนาดใหญ่"
+
+
+async def test_skills_run_carries_the_note_into_the_stage_state(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
+    )
+
+    real_run = skill_extraction.run
+
+    async def recording_run(state):
+        seen.update(state)
+        return await real_run(state)
+
+    cache_patch, complete_patch, repo_patch, _ = _stub_need_stages({})
+    with (
+        cache_patch,
+        complete_patch,
+        repo_patch,
+        patch("curriculum_agent.stages.skill_extraction.run", new=recording_run),
+    ):
+        response = await client.post("/programs/cs-test/needs/skills/run", json={"note_th": NOTE})
+
+    assert response.status_code == 200, response.text
+    assert seen["designer_note"] == NOTE
+
+
+async def test_skills_run_returns_404_for_missing_program(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
+    )
+    response = await client.post("/programs/unknown-program/needs/skills/run")
+    assert response.status_code == 404
+
+
+async def test_combine_run_feeds_stored_skills_into_the_stage(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Combine-only reads the skill rows back out of the repository — it must not
+    re-extract, and the stage must receive them under the key it reads."""
+    seen: dict[str, object] = {}
+
+    async def fake_needs(state):
+        seen.update(state)
+        return {**state, "needs": [_need().model_dump(mode="json")]}
+
+    extracted = False
+
+    async def fake_skills(state):
+        nonlocal extracted
+        extracted = True
+        return state
+
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
+    )
+    monkeypatch.setattr(
+        needs_route.SkillRepository, "list_by_program", AsyncMock(return_value=[_skill()])
+    )
+    with (
+        patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
+        patch("curriculum_agent.stages.skill_extraction.run", new=fake_skills),
+    ):
+        response = await client.post("/programs/cs-test/needs/combine/run")
+
+    assert response.status_code == 200, response.text
+    assert extracted is False
+    assert [s["skill_id"] for s in seen["extracted_skills"]] == ["S1"]
+    assert response.json()["needs"][0]["need_id"] == "N1"
+
+
+async def test_combine_run_rejects_a_program_with_no_skills(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
+    )
+    monkeypatch.setattr(needs_route.SkillRepository, "list_by_program", AsyncMock(return_value=[]))
+    response = await client.post("/programs/cs-test/needs/combine/run")
+    assert response.status_code == 422
+    assert "ทักษะ" in response.json()["detail"]
+
+
+async def test_combine_run_returns_404_for_missing_program(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        needs_route.SkillRepository, "list_by_program", AsyncMock(return_value=[_skill()])
+    )
+    response = await client.post("/programs/unknown-program/needs/combine/run")
+    assert response.status_code == 404

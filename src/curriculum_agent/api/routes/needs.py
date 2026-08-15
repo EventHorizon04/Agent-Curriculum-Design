@@ -40,6 +40,17 @@ class NeedRunResult(BaseModel):
     dropped_ungrounded_count: int
 
 
+class SkillRunResult(BaseModel):
+    """What POST /skills/run answers with.
+
+    Skills rather than Needs, because this route deliberately stops before
+    need_combination: the stored Needs are left exactly as they were.
+    """
+
+    skills: list[ExtractedSkill]
+    dropped_ungrounded_count: int
+
+
 @router.get("/", response_model=list[Need])
 async def list_needs(program_id: str) -> list[Need]:
     return await _repo.list_by_program(program_id)
@@ -72,13 +83,14 @@ async def get_need_trace(program_id: str, need_id: str) -> NeedTrace:
     )
 
 
-@router.post("/run", response_model=NeedRunResult)
-async def run_need_pipeline(
-    program_id: str, body: DesignerNoteRequest | None = None
-) -> NeedRunResult:
-    from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
-    from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
+async def _build_stage_state(program_id: str, body: DesignerNoteRequest | None) -> AgentState:
+    """The state every run entry point starts from.
 
+    Both stages read `metadata` and `classified_evidence`, and both accept the
+    designer's note — skill_extraction uses it while extracting, need_combination
+    while writing each Need's sentence. Building it once keeps the three routes
+    from drifting apart in what they hand the pipeline.
+    """
     metadata = await ProgramRepository().get(program_id)
     if metadata is None:
         raise HTTPException(status_code=404, detail="Program not found")
@@ -99,7 +111,69 @@ async def run_need_pipeline(
     # reads as None through .get and no empty string is stored.
     if body is not None and body.note_th:
         state["designer_note"] = body.note_th
+    return state
+
+
+@router.post("/run", response_model=NeedRunResult)
+async def run_need_pipeline(
+    program_id: str, body: DesignerNoteRequest | None = None
+) -> NeedRunResult:
+    """Both stages back to back — the first run of a program, where there are no
+    skills to combine yet. Re-running one stage alone goes through the two routes
+    below."""
+    from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
+    from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
+
+    state = await _build_stage_state(program_id, body)
     state = await asyncio.wait_for(run_skills(state), timeout=300)
+    state = await asyncio.wait_for(run_needs(state), timeout=300)
+    return NeedRunResult(
+        needs=[Need.model_validate(n) for n in state.get("needs", [])],
+        dropped_ungrounded_count=state.get("dropped_ungrounded_count", 0),
+    )
+
+
+@router.post("/skills/run", response_model=SkillRunResult)
+async def run_skill_extraction(
+    program_id: str, body: DesignerNoteRequest | None = None
+) -> SkillRunResult:
+    """Re-extract skills and stop.
+
+    The stored Needs are left untouched on purpose. They will point at skill ids
+    this run just replaced, which the UI surfaces as a stale banner — a designer
+    who reworded evidence usually wants to read the new skills before deciding
+    whether the Needs should be redrawn.
+    """
+    from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
+
+    state = await _build_stage_state(program_id, body)
+    state = await asyncio.wait_for(run_skills(state), timeout=300)
+    return SkillRunResult(
+        skills=[ExtractedSkill.model_validate(s) for s in state.get("extracted_skills", [])],
+        dropped_ungrounded_count=state.get("dropped_ungrounded_count", 0),
+    )
+
+
+@router.post("/combine/run", response_model=NeedRunResult)
+async def run_need_combination(
+    program_id: str, body: DesignerNoteRequest | None = None
+) -> NeedRunResult:
+    """Re-cluster the skills already on record into Needs.
+
+    Reads the skill rows back from the repository instead of re-extracting: the
+    expensive per-evidence LLM pass is exactly what a designer re-running this
+    stage does not want repeated.
+    """
+    from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
+
+    state = await _build_stage_state(program_id, body)
+    skills = await SkillRepository().list_by_program(program_id)
+    if not skills:
+        raise HTTPException(
+            status_code=422,
+            detail="ยังไม่มีทักษะที่สกัดไว้ กรุณารัน Skill Extraction ก่อน",
+        )
+    state["extracted_skills"] = [s.model_dump(mode="json") for s in skills]
     state = await asyncio.wait_for(run_needs(state), timeout=300)
     return NeedRunResult(
         needs=[Need.model_validate(n) for n in state.get("needs", [])],
