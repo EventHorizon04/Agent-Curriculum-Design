@@ -1,13 +1,18 @@
 import { Fragment, useMemo, useState } from 'react'
 import {
   STAKEHOLDER_GROUPS,
-  classStyle,
   isRequirementStakeholder,
-  ksecColor,
-  ksecLabel,
   stakeholderLabel,
 } from '../../constants/stakeholder'
 
+/**
+ * `ksec_category`, `bloom_level`, and `classification` stay on the row because
+ * the API sends them and the pipeline runs on them — they drive KSEC bucketing,
+ * the one-verb rule, and need/want weighting. They are deliberately not
+ * rendered: they are the machinery, not something a curriculum designer reviews
+ * skill by skill. Drill-down still shows the quote and its source, which is what
+ * a designer actually checks.
+ */
 export interface SkillRow {
   skill_id: string
   skill_name_th: string
@@ -24,15 +29,6 @@ export interface EvidenceMeta {
   source_name: string
   stakeholder_type: string
   classification: string
-}
-
-const BLOOM_TH: Record<string, string> = {
-  remember: 'จำได้',
-  understand: 'เข้าใจ',
-  apply: 'ประยุกต์',
-  analyze: 'วิเคราะห์',
-  evaluate: 'ประเมิน',
-  create: 'สร้างสรรค์',
 }
 
 interface StakeholderBucket {
@@ -118,10 +114,6 @@ export default function SkillsByStakeholder({
 
           <div className="space-y-3">
             {section.buckets.map(bucket => {
-              const evidenceClass = isRequirementStakeholder(bucket.type)
-                ? 'requirement'
-                : 'general'
-              const style = classStyle(evidenceClass)
               return (
                 <div
                   key={bucket.type}
@@ -130,11 +122,6 @@ export default function SkillsByStakeholder({
                   <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
                     <span className="text-sm font-medium text-gray-800">
                       {stakeholderLabel(bucket.type)}
-                    </span>
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${style.cls}`}
-                    >
-                      {style.label}
                     </span>
                     <span className="ml-auto text-xs text-gray-500">
                       {bucket.skills.length} ทักษะ
@@ -145,7 +132,6 @@ export default function SkillsByStakeholder({
                     {bucket.skills.map(skill => {
                       const open = expanded === skill.skill_id
                       const evidence = evidenceById[skill.source_evidence_id]
-                      const skillClass = classStyle(skill.classification)
                       return (
                         <Fragment key={skill.skill_id}>
                           <li>
@@ -162,19 +148,6 @@ export default function SkillsByStakeholder({
                                     {skill.skill_name_en}
                                   </span>
                                 )}
-                              </span>
-                              <span
-                                className={`shrink-0 rounded px-1.5 py-0.5 text-xs font-medium ${ksecColor(skill.ksec_category)}`}
-                              >
-                                {ksecLabel(skill.ksec_category)}
-                              </span>
-                              <span className="shrink-0 text-xs text-gray-500">
-                                {BLOOM_TH[skill.bloom_level] ?? skill.bloom_level}
-                              </span>
-                              <span
-                                className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${skillClass.cls}`}
-                              >
-                                {skillClass.label}
                               </span>
                             </button>
                           </li>

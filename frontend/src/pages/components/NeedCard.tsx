@@ -1,7 +1,13 @@
 import { useState } from 'react'
 import api from '../../api/client'
-import { ksecColor, ksecLabel, stakeholderLabel } from '../../constants/stakeholder'
+import { stakeholderLabel } from '../../constants/stakeholder'
 
+/**
+ * `ksec_category` and `bloom_level` stay on the row — the pipeline groups and
+ * drafts PLOs from them — but they are not rendered. They describe how a Need
+ * was derived, not what the designer decides about it; the statement, who asked
+ * for it, and how often carry that.
+ */
 export interface NeedRow {
   need_id: string
   statement_th: string
@@ -54,12 +60,6 @@ export default function NeedCard({ programId, need }: { programId: string; need:
         )}
       </div>
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
-        <span className={`rounded px-1.5 py-0.5 ${ksecColor(need.ksec_category)}`}>
-          {ksecLabel(need.ksec_category)}
-        </span>
-        <span className="rounded bg-indigo-100 px-1.5 py-0.5 text-indigo-800">
-          {need.bloom_level}
-        </span>
         {need.source_stakeholder_types.map(t => (
           <span key={t} className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">
             {stakeholderLabel(t)}
@@ -87,9 +87,7 @@ export default function NeedCard({ programId, need }: { programId: string; need:
                 <p className="font-semibold text-gray-500">ทักษะในกลุ่ม ({trace.skills.length})</p>
                 <ul className="mt-1 list-disc pl-4 text-gray-700">
                   {trace.skills.map(s => (
-                    <li key={s.skill_id}>
-                      {s.skill_name_th} <span className="text-gray-400">· {s.bloom_level}</span>
-                    </li>
+                    <li key={s.skill_id}>{s.skill_name_th}</li>
                   ))}
                 </ul>
               </div>
@@ -99,9 +97,7 @@ export default function NeedCard({ programId, need }: { programId: string; need:
                 </p>
                 <ul className="mt-1 list-disc pl-4 text-gray-700">
                   {trace.evidence.map(e => (
-                    <li key={e.evidence_id}>
-                      {e.source_name} <span className="text-gray-400">· {e.classification}</span>
-                    </li>
+                    <li key={e.evidence_id}>{e.source_name}</li>
                   ))}
                 </ul>
               </div>
