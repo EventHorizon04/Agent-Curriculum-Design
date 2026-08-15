@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
@@ -9,6 +9,22 @@ import SkillsByStakeholder, {
 import NeedCard, { type NeedRow } from './components/NeedCard'
 import DesignerNote from './components/DesignerNote'
 
+/** Which stage a run covers. 'all' is the first run, where there is nothing to
+ * combine yet; the other two are the split re-runs. */
+type RunKind = 'all' | 'skills' | 'needs'
+
+const RUN_PATH: Record<RunKind, string> = {
+  all: 'run',
+  skills: 'skills/run',
+  needs: 'combine/run',
+}
+
+const RUN_LABEL: Record<RunKind, string> = {
+  all: 'กำลังสกัดทักษะและรวม Need...',
+  skills: 'กำลังสกัดทักษะจาก evidence...',
+  needs: 'กำลังรวมทักษะเป็น Need...',
+}
+
 export default function SkillExtraction() {
   const { programId } = useProgram()
   const [tab, setTab] = useState<'skills' | 'needs'>('skills')
@@ -17,7 +33,7 @@ export default function SkillExtraction() {
   const [evidenceById, setEvidenceById] = useState<Record<string, EvidenceMeta>>({})
   const [droppedCount, setDroppedCount] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [running, setRunning] = useState(false)
+  const [running, setRunning] = useState<RunKind | null>(null)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
 
@@ -52,26 +68,45 @@ export default function SkillExtraction() {
     }
   }, [programId])
 
-  const runStage = useCallback(async () => {
-    if (!programId) return
-    setRunning(true)
-    setError('')
-    try {
-      const res = await api.post<{ needs: NeedRow[]; dropped_ungrounded_count: number }>(
-        `/programs/${programId}/needs/run`,
-        { note_th: note.trim() || null },
-      )
-      setDroppedCount(res.data.dropped_ungrounded_count)
-      await fetchAll()
-    } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'รัน Stage 3 ไม่สำเร็จ')
-    } finally {
-      setRunning(false)
-    }
-  }, [programId, note, fetchAll])
+  const runStage = useCallback(
+    async (kind: RunKind) => {
+      if (!programId) return
+      setRunning(kind)
+      setError('')
+      try {
+        const res = await api.post<{ dropped_ungrounded_count: number }>(
+          `/programs/${programId}/needs/${RUN_PATH[kind]}`,
+          { note_th: note.trim() || null },
+        )
+        // Only an extraction pass can drop a skill for being ungrounded, so a
+        // combine-only run must not reset the count the last extraction reported.
+        if (kind !== 'needs') setDroppedCount(res.data.dropped_ungrounded_count)
+        await fetchAll()
+      } catch (err: unknown) {
+        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        setError(msg ?? 'รัน Stage 3 ไม่สำเร็จ')
+      } finally {
+        setRunning(null)
+      }
+    },
+    [programId, note, fetchAll],
+  )
 
   useEffect(() => { fetchAll() }, [fetchAll])
+
+  /**
+   * Needs left behind by an older set of skills.
+   *
+   * skill_extraction deletes every skill row and mints new ids, so a Need that
+   * still names an id no longer on record was built from a previous extraction.
+   * Its trace would come back empty, which reads as a bug rather than as stale
+   * data — hence the banner.
+   */
+  const staleNeedCount = useMemo(() => {
+    if (skills.length === 0 || needs.length === 0) return 0
+    const live = new Set(skills.map(s => s.skill_id))
+    return needs.filter(n => n.member_skill_ids.some(id => !live.has(id))).length
+  }, [skills, needs])
 
   if (!programId) {
     return (
@@ -103,8 +138,12 @@ export default function SkillExtraction() {
       ) : running ? (
         <div className="text-center py-20">
           <div className="text-4xl mb-4 animate-spin">⚙️</div>
-          <p className="text-gray-600 font-medium mb-1">กำลังสกัดทักษะและรวม Need...</p>
-          <p className="text-gray-400 text-sm">อาจใช้เวลา 1-5 นาที ขึ้นกับจำนวน evidence</p>
+          <p className="text-gray-600 font-medium mb-1">{RUN_LABEL[running]}</p>
+          <p className="text-gray-400 text-sm">
+            {running === 'needs'
+              ? 'อาจใช้เวลาราวหนึ่งนาที'
+              : 'อาจใช้เวลา 1-5 นาที ขึ้นกับจำนวน evidence'}
+          </p>
         </div>
       ) : !hasData ? (
         <div className="text-center py-20">
@@ -115,7 +154,7 @@ export default function SkillExtraction() {
             <DesignerNote value={note} onChange={setNote} />
           </div>
           <button
-            onClick={runStage}
+            onClick={() => runStage('all')}
             className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-medium transition-colors"
           >
             Run Skill Extraction
@@ -123,15 +162,28 @@ export default function SkillExtraction() {
         </div>
       ) : (
         <>
-          <DesignerNote value={note} onChange={setNote} disabled={running} />
+          <DesignerNote value={note} onChange={setNote} disabled={running !== null} />
           <div className="flex justify-between items-center mb-5">
             <div className="flex items-center gap-3">
+              {/* Two entry points, not one: re-extracting is the expensive
+                  per-evidence LLM pass, while re-combining only re-clusters
+                  what is already on record. */}
               <button
-                onClick={runStage}
-                disabled={running}
+                onClick={() => runStage('skills')}
+                disabled={running !== null}
+                title="สกัดทักษะจาก evidence ใหม่ (ไม่แตะ Need ที่มีอยู่)"
                 className="text-xs text-gray-400 hover:text-blue-600 underline disabled:opacity-50"
               >
-                Re-run
+                Re-run Skill
+              </button>
+              <span className="text-xs text-gray-300">·</span>
+              <button
+                onClick={() => runStage('needs')}
+                disabled={running !== null}
+                title="รวมทักษะที่มีอยู่เป็น Need ใหม่ (ไม่สกัดทักษะซ้ำ)"
+                className="text-xs text-gray-400 hover:text-blue-600 underline disabled:opacity-50"
+              >
+                Re-run Need
               </button>
             </div>
             <Link
@@ -171,6 +223,21 @@ export default function SkillExtraction() {
             <p className="py-8 text-center text-sm text-gray-400">ยังไม่มี Need — รัน Skill Extraction ก่อน</p>
           ) : (
             <div className="space-y-3">
+              {staleNeedCount > 0 && (
+                <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  <span className="flex-1">
+                    Need {staleNeedCount} รายการมาจากทักษะชุดก่อน — กด Re-run Need
+                    เพื่อรวมใหม่จากทักษะปัจจุบัน
+                  </span>
+                  <button
+                    onClick={() => runStage('needs')}
+                    disabled={running !== null}
+                    className="shrink-0 rounded bg-amber-600 px-2 py-1 font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                  >
+                    Re-run Need
+                  </button>
+                </div>
+              )}
               {needs.map(n => (
                 <NeedCard key={n.need_id} programId={programId} need={n} />
               ))}
