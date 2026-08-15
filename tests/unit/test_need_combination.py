@@ -3,6 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages import need_combination as nc
@@ -267,3 +268,29 @@ async def test_no_upper_cap_on_core_needs(monkeypatch: pytest.MonkeyPatch):
     )
 
     assert len(state["needs"]) == 15
+
+
+# --- the generated sentence must not carry code tokens ---------------------
+
+
+def test_need_statement_model_rejects_a_leaked_code_token() -> None:
+    """Instructor retries on a validator error, so rejecting here is what makes
+    the model re-answer instead of the token reaching a stored Need."""
+    with pytest.raises(ValidationError) as exc:
+        nc._NeedStatement(
+            statement_th="ตลาดแรงงานต้องการบุคคลที่สามารถเป็นผู้ประกอบการ หน.getDefault รับฟังผู้บริหาร"
+        )
+    assert "getDefault" in str(exc.value)
+
+
+def test_need_statement_model_accepts_ordinary_thai_with_industry_terms() -> None:
+    written = nc._NeedStatement(
+        statement_th="ตลาดแรงงานต้องการผู้ที่ประยุกต์ AI และ Data Science กับงานธุรกิจได้",
+    )
+    assert written.statement_en is None
+
+
+def test_summarize_is_asked_to_retry_on_a_rejected_statement() -> None:
+    """The retry budget has to reach Instructor — without max_retries the
+    validator would turn a recoverable leak into a fallback sentence."""
+    assert nc._STATEMENT_ATTEMPTS >= 2

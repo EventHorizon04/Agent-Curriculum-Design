@@ -8,6 +8,7 @@ from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, St
 from curriculum_agent.stages.need_grouping import (
     bucket_by_ksec,
     dedupe_with_bloom_max,
+    find_code_identifier,
     merge_bloom,
 )
 
@@ -157,3 +158,47 @@ def test_need_tag_of_a_non_ec_bucket_is_the_member_tag():
 
     members = [_skill("เขียนโปรแกรม", KSECCategory.S, skill_id="S1")]
     assert resolve_need_ksec(members) is KSECCategory.S
+
+
+# --- code-token guard on the generated Need sentence -----------------------
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # The one that shipped: a Thai abbreviation fused to a Java method name.
+        "ตลาดแรงงานต้องการบุคคลที่สามารถเป็นผู้ประกอบการ หน.getDefault รับฟังผู้บริหาร",
+        "ตลาดแรงงานต้องการผู้ที่ใช้ get_default ในการทำงาน",
+        "ตลาดแรงงานต้องการผู้ที่เรียกใช้ calculate() ได้",
+        "ตลาดแรงงานต้องการผู้ที่เข้าใจ obj.getValue อย่างลึกซึ้ง",
+    ],
+)
+def test_code_identifiers_are_detected(statement: str) -> None:
+    assert find_code_identifier(statement) is not None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # Every one of these is ordinary Thai curriculum language. A guard that
+        # rejects them is worse than the bug: it would retry good sentences and
+        # fall back to a comma-joined skill list.
+        "ตลาดแรงงานต้องการผู้ที่ประยุกต์ AI และ Data Science กับงานธุรกิจได้",
+        "ตลาดแรงงานต้องการผู้ที่เข้าใจหลัก ESG และความยั่งยืนขององค์กร",
+        "ตลาดแรงงานต้องการผู้ที่ให้คำปรึกษา SME ด้านการเงินได้",
+        "ตลาดแรงงานต้องการผู้ที่พัฒนาเว็บด้วย JavaScript และ TypeScript",
+        "ตลาดแรงงานต้องการผู้ที่ใช้ IoT ในงานอุตสาหกรรม",
+        "ตลาดแรงงานต้องการผู้ที่ใช้เครื่องมือ Power BI วิเคราะห์ข้อมูลยอดขาย",
+        "ตลาดแรงงานต้องการบุคคลที่สื่อสารและทำงานเป็นทีมได้อย่างมีประสิทธิภาพ",
+    ],
+)
+def test_ordinary_thai_and_english_terms_pass(statement: str) -> None:
+    assert find_code_identifier(statement) is None
+
+
+def test_the_detector_reports_what_it_found() -> None:
+    """The retry prompt names the offending token, so the detector has to return
+    it rather than a bare bool."""
+    found = find_code_identifier("ตลาดแรงงานต้องการ หน.getDefault ในงาน")
+    assert found is not None
+    assert "getDefault" in found

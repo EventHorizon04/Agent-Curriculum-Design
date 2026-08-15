@@ -14,6 +14,37 @@ MIN_NEEDS = 6
 _WS_RE = re.compile(r"\s+")
 _BLOOM_RANK = {level: i for i, level in enumerate(BLOOM_ORDER)}
 
+# Shapes that no Thai curriculum sentence produces but a code-trained model
+# leaks: `หน.getDefault` reached a stored Need this way. Deliberately narrow —
+# a guard that also rejected JavaScript, IoT, or Power BI would retry good
+# sentences and end up falling back to a comma-joined skill list, which is
+# worse than the leak it was meant to catch. General camelCase is therefore NOT
+# matched; only these four shapes are.
+_CODE_TOKEN_RES: tuple[re.Pattern[str], ...] = (
+    # snake_case — no natural-language word carries an underscore
+    re.compile(r"[A-Za-z]\w*_\w+"),
+    # a call's empty parens: calculate()
+    re.compile(r"[A-Za-z]\w*\(\s*\)"),
+    # Thai fused to Latin across a dot: หน.getDefault
+    re.compile(r"[฀-๿]\.[A-Za-z]\w*"),
+    # attribute access on a lowercase receiver: obj.getValue, df.head
+    re.compile(r"\b[a-z]\w*\.[a-z]\w*"),
+)
+
+
+def find_code_identifier(statement: str) -> str | None:
+    """The first code-shaped token in `statement`, or None.
+
+    Returns the token itself rather than a bool because the retry prompt names
+    it — telling a model "your sentence contained getDefault" corrects it far
+    more reliably than "your sentence was invalid".
+    """
+    for pattern in _CODE_TOKEN_RES:
+        match = pattern.search(statement)
+        if match:
+            return match.group(0)
+    return None
+
 
 def normalize_need_name(name: str) -> str:
     """Trim, collapse internal whitespace, lowercase.

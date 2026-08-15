@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from curriculum_agent.data.repositories import NeedRepository
 from curriculum_agent.graph import AgentState
@@ -27,14 +27,39 @@ from curriculum_agent.stages.need_grouping import (
     MIN_NEEDS,
     bucket_by_ksec,
     dedupe_with_bloom_max,
+    find_code_identifier,
     merge_bloom,
     resolve_need_ksec,
 )
+
+# Instructor re-asks the model when _NeedStatement's validator raises, quoting
+# the error back. Three attempts: the leak is sporadic, so a retry almost always
+# clears it, and a group that still fails falls back to its skill names.
+_STATEMENT_ATTEMPTS = 3
 
 
 class _NeedStatement(BaseModel):
     statement_th: str = Field(min_length=1)
     statement_en: str | None = None
+
+    @field_validator("statement_th")
+    @classmethod
+    def _reject_code_tokens(cls, statement: str) -> str:
+        """Bounce a sentence carrying a code identifier back to the model.
+
+        A light model tokenising Thai byte-by-byte occasionally emits a token
+        from its code training instead of the Thai it was asked for — one stored
+        Need read "...เป็นผู้ประกอบการ หน.getDefault รับฟังผู้บริหาร...", built
+        from two clean skill names. Raising here is what makes Instructor retry
+        with the failure quoted back, the same shape as the SMART retry loop.
+        """
+        found = find_code_identifier(statement)
+        if found:
+            raise ValueError(
+                f"statement_th ต้องเป็นภาษาไทยล้วน พบข้อความที่เป็นโค้ด: '{found}' "
+                "ห้ามใส่ชื่อฟังก์ชัน ชื่อตัวแปร หรือโค้ดในประโยค"
+            )
+        return statement
 
 
 class _Group(BaseModel):
@@ -145,10 +170,26 @@ async def run(state: AgentState) -> AgentState:
                 build_summarize_need_prompt(
                     group.skill_names, samples, group.ksec.value, note_th=note_th
                 ),
+                max_retries=_STATEMENT_ATTEMPTS,
             )
         except Exception as exc:
             logger.warning(f"Need summarize failed for {group.ksec.value} group: {exc}")
-            written = _NeedStatement(statement_th=", ".join(group.skill_names[:5]))
+            # The fallback is built from skill names the extractor already
+            # validated, so it cannot reintroduce what the validator just
+            # rejected — but a name arriving from the manual path could, and a
+            # Need is written straight into the report.
+            fallback = ", ".join(group.skill_names[:5])
+            leaked = find_code_identifier(fallback)
+            if leaked:
+                logger.warning(f"Fallback statement carried a code token ({leaked}); stripping")
+                fallback = (
+                    ", ".join(n for n in group.skill_names[:5] if not find_code_identifier(n))
+                    or group.ksec.value
+                )
+            # model_construct, not the constructor: this is already the failure
+            # path, and a validator raising here would take the whole stage down
+            # over one group. The value it would have checked is checked above.
+            written = _NeedStatement.model_construct(statement_th=fallback)
 
         needs.append(
             Need(
