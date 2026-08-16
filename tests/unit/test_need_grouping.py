@@ -202,3 +202,31 @@ def test_the_detector_reports_what_it_found() -> None:
     found = find_code_identifier("ตลาดแรงงานต้องการ หน.getDefault ในงาน")
     assert found is not None
     assert "getDefault" in found
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # Both shipped in the same regeneration that the first guard passed.
+        "ตลาดแรงงานต้องการผู้ที่คิดวิเคราะห์เชิงกลยุทธ์chant และนวัตกรรม",
+        "ตลาดต้องการผู้LEANที่มีประสบการณ์สามารถสร้างความแตกต่าง",
+        # Latin leading into Thai is the same defect mirrored.
+        "ตลาดแรงงานต้องการผู้ที่ใช้ AIระบบ ในการทำงาน",
+    ],
+)
+def test_thai_fused_to_latin_without_a_space_is_detected(statement: str) -> None:
+    assert find_code_identifier(statement) is not None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # A space is all that separates a leak from correct Thai typography.
+        "ตลาดแรงงานต้องการผู้ที่ประยุกต์ AI และ Data Science กับงานธุรกิจได้",
+        "ตลาดแรงงานต้องการผู้ที่บริหารงานแบบ Lean ได้อย่างมีประสิทธิภาพ",
+        # Digits fused to Thai are ordinary: years, counts, มคอ. numbers.
+        "ตลาดแรงงานต้องการผู้ที่เข้าใจแผนพัฒนาฉบับที่ 13 พ.ศ.2566",
+    ],
+)
+def test_spaced_english_and_fused_digits_still_pass(statement: str) -> None:
+    assert find_code_identifier(statement) is None

@@ -29,6 +29,12 @@ _CODE_TOKEN_RES: tuple[re.Pattern[str], ...] = (
     re.compile(r"[฀-๿]\.[A-Za-z]\w*"),
     # attribute access on a lowercase receiver: obj.getValue, df.head
     re.compile(r"\b[a-z]\w*\.[a-z]\w*"),
+    # Thai running straight into Latin with no space, in either direction:
+    # "กลยุทธ์chant", "ผู้LEANที่มี". Correct Thai typography puts a space
+    # around an embedded English term, so requiring one costs nothing and
+    # catches leaks that carry no punctuation at all. Digits are excluded on
+    # purpose — "พ.ศ.2566" and "ฉบับที่ 13" are ordinary.
+    re.compile(r"[฀-๿][A-Za-z]|[A-Za-z][฀-๿]"),
 )
 
 
