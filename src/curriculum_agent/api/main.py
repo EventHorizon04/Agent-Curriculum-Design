@@ -44,6 +44,12 @@ def _require_compatible_event_loop() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     _require_compatible_event_loop()
+
+    from curriculum_agent.llm import log_target
+
+    # Before the checkpointer: this is the line an operator reads first when a run
+    # answers in the wrong language or bills the wrong account.
+    log_target()
     logger.info("Starting up — initialising Postgres checkpointer")
 
     async with await psycopg.AsyncConnection.connect(
