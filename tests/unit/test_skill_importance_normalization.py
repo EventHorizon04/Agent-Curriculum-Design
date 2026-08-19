@@ -65,7 +65,7 @@ async def test_two_spellings_of_one_skill_get_the_same_importance_score():
 
     with (
         patch.object(se, "LLMCacheRepository", return_value=cache),
-        patch.object(se, "complete_light", fake_extract_skills),
+        patch.object(se, "complete_extraction", fake_extract_skills),
         # run() clears the program's previous skill rows before inserting the new
         # set, so stubbing only bulk_insert leaves the delete hitting a real DB.
         patch.object(se.SkillRepository, "delete_by_program", AsyncMock()),

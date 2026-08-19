@@ -6,6 +6,7 @@ import curriculum_agent.llm as llm
 from curriculum_agent.config import Settings
 
 _TYPHOON_KEY = "sk-typhoon-000000000000000000000000"
+_ROUTER_KEY = "sk-or-v1-1111111111111111111111111111"
 
 
 def _settings(**overrides: object) -> Settings:
@@ -14,26 +15,30 @@ def _settings(**overrides: object) -> Settings:
 
 @pytest.fixture
 def typhoon(monkeypatch: pytest.MonkeyPatch) -> Settings:
-    """OpenTyphoon selected with a key configured.
+    """The shipped arrangement: OpenTyphoon by default, OpenRouter for extraction.
 
     The module-level name is replaced rather than the singleton mutated: llm.py
     binds `settings` at import, so a test that mutated the shared object would
     leak the provider into every later test in the session.
     """
-    settings = _settings(llm_provider="opentyphoon", opentyphoon_api_key=_TYPHOON_KEY)
+    settings = _settings(
+        llm_provider="opentyphoon",
+        opentyphoon_api_key=_TYPHOON_KEY,
+        openrouter_api_key=_ROUTER_KEY,
+    )
     monkeypatch.setattr(llm, "settings", settings)
     return settings
 
 
 def test_opentyphoon_resolves_to_its_own_endpoint_and_key(typhoon: Settings) -> None:
-    assert llm._base_url() == typhoon.opentyphoon_base_url
-    assert llm._api_key() == _TYPHOON_KEY
+    assert llm._base_url("opentyphoon") == typhoon.opentyphoon_base_url
+    assert llm._api_key("opentyphoon") == _TYPHOON_KEY
 
 
 def test_opentyphoon_sends_no_keep_alive(typhoon: Settings) -> None:
     """keep_alive pins a model in Ollama's VRAM. A hosted provider does not
     recognise the field, and OpenTyphoon is hosted."""
-    assert llm._extra_body() == {}
+    assert llm._extra_body("opentyphoon") == {}
 
 
 def test_opentyphoon_without_a_key_names_the_variable_to_set(
@@ -42,18 +47,45 @@ def test_opentyphoon_without_a_key_names_the_variable_to_set(
     monkeypatch.setattr(llm, "settings", _settings(llm_provider="opentyphoon"))
 
     with pytest.raises(ValueError, match="OPENTYPHOON_API_KEY"):
-        llm._api_key()
+        llm._api_key("opentyphoon")
 
 
-def test_describe_target_never_renders_the_key(typhoon: Settings) -> None:
+def test_extraction_resolves_to_a_different_endpoint_than_the_rest(typhoon: Settings) -> None:
+    """The whole point of the split: skill extraction talks to OpenRouter while
+    everything a designer reads stays on the Thai-first model."""
+    extraction = llm._extraction_provider()
+
+    assert extraction == "openrouter"
+    assert llm._base_url(extraction) == typhoon.openrouter_base_url
+    assert llm._api_key(extraction) == _ROUTER_KEY
+    assert llm._base_url(typhoon.llm_provider) == typhoon.opentyphoon_base_url
+
+
+def test_extraction_follows_the_default_provider_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One endpoint for the whole pipeline is a supported arrangement — someone
+    running fully local should not have to also name a provider for extraction."""
+    settings = _settings(llm_provider="ollama", extraction_provider=None)
+    monkeypatch.setattr(llm, "settings", settings)
+
+    assert llm._extraction_provider() == "ollama"
+    assert llm._base_url(llm._extraction_provider()).endswith("/v1")
+
+
+def test_describe_target_names_both_endpoints_and_no_key(typhoon: Settings) -> None:
     """The line goes to a log file, a terminal, and often a bug report. It says
-    whether a key is configured, never which one."""
+    whether a key is configured, never which one — and it names both targets,
+    since "the wrong model answered" cannot be diagnosed from one of them."""
     described = llm.describe_target()
 
     assert _TYPHOON_KEY not in described
-    assert "api_key=set" in described
+    assert _ROUTER_KEY not in described
     assert "provider=opentyphoon" in described
-    assert typhoon.opentyphoon_base_url in described
+    assert "extraction: provider=openrouter" in described
+    assert typhoon.openrouter_base_url in described
+    assert typhoon.extraction_model in described
+    assert "api_key=set" in described
 
 
 def test_describe_target_reports_a_missing_key_instead_of_raising(

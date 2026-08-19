@@ -93,7 +93,7 @@ async def test_cache_key_actually_incorporates_the_contract(monkeypatch: pytest.
     monkeypatch.setattr(se.LLMCacheRepository, "get", capture)
     monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
     monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
-    monkeypatch.setattr(se, "complete_light", AsyncMock(side_effect=RuntimeError("no LLM")))
+    monkeypatch.setattr(se, "complete_extraction", AsyncMock(side_effect=RuntimeError("no LLM")))
 
     monkeypatch.setattr(se, "_EXTRACTION_CONTRACT", "contract-one")
     await se.run({"program_id": "cs-test", "classified_evidence": [_EVIDENCE]})
@@ -127,7 +127,7 @@ async def test_cache_key_incorporates_program_metadata(monkeypatch: pytest.Monke
     monkeypatch.setattr(se.LLMCacheRepository, "get", capture)
     monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
     monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
-    monkeypatch.setattr(se, "complete_light", AsyncMock(side_effect=RuntimeError("no LLM")))
+    monkeypatch.setattr(se, "complete_extraction", AsyncMock(side_effect=RuntimeError("no LLM")))
 
     metadata_cs = {"field": "วิทยาการคอมพิวเตอร์", "name_th": "หลักสูตรวิทยาการคอมพิวเตอร์"}
     metadata_nursing = {"field": "พยาบาลศาสตร์", "name_th": "หลักสูตรพยาบาลศาสตร์"}
@@ -167,7 +167,7 @@ async def test_old_contract_cache_entry_is_re_extracted_not_raised(
     # it is the only one that needs the replace-then-insert pair stubbed out.
     monkeypatch.setattr(se.SkillRepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
-    monkeypatch.setattr(se.settings, "light_model", "stub-model")
+    monkeypatch.setattr(se.settings, "extraction_model", "stub-model")
 
     fresh = se._ExtractedSkillsResponse(
         skills=[
@@ -182,7 +182,7 @@ async def test_old_contract_cache_entry_is_re_extracted_not_raised(
         ]
     )
     llm = AsyncMock(return_value=fresh)
-    monkeypatch.setattr(se, "complete_light", llm)
+    monkeypatch.setattr(se, "complete_extraction", llm)
 
     state = await se.run({"program_id": "cs-test", "classified_evidence": [_EVIDENCE]})
 

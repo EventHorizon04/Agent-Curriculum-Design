@@ -20,7 +20,7 @@ The `curriculum-design-agent` skill (`.claude/skills/curriculum-design-agent/`) 
 
 - **Language:** Python 3.11+, dependency management via `uv`
 - **Agent:** LangGraph (state machine with `interrupt` for HITL)
-- **LLM:** provider-switchable via `LLM_PROVIDER` — `opentyphoon` (the default: Thai-first models, because every prompt and every stored statement here is Thai), `openrouter`, or `ollama` (running **natively on the host**, no container). Each hosted provider reads its own key (`OPENROUTER_API_KEY` / `OPENTYPHOON_API_KEY`); ollama needs none. `LIGHT_MODEL`/`HEAVY_MODEL` default per provider (`_PROVIDER_DEFAULT_MODEL` in `config.py`) and are overridable in `.env`. `llm.describe_target()` prints which endpoint a process resolved to — never the key — and the API logs it once at startup. Dual-model pattern — see `src/curriculum_agent/llm.py`
+- **LLM:** provider-switchable via `LLM_PROVIDER` — `opentyphoon` (the default: Thai-first models, because every prompt and every stored statement here is Thai), `openrouter`, or `ollama` (running **natively on the host**, no container). Each hosted provider reads its own key (`OPENROUTER_API_KEY` / `OPENTYPHOON_API_KEY`); ollama needs none. `LIGHT_MODEL`/`HEAVY_MODEL` default per provider (`_PROVIDER_DEFAULT_MODEL` in `config.py`) and are overridable in `.env`. **`skill_extraction` runs on its own endpoint** — `EXTRACTION_PROVIDER`/`EXTRACTION_MODEL`, defaulting to OpenRouter, called through `complete_extraction` — because it fans out one call per evidence item and exhausts a provider's token quota long before the other stages do; set `EXTRACTION_PROVIDER` equal to `LLM_PROVIDER` to run everything on one endpoint. `llm.describe_target()` prints both endpoints a process resolved to — never the keys — and the API logs it once at startup. Dual-model pattern — see `src/curriculum_agent/llm.py`
 - **Structured output:** Instructor + Pydantic v2 (no hand-parsing JSON). The `openai` package is a dependency because Instructor uses OpenAI-compatible API to talk to Ollama — not for the OpenAI cloud service.
 - **Clustering:** LLM-based (heavy model) — no embeddings/KeyBERT/Qdrant on this branch; see docs/superpowers/specs/2026-07-18-llm-only-pipeline-design.md
 - **Storage:** PostgreSQL (structured), MinIO (raw files)
@@ -145,6 +145,14 @@ tests/integration/     ← LLM mocked, full stages
 
 - **Don't bypass the SMART retry loop after synthesis.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. Hard checks are pure code (`smart_rules.py`); the soft judge is a separate light-model prompt. Escalated PLOs must stay visible in the UI.
 - **Don't pass full evidence text into synthesis prompts.** Summarize each Need in ≤200 tokens. Full evidence stays in Postgres for drill-down, not in the synthesis prompt.
+- **The extraction cache is keyed on `settings.extraction_model`, and so is what
+  it stores.** One name in three places — the key, the hit comparison, and the
+  `set` call. It was keyed on `light_model` and stored as `heavy_model` for as
+  long as those resolved to the same string; the moment extraction moved to its
+  own provider, every write became a permanent miss and the corpus was
+  re-extracted at full cost on every run. `test_skill_extraction_cache.py`
+  replays a stored entry rather than asserting each call site, because asserting
+  them separately is exactly what let the mismatch through.
 - **`need_combination` reads the extracted skills and nothing else.** No evidence
   text reaches the stage: the sentence for each Need is written from its member
   skill names, and `demand_score` is computed from the evidence ids and

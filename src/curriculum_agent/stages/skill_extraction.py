@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import LLMCacheRepository, SkillRepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.llm import complete_light
+from curriculum_agent.llm import complete_extraction
 from curriculum_agent.models import (
     SKILL_KSEC,
     BloomLevel,
@@ -243,14 +243,20 @@ async def run(state: AgentState) -> AgentState:
         # text (same สภาวิชาชีพ standard, same scraped posting) would share a
         # cache entry, and the second program would be served skills whose
         # is_field_relevant was judged against the first program's field.
+        #
+        # settings.extraction_model appears here, in the hit comparison, and in
+        # what `set` stores — one name in all three places. It used to be keyed on
+        # light_model and stored as heavy_model, which only worked because the two
+        # resolved to the same string; the moment they differ every write becomes
+        # a permanent miss and the whole corpus is re-extracted on every run.
         cache_key = hashlib.sha256(
-            f"{text_slice}\x00{evidence.classification}\x00{settings.light_model}"
+            f"{text_slice}\x00{evidence.classification}\x00{settings.extraction_model}"
             f"\x00{_EXTRACTION_CONTRACT}\x00{field_th}\x00{program_name_th}".encode()
         ).hexdigest()
 
         result: _ExtractedSkillsResponse | None = None
         cached = await _cache.get(cache_key)
-        if cached is not None and cached[0] == settings.light_model:
+        if cached is not None and cached[0] == settings.extraction_model:
             try:
                 result = _ExtractedSkillsResponse.model_validate_json(cached[1])
                 logger.debug(f"Cache hit for evidence {evidence.evidence_id}")
@@ -272,8 +278,8 @@ async def run(state: AgentState) -> AgentState:
             # for a slot it did not need.
             async with _sem:
                 try:
-                    result = await complete_light(_ExtractedSkillsResponse, messages)
-                    await _cache.set(cache_key, settings.light_model, result.model_dump_json())
+                    result = await complete_extraction(_ExtractedSkillsResponse, messages)
+                    await _cache.set(cache_key, settings.extraction_model, result.model_dump_json())
                 except Exception as exc:
                     logger.warning(f"LLM skill extraction failed for {evidence.evidence_id}: {exc}")
         return result

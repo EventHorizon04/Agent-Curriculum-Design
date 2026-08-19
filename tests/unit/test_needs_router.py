@@ -223,7 +223,7 @@ def _stub_need_stages(seen: dict[str, object]):
     fake_cache.get = AsyncMock(return_value=None)  # always miss, force the "extraction" below
     fake_cache.set = AsyncMock()
 
-    async def fake_complete_light(response_model, messages, **kwargs):
+    async def fake_complete_extraction(response_model, messages, **kwargs):
         # One grounded skill, quoting the evidence text verbatim so
         # skill_extraction's groundedness check (is_grounded) accepts it.
         return skill_extraction._ExtractedSkillsResponse(
@@ -240,7 +240,7 @@ def _stub_need_stages(seen: dict[str, object]):
 
     return (
         patch.object(skill_extraction, "LLMCacheRepository", return_value=fake_cache),
-        patch.object(skill_extraction, "complete_light", side_effect=fake_complete_light),
+        patch.object(skill_extraction, "complete_extraction", side_effect=fake_complete_extraction),
         patch.object(skill_extraction, "SkillRepository", return_value=AsyncMock()),
         patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
     )
@@ -320,7 +320,7 @@ async def test_needs_run_passes_program_field_into_extraction_prompt(
 
     captured: dict[str, object] = {}
 
-    async def fake_complete_light(response_model, messages, **kwargs):
+    async def fake_complete_extraction(response_model, messages, **kwargs):
         captured["messages"] = messages
         return skill_extraction._ExtractedSkillsResponse(
             skills=[
@@ -343,7 +343,7 @@ async def test_needs_run_passes_program_field_into_extraction_prompt(
 
     with (
         patch.object(skill_extraction, "LLMCacheRepository", return_value=fake_cache),
-        patch.object(skill_extraction, "complete_light", side_effect=fake_complete_light),
+        patch.object(skill_extraction, "complete_extraction", side_effect=fake_complete_extraction),
         patch.object(skill_extraction, "SkillRepository", return_value=AsyncMock()),
         patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
     ):

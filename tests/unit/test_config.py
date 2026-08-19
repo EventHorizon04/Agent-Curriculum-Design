@@ -146,3 +146,26 @@ def test_cors_origins_default_to_the_vite_dev_server():
 def test_cors_origins_can_be_emptied_for_same_origin_serving():
     s = Settings(_env_file=None, cors_origins=[])
     assert s.cors_origins == []
+
+
+def test_skill_extraction_gets_its_own_provider_and_model():
+    """Extraction fans out one call per evidence item, so it is what exhausts a
+    provider's token quota first. It runs on OpenRouter while everything a
+    designer reads stays on the Thai-first default."""
+    s = Settings(_env_file=None)
+    assert s.llm_provider == "opentyphoon"
+    assert s.extraction_provider == "openrouter"
+    assert s.extraction_model == "meta-llama/llama-3.3-70b-instruct"
+
+
+def test_extraction_provider_unset_follows_the_default_provider():
+    """Running the whole pipeline on one endpoint must not require naming that
+    endpoint twice — the model default follows the provider that wins."""
+    s = Settings(_env_file=None, llm_provider="ollama", extraction_provider=None)
+    assert s.extraction_provider == "ollama"
+    assert s.extraction_model == "gemma4:31b-cloud"
+
+
+def test_an_explicit_extraction_model_survives_the_provider_default():
+    s = Settings(_env_file=None, extraction_model="qwen/qwen3-235b-a22b")
+    assert s.extraction_model == "qwen/qwen3-235b-a22b"

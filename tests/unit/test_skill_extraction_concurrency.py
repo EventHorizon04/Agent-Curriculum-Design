@@ -78,7 +78,7 @@ class _ConcurrencyTracker:
 
 async def test_extraction_calls_overlap(monkeypatch: pytest.MonkeyPatch, _stub_repos: None) -> None:
     tracker = _ConcurrencyTracker()
-    monkeypatch.setattr(se, "complete_light", tracker)
+    monkeypatch.setattr(se, "complete_extraction", tracker)
 
     await se.run(
         {
@@ -98,7 +98,7 @@ async def test_fan_out_respects_the_configured_ceiling(
     """Unbounded gather over a large corpus would open one connection per item
     and earn a 429 from any hosted provider."""
     tracker = _ConcurrencyTracker()
-    monkeypatch.setattr(se, "complete_light", tracker)
+    monkeypatch.setattr(se, "complete_extraction", tracker)
     monkeypatch.setattr(se.settings, "llm_max_concurrency", 3)
 
     await se.run(
@@ -119,7 +119,7 @@ async def test_results_keep_evidence_order(
     """Concurrency must not reorder the output: skill rows feed frequency counts
     and ids downstream, and a run that shuffles them is not reproducible."""
     tracker = _ConcurrencyTracker()
-    monkeypatch.setattr(se, "complete_light", tracker)
+    monkeypatch.setattr(se, "complete_extraction", tracker)
 
     state = await se.run(
         {
@@ -146,7 +146,7 @@ async def test_one_failing_item_does_not_sink_the_others(
             raise RuntimeError("provider said no")
         return _response(n)
 
-    monkeypatch.setattr(se, "complete_light", flaky)
+    monkeypatch.setattr(se, "complete_extraction", flaky)
 
     state = await se.run(
         {

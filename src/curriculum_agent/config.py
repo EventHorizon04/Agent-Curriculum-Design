@@ -54,6 +54,15 @@ class Settings(BaseSettings):
     # branch on llm_provider would be frozen at import time and ignore .env.
     light_model: str = ""
     heavy_model: str = ""
+    # skill_extraction gets its own endpoint. It is the only stage that fans out
+    # one call per evidence item, so it spends a provider's token quota faster
+    # than the rest of the pipeline put together — and it is the stage whose
+    # output is a list of skill names rather than the Thai prose a designer
+    # reads, so it has the least to lose from leaving the Thai-first default.
+    # None means "whatever llm_provider is", for running the whole pipeline on
+    # one endpoint; the model resolves from whichever provider ends up selected.
+    extraction_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
+    extraction_model: str = ""
     # REST API auth secret (require_api_key). None disables auth (dev default).
     api_key: SecretStr | None = None
     # Sent as the OpenAI-client api_key when talking to local Ollama. Ollama
@@ -103,6 +112,12 @@ class Settings(BaseSettings):
             self.light_model = fallback
         if not self.heavy_model:
             self.heavy_model = fallback
+        # Resolved here rather than at each call site, so nothing downstream has
+        # to remember that None means "follow llm_provider".
+        if self.extraction_provider is None:
+            self.extraction_provider = self.llm_provider
+        if not self.extraction_model:
+            self.extraction_model = _PROVIDER_DEFAULT_MODEL[self.extraction_provider]
         return self
 
     @computed_field  # type: ignore[prop-decorator]

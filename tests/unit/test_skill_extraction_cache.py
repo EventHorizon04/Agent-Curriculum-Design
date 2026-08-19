@@ -7,7 +7,7 @@ from curriculum_agent.config import settings
 
 
 async def test_cache_hit_skips_extraction_llm_call():
-    """Cache hit for evidence → complete_light not called for skill extraction."""
+    """Cache hit for evidence → complete_extraction not called for skill extraction."""
     from curriculum_agent.graph import AgentState
     from curriculum_agent.stages.skill_extraction import _EXTRACTION_CONTRACT, run
 
@@ -21,7 +21,7 @@ async def test_cache_hit_skips_extraction_llm_call():
     # or {}` fallback — and both are part of the key alongside the contract
     # fingerprint (Task 8).
     cache_key = hashlib.sha256(
-        f"{text_slice}\x00general\x00{settings.light_model}"
+        f"{text_slice}\x00general\x00{settings.extraction_model}"
         f"\x00{_EXTRACTION_CONTRACT}\x00\x00".encode()
     ).hexdigest()
 
@@ -49,14 +49,14 @@ async def test_cache_hit_skips_extraction_llm_call():
     }
 
     mock_cache_repo = AsyncMock()
-    mock_cache_repo.get = AsyncMock(return_value=(settings.light_model, cached_json))
+    mock_cache_repo.get = AsyncMock(return_value=(settings.extraction_model, cached_json))
     mock_cache_repo.set = AsyncMock()
 
     llm_call_response_models: list = []
 
-    async def mock_complete_light(response_model, messages, **kwargs):
+    async def mock_complete_extraction(response_model, messages, **kwargs):
         llm_call_response_models.append(response_model)
-        raise AssertionError("complete_light should not be called on a cache hit")
+        raise AssertionError("complete_extraction should not be called on a cache hit")
 
     with (
         patch(
@@ -64,8 +64,8 @@ async def test_cache_hit_skips_extraction_llm_call():
             return_value=mock_cache_repo,
         ),
         patch(
-            "curriculum_agent.stages.skill_extraction.complete_light",
-            side_effect=mock_complete_light,
+            "curriculum_agent.stages.skill_extraction.complete_extraction",
+            side_effect=mock_complete_extraction,
         ),
         patch(
             "curriculum_agent.stages.skill_extraction.SkillRepository",
@@ -83,3 +83,72 @@ async def test_cache_hit_skips_extraction_llm_call():
     assert result_state["extracted_skills"][0]["skill_name_th"] == "Python"
     # Cache set should NOT be called on a hit
     mock_cache_repo.set.assert_not_called()
+
+
+async def test_what_extraction_stores_is_what_a_later_run_reads_back():
+    """The model name in the key, in the hit comparison, and in what `set`
+    stores must be one and the same.
+
+    It was three places and two names: keyed on light_model, stored as
+    heavy_model. That only worked while both resolved to the same string —
+    once skill extraction moved to its own provider they diverged, every write
+    became a permanent miss, and the whole corpus was re-extracted on every
+    run at full provider cost. Replaying the stored tuple is the only way to
+    catch that; asserting each call site separately is what let it through.
+    """
+    from curriculum_agent.graph import AgentState
+    from curriculum_agent.stages import skill_extraction as se
+
+    text = "ต้องการผู้เชี่ยวชาญด้าน Python และ Machine Learning"
+    evidence_dict = {
+        "evidence_id": "ev-001",
+        "program_id": "prog-001",
+        "stakeholder_type": "employer",
+        "source_name": "Test",
+        "raw_text_th": text,
+        "collected_at": "2026-01-01T00:00:00",
+        "classification": "general",
+        "metadata": {},
+    }
+    state: AgentState = {"program_id": "prog-001", "classified_evidence": [evidence_dict]}
+
+    fresh = se._ExtractedSkillsResponse(
+        skills=[
+            se._SkillItem(
+                skill_name_th="Python",
+                skill_name_en="Python",
+                ksec_category="S",
+                bloom_level="apply",
+                evidence_span_th="ต้องการผู้เชี่ยวชาญด้าน Python",
+                confidence=0.9,
+            )
+        ]
+    )
+
+    stored: dict[str, tuple[str, str]] = {}
+
+    async def fake_get(_self, key: str):
+        return stored.get(key)
+
+    async def fake_set(_self, key: str, model: str, payload: str) -> None:
+        stored[key] = (model, payload)
+
+    calls = 0
+
+    async def fake_extract(response_model, messages, **kwargs):
+        nonlocal calls
+        calls += 1
+        return fresh
+
+    with (
+        patch.object(se.LLMCacheRepository, "get", fake_get),
+        patch.object(se.LLMCacheRepository, "set", fake_set),
+        patch.object(se, "complete_extraction", fake_extract),
+        patch.object(se.SkillRepository, "delete_by_program", AsyncMock(return_value=0)),
+        patch.object(se.SkillRepository, "bulk_insert", AsyncMock()),
+    ):
+        await se.run(dict(state))
+        assert calls == 1, "first pass must reach the provider"
+        await se.run(dict(state))
+
+    assert calls == 1, "second pass re-extracted — the cache write is unreadable"

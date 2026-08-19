@@ -62,13 +62,13 @@ def _run_extraction(
 
     served = iter(responses)
 
-    async def fake_complete_light(model, messages, **kw):  # noqa: ANN001, ANN003
+    async def fake_complete_extraction(model, messages, **kw):  # noqa: ANN001, ANN003
         return next(served)
 
     async def _go():
         with (
             patch.object(se, "LLMCacheRepository", return_value=cache),
-            patch.object(se, "complete_light", side_effect=fake_complete_light),
+            patch.object(se, "complete_extraction", side_effect=fake_complete_extraction),
             patch.object(se, "SkillRepository", return_value=repo),
         ):
             return await se.run({"program_id": "prog-1", "classified_evidence": evidence})
