@@ -119,17 +119,20 @@ Watch for these two, which the setup cannot prevent:
    .\scripts\stop-dev.ps1
    ```
 
-3. **Confirm nothing is still listening on 8000:**
+   `stop-dev.ps1` finds the API by command line, so it stops all three
+   processes of the `uv run python -m curriculum_agent.api` tree and waits for
+   port 8000 to come free before returning. It prints a warning if anything
+   still holds the port — that would be a process outside this project, which
+   the script will not kill.
+
+   Add `-KeepServices` to stop only the API and leave postgres/minio up, which
+   is what you want when restarting after a code change.
+
+3. **If you need to confirm by hand:**
 
    ```powershell
-   netstat -ano | Select-String ":8000"
+   Get-NetTCPConnection -LocalPort 8000 -State Listen
    ```
-
-   `stop-dev.ps1` kills the `uv` wrapper PID, not the
-   `python -m curriculum_agent.api` process it spawns — on Windows a child is
-   not terminated with its parent, so that grandchild process can keep the
-   port held. If the command above still shows something bound, find the PID
-   in the last column and stop it directly: `Stop-Process -Id <pid> -Force`.
 
 4. Remove the Access application if the hostname will not be reused.
 5. Keep the backup file until the exported results have been checked.
