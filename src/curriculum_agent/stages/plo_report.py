@@ -44,11 +44,17 @@ async def run(state: AgentState) -> AgentState:
                 f"program '{program_id}' — the drill-down for this outcome will be incomplete"
             )
 
+    # Derived from the data rather than read off AgentState: a Need ends up with
+    # no PLO either because it lost the MAX_CORE_PLOS cut or because its synthesis
+    # failed, and the designer needs to see both. Computed the same way in the UI.
+    cited = {nid for p in plos for nid in p.source_need_ids}
+    not_synthesized = [nid for nid in needs_by_id if nid not in cited]
+
     core = sum(1 for p in plos if not p.is_optional)
     escalated = sum(1 for p in plos if p.smart_escalated)
     logger.info(
         f"PLO report: {len(plos)} PLOs ({core} core, {len(plos) - core} optional, "
-        f"{escalated} escalated for repair)"
+        f"{escalated} escalated for repair), {len(not_synthesized)} Need(s) without a PLO"
     )
 
     report: dict[str, Any] = {
@@ -56,11 +62,16 @@ async def run(state: AgentState) -> AgentState:
         # Keyed for drill-down: the page resolves each PLO's source_need_ids
         # against this rather than issuing a request per outcome.
         "needs_by_id": {nid: n.model_dump(mode="json") for nid, n in needs_by_id.items()},
+        # Needs that produced no PLO — the ones below the MAX_CORE_PLOS cut, plus
+        # any whose synthesis failed. Listed, not just counted, so the review page
+        # can name them.
+        "needs_not_synthesized": not_synthesized,
         "counts": {
             "total": len(plos),
             "core": core,
             "optional": len(plos) - core,
             "escalated": escalated,
+            "needs_not_synthesized": len(not_synthesized),
         },
     }
 

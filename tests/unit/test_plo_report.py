@@ -80,7 +80,13 @@ async def test_report_counts_split_core_and_optional(monkeypatch: pytest.MonkeyP
         }
     )
 
-    assert state["report"]["counts"] == {"total": 2, "core": 1, "optional": 1, "escalated": 0}
+    assert state["report"]["counts"] == {
+        "total": 2,
+        "core": 1,
+        "optional": 1,
+        "escalated": 0,
+        "needs_not_synthesized": 0,
+    }
 
 
 async def test_report_counts_surface_escalated_plos(monkeypatch: pytest.MonkeyPatch):
@@ -101,7 +107,13 @@ async def test_report_counts_surface_escalated_plos(monkeypatch: pytest.MonkeyPa
         }
     )
 
-    assert state["report"]["counts"] == {"total": 2, "core": 2, "optional": 0, "escalated": 1}
+    assert state["report"]["counts"] == {
+        "total": 2,
+        "core": 2,
+        "optional": 0,
+        "escalated": 1,
+        "needs_not_synthesized": 0,
+    }
     # Escalated PLOs must stay visible, never dropped from the assembled set.
     assert {p["plo_id"] for p in state["report"]["plos"]} == {"PLO1", "PLO2"}
 

@@ -25,6 +25,15 @@ from curriculum_agent.stages.smart_rules import (
     hard_failures,
 )
 
+# Project policy: 6-10 main PLOs. MIN_NEEDS is a floor no stage can manufacture —
+# too few Needs simply means too few PLOs, and the designer adds more at the
+# checkpoint. The ceiling is enforceable, and it is enforced by choosing which
+# Needs to use rather than by merging them down to a quota: every Need keeps its
+# own sentence and its own evidence trail, and the ones that lose the cut stay in
+# the Need list where a designer can promote one by editing its rivals. Optional
+# (want-based) PLOs are outside this count, as they are outside the 6 floor.
+MAX_CORE_PLOS = 10
+
 _MAX_RETRIES = 3
 
 # Identifier scheme. Main outcomes are PLO1..PLOn ordered by descending demand,
@@ -333,6 +342,17 @@ async def run(state: AgentState) -> AgentState:
     plos: list[PLO] = []
     for is_optional in (False, True):
         series = synthesis_order([n for n in needs if n.is_optional is is_optional])
+        if not is_optional and len(series) > MAX_CORE_PLOS:
+            # Logged, not silent: a designer looking at 22 Needs and 10 PLOs has to
+            # be able to find out which twelve lost and why. plo_report shows the
+            # same set on the review page.
+            dropped = series[MAX_CORE_PLOS:]
+            logger.warning(
+                f"{len(series)} core Needs exceed the {MAX_CORE_PLOS}-PLO ceiling — "
+                f"synthesizing the {MAX_CORE_PLOS} highest-demand ones and leaving "
+                f"{len(dropped)} unused: {', '.join(n.need_id for n in dropped)}"
+            )
+            series = series[:MAX_CORE_PLOS]
         for index, need in enumerate(series, start=1):
             plo_id = format_plo_id(index, is_optional=is_optional)
             plo = await synthesize_from_needs(

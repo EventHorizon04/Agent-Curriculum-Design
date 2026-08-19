@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
@@ -89,6 +89,13 @@ export default function PloReport() {
   const [plos, setPlos] = useState<PLO[]>([])
   const [needsById, setNeedsById] = useState<Record<string, NeedSummary>>({})
   const [counts, setCounts] = useState<ReportCounts>({ total: 0, core: 0, optional: 0, escalated: 0 })
+  // Derived, not read off the response: `fetchData` and `runReport` populate the
+  // page by different routes, and a count that only one of them set would read as
+  // "nothing was cut" on the other. Same rule the report stage applies server-side.
+  const needsWithoutPlo = useMemo(() => {
+    const cited = new Set(plos.flatMap((p) => p.source_need_ids))
+    return Object.keys(needsById).filter((id) => !cited.has(id)).length
+  }, [plos, needsById])
   const [exporting, setExporting] = useState(false)
   const [loading, setLoading] = useState(false)
   const [running, setRunning] = useState(false)
@@ -207,6 +214,14 @@ export default function PloReport() {
               <span><b className="text-gray-700">{counts.optional}</b> เสริม</span>
               {counts.escalated > 0 && (
                 <span className="text-amber-700"><b>{counts.escalated}</b> ต้องแก้ไข</span>
+              )}
+              {needsWithoutPlo > 0 && (
+                <span
+                  className="text-amber-700"
+                  title="ความต้องการที่ไม่ได้ถูกแปลงเป็น PLO — เพดาน PLO หลักคือ 10 ข้อ เรียงตาม demand score"
+                >
+                  <b>{needsWithoutPlo}</b> Need ไม่ได้ใช้
+                </span>
               )}
               <button onClick={runReport} className="text-xs text-gray-400 hover:text-blue-600 underline">
                 Re-run

@@ -44,6 +44,10 @@ class PLOReportResponse(BaseModel):
     plos: list[PLO]
     counts: dict[str, int]
     needs_by_id: dict[str, Need]
+    # Need ids no PLO cites: those below the MAX_CORE_PLOS cut, plus any whose
+    # synthesis failed. Carried through for the same reason as `counts` — computing
+    # it in the stage and dropping it at the route would hide the cap.
+    needs_not_synthesized: list[str] = []
 
 
 @router.get("/", response_model=list[PLO])
@@ -183,6 +187,7 @@ async def run_plo_report(program_id: str) -> PLOReportResponse:
         plos=[PLO.model_validate(p) for p in report["plos"]],
         counts=report["counts"],
         needs_by_id={k: Need.model_validate(v) for k, v in report["needs_by_id"].items()},
+        needs_not_synthesized=report["needs_not_synthesized"],
     )
 
 
