@@ -105,6 +105,16 @@ def test_model_defaults_follow_the_openrouter_provider():
     assert s.heavy_model == "meta-llama/llama-3.3-70b-instruct"
 
 
+def test_the_default_provider_is_thai_first():
+    """Pinned because it is a decision, not an accident: the prompts and the
+    stored statements are Thai, so the default endpoint serves Thai-first models.
+    Changing it should require changing this line and saying why."""
+    s = Settings(_env_file=None)
+    assert s.llm_provider == "opentyphoon"
+    assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
+    assert s.heavy_model == "typhoon-v2.5-30b-a3b-instruct"
+
+
 def test_explicit_models_survive_the_provider_default():
     s = Settings(
         _env_file=None,

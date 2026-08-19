@@ -21,10 +21,13 @@ class Settings(BaseSettings):
     # must not crash Settings() — only declared fields are read.
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    # "ollama" (open-source, local, no key) or one of two hosted providers:
-    # "openrouter", or "opentyphoon" for Thai-language models. Config-switchable
-    # per project rule — never hardcode a paid provider.
-    llm_provider: Literal["ollama", "openrouter", "opentyphoon"] = "openrouter"
+    # "opentyphoon" by default: every prompt in this pipeline is written in Thai
+    # and every stored statement is read by a Thai curriculum designer, and a
+    # Thai-first model is what stops a Need's sentence from drifting into
+    # translated-sounding Thai. "openrouter" and "ollama" (local, no key) stay
+    # one .env line away. Config-switchable per project rule — the default is a
+    # setting a deployment overrides, never a provider hardcoded at a call site.
+    llm_provider: Literal["ollama", "openrouter", "opentyphoon"] = "opentyphoon"
     ollama_base_url: str = "http://localhost:11434"
     # No trailing /v1 — the OpenAI client path is appended once, in llm.py.
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
