@@ -43,22 +43,10 @@ def skills() -> list[ExtractedSkill]:
     ]
 
 
-@pytest.fixture
-def evidence() -> list[dict[str, str]]:
-    return [
-        {
-            "evidence_id": "E1",
-            "classification": "requirement",
-            "stakeholder_type": "professional_council",
-        },
-        {"evidence_id": "E2", "classification": "general", "stakeholder_type": "alumni"},
-        {"evidence_id": "E3", "classification": "general", "stakeholder_type": "community"},
-    ]
-
-
 async def _fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
     return nc._NeedStatement(
-        statement_th="สามารถทำงานตามที่ตลาดต้องการ", statement_en="Market capability"
+        statement_th="ตลาดแรงงานต้องการผู้ที่ออกแบบและดูแลระบบสารสนเทศขององค์กรให้ใช้งานได้จริง",
+        statement_en="The market needs people who maintain corporate information systems",
     )
 
 
@@ -83,7 +71,7 @@ def _patch_repo(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 async def test_every_need_holds_exactly_one_ksec_tag(
-    skills: list[ExtractedSkill], evidence: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
+    skills: list[ExtractedSkill], monkeypatch: pytest.MonkeyPatch
 ):
     _patch_llm(monkeypatch)
     _patch_repo(monkeypatch)
@@ -91,7 +79,6 @@ async def test_every_need_holds_exactly_one_ksec_tag(
     state = await nc.run(
         {
             "program_id": "cs-test",
-            "classified_evidence": evidence,
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
         }
     )
@@ -105,9 +92,7 @@ async def test_every_need_holds_exactly_one_ksec_tag(
         assert tags == {need["ksec_category"]}
 
 
-async def test_ethics_and_character_skills_form_one_ec_need(
-    evidence: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
-):
+async def test_ethics_and_character_skills_form_one_ec_need(monkeypatch: pytest.MonkeyPatch):
     skills = [
         _skill("จรรยาบรรณวิชาชีพ", KSECCategory.E, "S1", "E1"),
         _skill("ความรับผิดชอบต่อหน้าที่", KSECCategory.C, "S2", "E2"),
@@ -123,7 +108,6 @@ async def test_ethics_and_character_skills_form_one_ec_need(
     state = await nc.run(
         {
             "program_id": "cs-test",
-            "classified_evidence": evidence,
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
         }
     )
@@ -131,9 +115,7 @@ async def test_ethics_and_character_skills_form_one_ec_need(
     assert [n["ksec_category"] for n in state["needs"]] == ["EC"]
 
 
-async def test_an_all_ethics_group_keeps_the_standalone_e_tag(
-    evidence: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
-):
+async def test_an_all_ethics_group_keeps_the_standalone_e_tag(monkeypatch: pytest.MonkeyPatch):
     skills = [
         _skill("จรรยาบรรณวิชาชีพ", KSECCategory.E, "S1", "E1"),
         _skill("ความซื่อสัตย์ในวิชาชีพ", KSECCategory.E, "S2", "E2"),
@@ -149,7 +131,6 @@ async def test_an_all_ethics_group_keeps_the_standalone_e_tag(
     state = await nc.run(
         {
             "program_id": "cs-test",
-            "classified_evidence": evidence,
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
         }
     )
@@ -157,9 +138,7 @@ async def test_an_all_ethics_group_keeps_the_standalone_e_tag(
     assert [n["ksec_category"] for n in state["needs"]] == ["E"]
 
 
-async def test_needs_carry_their_source_stakeholder_types(
-    evidence: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
-):
+async def test_needs_carry_their_source_stakeholder_types(monkeypatch: pytest.MonkeyPatch):
     skills = [
         _skill(
             "วิเคราะห์ข้อมูล", KSECCategory.S, "S1", "E1", stype=StakeholderType.PROFESSIONAL_COUNCIL
@@ -177,7 +156,6 @@ async def test_needs_carry_their_source_stakeholder_types(
     state = await nc.run(
         {
             "program_id": "cs-test",
-            "classified_evidence": evidence,
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
         }
     )
@@ -185,9 +163,7 @@ async def test_needs_carry_their_source_stakeholder_types(
     assert state["needs"][0]["source_stakeholder_types"] == ["professional_council", "alumni"]
 
 
-async def test_a_want_only_group_is_optional(
-    evidence: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
-):
+async def test_a_want_only_group_is_optional(monkeypatch: pytest.MonkeyPatch):
     skills = [
         _skill("เล่นดนตรีไทย", KSECCategory.S, "S1", "E3", classification="want"),
         _skill("จัดนิทรรศการ", KSECCategory.S, "S2", "E3", classification="want"),
@@ -198,7 +174,6 @@ async def test_a_want_only_group_is_optional(
     state = await nc.run(
         {
             "program_id": "cs-test",
-            "classified_evidence": evidence,
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
         }
     )
@@ -206,9 +181,7 @@ async def test_a_want_only_group_is_optional(
     assert all(n["is_optional"] for n in state["needs"])
 
 
-async def test_freq_counts_mentions_not_unique_names(
-    evidence: list[dict[str, str]], monkeypatch: pytest.MonkeyPatch
-):
+async def test_freq_counts_mentions_not_unique_names(monkeypatch: pytest.MonkeyPatch):
     # Same capability named twice in one bucket, clustered together.
     dupes = [
         _skill("วิเคราะห์ข้อมูล", KSECCategory.S, "S1", "E1"),
@@ -219,7 +192,10 @@ async def test_freq_counts_mentions_not_unique_names(
         return [list(range(len(names)))]
 
     async def fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
-        return nc._NeedStatement(statement_th="วิเคราะห์ข้อมูลได้", statement_en="Analyse data")
+        return nc._NeedStatement(
+            statement_th="ตลาดแรงงานต้องการผู้ที่วิเคราะห์ข้อมูลยอดขายเพื่อสนับสนุนการตัดสินใจของผู้บริหาร",
+            statement_en="The market needs people who analyse sales data for management decisions",
+        )
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_light", fake_summarize)
@@ -228,7 +204,6 @@ async def test_freq_counts_mentions_not_unique_names(
     state = await nc.run(
         {
             "program_id": "cs-test",
-            "classified_evidence": evidence,
             "extracted_skills": [s.model_dump(mode="json") for s in dupes],
         }
     )
@@ -239,9 +214,7 @@ async def test_freq_counts_mentions_not_unique_names(
 
 async def test_empty_skills_yields_no_needs(monkeypatch: pytest.MonkeyPatch):
     _patch_repo(monkeypatch)
-    state = await nc.run(
-        {"program_id": "cs-test", "classified_evidence": [], "extracted_skills": []}
-    )
+    state = await nc.run({"program_id": "cs-test", "extracted_skills": []})
     assert state["needs"] == []
 
 
@@ -252,9 +225,6 @@ async def test_no_upper_cap_on_core_needs(monkeypatch: pytest.MonkeyPatch):
     own Need, regardless of how many that is.
     """
     many_skills = [_skill(f"ทักษะที่ {i}", KSECCategory.S, f"S{i}", "E1") for i in range(15)]
-    evidence = [
-        {"evidence_id": "E1", "classification": "requirement", "stakeholder_type": "employer"}
-    ]
 
     _patch_llm(monkeypatch)  # clusters each name into its own singleton
     _patch_repo(monkeypatch)
@@ -262,7 +232,6 @@ async def test_no_upper_cap_on_core_needs(monkeypatch: pytest.MonkeyPatch):
     state = await nc.run(
         {
             "program_id": "cs-test",
-            "classified_evidence": evidence,
             "extracted_skills": [s.model_dump(mode="json") for s in many_skills],
         }
     )
@@ -294,3 +263,178 @@ def test_summarize_is_asked_to_retry_on_a_rejected_statement() -> None:
     """The retry budget has to reach Instructor — without max_retries the
     validator would turn a recoverable leak into a fallback sentence."""
     assert nc._STATEMENT_ATTEMPTS >= 2
+
+
+# --- the stage reads skills and nothing else --------------------------------
+
+
+async def test_the_written_statement_reaches_the_stored_need(
+    skills: list[ExtractedSkill], monkeypatch: pytest.MonkeyPatch
+):
+    """Guards every other test in this file as much as the stage.
+
+    `run` wraps the summarize call in a try/except that falls back to a marked
+    skill list, so a fake statement that trips _NeedStatement's validators would
+    make the suite pass while exercising the fallback path instead of the one each
+    test names. Asserting the sentence survives is what keeps that honest.
+    """
+    _patch_llm(monkeypatch)
+    _patch_repo(monkeypatch)
+
+    state = await nc.run(
+        {
+            "program_id": "cs-test",
+            "extracted_skills": [s.model_dump(mode="json") for s in skills],
+        }
+    )
+
+    expected = (await _fake_summarize(None, [])).statement_th
+    assert all(n["statement_th"] == expected for n in state["needs"])
+
+
+async def test_evidence_text_in_the_state_never_reaches_the_prompt(
+    skills: list[ExtractedSkill], monkeypatch: pytest.MonkeyPatch
+):
+    """The stage sees the extracted skills only.
+
+    A caller may still hand it `classified_evidence` — `run` for the first pass of
+    a program builds one state for both stages. Nothing in that key may travel
+    into the summarize prompt: the skills already carry what extraction found.
+    """
+    secret = "ข้อความหลักฐานที่ต้องไม่ปรากฏในพรอมต์"
+    seen: list[list[dict[str, str]]] = []
+
+    async def capture(model, messages, **kw):  # noqa: ANN001, ANN003
+        seen.append(messages)
+        return await _fake_summarize(model, messages)
+
+    async def fake_cluster(names: list[str]) -> list[list[int]]:
+        return [[i] for i in range(len(names))]
+
+    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(nc, "complete_light", capture)
+    _patch_repo(monkeypatch)
+
+    await nc.run(
+        {
+            "program_id": "cs-test",
+            "classified_evidence": [
+                {"evidence_id": "E1", "stakeholder_type": "employer", "raw_text_th": secret}
+            ],
+            "extracted_skills": [s.model_dump(mode="json") for s in skills],
+        }
+    )
+
+    assert seen, "the summarize call never happened"
+    assert all(secret not in m["content"] for messages in seen for m in messages)
+
+
+async def test_demand_score_is_weighted_by_the_skills_own_stakeholder_types(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Scoring survives the loss of `classified_evidence`.
+
+    Both blocks of the score come off `ExtractedSkill.source_stakeholder_type` and
+    `source_evidence_id` now. In a two-item corpus each Need names half of it, so
+    the frequency block is 0.70 × 0.5 for both and only the council Need collects
+    the 0.30 mandate block on top.
+    """
+    council = _skill(
+        "ออกแบบระบบฐานข้อมูล",
+        KSECCategory.S,
+        "S1",
+        "E1",
+        stype=StakeholderType.PROFESSIONAL_COUNCIL,
+    )
+    student = _skill("จัดกิจกรรมนักศึกษา", KSECCategory.S, "S2", "E2", stype=StakeholderType.STUDENT)
+    _patch_llm(monkeypatch)
+    _patch_repo(monkeypatch)
+
+    state = await nc.run(
+        {
+            "program_id": "cs-test",
+            "extracted_skills": [s.model_dump(mode="json") for s in (council, student)],
+        }
+    )
+
+    by_skill = {n["member_skill_ids"][0]: n["demand_score"] for n in state["needs"]}
+    assert by_skill["S1"] == pytest.approx(0.30 + 0.70 * 0.5)
+    assert by_skill["S2"] == pytest.approx(0.70 * 0.5)
+
+
+async def test_a_group_whose_sentence_cannot_be_written_is_marked_for_review(
+    skills: list[ExtractedSkill], monkeypatch: pytest.MonkeyPatch
+):
+    """The fallback must not pass for a usable Need.
+
+    A comma-joined skill list is exactly what _require_plo_ready rejects, so
+    shipping one unmarked would hand plo_synthesis a Need it can only guess from.
+    The marker is what puts it in front of the designer at the checkpoint.
+    """
+
+    async def always_fails(model, messages, **kw):  # noqa: ANN001, ANN003
+        raise RuntimeError("model unavailable")
+
+    async def fake_cluster(names: list[str]) -> list[list[int]]:
+        return [list(range(len(names)))]
+
+    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(nc, "complete_light", always_fails)
+    _patch_repo(monkeypatch)
+
+    state = await nc.run(
+        {
+            "program_id": "cs-test",
+            "extracted_skills": [s.model_dump(mode="json") for s in skills],
+        }
+    )
+
+    assert state["needs"]
+    assert all(n["statement_th"].startswith(nc._REVIEW_MARKER_TH) for n in state["needs"])
+
+
+# --- the generated sentence must be usable as a PLO ------------------------
+
+
+@pytest.mark.parametrize(
+    ("statement", "reason"),
+    [
+        ("ตลาดต้องการคนเก่ง", "สั้นเกินไป"),
+        (
+            "ตลาดแรงงานต้องการผู้ที่มีทักษะที่จำเป็นต่อการทำงานในองค์กรยุคใหม่ได้อย่างเหมาะสม",
+            "คำกว้าง",
+        ),
+        (
+            "ตลาดแรงงานต้องการผู้ที่มีสมรรถนะด้านต่างๆ ในการทำงานร่วมกับผู้อื่นในองค์กรได้ดี",
+            "คำกว้าง",
+        ),
+        (
+            "ตลาดแรงงานต้องการบุคลากรที่มีความสามารถตามที่ตลาดต้องการในการทำงานยุคดิจิทัล",
+            "วนกลับมาพูดถึงตัวเอง",
+        ),
+        (
+            "เขียนโปรแกรมเว็บ, ออกแบบฐานข้อมูล, ทดสอบระบบ, เขียนเอกสาร, ดูแลเซิร์ฟเวอร์",
+            "เป็นลิสต์ชื่อทักษะ",
+        ),
+    ],
+)
+def test_a_statement_that_cannot_become_a_plo_is_rejected(statement: str, reason: str) -> None:
+    """Instructor re-asks on a validator error, so rejecting here is what makes the
+    model write a usable sentence instead of the placeholder reaching plo_synthesis."""
+    with pytest.raises(ValidationError):
+        nc._NeedStatement(statement_th=statement)
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "ตลาดแรงงานต้องการผู้ที่ออกแบบระบบฐานข้อมูลสำหรับงานธุรกิจให้รองรับปริมาณข้อมูลจริงได้",
+        # A real object modified by "ที่จำเป็น" is specific — only a generic head
+        # noun in front of it makes the phrase empty.
+        "ตลาดแรงงานต้องการผู้ที่คัดกรองข้อมูลที่จำเป็นต่อการตัดสินใจของผู้บริหารได้",
+        # Two commas is prose, not a list.
+        "ตลาดแรงงานต้องการผู้ที่ออกแบบ, พัฒนา และดูแลระบบสารสนเทศขององค์กรได้",
+    ],
+)
+def test_a_specific_market_sentence_passes(statement: str) -> None:
+    assert nc._NeedStatement(statement_th=statement).statement_th == statement

@@ -85,7 +85,6 @@ class NeedTable(Base):
     demand_score: Mapped[float] = mapped_column(Float)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
     classification_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
-    sample_quotes_th: Mapped[list[str]] = mapped_column(JSONB, default=list)
 
 
 class PLOTable(Base):

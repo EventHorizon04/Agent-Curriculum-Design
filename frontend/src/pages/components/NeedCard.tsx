@@ -20,7 +20,6 @@ export interface NeedRow {
   freq: number
   demand_score: number
   is_optional: boolean
-  sample_quotes_th: string[]
 }
 
 interface NeedTrace {

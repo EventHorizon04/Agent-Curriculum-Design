@@ -88,11 +88,10 @@ async def test_two_spellings_of_one_skill_get_the_same_importance_score():
     # not just whichever spelling's evidence happened to be grouped alone —
     # proof the two really merged into one group rather than coincidentally
     # landing on equal-but-independent scores.
-    from curriculum_agent.stages.demand import compute_demand_score, total_evidence_weight
+    from curriculum_agent.stages.demand import compute_demand_score
 
     stakeholder_type_by_evidence = {"E1": "employer", "E2": "faculty"}
-    total = total_evidence_weight(stakeholder_type_by_evidence)
-    expected_score = compute_demand_score(["E1", "E2"], stakeholder_type_by_evidence, total)
+    expected_score = compute_demand_score(["E1", "E2"], stakeholder_type_by_evidence)
     assert by_name["Python"] == expected_score
     assert expected_score > 0
 

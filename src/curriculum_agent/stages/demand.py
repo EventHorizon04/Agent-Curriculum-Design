@@ -1,70 +1,51 @@
 from __future__ import annotations
 
-from curriculum_agent.models import STAKEHOLDER_GROUP, StakeholderGroup, StakeholderType
+from curriculum_agent.models import StakeholderType
 
-# What a source's word is worth. สภาวิชาชีพ speaks with legal force; the
-# institution's own direction binds the program it governs; other outside voices
-# describe the market the graduate enters; inside voices describe the program
-# from within, where the incentive to reflect the market is weakest.
-_REQUIREMENT_WEIGHT = {
-    StakeholderType.PROFESSIONAL_COUNCIL: 1.0,
-    StakeholderType.INSTITUTIONAL_DIRECTION: 0.8,
-}
-_EXTERNAL_WEIGHT = 0.6
-_INTERNAL_WEIGHT = 0.4
+# The score is two blocks, not one weighted sum over per-type weights:
+#
+#   demand_score = 0.30 × (สภาวิชาชีพ named it? 1 : 0) + 0.70 × share of the corpus
+#
+# 30% asks a yes/no question with a defensible answer — สภาวิชาชีพ sets legally
+# binding practice requirements, so a capability it names is mandated whatever the
+# rest of the corpus says. 70% asks how much of the corpus named it. Everyone who
+# is not the council sits in one class: an employer's ask outranks a student's
+# because it was raised more often, not because a table said 0.6 beats 0.4. The
+# old per-type weights made every score depend on numbers nobody could defend, and
+# a Need's score moved whenever one of them was retuned.
+MANDATE_WEIGHT = 0.30
+FREQUENCY_WEIGHT = 0.70
 
-
-def evidence_weight(stakeholder_type: StakeholderType) -> float:
-    """Weight of one evidence item, from who produced it.
-
-    Resolution goes through STAKEHOLDER_GROUP, so a type added to the enum later
-    picks up the external or internal tier without an edit here.
-    """
-    explicit = _REQUIREMENT_WEIGHT.get(stakeholder_type)
-    if explicit is not None:
-        return explicit
-    group = STAKEHOLDER_GROUP.get(stakeholder_type, StakeholderGroup.INTERNAL)
-    return _EXTERNAL_WEIGHT if group is StakeholderGroup.EXTERNAL else _INTERNAL_WEIGHT
-
-
-def _weight_of(raw_type: str) -> float:
-    """Weight for a stored type string, tolerating a value not in the enum.
-
-    An unrecognised value scores the internal tier rather than raising: a stale
-    row must not take down the whole scoring pass.
-    """
-    try:
-        return evidence_weight(StakeholderType(raw_type))
-    except ValueError:
-        return _INTERNAL_WEIGHT
-
-
-def total_evidence_weight(stakeholder_type_by_evidence: dict[str, str]) -> float:
-    """Denominator for every score in one program: the weight of all its evidence."""
-    return sum(_weight_of(t) for t in stakeholder_type_by_evidence.values())
+# Deliberately narrower than models.REQUIREMENT_TYPES, which also holds
+# INSTITUTIONAL_DIRECTION. That set decides what counts as a mandate for evidence
+# and skill classification and is unchanged; this one decides who gets the 30%
+# block. The institution's own direction binds the program, but it is the
+# program's own voice — letting it buy the same 30% as สภาวิชาชีพ would let a
+# faculty raise any Need's rank by restating its vision. Do not collapse the two.
+_MANDATING_TYPE = StakeholderType.PROFESSIONAL_COUNCIL
 
 
 def compute_demand_score(
     source_evidence_ids: list[str],
     stakeholder_type_by_evidence: dict[str, str],
-    total_weight: float,
 ) -> float:
-    """Share of the program's total evidence weight that named this capability.
+    """How strongly the corpus asks for this capability, in [0, 1].
 
-    Pure weighted frequency. The previous formula added a breadth term divided by
-    len(StakeholderType) — the count of enum members, not of the groups the
-    program actually collected from — so a well-supported skill in a 3-source
-    program scored 0.33 on breadth and every stored score moved whenever the enum
-    grew. Frequency alone is both honest and stable.
+    `stakeholder_type_by_evidence` is both the type lookup and the corpus: its
+    size is the denominator, and an evidence id absent from it contributes
+    nothing. Callers build it from the extracted skills, so the corpus is the
+    evidence that yielded at least one skill.
+
+    Duplicate ids collapse — a capability named three times in one evidence item
+    is one item's worth of demand, not three.
     """
-    if total_weight <= 0:
+    corpus = len(stakeholder_type_by_evidence)
+    if corpus == 0:
         return 0.0
-    named = sum(
-        _weight_of(stakeholder_type_by_evidence.get(eid, ""))
-        for eid in set(source_evidence_ids)
-        if eid in stakeholder_type_by_evidence
-    )
-    return round(min(named / total_weight, 1.0), 4)
+    named = {eid for eid in source_evidence_ids if eid in stakeholder_type_by_evidence}
+    mandated = any(stakeholder_type_by_evidence[eid] == _MANDATING_TYPE.value for eid in named)
+    frequency = len(named) / corpus
+    return round(MANDATE_WEIGHT * float(mandated) + FREQUENCY_WEIGHT * frequency, 4)
 
 
 def classification_coverage(member_classes: list[str]) -> dict[str, int]:

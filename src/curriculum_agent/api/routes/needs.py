@@ -83,17 +83,34 @@ async def get_need_trace(program_id: str, need_id: str) -> NeedTrace:
     )
 
 
-async def _build_stage_state(program_id: str, body: DesignerNoteRequest | None) -> AgentState:
-    """The state every run entry point starts from.
+async def _base_state(program_id: str, body: DesignerNoteRequest | None) -> AgentState:
+    """Program metadata plus the designer's note — what every run entry point needs.
 
-    Both stages read `metadata` and `classified_evidence`, and both accept the
-    designer's note — skill_extraction uses it while extracting, need_combination
-    while writing each Need's sentence. Building it once keeps the three routes
-    from drifting apart in what they hand the pipeline.
+    Both stages accept the note: skill_extraction uses it while extracting,
+    need_combination while writing each Need's sentence.
     """
     metadata = await ProgramRepository().get(program_id)
     if metadata is None:
         raise HTTPException(status_code=404, detail="Program not found")
+
+    state: AgentState = {
+        "program_id": program_id,
+        "metadata": metadata.model_dump(mode="json"),
+    }
+    # Set only when there is a note: AgentState is total=False, so an absent key
+    # reads as None through .get and no empty string is stored.
+    if body is not None and body.note_th:
+        state["designer_note"] = body.note_th
+    return state
+
+
+async def _build_stage_state(program_id: str, body: DesignerNoteRequest | None) -> AgentState:
+    """Base state plus the evidence corpus, for the routes that extract skills.
+
+    need_combination no longer takes this path: it reads nothing but the skills,
+    so requiring evidence there would be a precondition the stage does not have.
+    """
+    state = await _base_state(program_id, body)
 
     evidence_items = await EvidenceRepository().list_by_program(program_id)
     if not evidence_items:
@@ -101,16 +118,7 @@ async def _build_stage_state(program_id: str, body: DesignerNoteRequest | None) 
             status_code=422,
             detail="ไม่มี evidence สำหรับโปรแกรมนี้ กรุณาเพิ่ม evidence ก่อน",
         )
-
-    state: AgentState = {
-        "program_id": program_id,
-        "metadata": metadata.model_dump(mode="json"),
-        "classified_evidence": [e.model_dump(mode="json") for e in evidence_items],
-    }
-    # Set only when there is a note: AgentState is total=False, so an absent key
-    # reads as None through .get and no empty string is stored.
-    if body is not None and body.note_th:
-        state["designer_note"] = body.note_th
+    state["classified_evidence"] = [e.model_dump(mode="json") for e in evidence_items]
     return state
 
 
@@ -162,11 +170,12 @@ async def run_need_combination(
 
     Reads the skill rows back from the repository instead of re-extracting: the
     expensive per-evidence LLM pass is exactly what a designer re-running this
-    stage does not want repeated.
+    stage does not want repeated. The evidence corpus is not loaded at all — the
+    stage groups and writes from the skills alone.
     """
     from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
 
-    state = await _build_stage_state(program_id, body)
+    state = await _base_state(program_id, body)
     skills = await SkillRepository().list_by_program(program_id)
     if not skills:
         raise HTTPException(

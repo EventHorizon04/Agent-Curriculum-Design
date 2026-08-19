@@ -26,7 +26,6 @@ from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.stages.demand import (
     classification_coverage,
     compute_demand_score,
-    total_evidence_weight,
 )
 from curriculum_agent.stages.need_grouping import merge_bloom, normalize_need_name
 
@@ -198,9 +197,8 @@ def _compute_skill_importance(
         norm = normalize_need_name(s["skill_name_th"])
         eids_by_name.setdefault(norm, set()).add(str(s["evidence_id"]))
 
-    total = total_evidence_weight(stakeholder_type_by_evidence)
     return {
-        name: compute_demand_score(sorted(eids), stakeholder_type_by_evidence, total)
+        name: compute_demand_score(sorted(eids), stakeholder_type_by_evidence)
         for name, eids in eids_by_name.items()
     }
 

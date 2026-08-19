@@ -43,7 +43,7 @@ def test_prompt_carries_the_thai_label_not_the_raw_code(ksec: KSECCategory) -> N
     or (..., "EC", ...) rendered the bare code straight into the Thai prompt
     text via the ksec.get(ksec, ksec) fallback, with nothing failing.
     """
-    messages = build_summarize_need_prompt(["ทักษะตัวอย่าง"], ["ตัวอย่าง evidence"], ksec.value)
+    messages = build_summarize_need_prompt(["ทักษะตัวอย่าง"], ksec.value, "apply")
     user_message = messages[1]["content"]
     # An exact-line check, not a substring check: "ทักษะ" is itself a substring
     # of the wrong label "ทักษะทั่วไป", so a bare `in` assertion would pass even
@@ -51,3 +51,19 @@ def test_prompt_carries_the_thai_label_not_the_raw_code(ksec: KSECCategory) -> N
     # production code emits so a mistype is as visible as a drop.
     expected_line = f"หมวดสมรรถนะ: {_EXPECTED_LABEL_TH[ksec]} ({ksec.value})"
     assert expected_line in user_message
+
+
+def test_the_prompt_asks_for_the_fields_the_caller_actually_parses() -> None:
+    """The prompt and the response model are one contract, split across two files.
+
+    need_combination calls this prompt with `_NeedStatement`, so a system message
+    that asks for any other JSON shape makes Instructor retry three times and then
+    fall back to a `[ต้องทบทวน]` skill list for every single Need — a total
+    pipeline failure that no other test in this file notices, because the rest
+    assert on the user message only. This is that guard.
+    """
+    from curriculum_agent.stages.need_combination import _NeedStatement
+
+    system = build_summarize_need_prompt(["ทักษะตัวอย่าง"], "S", "apply")[0]["content"]
+    for field in _NeedStatement.model_fields:
+        assert field in system, f"the prompt never names '{field}', which the caller parses"

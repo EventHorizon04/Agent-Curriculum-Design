@@ -499,7 +499,11 @@ async def test_combine_run_feeds_stored_skills_into_the_stage(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     """Combine-only reads the skill rows back out of the repository — it must not
-    re-extract, and the stage must receive them under the key it reads."""
+    re-extract, and the stage must receive them under the key it reads.
+
+    EvidenceRepository is deliberately left unstubbed: the route must not touch it
+    at all, so a call would hit a real database and fail this test rather than
+    passing on a stub nobody noticed had become unnecessary."""
     seen: dict[str, object] = {}
 
     async def fake_needs(state):
@@ -515,9 +519,6 @@ async def test_combine_run_feeds_stored_skills_into_the_stage(
 
     monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
-        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
-    )
-    monkeypatch.setattr(
         needs_route.SkillRepository, "list_by_program", AsyncMock(return_value=[_skill()])
     )
     with (
@@ -529,6 +530,7 @@ async def test_combine_run_feeds_stored_skills_into_the_stage(
     assert response.status_code == 200, response.text
     assert extracted is False
     assert [s["skill_id"] for s in seen["extracted_skills"]] == ["S1"]
+    assert "classified_evidence" not in seen
     assert response.json()["needs"][0]["need_id"] == "N1"
 
 
@@ -536,9 +538,6 @@ async def test_combine_run_rejects_a_program_with_no_skills(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
-    monkeypatch.setattr(
-        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
-    )
     monkeypatch.setattr(needs_route.SkillRepository, "list_by_program", AsyncMock(return_value=[]))
     response = await client.post("/programs/cs-test/needs/combine/run")
     assert response.status_code == 422
@@ -554,3 +553,31 @@ async def test_combine_run_returns_404_for_missing_program(
     )
     response = await client.post("/programs/unknown-program/needs/combine/run")
     assert response.status_code == 404
+
+
+async def test_combine_run_does_not_require_any_evidence(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Skills are the only precondition.
+
+    The shared state builder used to 422 on an empty evidence table, which was a
+    precondition need_combination no longer has: it groups and writes from the
+    skills alone. A program whose evidence rows were cleared after extraction must
+    still be able to redraw its Needs.
+    """
+
+    async def fake_needs(state):
+        return {**state, "needs": [_need().model_dump(mode="json")]}
+
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        needs_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[])
+    )
+    monkeypatch.setattr(
+        needs_route.SkillRepository, "list_by_program", AsyncMock(return_value=[_skill()])
+    )
+    with patch("curriculum_agent.stages.need_combination.run", new=fake_needs):
+        response = await client.post("/programs/cs-test/needs/combine/run")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["needs"][0]["need_id"] == "N1"

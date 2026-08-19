@@ -9,6 +9,8 @@ from curriculum_agent.stages.need_grouping import (
     bucket_by_ksec,
     dedupe_with_bloom_max,
     find_code_identifier,
+    find_vague_phrase,
+    looks_like_a_skill_list,
     merge_bloom,
 )
 
@@ -230,3 +232,73 @@ def test_thai_fused_to_latin_without_a_space_is_detected(statement: str) -> None
 )
 def test_spaced_english_and_fused_digits_still_pass(statement: str) -> None:
     assert find_code_identifier(statement) is None
+
+
+# --- the sentence has to be specific enough to draft a PLO from ------------
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # A generic head noun with an empty modifier names no capability, so a PLO
+        # drafted from it would have to be invented rather than derived.
+        "ตลาดแรงงานต้องการผู้ที่มีทักษะที่จำเป็นต่อการทำงาน",
+        "ตลาดแรงงานต้องการผู้ที่มีความรู้ที่เกี่ยวข้องกับอุตสาหกรรม",
+        "ตลาดแรงงานต้องการผู้ที่มีสมรรถนะด้านต่างๆ",
+        "ตลาดแรงงานต้องการผู้ที่มีความสามารถที่หลากหลาย",
+        # Restating the question instead of answering it.
+        "ตลาดแรงงานต้องการบุคลากรที่มีคุณสมบัติตามที่ตลาดต้องการ",
+        "ตลาดแรงงานต้องการผู้ที่ทำงานได้ตามความต้องการของตลาด",
+    ],
+)
+def test_content_free_phrases_are_detected(statement: str) -> None:
+    assert find_vague_phrase(statement) is not None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # Each names a capability, an object, and a context. Over-rejecting these
+        # costs a retry and, on the third failure, a Need the designer must write
+        # by hand — the same trade-off the code-token guard is tuned against.
+        "ตลาดแรงงานต้องการผู้ที่ออกแบบระบบฐานข้อมูลสำหรับงานธุรกิจได้",
+        # "ที่จำเป็น" attached to a real object, not to a generic head noun.
+        "ตลาดแรงงานต้องการผู้ที่คัดกรองข้อมูลที่จำเป็นต่อการตัดสินใจของผู้บริหารได้",
+        "ตลาดแรงงานต้องการผู้ที่ประเมินความเสี่ยงด้านการเงินของลูกค้ารายย่อยได้",
+        "ตลาดแรงงานต้องการผู้ที่วิเคราะห์ข้อมูลยอดขายด้วย Power BI เพื่อวางแผนการตลาด",
+    ],
+)
+def test_specific_market_sentences_pass_the_vagueness_check(statement: str) -> None:
+    assert find_vague_phrase(statement) is None
+
+
+def test_the_vagueness_detector_reports_what_it_found() -> None:
+    """Named in the retry prompt: a model told "ทักษะที่จำเป็น" was rejected
+    replaces that phrase, while one told the sentence was invalid rewrites the
+    wrong half."""
+    found = find_vague_phrase("ตลาดแรงงานต้องการผู้ที่มีทักษะที่จำเป็นต่อการทำงาน")
+    assert found is not None
+    assert "ที่จำเป็น" in found
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "เขียนโปรแกรมเว็บ, ออกแบบฐานข้อมูล, ทดสอบระบบ, เขียนเอกสาร",
+        "K, S, E, C, EC",
+    ],
+)
+def test_a_comma_joined_skill_list_is_detected(statement: str) -> None:
+    assert looks_like_a_skill_list(statement) is True
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # Two commas is ordinary Thai prose, which is why the floor sits above it.
+        "ตลาดแรงงานต้องการผู้ที่ออกแบบ, พัฒนา และดูแลระบบสารสนเทศขององค์กรได้",
+        "ตลาดแรงงานต้องการผู้ที่ออกแบบระบบฐานข้อมูลสำหรับงานธุรกิจได้",
+    ],
+)
+def test_prose_with_a_comma_or_two_is_not_a_list(statement: str) -> None:
+    assert looks_like_a_skill_list(statement) is False

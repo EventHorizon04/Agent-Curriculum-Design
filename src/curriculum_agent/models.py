@@ -247,9 +247,12 @@ class ExtractedSkill(BaseModel):
 class Need(BaseModel):
     """A market-side demand distilled from a group of extracted skills.
 
-    One sentence stating what the labour market asks for. PLO synthesis restates
-    it from the graduate's side; keeping both makes "which demand does this PLO
-    answer?" answerable from the data rather than inferred.
+    One sentence stating what the labour market asks for, written from the member
+    skills alone — no evidence text reaches the sentence, and none is stored on
+    the Need. `source_evidence_ids` still carries the trail, inherited from those
+    skills. PLO synthesis restates the sentence from the graduate's side and is
+    given nothing else, so the sentence has to be specific enough to draft one
+    PLO from; need_combination._NeedStatement is what enforces that.
     """
 
     need_id: str
@@ -271,7 +274,6 @@ class Need(BaseModel):
     demand_score: float = Field(ge=0, le=1)
     is_optional: bool = False
     classification_coverage: dict[str, int] = Field(default_factory=dict)
-    sample_quotes_th: list[str] = Field(default_factory=list, max_length=5)
 
 
 # --------------------------- Stage 3 -----------------------------

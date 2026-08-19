@@ -19,7 +19,7 @@ _BLOOM_RANK = {level: i for i, level in enumerate(BLOOM_ORDER)}
 # a guard that also rejected JavaScript, IoT, or Power BI would retry good
 # sentences and end up falling back to a comma-joined skill list, which is
 # worse than the leak it was meant to catch. General camelCase is therefore NOT
-# matched; only these four shapes are.
+# matched; only these five shapes are.
 _CODE_TOKEN_RES: tuple[re.Pattern[str], ...] = (
     # snake_case — no natural-language word carries an underscore
     re.compile(r"[A-Za-z]\w*_\w+"),
@@ -50,6 +50,54 @@ def find_code_identifier(statement: str) -> str | None:
         if match:
             return match.group(0)
     return None
+
+
+# A Need is drafted straight into one PLO, so a sentence that names no capability
+# is not a weaker Need — it is an unusable one. These two guards are the pure-code
+# half of "PLO-ready": the prompt asks for a concrete capability, and these reject
+# the two shapes a light model falls back to when it cannot produce one.
+
+# A generic head noun plus an empty modifier: "ทักษะที่จำเป็น", "ความรู้ที่เกี่ยวข้อง",
+# "ด้านต่างๆ". Matching the pair rather than the modifier alone is deliberate —
+# "ข้อมูลที่จำเป็นต่อการตัดสินใจ" names a real object and must pass.
+_VAGUE_HEAD_RE = re.compile(
+    r"(ความรู้|ทักษะ|สมรรถนะ|ความสามารถ|คุณลักษณะ|สิ่ง|เรื่อง|ด้าน|งาน)\s*"
+    r"(ที่จำเป็น|ที่เกี่ยวข้อง|ที่หลากหลาย|ต่าง\s*ๆ)"
+)
+
+# Restating the frame instead of answering it: "ตลาดแรงงานต้องการผู้ที่มีทักษะ
+# ตามที่ตลาดต้องการ". Circular by construction, so plain substrings are enough.
+_CIRCULAR_PHRASES_TH: tuple[str, ...] = (
+    "ตามที่ตลาดต้องการ",
+    "ตามความต้องการของตลาด",
+    "ที่ตลาดต้องการ",
+    "ตามที่สถานประกอบการต้องการ",
+)
+
+# Three or more commas is a list wearing a sentence's clothes. Two is still prose
+# ("ออกแบบ, พัฒนา และดูแลระบบ"), which is why the floor is not lower.
+_MAX_COMMAS = 2
+
+
+def find_vague_phrase(statement: str) -> str | None:
+    """The first content-free phrase in `statement`, or None.
+
+    Returns the phrase because the retry prompt names it: a model told that
+    "ทักษะที่จำเป็น" was rejected replaces it with the capability it meant, while
+    one told the sentence was invalid usually rewrites the wrong half.
+    """
+    match = _VAGUE_HEAD_RE.search(statement)
+    if match:
+        return match.group(0)
+    for phrase in _CIRCULAR_PHRASES_TH:
+        if phrase in statement:
+            return phrase
+    return None
+
+
+def looks_like_a_skill_list(statement: str) -> bool:
+    """True when the sentence is skill names joined by commas rather than a demand."""
+    return statement.count(",") + statement.count("，") > _MAX_COMMAS
 
 
 def normalize_need_name(name: str) -> str:
