@@ -177,11 +177,12 @@ class Need(BaseModel):
     stakeholder_coverage: dict[StakeholderType, int] = {}  # which groups, how often
     source_stakeholder_types: list[StakeholderType] = []  # distinct types, external first (enum order) — the display list
     freq: int = Field(ge=1)  # = len(member_skill_ids), a raw mention count
-    demand_score: float = Field(ge=0, le=1)  # weighted frequency over evidence weights
+    demand_score: float = Field(ge=0, le=1)  # 0.30 mandate block + 0.70 frequency block
     is_optional: bool = False  # majority-want group → supplementary, not core
     classification_coverage: dict[str, int] = {}  # member-skill count per classification
-    sample_quotes_th: list[str] = []  # up to 3-5 illustrative excerpts
 ```
+
+A Need holds no evidence text. `sample_quotes_th` was dropped (migration `e1a7c93b5d02`) when `need_combination` stopped reading evidence: the stage writes each sentence from the member skills alone, so there was nothing left to sample. The trail survives in `source_evidence_ids`, inherited from those skills, and the full text stays in the evidence table for drill-down. `demand_score`'s denominator moved with it — it is now the weight of the evidence that yielded at least one skill, since an evidence item nobody extracted a skill from expresses no demand for a Need to be a share of.
 
 **Groundedness (`ExtractedSkill.evidence_span_th`):** verified by `is_grounded()` in `stages/skill_extraction.py`. A span passes only if, after whitespace-normalisation, it is at least `_MIN_SPAN_CHARS` (12) characters long *and* occurs verbatim in the source evidence text. Skills whose quote is too short to prove anything, or whose quote isn't actually in the evidence (a fabrication), are dropped before persistence; the stage counts and logs both drop reasons separately (`dropped_too_short` / `dropped_not_found`) and the total dropped count travels in `AgentState["dropped_ungrounded_count"]` for checkpoint display.
 
@@ -197,14 +198,16 @@ Rules 1–2 outrank 3 on purpose — a mandated skill is never dropped for being
 
 **Single-tag guarantee (`Need.ksec_category`):** `need_combination` buckets `ExtractedSkill`s by `ksec_category` (`bucket_by_ksec` in `stages/need_grouping.py`) *before* clustering — `E` and `C` share one `EC` bucket, everything else buckets by its own tag — and clustering never fuses groups across buckets. A Need mixing two of `K`/`S`/`EC` is therefore structurally impossible. After a group forms, `resolve_need_ksec` decides its tag from its raw member tags: all-`E` → `E`, all-`C` → `C`, mixed → `EC`.
 
-`demand_score` is the signal the agent uses to decide which Needs are core vs optional. The weighting rule (`compute_demand_score` / `evidence_weight` in `stages/demand.py`, shared by skill-level `importance_score` and Need-level `demand_score`):
+`demand_score` is the signal the agent uses to decide which Needs are core vs optional. It is also what the 10-PLO ceiling ranks by. The rule (`compute_demand_score` in `stages/demand.py`, shared by skill-level `importance_score` and Need-level `demand_score`):
 
-- Pure weighted frequency, no breadth term: `demand_score = Σ weight(evidence items naming this skill/Need) / Σ weight(all evidence items in the program)`, both sums over distinct evidence ids.
-- Weight comes from who said it, resolved through `STAKEHOLDER_GROUP`: `PROFESSIONAL_COUNCIL` = 1.0, `INSTITUTIONAL_DIRECTION` = 0.8, every other external type = 0.6, every other internal type = 0.4. A type added to the enum later gets 0.6/0.4 automatically.
+- Two blocks, not one weighted sum: `demand_score = 0.30 × (สภาวิชาชีพ named it? 1 : 0) + 0.70 × (distinct evidence ids naming it / distinct evidence ids in the corpus)`. `MANDATE_WEIGHT` and `FREQUENCY_WEIGHT` in `stages/demand.py`.
+- The 30% block has exactly one buyer: `PROFESSIONAL_COUNCIL`. This is deliberately narrower than `models.REQUIREMENT_TYPES`, which also holds `INSTITUTIONAL_DIRECTION` and still governs evidence and skill classification — the institution's direction binds the program, but it is the program's own voice, and letting it buy the same 30% would let a faculty lift any Need's rank by restating its vision. `test_demand.py` pins the divergence; don't "fix" the two back into agreement.
+- Everyone who is not the council sits in one class. What separates an employer's ask from a student's is how often it was raised, not a per-type multiplier. The old table (1.0 / 0.8 / 0.6 / 0.4) is gone: every score depended on numbers nobody could defend, and retuning one moved every stored score.
+- The corpus is whatever the caller's `stakeholder_type_by_evidence` map holds. `need_combination` builds it from the extracted skills, so the denominator is the evidence that yielded at least one skill — an evidence item nobody extracted a skill from expresses no demand for a Need to be a share of.
 - `is_optional` on a Need is derived from its member skills' classifications: `want` count > `requirement` count + `need` count.
 - `classification_coverage` records the per-classification count over member *skills* (not source evidence items, since that is where classification now lives) — the report shows it as e.g. "3 requirement / 2 need / 1 want" under each Need.
 
-**Floor, no cap:** `need_combination` no longer merges core groups down to a quota — every core group clustering finds within a KSEC bucket becomes its own Need. `MIN_NEEDS=6` in `stages/need_grouping.py` is a floor only: if the program ends with fewer than 6 core Needs, `need_combination` logs a policy warning (and `plo_synthesis` logs its own if the resulting core PLO count is still short) for the designer to address at the checkpoint. PLO synthesis then maps one Need to one PLO (see below), so whatever core count `need_combination` produces carries through unchanged. Optional (want-dominant) Needs are exempt from the floor, same as optional PLOs.
+**Floor 6, ceiling 10 — enforced at different stages.** `need_combination` still turns every core group clustering finds within a KSEC bucket into its own Need; it merges nothing down to a quota. `MIN_NEEDS=6` (`stages/need_grouping.py`) is a floor code cannot manufacture, so falling short only logs a policy warning at `need_combination` and again at `plo_synthesis`, for the designer to address at the checkpoint. `MAX_CORE_PLOS=10` (`stages/plo_synthesis.py`) is a ceiling code can enforce, and it does so by **selection, not merging**: `synthesis_order` ranks the core Needs by descending `demand_score` and synthesis takes the first 10. The rest stay stored, still trace to their evidence, and are named in the synthesis warning and in `plo_report`'s `needs_not_synthesized`. Optional (want-dominant) Needs are outside both bounds.
 
 ## Stage 4: PLO (plo_synthesis) — cognitive-only, one Need → one PLO
 

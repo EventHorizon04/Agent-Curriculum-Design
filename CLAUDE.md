@@ -20,7 +20,7 @@ The `curriculum-design-agent` skill (`.claude/skills/curriculum-design-agent/`) 
 
 - **Language:** Python 3.11+, dependency management via `uv`
 - **Agent:** LangGraph (state machine with `interrupt` for HITL)
-- **LLM:** provider-switchable via `LLM_PROVIDER` — `ollama` (default, running **natively on the host**, no container) or `openrouter`. `LIGHT_MODEL`/`HEAVY_MODEL` default per provider (`_PROVIDER_DEFAULT_MODEL` in `config.py`) and are overridable in `.env`. Dual-model pattern — see `src/curriculum_agent/llm.py`
+- **LLM:** provider-switchable via `LLM_PROVIDER` — `openrouter` (the current default), `opentyphoon` (Thai-language models, same OpenAI-compatible shape), or `ollama` (running **natively on the host**, no container). Each hosted provider reads its own key (`OPENROUTER_API_KEY` / `OPENTYPHOON_API_KEY`); ollama needs none. `LIGHT_MODEL`/`HEAVY_MODEL` default per provider (`_PROVIDER_DEFAULT_MODEL` in `config.py`) and are overridable in `.env`. `llm.describe_target()` prints which endpoint a process resolved to — never the key — and the API logs it once at startup. Dual-model pattern — see `src/curriculum_agent/llm.py`
 - **Structured output:** Instructor + Pydantic v2 (no hand-parsing JSON). The `openai` package is a dependency because Instructor uses OpenAI-compatible API to talk to Ollama — not for the OpenAI cloud service.
 - **Clustering:** LLM-based (heavy model) — no embeddings/KeyBERT/Qdrant on this branch; see docs/superpowers/specs/2026-07-18-llm-only-pipeline-design.md
 - **Storage:** PostgreSQL (structured), MinIO (raw files)
@@ -103,7 +103,7 @@ These are project decisions. If a request conflicts with one, surface the confli
 3. **Forbidden words in PLO statements:** รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. The Pydantic model rejects these (exception: a PLO with `smart_escalated=True` is kept for human repair) — do not bypass.
 4. **One Bloom action verb per outcome.** Two verbs allowed only if at adjacent levels.
 5. **SMART gate on every synthesized PLO.** Hard criteria (S verb-in-statement, M no-forbidden-word, R evidence-resolves) drive an automated retry loop (max 3, criterion named in the retry prompt) — an unfixed PLO is marked `smart_escalated` for human repair, never silently dropped. Five soft verdicts (S object quality, M assessability, A level plausibility, R answers-its-Needs, T horizon) become `soft_flags` **and** set the matching `SMARTCheck` field, so `passed` means what it says; they never block.
-6. **At least 6 main PLOs per program, mapped one-to-one from main Needs — no upper cap.** `need_combination` no longer merges core groups down to a quota; every core group clustering finds within a KSEC bucket becomes its own Need, and PLO synthesis then drafts exactly one PLO per Need. A core count below 6 (`MIN_NEEDS` in `stages/need_grouping.py`) logs a policy warning for the designer to address at the checkpoint. Optional PLOs synthesized from want-based Needs (`is_optional=True`) are exempt from this count.
+6. **6-10 main PLOs per program, each drafted from one Need.** The floor (`MIN_NEEDS` in `stages/need_grouping.py`) cannot be enforced by code — too few Needs simply means too few PLOs — so a core count below 6 logs a policy warning for the designer to address at the checkpoint. The ceiling (`MAX_CORE_PLOS` in `stages/plo_synthesis.py`) is enforced **by choosing which Needs to use, not by merging them**: `need_combination` still turns every core group into its own Need, and synthesis takes the 10 highest `demand_score` ones. The Needs that lose the cut stay stored and visible, still tracing to their evidence — they are unused, not deleted, and both the synthesis log and the PLO report name them. Optional PLOs from want-based Needs (`is_optional=True`) are outside both bounds.
 7. **Human-in-the-loop at every stage boundary — except one shared checkpoint.** Stages never auto-chain into the next without checkpoint approval; the one exception is skill_extraction → need_combination, which run back-to-back and share a single checkpoint after need_combination so the designer reviews raw skills and distilled Needs together.
 8. **Open-source LLM by default.** Paid APIs (Claude, GPT-4o) are config-switchable for synthesis stages but never hardcoded.
 
@@ -126,7 +126,8 @@ src/curriculum_agent/
   exporters/           ← CHECO, มคอ.2, Excel matrix
   api/                 ← FastAPI routes
 frontend/              ← React UI (one page per stage + Pipeline)
-scripts/               ← start-dev.ps1 / stop-dev.ps1
+scripts/               ← start-dev.ps1 / start-demo.ps1 / stop-dev.ps1
+                         (_api-process.ps1 holds the shared port/pid logic)
 tests/unit/            ← validators, schema, pure functions
 tests/integration/     ← LLM mocked, full stages
 ```
@@ -144,6 +145,33 @@ tests/integration/     ← LLM mocked, full stages
 
 - **Don't bypass the SMART retry loop after synthesis.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. Hard checks are pure code (`smart_rules.py`); the soft judge is a separate light-model prompt. Escalated PLOs must stay visible in the UI.
 - **Don't pass full evidence text into synthesis prompts.** Summarize each Need in ≤200 tokens. Full evidence stays in Postgres for drill-down, not in the synthesis prompt.
+- **`need_combination` reads the extracted skills and nothing else.** No evidence
+  text reaches the stage: the sentence for each Need is written from its member
+  skill names, and `demand_score` is computed from the evidence ids and
+  stakeholder types carried on those skills. `POST /needs/combine/run` therefore does not load the
+  evidence table at all and has no evidence precondition. Don't reintroduce
+  `classified_evidence` here — extraction already read that evidence, and the raw
+  quotes only gave the light model longer Thai to drift on. Traceability is
+  unaffected: `Need.source_evidence_ids` still comes from the member skills.
+- **`demand_score` is two blocks, not a table of per-type weights.**
+  `0.30 × (สภาวิชาชีพ named it? 1 : 0) + 0.70 × share of the corpus that named it`
+  — `stages/demand.py`. Only `PROFESSIONAL_COUNCIL` buys the mandate block, which
+  is deliberately narrower than `models.REQUIREMENT_TYPES`: that set still holds
+  `INSTITUTIONAL_DIRECTION` and still governs evidence and skill classification,
+  but letting the institution's own voice buy the same 30% would let a faculty
+  lift any Need's rank by restating its vision. Everyone else shares one class and
+  is separated by frequency alone. Don't re-add per-type multipliers — the old
+  1.0/0.8/0.6/0.4 table made every stored score depend on numbers nobody could
+  defend, and the score now decides which Needs become PLOs.
+- **A Need has to be usable as a PLO on its own.** `plo_synthesis` drafts exactly
+  one PLO per Need and is handed nothing but `statement_th`, so a placeholder
+  ("ทักษะที่จำเป็น") or a comma-joined skill list makes the synthesis model invent the
+  capability with no evidence behind it. `need_combination._NeedStatement` enforces
+  a length floor, the no-list rule, and `find_vague_phrase` on top of the
+  code-token guard; Instructor retries with the offending phrase quoted. A group
+  that still fails ships a `[ต้องทบทวน]`-marked fallback for the designer to rewrite —
+  never a quietly-degraded Need. Keep the Need in the market's voice
+  ("ตลาดแรงงานต้องการ..."); restating it from the graduate's side is `plo_synthesis`'s job.
 - **Never merge or cluster skills across a KSEC bucket.** `need_combination` buckets `ExtractedSkill`s by `ksec_category` before any clustering runs, and clustering stays inside one bucket. The buckets are `K`, `S`, `EC` — `E` and `C` skills deliberately share the `EC` bucket, and `resolve_need_ksec` hands back a standalone `E` or `C` for a group whose members turn out to be purely one of them. This is what makes "a Need has exactly one KSEC tag" a structural guarantee rather than a rule someone has to remember — don't add a grouping path that clusters across buckets, even to reduce the Need count.
 - **Don't classify evidence with an LLM.** `requirement` is derived in code from
   `StakeholderType` (`classify_evidence_type`); `need`/`want`/`unclassified` are

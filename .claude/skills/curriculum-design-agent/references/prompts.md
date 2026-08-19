@@ -116,35 +116,56 @@ Because clustering and merging both run *inside* one KSEC bucket (bucketing happ
 
 **Model:** light (`complete_light`)
 
-**File:** `prompts/summarize_need.py` — `build_summarize_need_prompt(skill_names, sample_evidence, ksec, note_th=None)`
+**File:** `prompts/summarize_need.py` — `build_summarize_need_prompt(skill_names, ksec, bloom_level, note_th=None)`
+
+**Sees the skills and nothing else.** Evidence text used to be pasted in as samples; it is not any more. The skills already carry what extraction found in that evidence, the raw quotes only gave the light model longer Thai to drift on, and traceability is untouched — a Need's `source_evidence_ids` come from its member skills.
+
+**The sentence must be PLO-ready.** `plo_synthesis` drafts exactly one PLO per Need and is handed nothing but this sentence, so a placeholder or a skill list does not merely weaken the PLO — it makes the synthesis model invent the capability with no evidence behind it. Hence the three-part rule and the hard rejections below.
 
 ```
 คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ความต้องการของตลาดแรงงาน
 จากกลุ่มทักษะที่ให้มา จงสรุปเป็น 'ความต้องการของตลาด' หนึ่งประโยค
+ประโยคนี้จะถูกนำไปเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) หนึ่งข้อโดยตรง
+จึงต้องเจาะจงพอที่จะเขียน PLO ได้ทันทีโดยไม่ต้องเดาเนื้อหาเพิ่ม
 
 กติกา:
 - เขียนเป็นประโยคเดียว มุมมองของ 'ตลาดแรงงานต้องการอะไร'
   ไม่ใช่มุมมองผู้เรียนหรือผลลัพธ์การเรียนรู้
-- ต้องสื่อถึงความสามารถจริงที่ใช้ทำงานได้ ไม่ใช่แค่ชื่อหมวดทักษะ
-- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกันด้วยเครื่องหมายจุลภาค
-- ความยาวไม่เกิน 2 บรรทัด
+- ต้องมีครบ 3 ส่วน: (1) ความสามารถที่ลงมือทำได้จริง
+  (2) วัตถุหรือผลงานที่เจาะจง (3) บริบทของงานที่ใช้ความสามารถนั้น
+- หนึ่งประโยคคือหนึ่งสมรรถนะ
+- ระดับความยากต้องตรงกับระดับ Bloom ที่ระบุให้
+- ห้ามใช้คำกว้าง เช่น 'ทักษะที่จำเป็น' 'ความรู้ที่เกี่ยวข้อง' 'สมรรถนะด้านต่างๆ'
+- ห้ามวนกลับมาพูดว่า 'ตามที่ตลาดต้องการ'
+- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกัน (จุลภาคไม่เกิน 2 ตัว)
+- ความยาว 1-2 บรรทัด ไม่สั้นกว่า MIN_STATEMENT_CHARS (40) ตัวอักษร
+- ห้ามมีชื่อฟังก์ชัน ชื่อตัวแปร หรือโค้ดปนอยู่
 
 ตอบเป็น JSON object ที่มี field:
   statement_th: string (ประโยคภาษาไทย)
   statement_en: string (ประโยคภาษาอังกฤษ)
 
 หมวดสมรรถนะ: {ksec_label} ({ksec})
+ระดับที่ตลาดเรียกร้อง: {bloom_label} ({bloom_level})
 ทักษะในกลุ่มนี้: {skill_names, joined}
-ตัวอย่างข้อความ evidence: {sample_evidence}
 ```
 
-If this call fails, `stages/need_combination.py` falls back to a plain comma-joined skill-name list rather than blocking the stage — a degraded but still evidence-grounded `Need.statement_th`.
+**Output validation (pure code, drives Instructor retries).** `need_combination._NeedStatement` rejects the following, and each raised message names what it found so the retry prompt can quote it:
+
+| Check | Implemented by | Rejects |
+|---|---|---|
+| No code identifiers | `need_grouping.find_code_identifier` | `หน.getDefault`, `get_default`, `calculate()`, `กลยุทธ์chant` |
+| Long enough to carry three parts | `MIN_STATEMENT_CHARS` (40) | `ตลาดต้องการคนเก่ง` |
+| Not a joined list | `need_grouping.looks_like_a_skill_list` | more than 2 commas |
+| Names a capability | `need_grouping.find_vague_phrase` | `ทักษะที่จำเป็น`, `ด้านต่างๆ`, `ตามที่ตลาดต้องการ` |
+
+If every attempt fails, `stages/need_combination.py` writes a comma-joined skill-name list prefixed `[ต้องทบทวน]` — deliberately the shape the validator rejects, so it cannot pass for a usable Need, and marked so the designer fixes it at the checkpoint instead of `plo_synthesis` guessing from a list of words.
 
 ---
 
 ## Stage 5 (plo_synthesis): one Need → one PLO (the most important prompt)
 
-**Purpose:** restate one or more market Needs (already at least 6 core, no upper cap, post-`need_combination`) as a single graduate-side PLO. Called once per Need by the stage loop (list of length 1), and reused by the designer-driven `POST /programs/{id}/plos/from-needs` endpoint with a longer list when the designer chooses to merge several Needs into one PLO — same function, same rules, whether it's 1 Need or several.
+**Purpose:** restate one or more market Needs (post-`need_combination`) as a single graduate-side PLO. Called once per Need by the stage loop (list of length 1), and reused by the designer-driven `POST /programs/{id}/plos/from-needs` endpoint with a longer list when the designer chooses to merge several Needs into one PLO — same function, same rules, whether it's 1 Need or several.
 
 **Model:** heavy (`complete_heavy`) — config-switchable to a proprietary model per project policy, never hardcoded
 
@@ -234,6 +255,6 @@ The hard-fail retry loop this soft judge sits alongside is code, not a prompt: `
 
 **Keep Need summaries short.** PLO synthesis passes each Need's statement, KSEC tag, Bloom level, and frequency/demand — not full evidence text. Summarize in ≤200 tokens; the full evidence chain stays in the database, the prompt only needs the gist.
 
-**The floor is enforced upstream, not by asking nicely.** PLO synthesis never asks the model for a target PLO count — it calls the per-Need prompt once per Need, one PLO out per Need in. There is no upper cap: every core group `need_combination` finds becomes a Need, and one Need becomes one PLO. A core count below `MIN_NEEDS` (6) only logs a policy warning for the designer to address at the checkpoint. If a prompt anywhere asks an LLM to directly produce "a set of N PLOs", that's a regression to the old batch-synthesis design — don't reintroduce it.
+**The count is enforced by the stage, never by asking nicely.** PLO synthesis never asks the model for a target PLO count — it calls the per-Need prompt once per Need, one PLO out per Need in. The 6-10 policy is applied around that loop: a core count below `MIN_NEEDS` (6) logs a policy warning for the checkpoint, and above `MAX_CORE_PLOS` (10) the stage synthesizes only the 10 highest-`demand_score` core Needs and names the rest in a warning. If a prompt anywhere asks an LLM to directly produce "a set of N PLOs", that's a regression to the old batch-synthesis design — don't reintroduce it.
 
 **Never let a clustering/merge prompt cross a KSEC bucket.** Every skill-name clustering and merge call in `need_combination` is invoked per-bucket by the caller (`stages/need_grouping.py`'s `bucket_by_ksec`) — the prompt itself never receives skills from more than one KSEC tag at a time. If you add a new grouping prompt, bucket before you call it; don't rely on prompt wording to keep tags apart, since a model asked nicely can still mix them and there is no downstream check that would catch it.
