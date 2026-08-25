@@ -180,6 +180,16 @@ tests/integration/     ← LLM mocked, full stages
   that still fails ships a `[ต้องทบทวน]`-marked fallback for the designer to rewrite —
   never a quietly-degraded Need. Keep the Need in the market's voice
   ("ตลาดแรงงานต้องการ..."); restating it from the graduate's side is `plo_synthesis`'s job.
+- **A checkpoint thread has to be dropped explicitly.** LangGraph's rows live in
+  their own `langgraph` schema with no foreign key back to `programs`, so
+  `delete_cascade` cannot reach them — and a suspended checkpoint holds a full
+  copy of the `AgentState`: evidence text, skills, Needs, PLOs. `graph.discard_thread`
+  is the only thing that removes it, and both callers that end a thread's life
+  use it: `DELETE /programs/{id}` (the `{program_id}` thread `create_program`
+  starts, plus every session thread — read **before** the cascade deletes the
+  rows those ids live on) and `POST /sessions/{id}/reject` (terminal by design,
+  so nothing will ever resume it). It never raises: it runs after the deletion
+  has committed, where a 500 would claim nothing was deleted.
 - **Never merge or cluster skills across a KSEC bucket.** `need_combination` buckets `ExtractedSkill`s by `ksec_category` before any clustering runs, and clustering stays inside one bucket. The buckets are `K`, `S`, `EC` — `E` and `C` skills deliberately share the `EC` bucket, and `resolve_need_ksec` hands back a standalone `E` or `C` for a group whose members turn out to be purely one of them. This is what makes "a Need has exactly one KSEC tag" a structural guarantee rather than a rule someone has to remember — don't add a grouping path that clusters across buckets, even to reduce the Need count.
 - **Don't classify evidence with an LLM.** `requirement` is derived in code from
   `StakeholderType` (`classify_evidence_type`); `need`/`want`/`unclassified` are

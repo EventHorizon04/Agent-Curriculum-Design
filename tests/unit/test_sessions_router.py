@@ -54,6 +54,54 @@ def test_reject_sets_status():
     repo.set_status.assert_awaited_once_with("s1", "rejected")
 
 
+def test_reject_discards_the_checkpoint_thread():
+    """A rejected session is terminal — retrying means a new session under a new
+    thread_id, so nothing will ever resume this thread. Left alone it stays
+    suspended for the life of the database holding a full copy of the program's
+    evidence, skills and Needs. The session row stays; the checkpoint does not."""
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=_SESS)
+    repo.set_status = AsyncMock()
+    app.state.graph.checkpointer.adelete_thread = AsyncMock()
+
+    with _mock_repos(repo):
+        client = TestClient(app)
+        resp = client.post("/programs/p1/sessions/s1/reject")
+
+    assert resp.status_code == 200
+    app.state.graph.checkpointer.adelete_thread.assert_awaited_once_with("p1:s1")
+
+
+def test_reject_still_succeeds_when_the_checkpoint_delete_fails():
+    """The status change has already committed. Failing the request here would
+    leave the designer with a session that reads as rejected but answered 500."""
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=_SESS)
+    repo.set_status = AsyncMock()
+    app.state.graph.checkpointer.adelete_thread = AsyncMock(side_effect=RuntimeError("down"))
+
+    with _mock_repos(repo):
+        client = TestClient(app)
+        resp = client.post("/programs/p1/sessions/s1/reject")
+
+    assert resp.status_code == 200
+    assert resp.json()["session_id"] == "s1"
+
+
+def test_reject_leaves_a_non_suspended_session_thread_alone():
+    running = _SESS.model_copy(update={"status": "running"})
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=running)
+    app.state.graph.checkpointer.adelete_thread = AsyncMock()
+
+    with _mock_repos(repo):
+        client = TestClient(app)
+        resp = client.post("/programs/p1/sessions/s1/reject")
+
+    assert resp.status_code == 409
+    app.state.graph.checkpointer.adelete_thread.assert_not_awaited()
+
+
 def test_approve_requires_suspended_status():
     running_sess = _SESS.model_copy(update={"status": "running"})
     repo = AsyncMock()

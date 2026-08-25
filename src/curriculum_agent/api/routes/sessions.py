@@ -11,7 +11,7 @@ from langgraph.types import Command
 from loguru import logger
 
 from curriculum_agent.data.repositories import ProgramRepository, SessionRepository
-from curriculum_agent.graph import AgentState
+from curriculum_agent.graph import AgentState, discard_thread
 from curriculum_agent.models import SessionInfo
 
 router = APIRouter()
@@ -137,7 +137,7 @@ async def approve_session(
 
 
 @router.post("/{session_id}/reject", response_model=SessionInfo)
-async def reject_session(program_id: str, session_id: str) -> SessionInfo:
+async def reject_session(program_id: str, session_id: str, request: Request) -> SessionInfo:
     repo = SessionRepository()
     session = await repo.get(session_id)
     if session is None or session.program_id != program_id:
@@ -146,8 +146,13 @@ async def reject_session(program_id: str, session_id: str) -> SessionInfo:
         raise HTTPException(status_code=409, detail=f"Session is '{session.status}', not suspended")
 
     await repo.set_status(session_id, "rejected")
-    # The LangGraph checkpoint thread remains suspended in the checkpointer.
-    # A rejected session is terminal — start a new session (new thread_id) to retry.
+    # A rejected session is terminal — retrying means a new session with a new
+    # thread_id — so nothing will ever resume this thread. Its checkpoint is
+    # dropped rather than left suspended for the life of the database: it holds a
+    # full copy of the program's evidence, skills and Needs, and the session row
+    # stays behind to record that the run happened and was rejected.
+    await discard_thread(request.app.state.graph, session.thread_id)
+
     updated = await repo.get(session_id)
     if updated is None:
         # Session vanished between the status update and the re-read.

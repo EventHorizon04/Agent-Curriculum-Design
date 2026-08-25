@@ -1,6 +1,8 @@
 # tests/unit/test_api_programs.py
 from __future__ import annotations
 
+from contextlib import contextmanager
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
@@ -9,8 +11,11 @@ from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.main import app
 from curriculum_agent.api.routes.programs import _slugify
+from curriculum_agent.models import SessionInfo
 
 client = TestClient(app)
+
+_NOW = datetime(2026, 6, 1, 12, 0, 0)
 
 VALID_PROGRAM = {
     "field": "Computer Science",
@@ -238,23 +243,105 @@ def test_list_programs_returns_summaries_without_api_key() -> None:
     assert body[1]["current_stage"] is None
 
 
+@contextmanager
+def _delete_program_env(
+    *,
+    deleted: bool = True,
+    threads: list[str] | None = None,
+    delete_thread: AsyncMock | None = None,
+    calls: list[str] | None = None,
+):
+    """Both repositories and the graph, wired for the delete route.
+
+    SessionRepository is patched here rather than in each test because the route
+    reads it on every path: an unpatched one reaches a database that is not
+    running, and the failure reads as a route bug.
+    """
+    from curriculum_agent.api.main import app as _app
+
+    async def _delete_cascade(_program_id: str) -> bool:
+        if calls is not None:
+            calls.append("delete_cascade")
+        return deleted
+
+    async def _list_by_program(program_id: str) -> list[SessionInfo]:
+        if calls is not None:
+            calls.append("list_sessions")
+        return [
+            SessionInfo(
+                session_id=f"s{i}",
+                program_id=program_id,
+                thread_id=t,
+                status="rejected",
+                created_at=_NOW,
+                updated_at=_NOW,
+            )
+            for i, t in enumerate(threads or [])
+        ]
+
+    mock_graph = MagicMock()
+    mock_graph.checkpointer.adelete_thread = delete_thread or AsyncMock()
+
+    prog_repo = AsyncMock()
+    prog_repo.delete_cascade = AsyncMock(side_effect=_delete_cascade)
+    sess_repo = AsyncMock()
+    sess_repo.list_by_program = AsyncMock(side_effect=_list_by_program)
+
+    with (
+        patch("curriculum_agent.api.routes.programs.ProgramRepository", return_value=prog_repo),
+        patch("curriculum_agent.api.routes.programs.SessionRepository", return_value=sess_repo),
+        patch.object(_app.state, "graph", mock_graph, create=True),
+    ):
+        yield mock_graph
+
+
 def test_delete_program_success() -> None:
-    with patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls:
-        mock_repo = AsyncMock()
-        mock_repo.delete_cascade = AsyncMock(return_value=True)
-        mock_repo_cls.return_value = mock_repo
+    with _delete_program_env():
         resp = client.delete("/programs/computer-science")
     assert resp.status_code == 204, f"got {resp.status_code}"
 
 
 def test_delete_program_not_found() -> None:
-    with patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls:
-        mock_repo = AsyncMock()
-        mock_repo.delete_cascade = AsyncMock(return_value=False)
-        mock_repo_cls.return_value = mock_repo
+    with _delete_program_env(deleted=False) as graph:
         resp = client.delete("/programs/missing-program")
     assert resp.status_code == 404, f"got {resp.status_code}: {resp.json()}"
     assert resp.json()["detail"] == "ไม่พบหลักสูตรนี้"
+    graph.checkpointer.adelete_thread.assert_not_awaited()
+
+
+def test_delete_program_discards_the_program_thread_and_every_session_thread() -> None:
+    """Checkpoint rows sit in their own schema with no FK to the program, so the
+    cascade cannot reach them — and each one holds a full copy of that program's
+    evidence, skills and Needs. create_program runs the graph under the program
+    id itself, which is why that thread is dropped alongside the session ones."""
+    with _delete_program_env(threads=["computer-science:s0", "computer-science:s1"]) as graph:
+        resp = client.delete("/programs/computer-science")
+
+    assert resp.status_code == 204
+    discarded = [c.args[0] for c in graph.checkpointer.adelete_thread.await_args_list]
+    assert discarded == ["computer-science", "computer-science:s0", "computer-science:s1"]
+
+
+def test_delete_program_reads_session_threads_before_the_cascade() -> None:
+    """The cascade deletes the session rows the thread ids are recorded on. Read
+    them afterwards and the ids are gone, leaving checkpoints nothing can find."""
+    calls: list[str] = []
+    with _delete_program_env(threads=["computer-science:s0"], calls=calls):
+        resp = client.delete("/programs/computer-science")
+
+    assert resp.status_code == 204
+    assert calls == ["list_sessions", "delete_cascade"]
+
+
+def test_delete_program_reports_success_when_the_checkpoint_delete_fails() -> None:
+    """The program is already gone by then. Answering 500 would tell the designer
+    nothing was deleted, and a retry would 404 — the leftover rows are logged."""
+    failing = AsyncMock(side_effect=RuntimeError("checkpointer down"))
+    with _delete_program_env(threads=["computer-science:s0"], delete_thread=failing):
+        resp = client.delete("/programs/computer-science")
+
+    assert resp.status_code == 204
+    assert failing.await_count == 2
 
 
 def test_delete_program_requires_api_key_when_configured(monkeypatch) -> None:

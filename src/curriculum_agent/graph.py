@@ -23,6 +23,7 @@ from typing import Any, Literal, TypedDict
 from langgraph.graph import END, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Checkpointer, interrupt
+from loguru import logger
 
 # ----------------------------- State -----------------------------
 
@@ -162,3 +163,40 @@ def build_graph(
     g.add_edge("review_plo_report", END)
 
     return g.compile(checkpointer=checkpointer)
+
+
+# ------------------------ Thread lifecycle -----------------------
+
+
+async def discard_thread(
+    graph: CompiledStateGraph[AgentState, None, AgentState, AgentState],
+    thread_id: str,
+) -> bool:
+    """Delete every checkpoint the saver holds for one thread.
+
+    Checkpoint rows live in their own schema with no foreign key back to the
+    application tables, so nothing removes them when a program is deleted or a
+    session ends. That matters beyond disk: a suspended checkpoint holds a full
+    copy of the AgentState — the program's evidence text, extracted skills,
+    Needs and PLOs — and dropping the thread is the only thing that removes it.
+
+    Never raises. It is called after the deletion the caller asked for has
+    already committed, and failing the request then would report "not deleted"
+    for something that is already gone. A failure is logged at ERROR instead,
+    since leftover rows are a data-retention problem someone has to see.
+    """
+    # Falsy, not `is None`: LangGraph also spells "no checkpointer" as False on a
+    # graph compiled with persistence explicitly disabled, and that would reach
+    # the call below as an AttributeError logged at ERROR — noise for a graph
+    # that never persisted anything to drop.
+    checkpointer = getattr(graph, "checkpointer", None)
+    if not checkpointer:
+        logger.warning(f"No checkpointer configured — thread '{thread_id}' left in place")
+        return False
+    try:
+        await checkpointer.adelete_thread(thread_id)
+    except Exception as exc:
+        logger.error(f"Could not discard checkpoint thread '{thread_id}': {exc}")
+        return False
+    logger.info(f"Discarded checkpoint thread '{thread_id}'")
+    return True

@@ -7,7 +7,8 @@ from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.data.repositories import ProgramRepository
+from curriculum_agent.data.repositories import ProgramRepository, SessionRepository
+from curriculum_agent.graph import discard_thread
 from curriculum_agent.models import ProgramCreateRequest, ProgramMetadata, ProgramSummary
 
 router = APIRouter()
@@ -81,8 +82,19 @@ async def get_program(program_id: str) -> ProgramMetadata:
 
 
 @router.delete("/{program_id}", status_code=204, dependencies=[Depends(require_api_key)])
-async def delete_program(program_id: str) -> None:
+async def delete_program(program_id: str, request: Request) -> None:
     repo = ProgramRepository()
+    # Read the thread ids before the cascade, which deletes the session rows they
+    # are recorded on. A checkpoint thread nobody has the id of can never be
+    # found again, and it still holds that program's evidence and outcomes.
+    threads = [s.thread_id for s in await SessionRepository().list_by_program(program_id)]
+
     deleted = await repo.delete_cascade(program_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
+
+    # program_id is a thread in its own right: create_program runs the graph
+    # under it, so the thread exists even for a program no session ever ran on.
+    graph = request.app.state.graph
+    for thread_id in dict.fromkeys([program_id, *threads]):
+        await discard_thread(graph, thread_id)
