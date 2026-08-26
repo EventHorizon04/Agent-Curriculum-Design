@@ -171,8 +171,15 @@ If every attempt fails, `stages/need_combination.py` writes a comma-joined skill
 
 **File:** `prompts/stage_3_plo.py` — `build_plo_from_need_prompt(metadata, needs, note_th=None)`
 
+**The acronyms are spelled out, in Thai.** `MHESI` reaches a model as four letters that could stand for anything, and one that cannot place which ministry's standard it is writing to falls back on generic learning-outcome phrasing. The whole prompt is Thai and the default provider serves Thai-first models, so the Thai name is the form the model has actually read in curriculum documents. Same reason `OBE` and `PLO` each carry one clause of definition rather than being assumed.
+
 ```
-คุณเป็นผู้เชี่ยวชาญ OBE ตามมาตรฐาน MHESI
+คุณเป็นผู้เชี่ยวชาญการออกแบบหลักสูตรตามแนวคิด OBE (Outcome-Based Education)
+คือการออกแบบหลักสูตรโดยเริ่มจากผลลัพธ์ที่ต้องการให้เกิดกับผู้เรียนเป็นตัวตั้ง
+ยึดมาตรฐานของกระทรวงการอุดมศึกษา วิทยาศาสตร์ วิจัยและนวัตกรรม (อว. / MHESI)
+PLO (Program Learning Outcome) คือผลลัพธ์การเรียนรู้ระดับหลักสูตร
+ที่ระบุว่าบัณฑิตทุกคนทำอะไรได้เมื่อสำเร็จการศึกษา ต้องวัดและประเมินได้จริง
+
 จงแปลง 'ความต้องการของตลาด' หนึ่งข้อ ให้เป็น PLO หนึ่งข้อ
 [ถ้ามีหลาย Need: จงรวม 'ความต้องการของตลาด' ที่ให้มาทั้งหมด ให้เป็น PLO เพียงหนึ่งข้อ]
 

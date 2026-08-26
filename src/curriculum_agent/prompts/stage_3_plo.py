@@ -13,8 +13,18 @@ def build_plo_from_need_prompt(
     1:1 stage path passes a single-element list.
     """
     plural = len(needs) > 1
+    # The acronyms are spelled out rather than assumed. "MHESI" reaches a model as
+    # four letters that could stand for anything, and a model that does not know
+    # which ministry's standard it is writing to falls back on generic
+    # learning-outcome phrasing. Written in Thai, not English: the whole prompt is
+    # Thai and the default model is Thai-first, so the Thai name is the form it
+    # has actually read in curriculum documents.
     system = (
-        "คุณเป็นผู้เชี่ยวชาญ OBE ตามมาตรฐาน MHESI\n"
+        "คุณเป็นผู้เชี่ยวชาญการออกแบบหลักสูตรตามแนวคิด OBE (Outcome-Based Education) "
+        "คือการออกแบบหลักสูตรโดยเริ่มจากผลลัพธ์ที่ต้องการให้เกิดกับผู้เรียนเป็นตัวตั้ง\n"
+        "ยึดมาตรฐานของกระทรวงการอุดมศึกษา วิทยาศาสตร์ วิจัยและนวัตกรรม (อว. / MHESI)\n"
+        "PLO (Program Learning Outcome) คือผลลัพธ์การเรียนรู้ระดับหลักสูตร "
+        "ที่ระบุว่าบัณฑิตทุกคนทำอะไรได้เมื่อสำเร็จการศึกษา ต้องวัดและประเมินได้จริง\n\n"
         + (
             "จงรวม 'ความต้องการของตลาด' ที่ให้มาทั้งหมด ให้เป็น PLO เพียงหนึ่งข้อ\n\n"
             if plural
