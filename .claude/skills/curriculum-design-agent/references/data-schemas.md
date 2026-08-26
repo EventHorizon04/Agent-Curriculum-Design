@@ -209,6 +209,8 @@ Rules 1–2 outrank 3 on purpose — a mandated skill is never dropped for being
 
 **Floor 6, ceiling 10 — enforced at different stages.** `need_combination` still turns every core group clustering finds within a KSEC bucket into its own Need; it merges nothing down to a quota. `MIN_NEEDS=6` (`stages/need_grouping.py`) is a floor code cannot manufacture, so falling short only logs a policy warning at `need_combination` and again at `plo_synthesis`, for the designer to address at the checkpoint. `MAX_CORE_PLOS=10` (`stages/plo_synthesis.py`) is a ceiling code can enforce, and it does so by **selection, not merging**: `synthesis_order` ranks the core Needs by descending `demand_score` and synthesis takes the first 10. The rest stay stored, still trace to their evidence, and are named in the synthesis warning and in `plo_report`'s `needs_not_synthesized`. Optional (want-dominant) Needs are outside both bounds.
 
+The ceiling binds the **stored set**, not just the synthesis loop: `POST /programs/{id}/plos/from-needs` appends a merged PLO and removes nothing, so it returns 422 once the core count already sits at `MAX_CORE_PLOS`, naming the limit. It does not delete the PLOs the merged Needs produced — which outcomes a merge replaces is a designer decision, and a route that guessed would silently discard a reviewed outcome. An all-optional merge is exempt, matching synthesis.
+
 ## Stage 4: PLO (plo_synthesis) — cognitive-only, one Need → one PLO
 
 ```python

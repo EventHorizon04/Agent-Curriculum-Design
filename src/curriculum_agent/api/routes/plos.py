@@ -210,6 +210,7 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     the Needs. Need ids are validated only after the program exists.
     """
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
+        MAX_CORE_PLOS,
         next_plo_id,
         synthesize_from_needs,
     )
@@ -229,7 +230,27 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     # takes the next free number in that series — plo_id is the primary key and the
     # repository upserts, so reusing one would overwrite an existing outcome.
     is_optional = all(n.is_optional for n in selected)
-    existing_ids = [p.plo_id for p in await _repo.list_by_program(program_id)]
+    existing = await _repo.list_by_program(program_id)
+
+    # The 6-10 policy is a property of the stored set, not of one stage's output.
+    # This endpoint appends without removing the PLOs the merged Needs already
+    # produced, so without this guard a designer merging repeatedly walks the core
+    # count past the ceiling plo_synthesis just enforced. Refusing is the honest
+    # answer: which outcomes the merge replaces is the designer's call, not one
+    # this route can make by deleting rows on their behalf. Optional PLOs are
+    # outside the count here for the same reason they are in synthesis.
+    if not is_optional:
+        core = sum(1 for p in existing if not p.is_optional)
+        if core >= MAX_CORE_PLOS:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"หลักสูตรนี้มี PLO หลักครบ {MAX_CORE_PLOS} ข้อแล้ว "
+                    "กรุณาลบ PLO ที่การรวมนี้จะมาแทนที่ก่อน แล้วจึงรวมใหม่"
+                ),
+            )
+
+    existing_ids = [p.plo_id for p in existing]
     plo = await synthesize_from_needs(
         program,
         selected,

@@ -10,11 +10,13 @@ from curriculum_agent.api.routes import needs as needs_route
 from curriculum_agent.api.routes import plos as plos_route
 from curriculum_agent.models import (
     NOTE_MAX_CHARS,
+    PLO,
     BloomLevel,
     ExtractedSkill,
     KSECCategory,
     Need,
     ProgramMetadata,
+    SMARTCheck,
     StakeholderEvidence,
 )
 from curriculum_agent.stages import skill_extraction
@@ -581,3 +583,120 @@ async def test_combine_run_does_not_require_any_evidence(
 
     assert response.status_code == 200, response.text
     assert response.json()["needs"][0]["need_id"] == "N1"
+
+
+def _core_plo(index: int, *, optional: bool = False) -> PLO:
+    prefix = "PLO-O" if optional else "PLO"
+    return PLO(
+        plo_id=f"{prefix}{index}",
+        program_id="cs-test",
+        statement_th="บัณฑิตสามารถวิเคราะห์ข้อมูลขนาดใหญ่เพื่อสนับสนุนการตัดสินใจทางธุรกิจได้",
+        bloom_level=BloomLevel.ANALYZE,
+        action_verb_th="วิเคราะห์",
+        source_need_ids=["N1"],
+        source_evidence_ids=["E1"],
+        rationale_th="ตอบความต้องการของตลาดแรงงานด้านการวิเคราะห์ข้อมูล",
+        smart_check=SMARTCheck(
+            specific=True, measurable=True, achievable=True, relevant=True, timely=True
+        ),
+        is_optional=optional,
+    )
+
+
+def _optional_need(need_id: str) -> Need:
+    return _need().model_copy(update={"need_id": need_id, "is_optional": True})
+
+
+async def test_from_needs_refuses_to_push_the_core_count_past_the_ceiling(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Merging appends; it does not remove the PLOs the merged Needs produced.
+    Without this guard the designer walks the core count past the ceiling that
+    plo_synthesis enforces, one merge at a time."""
+    from curriculum_agent.stages.plo_synthesis import MAX_CORE_PLOS
+
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.NeedRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_need(), _need().model_copy(update={"need_id": "N2"})]),
+    )
+    monkeypatch.setattr(
+        plos_route.PLORepository,
+        "list_by_program",
+        AsyncMock(return_value=[_core_plo(i) for i in range(1, MAX_CORE_PLOS + 1)]),
+    )
+
+    # Patched even though the guard should refuse before reaching it: unpatched,
+    # a regression here calls the real provider instead of failing the assertion.
+    synth = AsyncMock()
+    with patch("curriculum_agent.stages.plo_synthesis.synthesize_from_needs", synth):
+        response = await client.post(
+            "/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]}
+        )
+
+    assert response.status_code == 422
+    assert str(MAX_CORE_PLOS) in response.json()["detail"]
+    synth.assert_not_awaited()
+
+
+async def test_from_needs_allows_a_merge_that_stays_under_the_ceiling(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from curriculum_agent.stages.plo_synthesis import MAX_CORE_PLOS
+
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.NeedRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_need(), _need().model_copy(update={"need_id": "N2"})]),
+    )
+    monkeypatch.setattr(
+        plos_route.PLORepository,
+        "list_by_program",
+        AsyncMock(return_value=[_core_plo(i) for i in range(1, MAX_CORE_PLOS)]),
+    )
+    monkeypatch.setattr(plos_route.PLORepository, "bulk_insert", AsyncMock())
+    merged = _core_plo(MAX_CORE_PLOS).model_copy(update={"source_need_ids": ["N1", "N2"]})
+    with patch(
+        "curriculum_agent.stages.plo_synthesis.synthesize_from_needs",
+        AsyncMock(return_value=merged),
+    ):
+        response = await client.post(
+            "/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]}
+        )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["source_need_ids"] == ["N1", "N2"]
+
+
+async def test_from_needs_leaves_an_optional_merge_outside_the_ceiling(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    """Optional PLOs sit outside the 6-10 count in synthesis, and a merge of
+    want-based Needs is optional too — a full core set must not block one."""
+    from curriculum_agent.stages.plo_synthesis import MAX_CORE_PLOS
+
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.NeedRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_optional_need("N1"), _optional_need("N2")]),
+    )
+    monkeypatch.setattr(
+        plos_route.PLORepository,
+        "list_by_program",
+        AsyncMock(return_value=[_core_plo(i) for i in range(1, MAX_CORE_PLOS + 1)]),
+    )
+    monkeypatch.setattr(plos_route.PLORepository, "bulk_insert", AsyncMock())
+    merged = _core_plo(1, optional=True).model_copy(update={"source_need_ids": ["N1", "N2"]})
+    with patch(
+        "curriculum_agent.stages.plo_synthesis.synthesize_from_needs",
+        AsyncMock(return_value=merged),
+    ):
+        response = await client.post(
+            "/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]}
+        )
+
+    assert response.status_code == 200, response.json()
+    assert response.json()["is_optional"] is True
