@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { useProgram } from '../hooks/useProgram'
+import { SESSION_STATUS_LABELS, STAGE_LABELS, STAGE_ROUTES } from '../constants/stages'
 
 interface ProgramSummary {
   program_id: string
@@ -21,34 +22,10 @@ function programLabel(p: ProgramSummary): string {
   return p.name_th || p.field || p.program_id
 }
 
-const STAGE_ROUTES: Record<string, string> = {
-  intake: '/intake',
-  stakeholder_needs: '/stakeholder-needs',
-  skill_extraction: '/skill-extraction',
-  plo_synthesis: '/plo-synthesis',
-  plo_report: '/plo-report',
-}
-
-const STAGE_LABELS: Record<string, string> = {
-  intake: 'ขั้นที่ 1: ข้อมูลหลักสูตร',
-  stakeholder_needs: 'ขั้นที่ 2: ความต้องการผู้มีส่วนได้ส่วนเสีย',
-  skill_extraction: 'ขั้นที่ 3: สกัดทักษะ',
-  plo_synthesis: 'ขั้นที่ 4: สังเคราะห์ PLO',
-  plo_report: 'ขั้นที่ 5: รายงาน PLO',
-}
-
 const DEGREE_LABELS: Record<string, string> = {
   bachelor: 'ปริญญาตรี',
   master: 'ปริญญาโท',
   doctoral: 'ปริญญาเอก',
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  running: 'กำลังทำงาน',
-  suspended: 'รอตรวจสอบ',
-  completed: 'เสร็จสิ้น',
-  rejected: 'ถูกปฏิเสธ',
-  failed: 'ล้มเหลว',
 }
 
 function stageRoute(stage: string | null): string {
@@ -168,7 +145,7 @@ export default function Programs() {
                   </span>
                   {p.session_status && (
                     <span className="ml-2 text-xs text-gray-400">
-                      {STATUS_LABELS[p.session_status] ?? p.session_status}
+                      {SESSION_STATUS_LABELS[p.session_status] ?? p.session_status}
                     </span>
                   )}
                 </td>

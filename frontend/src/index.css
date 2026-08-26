@@ -1,6 +1,108 @@
 @import "tailwindcss";
 
-body {
-  margin: 0;
-  background: #f8fafc;
+/* ---------------------------------------------------------------------------
+   Design tokens.
+
+   Two voices, because the tool has two jobs. THE RECORD is what the program is
+   — evidence, statements, approved outcomes — and it is set on a light field in
+   a Thai serif, the register of the document this work ends up as. THE
+   INSTRUMENT is the chrome around it — gates, states, identifiers — dark,
+   terse, monospaced. Nothing is coloured for emphasis alone.
+--------------------------------------------------------------------------- */
+@theme {
+  /* Ground of the instrument. Desaturated blue-green rather than black: it sits
+     next to a light field all day, and true black vibrates against it. */
+  --color-ink: #16232b;
+  --color-ink-raised: #24373f;
+  --color-ink-line: #35505a;
+
+  /* The record's paper. Cool and faintly green — deliberately not the warm
+     cream that every other tool of this shape reaches for. */
+  --color-field: #f2f4f1;
+  --color-card: #ffffff;
+  --color-rule: #ccd5cf;
+
+  --color-body: #1d2b30;
+  --color-mute: #64777d;
+  --color-faint: #93a4a6;
+
+  /* The one accent, and it means one thing: a mandate. สภาวิชาชีพ speaks with
+     legal force, and it is the only voice that buys the 30% block in
+     demand_score — so it is the only voice that gets a colour. Blocking states
+     borrow it because they carry the same "you cannot proceed past this"
+     weight. Everything else earns emphasis through weight and position. */
+  --color-seal: #a3302a;
+  --color-seal-soft: #f0e0dd;
+
+  --font-record: "Noto Serif Thai", Georgia, serif;
+  --font-ui: "IBM Plex Sans Thai", "Segoe UI", system-ui, sans-serif;
+  --font-data: "IBM Plex Mono", ui-monospace, monospace;
+
+  --rail-width: 17rem;
+}
+
+/* Thai stacks vowels above and tone marks above those; the leading that suits
+   Latin clips them into the line before. Every Thai-bearing surface in this app
+   inherits from here. */
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-field);
+    color: var(--color-body);
+    font-family: var(--font-ui);
+    font-size: 0.9375rem;
+    line-height: 1.75;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3 {
+    line-height: 1.45;
+    text-wrap: balance;
+  }
+
+  /* Keyboard focus is never removed, only restyled — the rail is dark and the
+     field is light, so each gets a ring it can actually be seen against. */
+  :focus-visible {
+    outline: 2px solid var(--color-seal);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  .on-ink :focus-visible {
+    outline-color: #8fd6c8;
+  }
+}
+
+@layer utilities {
+  /* Identifiers this system is full of — program slugs, PLO1, N-003, 0.7412.
+     Tabular figures so a column of scores lines up on the decimal. */
+  .data {
+    font-family: var(--font-data);
+    font-feature-settings: "tnum";
+    letter-spacing: -0.01em;
+  }
+
+  .eyebrow {
+    font-family: var(--font-data);
+    font-size: 0.6875rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
