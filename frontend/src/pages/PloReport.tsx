@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
-import { ksecColor, ksecLabel, stakeholderLabel, classStyle } from '../constants/stakeholder'
+import { ksecLabel, stakeholderLabel, classStyle, isRequirementStakeholder } from '../constants/stakeholder'
 
 interface PLO {
   plo_id: string
@@ -17,9 +17,13 @@ interface PLO {
   is_optional: boolean
 }
 
+/** `/needs/` returns whole Needs; the report only reads these fields, and the
+ *  unused-Need list needs the statement to be worth showing at all. */
 interface NeedSummary {
   need_id: string
+  statement_th?: string
   ksec_category: string
+  demand_score?: number
 }
 
 interface ReportCounts {
@@ -74,6 +78,13 @@ const SOFT_FLAG_TH: Record<string, string> = {
   R_alignment: 'อาจไม่สอดคล้องวิสัยทัศน์',
 }
 
+/** Mirrors MIN_NEEDS and MAX_CORE_PLOS in the pipeline. The band is the policy
+ *  a curriculum is judged against, so the page states it rather than implying it. */
+const MIN_CORE = 6
+const MAX_CORE = 10
+/** Two past the ceiling, so a set that overshoots still lands on the scale. */
+const BAND_SCALE = 12
+
 function countsFrom(plos: PLO[]): ReportCounts {
   const core = plos.filter((p) => !p.is_optional).length
   return {
@@ -84,6 +95,84 @@ function countsFrom(plos: PLO[]): ReportCounts {
   }
 }
 
+/** A hairline tag. The letter is the code — K, S, EC carry their own meaning and
+ *  a colour per category would only add five hues that mean nothing to a reader
+ *  who has not memorised the key. Colour on this page means "mandate" alone. */
+function Tag({ children, mono = false }: { children: React.ReactNode; mono?: boolean }) {
+  return (
+    <span
+      className={`rounded-sm border border-rule px-1.5 py-px text-xs text-mute ${mono ? 'data' : ''}`}
+    >
+      {children}
+    </span>
+  )
+}
+
+/**
+ * The set against its policy band — the one measure a curriculum designer is
+ * held to, and the thing the whole pipeline spends its effort enforcing. Drawn
+ * as a range with a floor and a ceiling rather than a number in a tile, because
+ * the question is never "how many" but "are we inside the band".
+ */
+function PolicyBand({ core, optional }: { core: number; optional: number }) {
+  const pct = (n: number) => `${Math.min((n / BAND_SCALE) * 100, 100)}%`
+  const short = core < MIN_CORE
+  const over = core > MAX_CORE
+  const outside = short || over
+
+  return (
+    <section className="border-b border-rule pb-6" aria-labelledby="band-heading">
+      <h2 id="band-heading" className="eyebrow">
+        PLO หลัก
+      </h2>
+
+      <p className="mt-1 flex items-baseline gap-2">
+        <span className="data text-3xl leading-none text-body">{core}</span>
+        <span className="text-sm text-mute">
+          {outside ? (
+            <span className="text-seal">
+              {short
+                ? `ต่ำกว่าเกณฑ์ ${MIN_CORE} ข้อ — เพิ่มอีก ${MIN_CORE - core} ข้อ`
+                : `เกินเพดาน ${MAX_CORE} ข้อ`}
+            </span>
+          ) : (
+            `อยู่ในเกณฑ์ ${MIN_CORE}–${MAX_CORE} ข้อ`
+          )}
+        </span>
+      </p>
+
+      <div className="relative mt-4 h-8 max-w-md" aria-hidden="true">
+        {/* Full scale, then the legal band drawn on top of it. */}
+        <span className="absolute top-3 h-px w-full bg-rule" />
+        <span
+          className="absolute top-3 h-px bg-body"
+          style={{ left: pct(MIN_CORE), width: pct(MAX_CORE - MIN_CORE) }}
+        />
+        {[MIN_CORE, MAX_CORE].map((n) => (
+          <span key={n} className="absolute top-0" style={{ left: pct(n) }}>
+            <span className="block h-6 w-px -translate-x-1/2 bg-rule" />
+            <span className="data absolute left-0 top-6 -translate-x-1/2 text-[0.6875rem] text-faint">
+              {n}
+            </span>
+          </span>
+        ))}
+        <span
+          className={`absolute top-3 block h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 ${
+            outside ? 'bg-seal' : 'bg-body'
+          }`}
+          style={{ left: pct(core) }}
+        />
+      </div>
+
+      {optional > 0 && (
+        <p className="mt-2 text-xs text-mute">
+          อีก {optional} ข้อเป็น PLO เสริม ซึ่งอยู่นอกเกณฑ์นี้
+        </p>
+      )}
+    </section>
+  )
+}
+
 export default function PloReport() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
@@ -92,9 +181,9 @@ export default function PloReport() {
   // Derived, not read off the response: `fetchData` and `runReport` populate the
   // page by different routes, and a count that only one of them set would read as
   // "nothing was cut" on the other. Same rule the report stage applies server-side.
-  const needsWithoutPlo = useMemo(() => {
+  const unusedNeeds = useMemo(() => {
     const cited = new Set(plos.flatMap((p) => p.source_need_ids))
-    return Object.keys(needsById).filter((id) => !cited.has(id)).length
+    return Object.values(needsById).filter((n) => !cited.has(n.need_id))
   }, [plos, needsById])
   const [exporting, setExporting] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -114,7 +203,7 @@ export default function PloReport() {
       setNeedsById(Object.fromEntries(needRes.data.map((n) => [n.need_id, n])))
       setCounts(countsFrom(ploRes.data))
     } catch {
-      setError('โหลดข้อมูลไม่สำเร็จ')
+      setError('โหลดข้อมูลไม่สำเร็จ ตรวจว่า API ทำงานอยู่ แล้วลองใหม่')
     } finally {
       setLoading(false)
     }
@@ -131,7 +220,7 @@ export default function PloReport() {
       setNeedsById(res.data.needs_by_id)
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'รัน PLO Report ไม่สำเร็จ')
+      setError(msg ?? 'สร้างรายงานไม่สำเร็จ')
     } finally {
       setRunning(false)
     }
@@ -161,119 +250,153 @@ export default function PloReport() {
     }
   }, [programId])
 
-  useEffect(() => { fetchData() }, [fetchData])
+  useEffect(() => {
+    fetchData()
+  }, [fetchData])
 
   if (!programId) {
     return (
-      <div className="max-w-2xl mx-auto py-16 text-center">
-        <p className="text-gray-500 mb-4">ยังไม่ได้เลือกโปรแกรม</p>
-        <Link to="/" className="text-blue-600 hover:underline">ไปหน้า Intake</Link>
+      <div className="py-16 text-center">
+        <p className="mb-3 text-mute">ยังไม่ได้เลือกหลักสูตร</p>
+        <Link to="/" className="text-seal underline underline-offset-2">
+          เลือกจากรายการหลักสูตร
+        </Link>
       </div>
     )
   }
 
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Stage 5: PLO Report</h1>
-        <p className="text-gray-500 text-sm">
-          รายงาน PLO ฉบับสมบูรณ์ พร้อมที่มาของแต่ละรายการ — ตรวจสอบก่อนส่งออก
+    <div className="space-y-6">
+      <header>
+        <h1 className="font-record text-2xl leading-tight text-body">รายงาน PLO</h1>
+        <p className="mt-1 text-sm text-mute">
+          ผลลัพธ์การเรียนรู้ทั้งชุด พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
         </p>
-        <p className="text-xs text-gray-400 mt-1 font-mono">{programId}</p>
-      </div>
+      </header>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-red-700 text-sm">{error}</div>
+        <p className="border-l-2 border-seal bg-seal-soft px-3 py-2 text-sm text-seal">{error}</p>
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-400">กำลังโหลด...</div>
+        <p className="py-16 text-center text-sm text-faint">กำลังโหลด…</p>
       ) : running ? (
-        <div className="text-center py-20">
-          <div className="text-4xl mb-4 animate-spin">⚙️</div>
-          <p className="text-gray-600 font-medium mb-1">กำลังประมวลผล PLO Report...</p>
-        </div>
+        <p className="py-16 text-center text-sm text-mute">
+          กำลังสร้างรายงาน — รวบรวม PLO และย้อนรอยหลักฐาน
+        </p>
       ) : plos.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="text-5xl mb-4">🗂️</div>
-          <p className="text-gray-500 text-lg font-medium mb-1">ยังไม่มี PLO</p>
-          <p className="text-gray-400 text-sm mb-6">รัน PLO Synthesis ก่อน แล้วกลับมาสร้างรายงานที่นี่</p>
-          <button
-            onClick={runReport}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-medium"
-          >
-            Run PLO Report
-          </button>
+        <div className="border border-rule bg-card px-6 py-12 text-center">
+          <p className="font-record text-lg text-body">ยังไม่มี PLO ให้รายงาน</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-mute">
+            รายงานประกอบขึ้นจาก PLO ที่สังเคราะห์ไว้แล้ว ถ้ายังไม่ได้สังเคราะห์
+            ให้กลับไปที่ขั้นที่ 4 ก่อน
+          </p>
+          <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
+            <button
+              onClick={runReport}
+              className="bg-ink px-4 py-2 text-sm text-field transition-colors hover:bg-ink-raised"
+            >
+              สร้างรายงาน
+            </button>
+            <Link to="/plo-synthesis" className="text-sm text-mute underline underline-offset-2">
+              ไปสังเคราะห์ PLO
+            </Link>
+          </div>
         </div>
       ) : (
         <>
-          <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
-            <div className="flex gap-4 text-sm text-gray-600">
-              <span><b className="text-gray-700">{counts.total}</b> ทั้งหมด</span>
-              <span><b className="text-gray-700">{counts.core}</b> หลัก</span>
-              <span><b className="text-gray-700">{counts.optional}</b> เสริม</span>
-              {counts.escalated > 0 && (
-                <span className="text-amber-700"><b>{counts.escalated}</b> ต้องแก้ไข</span>
-              )}
-              {needsWithoutPlo > 0 && (
-                <span
-                  className="text-amber-700"
-                  title="ความต้องการที่ไม่ได้ถูกแปลงเป็น PLO — เพดาน PLO หลักคือ 10 ข้อ เรียงตาม demand score"
-                >
-                  <b>{needsWithoutPlo}</b> Need ไม่ได้ใช้
-                </span>
-              )}
-              <button onClick={runReport} className="text-xs text-gray-400 hover:text-blue-600 underline">
-                Re-run
-              </button>
-            </div>
+          <PolicyBand core={counts.core} optional={counts.optional} />
 
-            <div className="flex items-center gap-2">
+          {/* Only what needs acting on. The set's size is the band's job, and
+              repeating it here as a total would be the third place it appears. */}
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+            {counts.escalated > 0 && (
+              <span className="text-seal">
+                <span className="data">{counts.escalated}</span> ข้อไม่ผ่าน SMART
+              </span>
+            )}
+            {unusedNeeds.length > 0 && (
+              <a href="#unused-needs" className="text-mute underline underline-offset-2">
+                <span className="data">{unusedNeeds.length}</span> Need ไม่ได้ใช้
+              </a>
+            )}
+
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={runReport}
+                className="border border-rule px-3 py-1.5 text-sm text-mute transition-colors hover:border-body hover:text-body"
+              >
+                สร้างใหม่
+              </button>
               <button
                 onClick={exportMatrix}
                 disabled={exporting}
-                className="rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-emerald-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50"
+                className="bg-ink px-3 py-1.5 text-sm text-field transition-colors hover:bg-ink-raised disabled:opacity-40"
               >
-                {exporting ? 'กำลังส่งออก...' : 'ส่งออก Excel'}
-              </button>
-              {/* The CHECO and มคอ.2 exporters are stubs; their routes answer 501.
-                  Shown disabled so the designer knows the outputs are planned
-                  rather than missing. */}
-              <button
-                disabled
-                title="อยู่ระหว่างพัฒนา"
-                className="cursor-not-allowed rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-400"
-              >
-                CHECO (เร็วๆ นี้)
-              </button>
-              <button
-                disabled
-                title="อยู่ระหว่างพัฒนา"
-                className="cursor-not-allowed rounded-lg border border-gray-200 px-3 py-2 text-sm text-gray-400"
-              >
-                มคอ.2 (เร็วๆ นี้)
+                {exporting ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
               </button>
             </div>
           </div>
 
-          <div className="space-y-3">
+          <ol className="border-t border-rule">
             {plos.map((p) => (
-              <PLOCard key={p.plo_id} plo={p} programId={programId} needsById={needsById} />
+              <PloRow key={p.plo_id} plo={p} programId={programId} needsById={needsById} />
             ))}
-          </div>
+          </ol>
 
-          <div className="mt-8 text-sm text-gray-500 border-t border-gray-100 pt-4">
-            เมื่อตรวจสอบเสร็จ ไปที่{' '}
-            <Link to="/pipeline" className="text-blue-600 hover:underline">หน้า Pipeline</Link>{' '}
-            เพื่อ Approve และจบ session
-          </div>
+          {/* The CHECO and มคอ.2 exporters are stubs whose routes answer 501.
+              Named as not-yet-available rather than rendered as dead buttons, so
+              the designer plans around them instead of clicking to find out. */}
+          <p className="text-xs text-faint">
+            ส่งออก CHECO และ มคอ.2 ยังไม่เปิดใช้
+          </p>
+
+          {unusedNeeds.length > 0 && <UnusedNeeds needs={unusedNeeds} />}
+
+          <p className="border-t border-rule pt-4 text-sm text-mute">
+            ตรวจเสร็จแล้ว อนุมัติและปิด session ได้ที่{' '}
+            <Link to="/pipeline" className="text-body underline underline-offset-2">
+              รันทั้งชุด
+            </Link>
+          </p>
         </>
       )}
     </div>
   )
 }
 
-function PLOCard({
+/**
+ * Needs that produced no PLO — the ones below the ceiling cut, plus any whose
+ * synthesis failed. Listed rather than counted: a demand the market raised and
+ * the program did not answer is a decision the designer should make knowingly.
+ */
+function UnusedNeeds({ needs }: { needs: NeedSummary[] }) {
+  const ordered = [...needs].sort((a, b) => (b.demand_score ?? 0) - (a.demand_score ?? 0))
+  return (
+    <section id="unused-needs" className="border-t border-rule pt-5">
+      <h2 className="eyebrow">Need ที่ไม่ได้เป็น PLO</h2>
+      <p className="mt-1 text-sm text-mute">
+        เพดาน PLO หลักคือ {MAX_CORE} ข้อ เรียงตาม demand score — Need เหล่านี้ยังเก็บไว้
+        พร้อมหลักฐานเดิม แต่ไม่ได้ถูกแปลงเป็นผลลัพธ์การเรียนรู้
+      </p>
+      <ul className="mt-3 space-y-2">
+        {ordered.map((n) => (
+          <li key={n.need_id} className="flex items-baseline gap-3 text-sm">
+            <span className="data shrink-0 text-xs text-faint">{n.need_id}</span>
+            <span className="min-w-0 flex-1 text-body">{n.statement_th ?? '—'}</span>
+            {n.demand_score !== undefined && (
+              <span className="data shrink-0 text-xs text-mute">
+                {(n.demand_score * 100).toFixed(0)}%
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function PloRow({
   plo: p,
   programId,
   needsById,
@@ -284,133 +407,127 @@ function PLOCard({
 }) {
   const [traceOpen, setTraceOpen] = useState(false)
 
-  const ksecTags = [...new Set(
-    p.source_need_ids.map((id) => needsById[id]?.ksec_category).filter((c): c is string => Boolean(c)),
-  )]
+  const ksecTags = [
+    ...new Set(
+      p.source_need_ids
+        .map((id) => needsById[id]?.ksec_category)
+        .filter((c): c is string => Boolean(c))
+    ),
+  ]
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-      <div className="flex items-center gap-2 flex-wrap mb-2">
-        <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded">{p.plo_id}</span>
-        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">
-          {BLOOM_LABEL[p.bloom_level] ?? p.bloom_level}
-        </span>
-        {ksecTags.map((cat) => (
-          <span key={cat} className={`text-xs px-2 py-0.5 rounded-full font-medium ${ksecColor(cat)}`}>
-            {ksecLabel(cat)}
-          </span>
-        ))}
-        {p.is_optional && (
-          <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
-            เสริม
-          </span>
-        )}
-      </div>
+    <li className="border-b border-rule py-5">
+      <div className="flex items-baseline gap-3">
+        <span className="data w-16 shrink-0 text-sm text-faint">{p.plo_id}</span>
+        <div className="min-w-0 flex-1">
+          {/* The statement is the record — the sentence that ends up in มคอ.2 —
+              so it is the one thing on this page set in the document's voice. */}
+          <p className="font-record text-[1.0625rem] leading-relaxed text-body">{p.statement_th}</p>
+          {p.statement_en && <p className="mt-1 text-sm text-faint">{p.statement_en}</p>}
 
-      {p.smart_escalated && (
-        <div className="mb-2 rounded-lg bg-red-50 border border-red-100 px-3 py-2 text-xs text-red-700">
-          ไม่ผ่าน SMART หลัง retry {p.smart_retry_count} ครั้ง — ต้องแก้ด้วยมือ
+          {p.smart_escalated && (
+            <p className="mt-2 border-l-2 border-seal bg-seal-soft px-3 py-1.5 text-sm text-seal">
+              ไม่ผ่าน SMART หลังแก้อัตโนมัติ {p.smart_retry_count} ครั้ง — ต้องแก้ข้อความเอง
+            </p>
+          )}
+
+          {p.soft_flags.length > 0 && (
+            <ul className="mt-2 space-y-0.5">
+              {p.soft_flags.map((f) => (
+                <li key={f} className="text-sm text-mute">
+                  ข้อสังเกต — {SOFT_FLAG_TH[f] ?? f}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {p.rationale_th && <p className="mt-2 text-sm text-mute">{p.rationale_th}</p>}
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <Tag mono>{BLOOM_LABEL[p.bloom_level] ?? p.bloom_level}</Tag>
+            {ksecTags.map((cat) => (
+              <Tag key={cat}>{ksecLabel(cat)}</Tag>
+            ))}
+            {p.is_optional && <Tag>เสริม</Tag>}
+            <button
+              onClick={() => setTraceOpen((v) => !v)}
+              aria-expanded={traceOpen}
+              className="ml-auto text-sm text-mute underline underline-offset-2 transition-colors hover:text-body"
+            >
+              {traceOpen
+                ? 'ซ่อนที่มา'
+                : `ดูที่มา · ${p.source_need_ids.length} Need`}
+            </button>
+          </div>
+
+          {traceOpen && <TracePanel programId={programId} ploId={p.plo_id} />}
         </div>
-      )}
-
-      {p.soft_flags.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1">
-          {p.soft_flags.map((f) => (
-            <span key={f} className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
-              {SOFT_FLAG_TH[f] ?? f}
-            </span>
-          ))}
-        </div>
-      )}
-
-      <p className="text-gray-900 font-medium leading-relaxed">{p.statement_th}</p>
-      {p.statement_en && (
-        <p className="text-gray-400 text-sm mt-1 italic">{p.statement_en}</p>
-      )}
-      {p.rationale_th && (
-        <p className="text-gray-500 text-sm mt-2 leading-relaxed">{p.rationale_th}</p>
-      )}
-
-      <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4 text-xs text-gray-400">
-        <span>{p.source_need_ids.length} needs</span>
-        <button
-          onClick={() => setTraceOpen((v) => !v)}
-          aria-expanded={traceOpen}
-          className="ml-auto text-xs text-blue-500 hover:text-blue-700 font-medium transition-colors flex items-center gap-1 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
-        >
-          {traceOpen ? '▲ ซ่อนที่มา' : '▼ ดูที่มา'}
-        </button>
       </div>
-      {traceOpen && <TracePanel programId={programId} ploId={p.plo_id} />}
-    </div>
+    </li>
   )
 }
 
+/**
+ * The evidence chain, drawn as one. Every PLO in this system is required to
+ * trace to evidence, so the trace is not a detail panel — it is the proof of
+ * the claim above it, and it is indented off a single rule to read that way.
+ */
 function TracePanel({ programId, ploId }: { programId: string; ploId: string }) {
   const [trace, setTrace] = useState<PLOTrace | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    api.get<PLOTrace>(`/programs/${programId}/plos/${ploId}/trace`)
+    api
+      .get<PLOTrace>(`/programs/${programId}/plos/${ploId}/trace`)
       .then((r) => setTrace(r.data))
-      .catch(() => setError('โหลด trace ไม่สำเร็จ'))
+      .catch(() => setError('โหลดที่มาไม่สำเร็จ ลองเปิดใหม่อีกครั้ง'))
       .finally(() => setLoading(false))
   }, [programId, ploId])
 
-  if (loading) return <div className="py-4 text-center text-sm text-gray-400">กำลังโหลด trace...</div>
-  if (error) return <div className="py-3 text-sm text-red-600">{error}</div>
+  if (loading) return <p className="mt-3 text-sm text-faint">กำลังโหลดที่มา…</p>
+  if (error) return <p className="mt-3 text-sm text-seal">{error}</p>
   if (!trace) return null
 
   return (
-    <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
-      <div>
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-          Needs ({trace.clusters.length})
-        </h4>
-        <div className="space-y-2">
-          {trace.clusters.map((c) => (
-            <div key={c.need_id} className="bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800 leading-snug">{c.statement_th}</p>
-                  {c.statement_en && (
-                    <p className="text-xs text-gray-400 italic">{c.statement_en}</p>
-                  )}
-                </div>
-                <span className="shrink-0 text-xs font-mono bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600">
-                  {(c.demand_score * 100).toFixed(0)}%
-                </span>
-              </div>
-              <p className="text-xs text-gray-400 mt-1.5">
-                {c.source_evidence_ids.length} evidence ·{' '}
-                <span className={`rounded px-1 ${ksecColor(c.ksec_category)}`}>{ksecLabel(c.ksec_category)}</span>
-                {' '}· {c.bloom_level}
-              </p>
+    <div className="mt-4 border-l border-rule pl-4">
+      <h3 className="eyebrow">ความต้องการของตลาด</h3>
+      <ul className="mt-2 space-y-3">
+        {trace.clusters.map((c) => (
+          <li key={c.need_id}>
+            <div className="flex items-baseline gap-3">
+              <p className="min-w-0 flex-1 text-sm leading-relaxed text-body">{c.statement_th}</p>
+              <span className="data shrink-0 text-xs text-mute">
+                {(c.demand_score * 100).toFixed(0)}%
+              </span>
             </div>
-          ))}
-        </div>
-      </div>
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-faint">
+              <span className="data">{c.need_id}</span>
+              <span>{ksecLabel(c.ksec_category)}</span>
+              <span>{c.bloom_level}</span>
+              <span>หลักฐาน {c.source_evidence_ids.length} ชิ้น</span>
+            </p>
+          </li>
+        ))}
+      </ul>
 
-      <div>
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-          Evidence ({trace.evidence.length})
-        </h4>
-        <div className="space-y-2">
-          {trace.evidence.map((e) => (
-            <div key={e.evidence_id} className="bg-white rounded-lg px-3 py-2.5 border border-gray-100">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-gray-700">{e.source_name}</span>
-                <span className="text-xs text-gray-400">{stakeholderLabel(e.stakeholder_type)}</span>
-                <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${classStyle(e.classification).cls}`}>
-                  {classStyle(e.classification).label}
-                </span>
-              </div>
-              <p className="text-xs text-gray-600 leading-relaxed line-clamp-3">{e.raw_text_th}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <h3 className="eyebrow mt-5">หลักฐาน</h3>
+      <ul className="mt-2 space-y-3">
+        {trace.evidence.map((e) => (
+          <li key={e.evidence_id}>
+            <p className="flex flex-wrap items-baseline gap-2 text-xs">
+              <span className="text-body">{e.source_name}</span>
+              {/* สภาวิชาชีพ and the institution's own direction are the voices
+                  that bind the program, and binding is what colour means here. */}
+              <span className={isRequirementStakeholder(e.stakeholder_type) ? 'text-seal' : 'text-mute'}>
+                {stakeholderLabel(e.stakeholder_type)}
+              </span>
+              <span className="text-faint">{classStyle(e.classification).label}</span>
+            </p>
+            <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-mute">{e.raw_text_th}</p>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }
