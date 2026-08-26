@@ -177,12 +177,21 @@ function ProgramBar({ program, programId }: { program: ProgramRow | null; progra
   const awaiting = status === 'suspended'
 
   return (
-    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-b border-rule bg-card px-6 py-3 lg:px-10">
-      <h1 className="font-record text-lg leading-tight text-body">
-        {program?.name_th || program?.field || programId}
-      </h1>
-      <span className="data text-xs text-faint">{programId}</span>
-      {program?.faculty && <span className="text-xs text-mute">{program.faculty}</span>}
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule bg-card px-6 py-3 lg:px-10">
+      <div className="min-w-0">
+        {/* Labelled, because the name alone is just a string: a designer with
+            two curricula open in two tabs cannot tell which one this is. */}
+        <p className="eyebrow">หลักสูตรที่กำลังทำงาน</p>
+        <div className="flex flex-wrap items-baseline gap-x-3">
+          {/* Deliberately not an h1 — the page below owns that. This is chrome
+              naming the working context, not the heading of the document. */}
+          <p className="font-record text-lg leading-tight text-body">
+            {program?.name_th || program?.field || programId}
+          </p>
+          <span className="data text-xs text-faint">{programId}</span>
+          {program?.faculty && <span className="text-xs text-mute">{program.faculty}</span>}
+        </div>
+      </div>
       {status && (
         <span
           className={[
