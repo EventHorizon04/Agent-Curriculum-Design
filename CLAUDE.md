@@ -189,7 +189,10 @@ tests/integration/     ← LLM mocked, full stages
   starts, plus every session thread — read **before** the cascade deletes the
   rows those ids live on) and `POST /sessions/{id}/reject` (terminal by design,
   so nothing will ever resume it). It never raises: it runs after the deletion
-  has committed, where a 500 would claim nothing was deleted.
+  has committed, where a 500 would claim nothing was deleted — which is also why
+  a failed drop leaks a thread. `uv run python -m curriculum_agent.data.prune_threads`
+  reports what is unreachable (add `--delete` to drop it) and is the sweep for
+  those, and for rows written before any of this existed.
 - **Never merge or cluster skills across a KSEC bucket.** `need_combination` buckets `ExtractedSkill`s by `ksec_category` before any clustering runs, and clustering stays inside one bucket. The buckets are `K`, `S`, `EC` — `E` and `C` skills deliberately share the `EC` bucket, and `resolve_need_ksec` hands back a standalone `E` or `C` for a group whose members turn out to be purely one of them. This is what makes "a Need has exactly one KSEC tag" a structural guarantee rather than a rule someone has to remember — don't add a grouping path that clusters across buckets, even to reduce the Need count.
 - **Don't classify evidence with an LLM.** `requirement` is derived in code from
   `StakeholderType` (`classify_evidence_type`); `need`/`want`/`unclassified` are
