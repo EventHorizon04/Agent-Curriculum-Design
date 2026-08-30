@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import uuid
 
+from instructor.core.exceptions import ValidationError as InstructorValidationError
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator
+from pydantic import ValidationError as PydanticValidationError
 
 from curriculum_agent.data.repositories import NeedRepository
 from curriculum_agent.graph import AgentState
@@ -42,9 +44,40 @@ from curriculum_agent.stages.need_grouping import (
 # clears it, and a group that still fails falls back to its skill names.
 _STATEMENT_ATTEMPTS = 3
 
-# Prefix on a Need whose sentence every attempt failed to write. Visible in the
-# UI's Need list, which is where the designer decides what to fix.
+# Prefixes on a Need whose sentence never got written, both visible in the UI's
+# Need list — which is where the designer decides what to do about it, and the
+# two failures need opposite responses. A rejected sentence is a content problem
+# only a human can settle; a call that never completed is infrastructure, and
+# re-running the stage is very likely all it takes. One marker for both left the
+# designer rewriting Needs by hand that a retry would have produced.
 _REVIEW_MARKER_TH = "[ต้องทบทวน]"
+_PROVIDER_MARKER_TH = "[เรียกโมเดลไม่สำเร็จ]"
+
+
+def _model_answered_but_was_rejected(exc: BaseException) -> bool:
+    """True when the sentence came back and _NeedStatement refused it.
+
+    Instructor raises the same InstructorRetryException whether it ran out of
+    re-asks over a validator or the provider never answered, wrapping the last
+    exception rather than distinguishing them — so the wrapped chain is what has
+    to be read. A ValidationError anywhere in it means the model produced text
+    and our own guards rejected it.
+
+    Walks args as well as __cause__/__context__ because Instructor passes the
+    wrapped exception positionally, where neither chaining attribute is set.
+    """
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, PydanticValidationError | InstructorValidationError):
+            return True
+        stack.extend(a for a in getattr(current, "args", ()) if isinstance(a, BaseException))
+        stack.extend(nxt for nxt in (current.__cause__, current.__context__) if nxt is not None)
+    return False
 
 
 class _NeedStatement(BaseModel):
@@ -210,7 +243,20 @@ async def run(state: AgentState) -> AgentState:
                 max_retries=_STATEMENT_ATTEMPTS,
             )
         except Exception as exc:
-            logger.warning(f"Need summarize failed for {group.ksec.value} group: {exc}")
+            rejected = _model_answered_but_was_rejected(exc)
+            if rejected:
+                logger.warning(
+                    f"Need statement rejected after {_STATEMENT_ATTEMPTS} attempts for the "
+                    f"{group.ksec.value} group — the designer has to write this one: {exc}"
+                )
+            else:
+                # ERROR, not WARNING: nothing is wrong with the data, the stage
+                # simply could not reach the model, and the degraded Need it
+                # writes instead is an operational fault someone should see.
+                logger.error(
+                    f"Need statement call failed for the {group.ksec.value} group — "
+                    f"re-running the stage should produce it: {exc}"
+                )
             # Skill names the extractor already validated, minus any that a
             # manual entry could still have carried a code token into.
             names = [n for n in group.skill_names[:5] if not find_code_identifier(n)]
@@ -220,8 +266,9 @@ async def run(state: AgentState) -> AgentState:
             # fallback cannot pretend to be a usable Need. Marking it is what puts
             # it in front of the designer at the checkpoint instead of letting
             # plo_synthesis invent a PLO from a list of words.
+            marker = _REVIEW_MARKER_TH if rejected else _PROVIDER_MARKER_TH
             written = _NeedStatement.model_construct(
-                statement_th=f"{_REVIEW_MARKER_TH} {', '.join(names) or group.ksec.value}"
+                statement_th=f"{marker} {', '.join(names) or group.ksec.value}"
             )
 
         needs.append(
