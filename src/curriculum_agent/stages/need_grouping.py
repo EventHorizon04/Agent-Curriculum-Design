@@ -7,9 +7,18 @@ from loguru import logger
 
 from curriculum_agent.models import BLOOM_ORDER, BloomLevel, ExtractedSkill, KSECCategory
 
-# Project policy: at least 6 main Needs, which become main PLOs one-to-one.
-# No upper cap — every core group clustering finds becomes its own Need.
+# Project policy: 6-10 main Needs, which become main PLOs one-to-one. Both bounds
+# live here because they are one policy and the clustering that has to respect
+# them is in this module. MIN_NEEDS is a floor no stage can manufacture — too few
+# Needs simply means too few PLOs, and the designer adds more at the checkpoint.
+#
+# MAX_CORE_PLOS is a ceiling plo_synthesis enforces by choosing which Needs to
+# use rather than by merging them down to a quota: every Need keeps its own
+# sentence and its own evidence trail, and the ones that lose the cut stay in the
+# Need list where a designer can promote one by editing its rivals. Optional
+# (want-based) PLOs are outside this count, as they are outside the 6 floor.
 MIN_NEEDS = 6
+MAX_CORE_PLOS = 10
 
 _WS_RE = re.compile(r"\s+")
 _BLOOM_RANK = {level: i for i, level in enumerate(BLOOM_ORDER)}
@@ -132,6 +141,67 @@ def bucket_by_ksec(skills: list[ExtractedSkill]) -> dict[KSECCategory, list[Extr
         key = KSECCategory.EC if skill.ksec_category in _EC_MEMBERS else skill.ksec_category
         buckets.setdefault(key, []).append(skill)
     return buckets
+
+
+def allocate_cluster_targets(
+    bucket_sizes: dict[KSECCategory, int],
+    total: int = MAX_CORE_PLOS,
+) -> dict[KSECCategory, int]:
+    """How many groups each KSEC bucket should be clustered into.
+
+    Clustering runs once per bucket, and the prompt used to ask each one for
+    "typically 4-12 groups" with no idea how many buckets there were. Three
+    buckets therefore produced 12-36 Needs against a ceiling of ten, so a run's
+    Need count was set by how splitty the model felt rather than by policy, and
+    plo_synthesis routinely dropped two thirds of what this stage wrote. Sizing
+    the buckets against the ceiling up front is the difference between a
+    deliberate shortlist and an accident.
+
+    Shares are proportional to how many unique skill names each bucket holds,
+    apportioned by largest remainder. Every non-empty bucket gets at least one
+    group: K, S and EC are different competency domains, and trimming a program's
+    whole ethics dimension to hit a count is not a trade the arithmetic gets to
+    make. A bucket is never asked for more groups than it has names.
+
+    The result is a target, not a cap — the model is asked for about this many
+    and validate_assignments still accepts whatever partition comes back, since a
+    skill silently dropped to hit a number would be far worse than a Need over
+    budget. plo_synthesis remains the only place the ceiling is enforced.
+    """
+    sizes = {ksec: n for ksec, n in bucket_sizes.items() if n > 0}
+    if not sizes:
+        return {}
+
+    # Every bucket gets one before anything gets two.
+    total = max(total, len(sizes))
+    grand = sum(sizes.values())
+    exact = {ksec: total * n / grand for ksec, n in sizes.items()}
+    targets = {ksec: max(1, min(int(share), sizes[ksec])) for ksec, share in exact.items()}
+
+    # Largest fractional remainder first, then the biggest bucket, then the tag
+    # itself so the outcome does not depend on dict ordering.
+    order = sorted(sizes, key=lambda k: (-(exact[k] % 1), -sizes[k], k.value))
+
+    shortfall = total - sum(targets.values())
+    while shortfall > 0:
+        spendable = [k for k in order if targets[k] < sizes[k]]
+        if not spendable:
+            break  # every bucket already has one group per name
+        for ksec in spendable[:shortfall]:
+            targets[ksec] += 1
+        shortfall = total - sum(targets.values())
+
+    # The floor of one per bucket can push the total past the ceiling when a
+    # tiny bucket rounds up; take it back from the largest targets.
+    while shortfall < 0:
+        reducible = [k for k in reversed(order) if targets[k] > 1]
+        if not reducible:
+            break  # one group per bucket is the floor, ceiling or not
+        for ksec in reducible[:-shortfall]:
+            targets[ksec] -= 1
+        shortfall = total - sum(targets.values())
+
+    return targets
 
 
 def resolve_need_ksec(members: list[ExtractedSkill]) -> KSECCategory:

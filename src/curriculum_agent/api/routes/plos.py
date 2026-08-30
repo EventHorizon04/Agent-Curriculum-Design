@@ -209,8 +209,8 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     Program is looked up first: a missing program is a 404, not a 422 blaming
     the Needs. Need ids are validated only after the program exists.
     """
+    from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS  # noqa: PLC0415
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
-        MAX_CORE_PLOS,
         next_plo_id,
         synthesize_from_needs,
     )

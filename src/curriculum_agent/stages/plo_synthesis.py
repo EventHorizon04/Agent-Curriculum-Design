@@ -18,21 +18,12 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
-from curriculum_agent.stages.need_grouping import MIN_NEEDS
+from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS, MIN_NEEDS
 from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
     hard_failures,
 )
-
-# Project policy: 6-10 main PLOs. MIN_NEEDS is a floor no stage can manufacture —
-# too few Needs simply means too few PLOs, and the designer adds more at the
-# checkpoint. The ceiling is enforceable, and it is enforced by choosing which
-# Needs to use rather than by merging them down to a quota: every Need keeps its
-# own sentence and its own evidence trail, and the ones that lose the cut stay in
-# the Need list where a designer can promote one by editing its rivals. Optional
-# (want-based) PLOs are outside this count, as they are outside the 6 floor.
-MAX_CORE_PLOS = 10
 
 _MAX_RETRIES = 3
 

@@ -613,7 +613,7 @@ async def test_from_needs_refuses_to_push_the_core_count_past_the_ceiling(
     """Merging appends; it does not remove the PLOs the merged Needs produced.
     Without this guard the designer walks the core count past the ceiling that
     plo_synthesis enforces, one merge at a time."""
-    from curriculum_agent.stages.plo_synthesis import MAX_CORE_PLOS
+    from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS
 
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
@@ -643,7 +643,7 @@ async def test_from_needs_refuses_to_push_the_core_count_past_the_ceiling(
 async def test_from_needs_allows_a_merge_that_stays_under_the_ceiling(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
-    from curriculum_agent.stages.plo_synthesis import MAX_CORE_PLOS
+    from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS
 
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
@@ -675,7 +675,7 @@ async def test_from_needs_leaves_an_optional_merge_outside_the_ceiling(
 ):
     """Optional PLOs sit outside the 6-10 count in synthesis, and a merge of
     want-based Needs is optional too — a full core set must not block one."""
-    from curriculum_agent.stages.plo_synthesis import MAX_CORE_PLOS
+    from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS
 
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(

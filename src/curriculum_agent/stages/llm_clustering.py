@@ -154,18 +154,27 @@ def is_valid_partition(groups: list[list[int]], n: int) -> bool:
     return len(seen) == n
 
 
-async def _cluster_pass(names: list[str]) -> list[tuple[str, list[int]]]:
+async def _cluster_pass(
+    names: list[str], target_clusters: int | None = None
+) -> list[tuple[str, list[int]]]:
     """One heavy-model clustering call over `names`, validated."""
     result = await complete_heavy(
         ClusterAssignmentsResponse,
-        build_cluster_skills_prompt(names),
+        build_cluster_skills_prompt(names, target_clusters),
         temperature=0,
     )
     return validate_assignments([(c.label_th, c.member_indices) for c in result.clusters], names)
 
 
-async def _cluster_map_reduce(names: list[str]) -> list[list[int]]:
-    """Cluster per batch, then merge equivalent cluster labels across batches."""
+async def _cluster_map_reduce(
+    names: list[str], target_clusters: int | None = None
+) -> list[list[int]]:
+    """Cluster per batch, then merge equivalent cluster labels across batches.
+
+    The target is applied at the merge, not per batch: a batch sees a slice of
+    the bucket and is meant to over-produce, and the merge is where the final
+    count is decided.
+    """
     labelled: list[tuple[str, list[int]]] = []
     offset = 0
     for batch in split_batches(names):
@@ -176,14 +185,16 @@ async def _cluster_map_reduce(names: list[str]) -> list[list[int]]:
     labels = [label for label, _ in labelled]
     merge = await complete_heavy(
         MergeGroupsResponse,
-        build_merge_clusters_prompt(labels),
+        build_merge_clusters_prompt(labels, target_clusters),
         temperature=0,
     )
     merged = validate_assignments([("", g) for g in merge.groups], labels)
     return [sorted(i for ci in group for i in labelled[ci][1]) for _, group in merged]
 
 
-async def cluster_skill_names(names: list[str]) -> list[list[int]]:
+async def cluster_skill_names(
+    names: list[str], target_clusters: int | None = None
+) -> list[list[int]]:
     """Group skill names by meaning using the heavy model.
 
     Returns groups of indices into `names`. Single pass when the list fits in one
@@ -201,8 +212,14 @@ async def cluster_skill_names(names: list[str]) -> list[list[int]]:
     cache = LLMCacheRepository()
     # Order- and spelling-sensitive: callers should pass a deterministic
     # ordering (dedupe_names' sorted, first-seen-spelling output).
+    # The target is in the key because it goes into the prompt: the contract
+    # fingerprint covers only the instructions that do not vary per call, so
+    # without this a bucket asked for four groups would be served an entry
+    # produced when it was asked for eight.
     cache_key = hashlib.sha256(
-        "\x00".join([*names, settings.heavy_model, _CLUSTERING_CONTRACT]).encode()
+        "\x00".join(
+            [*names, settings.heavy_model, _CLUSTERING_CONTRACT, str(target_clusters)]
+        ).encode()
     ).hexdigest()
     cached = await cache.get(cache_key)
     if cached is not None and cached[0] == settings.heavy_model:
@@ -219,9 +236,9 @@ async def cluster_skill_names(names: list[str]) -> list[list[int]]:
             )
 
     if len(names) <= SINGLE_PASS_MAX:
-        groups = [indices for _, indices in await _cluster_pass(names)]
+        groups = [indices for _, indices in await _cluster_pass(names, target_clusters)]
     else:
-        groups = await _cluster_map_reduce(names)
+        groups = await _cluster_map_reduce(names, target_clusters)
 
     await cache.set(cache_key, settings.heavy_model, json.dumps(groups))
     return groups

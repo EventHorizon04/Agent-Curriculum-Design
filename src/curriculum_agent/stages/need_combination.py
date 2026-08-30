@@ -30,6 +30,7 @@ from curriculum_agent.stages.demand import (
 from curriculum_agent.stages.llm_clustering import cluster_skill_names, validate_assignments
 from curriculum_agent.stages.need_grouping import (
     MIN_NEEDS,
+    allocate_cluster_targets,
     bucket_by_ksec,
     dedupe_with_bloom_max,
     find_code_identifier,
@@ -164,13 +165,29 @@ async def _build_groups(
     scoring stays inside what extraction produced.
     """
     groups: list[_Group] = []
-    for ksec, bucket in bucket_by_ksec(skills).items():
-        names, index_groups, bloom_by_name = dedupe_with_bloom_max(bucket)
+    buckets = bucket_by_ksec(skills)
+    deduped = {ksec: dedupe_with_bloom_max(bucket) for ksec, bucket in buckets.items()}
+    # Sized against the PLO ceiling before any clustering runs. Each bucket used
+    # to be asked for "typically 4-12 groups" with no notion of how many buckets
+    # existed, so three of them produced 12-36 Needs against a ceiling of ten and
+    # plo_synthesis dropped most of what this stage wrote.
+    targets = allocate_cluster_targets({ksec: len(d[0]) for ksec, d in deduped.items()})
+    if targets:
+        logger.info(
+            "Need budget by competency domain: "
+            + ", ".join(
+                f"{k.value}={n}" for k, n in sorted(targets.items(), key=lambda kv: kv[0].value)
+            )
+        )
+
+    for ksec, bucket in buckets.items():
+        names, index_groups, bloom_by_name = deduped[ksec]
         if not names:
             continue
-        logger.info(f"Clustering {len(names)} unique {ksec.value} skills")
+        target = targets.get(ksec)
+        logger.info(f"Clustering {len(names)} unique {ksec.value} skills into about {target}")
         name_clusters = validate_assignments(
-            [("", g) for g in await cluster_skill_names(names)], names
+            [("", g) for g in await cluster_skill_names(names, target)], names
         )
         for _, name_indices in name_clusters:
             member_positions = sorted({p for ni in name_indices for p in index_groups[ni]})
