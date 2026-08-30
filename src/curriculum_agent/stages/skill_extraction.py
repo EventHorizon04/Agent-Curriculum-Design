@@ -24,6 +24,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.stages.demand import (
+    build_scoring_corpus,
     classification_coverage,
     compute_demand_score,
 )
@@ -367,17 +368,23 @@ async def run(state: AgentState) -> AgentState:
     # One pass over `classified` building both per-evidence lookups: the split
     # into two identically-guarded loops was an artefact of Tasks 7 and 8 landing
     # separately, not a deliberate choice.
-    stakeholder_type_by_evidence: dict[str, str] = {}
     evidence_class_by_id: dict[str, str] = {}
     for d in classified:
         eid = d.get("evidence_id")
         if not eid:
             continue
-        eid = str(eid)
-        stakeholder_type_by_evidence[eid] = str(d.get("stakeholder_type", "employer"))
-        evidence_class_by_id[eid] = str(d.get("classification", "general"))
+        evidence_class_by_id[str(eid)] = str(d.get("classification", "general"))
 
-    importance_by_name = _compute_skill_importance(raw_skills, stakeholder_type_by_evidence)
+    # Built from the skills, not from `classified`: this is the denominator every
+    # demand score is a share of, and need_combination builds the same corpus the
+    # same way from the same rows. Reading it off the evidence table here instead
+    # is exactly what made a skill's importance_score and its Need's demand_score
+    # disagree — see build_scoring_corpus.
+    scoring_corpus = build_scoring_corpus(
+        (str(s["evidence_id"]), str(s["stakeholder_type"])) for s in raw_skills
+    )
+
+    importance_by_name = _compute_skill_importance(raw_skills, scoring_corpus)
     class_by_name = classify_skills(raw_skills, evidence_class_by_id)
     # class_by_name is keyed by the first spelling classify_skills happened to see
     # per normalised name; a second evidence item can contribute a differently-

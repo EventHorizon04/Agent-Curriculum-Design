@@ -20,6 +20,7 @@ from curriculum_agent.prompts.summarize_need import (
     build_summarize_need_prompt,
 )
 from curriculum_agent.stages.demand import (
+    build_scoring_corpus,
     classification_coverage,
     compute_demand_score,
     is_optional_group,
@@ -186,15 +187,14 @@ async def run(state: AgentState) -> AgentState:
         return state
 
     # Read off the skills, not off the evidence rows: this stage sees only what
-    # extraction produced. That also moves the demand denominator to the weight of
-    # the evidence that yielded at least one skill, which is the honest base for
-    # "what share of the demand named this?" — an evidence item nobody extracted a
-    # skill from expresses no demand for a Need to be a share of.
-    stakeholder_type_by_evidence = {
-        s.source_evidence_id: s.source_stakeholder_type.value for s in skills
-    }
+    # extraction produced, and the same corpus skill_extraction scored its
+    # importance_score against — see build_scoring_corpus for why both go through
+    # one function.
+    scoring_corpus = build_scoring_corpus(
+        (s.source_evidence_id, s.source_stakeholder_type.value) for s in skills
+    )
 
-    groups = await _build_groups(skills, stakeholder_type_by_evidence)
+    groups = await _build_groups(skills, scoring_corpus)
 
     needs: list[Need] = []
     for group in groups:

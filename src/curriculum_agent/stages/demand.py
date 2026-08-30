@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from curriculum_agent.models import StakeholderType
 
 # The score is two blocks, not one weighted sum over per-type weights:
@@ -23,6 +25,25 @@ FREQUENCY_WEIGHT = 0.70
 # program's own voice — letting it buy the same 30% as สภาวิชาชีพ would let a
 # faculty raise any Need's rank by restating its vision. Do not collapse the two.
 _MANDATING_TYPE = StakeholderType.PROFESSIONAL_COUNCIL
+
+
+def build_scoring_corpus(evidence_types: Iterable[tuple[str, str]]) -> dict[str, str]:
+    """The corpus a demand score is a share of, from (evidence_id, type) pairs.
+
+    Built from the *extracted skills*, never from the evidence table, so the
+    denominator is the evidence that yielded at least one skill. An evidence item
+    nobody extracted anything from expresses no demand, and counting it would
+    make every score a share of a corpus part of which said nothing.
+
+    It exists as a function because two stages score the same data and drifted
+    apart: skill_extraction built this from every evidence item while
+    need_combination built it from the skills, so one capability was scored
+    0.35 as a skill and 0.49 as the Need it formed — same weights, same evidence,
+    different denominators, and both numbers shown to the designer side by side.
+    Duplicate ids collapse, which is what makes "how many items named it" a count
+    of items rather than of mentions.
+    """
+    return dict(evidence_types)
 
 
 def compute_demand_score(
