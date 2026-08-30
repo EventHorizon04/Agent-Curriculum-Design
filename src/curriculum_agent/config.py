@@ -67,10 +67,14 @@ class Settings(BaseSettings):
     heavy_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
-    # fans out a call per evidence item. It ships on the Thai-first default —
-    # it reads Thai evidence and names Thai skills — but the whole point of the
-    # field is that moving it off is one line when a quota runs out.
-    extraction_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = None
+    # fans out a call per evidence item, and now one per window of each item
+    # rather than one per item. It shipped on the Thai-first default, which is
+    # what the knob exists to move — Typhoon's quota is the first thing a real
+    # corpus exhausts, and extraction exhausts it before any other stage has run.
+    # What it gives up is small: extraction names skills, it does not write the
+    # Thai prose a designer reads back. That is `light`, which stays on Typhoon.
+    # None means "whatever llm_provider is", for one endpoint end to end.
+    extraction_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
     extraction_model: str = ""
     # REST API auth secret (require_api_key). None disables auth (dev default).
     api_key: SecretStr | None = None

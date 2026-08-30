@@ -112,13 +112,13 @@ def test_the_default_provider_is_thai_first():
     stored statements are Thai, so the default endpoint serves Thai-first models.
     Changing it should require changing this line and saying why.
 
-    It governs the two stages whose output is Thai prose a designer reads back:
-    light (Need sentences, the SMART soft judge) and extraction.
+    It governs `light` — the Need sentences and the SMART soft judge, the Thai
+    prose a designer actually reads back. Heavy and extraction each run on their
+    own endpoint for reasons pinned in their own tests.
     """
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
     assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
-    assert s.extraction_model == "typhoon-v2.5-30b-a3b-instruct"
 
 
 def test_explicit_models_survive_the_provider_default():
@@ -179,13 +179,15 @@ def test_an_explicit_heavy_model_survives_the_provider_default():
     assert s.heavy_model == "qwen/qwen3-235b-a22b"
 
 
-def test_skill_extraction_runs_on_the_thai_first_default():
-    """Extraction reads Thai evidence and names Thai skills, so it stays on the
-    Thai-first endpoint. It is the fan-out stage, so it is also what exhausts a
-    quota first — moving it is one EXTRACTION_PROVIDER line."""
+def test_skill_extraction_runs_off_the_thai_first_endpoint():
+    """Extraction is the fan-out stage — one call per window of every evidence
+    item — so it is what exhausts a quota before any other stage has run, and it
+    ran Typhoon's out. It gives up little by moving: extraction names skills, it
+    does not write the Thai prose the designer reads back. Pinned because it is a
+    decision; changing it back should mean changing this line and saying why."""
     s = Settings(_env_file=None)
-    assert s.extraction_provider == "opentyphoon"
-    assert s.extraction_model == "typhoon-v2.5-30b-a3b-instruct"
+    assert s.extraction_provider == "openrouter"
+    assert s.extraction_model == "meta-llama/llama-3.3-70b-instruct"
 
 
 def test_extraction_provider_unset_follows_the_default_provider():

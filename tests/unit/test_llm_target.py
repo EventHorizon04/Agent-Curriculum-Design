@@ -72,14 +72,15 @@ def test_heavy_follows_the_default_provider_when_unset(
     assert llm._heavy_provider() == "ollama"
 
 
-def test_extraction_shares_the_thai_first_endpoint(typhoon: Settings) -> None:
-    """Extraction reads Thai evidence and names Thai skills, so it sits on the
-    same endpoint as light rather than on heavy's."""
+def test_extraction_runs_on_its_own_hosted_endpoint(typhoon: Settings) -> None:
+    """Extraction fans out a call per window of every evidence item, so it is
+    what exhausts a quota first — and it exhausted Typhoon's. It resolves to its
+    own provider with that provider's key, not light's."""
     extraction = llm._extraction_provider()
 
-    assert extraction == "opentyphoon"
-    assert llm._base_url(extraction) == typhoon.opentyphoon_base_url
-    assert llm._api_key(extraction) == _TYPHOON_KEY
+    assert extraction == "openrouter"
+    assert llm._base_url(extraction) == typhoon.openrouter_base_url
+    assert llm._api_key(extraction) == _ROUTER_KEY
 
 
 def test_extraction_follows_the_default_provider_when_unset(
@@ -104,7 +105,7 @@ def test_describe_target_names_both_endpoints_and_no_key(typhoon: Settings) -> N
     assert _ROUTER_KEY not in described
     assert "light: provider=opentyphoon" in described
     assert "heavy: provider=openrouter" in described
-    assert "extraction: provider=opentyphoon" in described
+    assert "extraction: provider=openrouter" in described
     assert typhoon.openrouter_base_url in described
     assert typhoon.opentyphoon_base_url in described
     assert typhoon.heavy_model in described
