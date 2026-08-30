@@ -11,25 +11,10 @@ from langgraph.types import Command
 from loguru import logger
 
 from curriculum_agent.data.repositories import ProgramRepository, SessionRepository
-from curriculum_agent.graph import AgentState, discard_thread
+from curriculum_agent.graph import REVIEW_NODE_STAGE, AgentState, discard_thread
 from curriculum_agent.models import SessionInfo
 
 router = APIRouter()
-
-_STAGE_ORDER = [
-    "intake",
-    "stakeholder_needs",
-    "skill_extraction",
-    "plo_synthesis",
-    "plo_report",
-]
-
-_NODE_TO_STAGE: dict[str, str] = {
-    "review_evidence": "stakeholder_needs",
-    "review_clusters": "skill_extraction",
-    "review_plos_node": "plo_synthesis",
-    "review_plo_report": "plo_report",
-}
 
 
 async def _run_graph(
@@ -54,7 +39,16 @@ async def _run_graph(
                     msg = str(intr.value)
                     break
             raw_node = snap.next[0] if snap.next else "unknown"
-            stage = _NODE_TO_STAGE.get(raw_node, raw_node)
+            stage = REVIEW_NODE_STAGE.get(raw_node)
+            if stage is None:
+                # Stored anyway — a suspended run that records no stage at all is
+                # worse than one recording a name only an engineer recognises —
+                # but said out loud, because the designer's rail cannot place it.
+                logger.warning(
+                    f"Session {session_id} suspended at node '{raw_node}', which maps to no "
+                    "designer stage — add it to REVIEW_NODE_STAGE in graph.py"
+                )
+                stage = raw_node
             await repo.set_suspended(session_id, stage, msg)
         else:
             await repo.set_status(session_id, "completed")

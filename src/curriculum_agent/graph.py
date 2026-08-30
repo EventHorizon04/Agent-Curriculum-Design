@@ -131,6 +131,37 @@ def review_plo_report(state: AgentState) -> AgentState:
     return state
 
 
+# ----------------------- Stages as reported ----------------------
+
+# The stages a designer works through, in order. Fewer than the graph has nodes:
+# skill_extraction and need_combination run back to back behind one review gate,
+# so the pair is reported under the stage whose page the designer opens it at.
+# This is the same list the UI keys its rail off — a value outside it reaches the
+# frontend as "unknown stage" and the program looks like it never started.
+DESIGNER_STAGES: tuple[str, ...] = (
+    "intake",
+    "stakeholder_needs",
+    "skill_extraction",
+    "plo_synthesis",
+    "plo_report",
+)
+
+# Which stage a suspended run is waiting at, by the node it is suspended on.
+#
+# Declared here beside the nodes it names rather than in the API layer that reads
+# it: this map drifted once already, still holding a "review_clusters" node that
+# had been renamed to "review_needs_node", which meant every run suspended after
+# need_combination wrote the raw node name into sessions.current_stage and the UI
+# read it as a program that had not started. test_session_stage_mapping.py checks
+# both directions against the compiled graph so a rename cannot do that again.
+REVIEW_NODE_STAGE: dict[str, str] = {
+    "review_evidence": "stakeholder_needs",
+    "review_needs_node": "skill_extraction",
+    "review_plos_node": "plo_synthesis",
+    "review_plo_report": "plo_report",
+}
+
+
 # --------------------------- Build graph -------------------------
 
 
