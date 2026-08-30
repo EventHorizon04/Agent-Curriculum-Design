@@ -60,15 +60,15 @@ def state(program_metadata: ProgramMetadata, needs: list[Need]) -> dict:
 def _patched(needs: list[Need]):
     drafts = {n.need_id: _draft_for(n) for n in needs}
 
-    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+    async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
         body = messages[-1]["content"]
         nid = next(n.need_id for n in needs if n.need_id in body)
         return _SingleDraftResponse(plo=drafts[nid])
 
     return (
         patch(
-            "curriculum_agent.stages.plo_synthesis.complete_heavy",
-            new=fake_heavy,
+            "curriculum_agent.stages.plo_synthesis.complete_synthesis",
+            new=fake_synthesis,
         ),
         patch(
             "curriculum_agent.stages.plo_synthesis.complete_light",

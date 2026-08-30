@@ -52,7 +52,7 @@ def _draft(nid: str) -> ps._PLODraft:
 def _patch_llm(needs: list[Need], delete_mock: AsyncMock, insert_mock: AsyncMock):
     drafts = {n.need_id: _draft(n.need_id) for n in needs}
 
-    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+    async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
         body = messages[-1]["content"]
         nid = next(n.need_id for n in needs if n.need_id in body)
         return ps._SingleDraftResponse(plo=drafts[nid])
@@ -61,7 +61,7 @@ def _patch_llm(needs: list[Need], delete_mock: AsyncMock, insert_mock: AsyncMock
         return ps._SmartSoftJudge()
 
     return (
-        patch.object(ps, "complete_heavy", fake_heavy),
+        patch.object(ps, "complete_synthesis", fake_synthesis),
         patch.object(ps, "complete_light", fake_light),
         patch.object(ps.PLORepository, "delete_by_program", delete_mock),
         patch.object(ps.PLORepository, "bulk_insert", insert_mock),
@@ -117,13 +117,13 @@ async def test_nothing_is_deleted_when_synthesis_produces_nothing(
     produces nothing must not destroy the last good set."""
     needs = [_need("N1")]
 
-    async def failing_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+    async def failing_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
         raise RuntimeError("provider down")
 
     delete_mock = AsyncMock(return_value=0)
     insert_mock = AsyncMock()
     with (
-        patch.object(ps, "complete_heavy", failing_heavy),
+        patch.object(ps, "complete_synthesis", failing_synthesis),
         patch.object(ps, "complete_light", AsyncMock(return_value=ps._SmartSoftJudge())),
         patch.object(ps.PLORepository, "delete_by_program", delete_mock),
         patch.object(ps.PLORepository, "bulk_insert", insert_mock),

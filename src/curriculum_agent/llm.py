@@ -19,11 +19,10 @@ _HOSTED_PROVIDERS = frozenset({"openrouter", "opentyphoon"})
 
 
 # Every helper below takes the provider rather than reading settings.llm_provider,
-# because three endpoints are in play: the pipeline's default (light), whichever
-# one the heavy slot is routed to (settings.heavy_provider), and whichever one
-# skill_extraction is routed to (settings.extraction_provider). A helper that
-# resolved the provider itself would silently send one slot's model to another
-# slot's endpoint, which fails as an unknown-model error far from its cause.
+# because four endpoints are in play: the pipeline's default (light), and one
+# each for heavy, plo_synthesis and skill_extraction. A helper that resolved the
+# provider itself would silently send one slot's model to another slot's
+# endpoint, which fails as an unknown-model error far from its cause.
 
 
 def _base_url(provider: str) -> str:
@@ -60,6 +59,11 @@ def _extra_body(provider: str) -> dict[str, Any]:
 def _heavy_provider() -> str:
     """Provider for the heavy slot. Settings resolves None to llm_provider."""
     return settings.heavy_provider or settings.llm_provider
+
+
+def _synthesis_provider() -> str:
+    """Provider for plo_synthesis. Settings resolves None to llm_provider."""
+    return settings.synthesis_provider or settings.llm_provider
 
 
 def _extraction_provider() -> str:
@@ -99,6 +103,7 @@ def describe_target() -> str:
     slots = (
         _describe_slot("light", settings.llm_provider, settings.light_model),
         _describe_slot("heavy", _heavy_provider(), settings.heavy_model),
+        _describe_slot("synthesis", _synthesis_provider(), settings.synthesis_model),
         _describe_slot("extraction", _extraction_provider(), settings.extraction_model),
     )
     return "LLM target: " + " | ".join(slots)
@@ -172,9 +177,27 @@ async def complete_heavy(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """Heavy model used for clustering and PLO synthesis — see Settings.heavy_provider."""
+    """Heavy model, used by LLM clustering — see Settings.heavy_provider."""
     return await _complete(
         _heavy_provider(), settings.heavy_model, response_model, messages, **kwargs
+    )
+
+
+async def complete_synthesis(
+    response_model: type[T],
+    messages: list[dict[str, Any]],
+    **kwargs: Any,
+) -> T:
+    """plo_synthesis's own endpoint — see Settings.synthesis_provider.
+
+    Split out of complete_heavy rather than left sharing it: clustering and
+    synthesis want opposite things from a model, and one wrapper meant neither
+    could be moved without dragging the other along. Both the draft call and the
+    SMART repair call go through here, so a repair is never answered by a
+    different model than wrote the draft it is repairing.
+    """
+    return await _complete(
+        _synthesis_provider(), settings.synthesis_model, response_model, messages, **kwargs
     )
 
 
@@ -201,7 +224,7 @@ async def warmup_models() -> None:
 
     Hosted providers are skipped — there is no local VRAM to warm, and the
     warm-up call would spend a real request (and, on a paid provider, real money)
-    on a prompt whose answer is thrown away. All three slots are considered,
+    on a prompt whose answer is thrown away. All four slots are considered,
     since only some of them may be the local one.
     """
     local = {
@@ -209,6 +232,7 @@ async def warmup_models() -> None:
         for provider, model in (
             (settings.llm_provider, settings.light_model),
             (_heavy_provider(), settings.heavy_model),
+            (_synthesis_provider(), settings.synthesis_model),
             (_extraction_provider(), settings.extraction_model),
         )
         if provider not in _HOSTED_PROVIDERS

@@ -94,7 +94,9 @@ def test_postgres_dsn_langgraph_keeps_the_psycopg_form():
 def test_model_defaults_follow_the_ollama_provider():
     # heavy_provider=None collapses the three endpoints onto llm_provider, which
     # is the arrangement someone running fully local wants.
-    s = Settings(_env_file=None, llm_provider="ollama", heavy_provider=None)
+    s = Settings(
+        _env_file=None, llm_provider="ollama", heavy_provider=None, synthesis_provider=None
+    )
     assert s.light_model == "gemma4:31b-cloud"
     assert s.heavy_model == "gemma4:31b-cloud"
 
@@ -102,7 +104,9 @@ def test_model_defaults_follow_the_ollama_provider():
 def test_model_defaults_follow_the_openrouter_provider():
     # The provider is read at instance level, not at class-definition time, so
     # switching it in .env must switch the model defaults with it.
-    s = Settings(_env_file=None, llm_provider="openrouter", heavy_provider=None)
+    s = Settings(
+        _env_file=None, llm_provider="openrouter", heavy_provider=None, synthesis_provider=None
+    )
     assert s.light_model == "meta-llama/llama-3.3-70b-instruct"
     assert s.heavy_model == "meta-llama/llama-3.3-70b-instruct"
 
@@ -126,6 +130,7 @@ def test_explicit_models_survive_the_provider_default():
         _env_file=None,
         llm_provider="ollama",
         heavy_provider=None,
+        synthesis_provider=None,
         light_model="typhoon2:8b",
         heavy_model="qwen2.5:14b",
     )
@@ -156,13 +161,24 @@ def test_cors_origins_can_be_emptied_for_same_origin_serving():
 
 
 def test_heavy_gets_its_own_provider_and_model():
-    """The shipped split: clustering and PLO synthesis run on OpenRouter, the
-    stages that write Thai prose stay on the Thai-first default."""
+    """Heavy is LLM clustering alone. It reasons over a whole KSEC bucket in one
+    context and returns a grouping, not prose, so it runs on the larger model."""
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
     assert s.heavy_provider == "openrouter"
     assert s.heavy_model == "meta-llama/llama-3.3-70b-instruct"
     assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
+
+
+def test_plo_synthesis_gets_its_own_provider_and_model():
+    """Synthesis is split out of heavy rather than sharing it. Both were `heavy`,
+    so neither could move without the other — and they want opposite things:
+    clustering wants the larger model, while the PLO statement is Thai that goes
+    to MHESI over a curriculum designer's name."""
+    s = Settings(_env_file=None)
+    assert s.synthesis_provider == "opentyphoon"
+    assert s.synthesis_model == "typhoon-v2.5-30b-a3b-instruct"
+    assert s.heavy_provider == "openrouter"
 
 
 def test_heavy_provider_unset_follows_the_default_provider():
@@ -177,6 +193,18 @@ def test_an_explicit_heavy_model_survives_the_provider_default():
     s = Settings(_env_file=None, heavy_model="qwen/qwen3-235b-a22b")
     assert s.heavy_provider == "openrouter"
     assert s.heavy_model == "qwen/qwen3-235b-a22b"
+
+
+def test_synthesis_provider_unset_follows_the_default_provider():
+    s = Settings(_env_file=None, llm_provider="ollama", synthesis_provider=None)
+    assert s.synthesis_provider == "ollama"
+    assert s.synthesis_model == "gemma4:31b-cloud"
+
+
+def test_an_explicit_synthesis_model_survives_the_provider_default():
+    s = Settings(_env_file=None, synthesis_model="typhoon-v2.5-70b")
+    assert s.synthesis_provider == "opentyphoon"
+    assert s.synthesis_model == "typhoon-v2.5-70b"
 
 
 def test_skill_extraction_runs_off_the_thai_first_endpoint():

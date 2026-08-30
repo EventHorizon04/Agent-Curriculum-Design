@@ -7,7 +7,7 @@ from pydantic import BaseModel, model_validator
 
 from curriculum_agent.data.repositories import PLORepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.llm import complete_heavy, complete_light
+from curriculum_agent.llm import complete_light, complete_synthesis
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
@@ -193,7 +193,7 @@ async def _ensure_smart(
         retries += 1
         logger.debug(f"  SMART retry {retries} for PLO {plo_id}: {[f.value for f in fails]}")
         try:
-            fix = await complete_heavy(
+            fix = await complete_synthesis(
                 _SingleDraftResponse, _build_fix_prompt(draft, fails), max_retries=2
             )
             draft = fix.plo
@@ -279,7 +279,7 @@ async def synthesize_from_needs(
         raise ValueError("synthesize_from_needs requires at least one Need")
 
     try:
-        response = await complete_heavy(
+        response = await complete_synthesis(
             _SingleDraftResponse,
             build_plo_from_need_prompt(metadata, needs, note_th=note_th),
             max_retries=_MAX_RETRIES,

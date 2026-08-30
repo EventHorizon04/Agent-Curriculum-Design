@@ -186,7 +186,7 @@ async def test_plo_synthesis_forwards_the_note_to_the_draft_prompt(
 ):
     seen: list[list[dict[str, str]]] = []
 
-    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+    async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
         seen.append(messages)
         return ps._SingleDraftResponse(
             plo=ps._PLODraft(
@@ -198,7 +198,7 @@ async def test_plo_synthesis_forwards_the_note_to_the_draft_prompt(
             )
         )
 
-    monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
+    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
     monkeypatch.setattr(
         ps,
         "complete_light",

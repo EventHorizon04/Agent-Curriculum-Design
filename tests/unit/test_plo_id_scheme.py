@@ -91,7 +91,7 @@ def _no_db(monkeypatch: pytest.MonkeyPatch):
 
 
 def _patch_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+    async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SingleDraftResponse(
             plo=ps._PLODraft(
                 statement_th="วิเคราะห์ข้อมูลเพื่อเสนอแนวทางแก้ปัญหาได้",
@@ -107,7 +107,7 @@ def _patch_model(monkeypatch: pytest.MonkeyPatch) -> None:
             specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
         )
 
-    monkeypatch.setattr(ps, "complete_heavy", fake_heavy)
+    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
     monkeypatch.setattr(ps, "complete_light", fake_light)
 
 
@@ -188,7 +188,7 @@ async def test_a_failed_need_leaves_a_gap_rather_than_renumbering(
             specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
         )
 
-    async def flaky_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+    async def flaky_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
         if "Nmid" in messages[-1]["content"]:
             raise RuntimeError("model unavailable for this one")
         return ps._SingleDraftResponse(
@@ -201,7 +201,7 @@ async def test_a_failed_need_leaves_a_gap_rather_than_renumbering(
             )
         )
 
-    monkeypatch.setattr(ps, "complete_heavy", flaky_heavy)
+    monkeypatch.setattr(ps, "complete_synthesis", flaky_synthesis)
     monkeypatch.setattr(ps, "complete_light", fake_light)
 
     needs = [_need("Nhigh", 0.9), _need("Nmid", 0.6), _need("Nlow", 0.3)]

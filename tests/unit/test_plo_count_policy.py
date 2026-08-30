@@ -47,7 +47,7 @@ def _draft(nid: str) -> ps._PLODraft:
 def _patch_llm(needs: list[Need]):
     drafts = {n.need_id: _draft(n.need_id) for n in needs}
 
-    async def fake_heavy(model, messages, **kw):  # noqa: ANN001, ANN003
+    async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
         # Match the whole "need_id: <id>" line, not the bare id: "N1" is a
         # substring of "N10", and a substring match would hand N10's prompt N1's
         # draft — silently, since only the count would still look right.
@@ -59,7 +59,7 @@ def _patch_llm(needs: list[Need]):
         return ps._SmartSoftJudge()
 
     return (
-        patch.object(ps, "complete_heavy", fake_heavy),
+        patch.object(ps, "complete_synthesis", fake_synthesis),
         patch.object(ps, "complete_light", fake_light),
         patch.object(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0)),
         patch.object(ps.PLORepository, "bulk_insert", AsyncMock()),

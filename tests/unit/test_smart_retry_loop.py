@@ -45,12 +45,12 @@ async def test_hard_fail_retries_with_criterion_and_escalates():
     bad = _draft("ข้อมูลทางสถิติ", verb="ออกแบบ")  # verb absent → S_VERB forever
     fix_calls: list[list[dict]] = []
 
-    async def fake_heavy(model, messages, **kw):
+    async def fake_synthesis(model, messages, **kw):
         fix_calls.append(messages)
         return ps._SingleDraftResponse(plo=bad)  # never fixes it
 
     with (
-        patch.object(ps, "complete_heavy", side_effect=fake_heavy),
+        patch.object(ps, "complete_synthesis", side_effect=fake_synthesis),
         patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)),
     ):
         out = await ps._ensure_smart(bad, {"c1"}, META, ["c1"], ["ตลาดต้องการ"], "PLO1")
@@ -85,18 +85,18 @@ async def test_gate_judges_authoritative_need_ids_not_the_models_echo():
     Without pinning the draft to authoritative_need_ids before hard_failures
     runs, this "WRONG-ID" (unknown to known_need_ids={"c1"}) would fail
     R_EVIDENCE, burn all 3 retries against a fix prompt that never mentions
-    need ids (so it cannot repair the field — fake_heavy below just echoes the
+    need ids (so it cannot repair the field — fake_synthesis below just echoes the
     same bad draft back, as a real model would when asked to fix an
     unrelated criterion), and escalate a PLO whose real, shipped evidence
     trail was correct all along.
     """
     bad = _draft("วิเคราะห์ข้อมูลทางสถิติได้", needs=["WRONG-ID"])
 
-    async def fake_heavy(model, messages, **kw):
+    async def fake_synthesis(model, messages, **kw):
         return ps._SingleDraftResponse(plo=bad)
 
     with (
-        patch.object(ps, "complete_heavy", side_effect=fake_heavy),
+        patch.object(ps, "complete_synthesis", side_effect=fake_synthesis),
         patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)),
     ):
         out = await ps._ensure_smart(
@@ -136,12 +136,12 @@ async def test_note_reaches_the_draft_prompt_but_never_a_fix_prompt():
     bad = _draft("ข้อมูลทางสถิติ", verb="ออกแบบ")  # verb absent → S_VERB never passes
     calls: list[list[dict]] = []
 
-    async def fake_heavy(model, messages, **kw):
+    async def fake_synthesis(model, messages, **kw):
         calls.append(messages)
         return ps._SingleDraftResponse(plo=bad)
 
     with (
-        patch.object(ps, "complete_heavy", side_effect=fake_heavy),
+        patch.object(ps, "complete_synthesis", side_effect=fake_synthesis),
         patch.object(ps, "complete_light", AsyncMock(return_value=_SOFT_OK)),
     ):
         await ps.synthesize_from_needs(META, [NEED], "p1", {"c1"}, "PLO1", note_th=note)

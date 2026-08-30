@@ -56,15 +56,23 @@ class Settings(BaseSettings):
     # time and ignore .env.
     light_model: str = ""
     heavy_model: str = ""
-    # The heavy slot gets its own endpoint. Clustering and PLO synthesis are the
-    # two calls that have to hold a whole bucket of skills, or a Need plus a
-    # Bloom rubric, in one context and reason over it — the work a 30B Thai-first
-    # model is weakest at. Their output is also the least Thai-shaped thing the
-    # pipeline produces: a grouping decision and a single outcome sentence the
-    # designer edits anyway, not the prose that carries the corpus's voice.
+    # The heavy slot is LLM clustering, and nothing else. It holds a whole KSEC
+    # bucket of skills in one context and reasons over it, which is the work a
+    # 30B Thai-first model is weakest at, and it returns a grouping rather than
+    # prose — so there is nothing Thai to lose by moving it off Typhoon.
     # None means "whatever llm_provider is", for running the whole pipeline on
     # one endpoint; the model resolves from whichever provider ends up selected.
     heavy_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
+    # PLO synthesis is its own slot rather than part of heavy. Both calls were
+    # `heavy` until they had to go different ways: clustering wants the larger
+    # model, while a PLO statement is Thai that a curriculum designer submits to
+    # MHESI under their own name — the most consequential Thai the pipeline
+    # writes. Sharing one knob meant neither could move without the other.
+    # It is affordable to leave here: synthesis is at most four calls per PLO
+    # (one draft plus up to three SMART repairs) against extraction's one per
+    # window of every evidence item, so it is not what exhausts a quota.
+    synthesis_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "opentyphoon"
+    synthesis_model: str = ""
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
     # fans out a call per evidence item, and now one per window of each item
@@ -125,6 +133,8 @@ class Settings(BaseSettings):
         # llm_provider" — and so a model default never reads an unresolved None.
         if self.heavy_provider is None:
             self.heavy_provider = self.llm_provider
+        if self.synthesis_provider is None:
+            self.synthesis_provider = self.llm_provider
         if self.extraction_provider is None:
             self.extraction_provider = self.llm_provider
         # Each model falls back to its own provider's default, not to
@@ -135,6 +145,8 @@ class Settings(BaseSettings):
             self.light_model = _PROVIDER_DEFAULT_MODEL[self.llm_provider]
         if not self.heavy_model:
             self.heavy_model = _PROVIDER_DEFAULT_MODEL[self.heavy_provider]
+        if not self.synthesis_model:
+            self.synthesis_model = _PROVIDER_DEFAULT_MODEL[self.synthesis_provider]
         if not self.extraction_model:
             self.extraction_model = _PROVIDER_DEFAULT_MODEL[self.extraction_provider]
         return self
