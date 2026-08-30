@@ -162,6 +162,46 @@ REVIEW_NODE_STAGE: dict[str, str] = {
 }
 
 
+def stage_reached(
+    *,
+    has_evidence: bool,
+    has_skills: bool,
+    has_needs: bool,
+    has_plos: bool,
+) -> str:
+    """The furthest stage a program has produced output for.
+
+    Derived from what is stored rather than recorded as a program runs, because
+    there are two ways to run a stage and only one of them was doing the
+    recording. A graph session writes the stage it suspends at; the per-stage
+    REST routes the stage pages call write nothing, so a designer working page by
+    page had no recorded progress at all and the rail showed every stage as not
+    yet reached. Deriving it means both paths report the same thing without
+    either having to remember to.
+
+    It also cannot go stale. Deleting a program's evidence, or re-running skill
+    extraction, moves this answer back on its own; a stored column would keep
+    claiming the furthest point the program ever got to.
+
+    Skills and Needs both answer `skill_extraction`: they are two engine stages
+    behind one review gate, reviewed together on one page.
+
+    `plo_report` is not reachable here — it re-persists the PLOs synthesis
+    already wrote and leaves no artifact of its own, so a program that has been
+    through it looks exactly like one that has not. The session still records
+    that distinction for the run it belongs to.
+    """
+    if has_plos:
+        return "plo_synthesis"
+    if has_skills or has_needs:
+        return "skill_extraction"
+    if has_evidence:
+        return "stakeholder_needs"
+    # The program row itself is intake's output, so a program that exists has
+    # always got at least this far.
+    return "intake"
+
+
 # --------------------------- Build graph -------------------------
 
 

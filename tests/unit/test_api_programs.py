@@ -229,6 +229,7 @@ def test_list_programs_returns_summaries_without_api_key() -> None:
             name_en="Data Science",
             degree_level="master",
             created_at=datetime(2026, 7, 1, 9, 0, 0),
+            current_stage="intake",
         ),
     ]
     with patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls:
@@ -240,7 +241,7 @@ def test_list_programs_returns_summaries_without_api_key() -> None:
     body = resp.json()
     assert [p["program_id"] for p in body] == ["computer-science", "data-science"]
     assert body[0]["current_stage"] == "plo_synthesis"
-    assert body[1]["current_stage"] is None
+    assert body[1]["current_stage"] == "intake"
 
 
 @contextmanager

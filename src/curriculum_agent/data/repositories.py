@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from sqlalchemy import CursorResult, delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from curriculum_agent.data.orm import (
     Base,
@@ -17,6 +18,7 @@ from curriculum_agent.data.orm import (
     SkillTable,
 )
 from curriculum_agent.data.postgres import AsyncSessionLocal
+from curriculum_agent.graph import stage_reached
 from curriculum_agent.models import (
     PLO,
     ExtractedSkill,
@@ -27,6 +29,16 @@ from curriculum_agent.models import (
     StageCheckpoint,
     StakeholderEvidence,
 )
+
+
+async def _programs_with_rows(session: AsyncSession, column: Any) -> set[str]:
+    """Which programs have at least one row in the table this column belongs to.
+
+    One distinct-select per table rather than a count per program: the caller
+    needs existence, not totals, and asking per program would be a query per row
+    on the list page.
+    """
+    return set((await session.execute(select(column).distinct())).scalars().all())
 
 
 def _row_to_dict(row: Base) -> dict[str, Any]:
@@ -82,7 +94,13 @@ class ProgramRepository:
             return row is not None
 
     async def list_all(self) -> list[ProgramSummary]:
-        """All programs (created_at DESC), each with its latest session state."""
+        """All programs (created_at DESC), each with how far it has got.
+
+        Progress is derived from the rows a program owns, not read off its latest
+        session — see `stage_reached`. The session is still what says whether a
+        run is waiting for approval, which is a different fact and stays its own
+        field.
+        """
         async with AsyncSessionLocal() as session:
             prog_rows = (
                 (
@@ -94,6 +112,10 @@ class ProgramRepository:
                 .all()
             )
             sess_rows = (await session.execute(select(SessionTable))).scalars().all()
+            with_evidence = await _programs_with_rows(session, EvidenceTable.program_id)
+            with_skills = await _programs_with_rows(session, SkillTable.program_id)
+            with_needs = await _programs_with_rows(session, NeedTable.program_id)
+            with_plos = await _programs_with_rows(session, PLOTable.program_id)
 
         latest: dict[str, SessionTable] = {}
         for s in sess_rows:
@@ -112,8 +134,11 @@ class ProgramRepository:
                 faculty=p.faculty,
                 degree_level=p.degree_level,
                 created_at=p.created_at,
-                current_stage=(
-                    latest[p.program_id].current_stage if p.program_id in latest else None
+                current_stage=stage_reached(
+                    has_evidence=p.program_id in with_evidence,
+                    has_skills=p.program_id in with_skills,
+                    has_needs=p.program_id in with_needs,
+                    has_plos=p.program_id in with_plos,
                 ),
                 session_status=(latest[p.program_id].status if p.program_id in latest else None),
             )

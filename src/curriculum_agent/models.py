@@ -179,9 +179,13 @@ class ProgramMetadata(ProgramCreateRequest):
 
 
 class ProgramSummary(BaseModel):
-    """List-page row: program metadata + latest-session state.
+    """List-page row: program metadata, how far it has got, and any live run.
 
-    current_stage/session_status are None when the program has no session yet.
+    The two state fields answer different questions and are sourced differently.
+    `current_stage` is derived from the rows the program owns, so it is always
+    known — a program that exists has at least completed intake. `session_status`
+    is None until a graph session has run, because "no run has ever started" is a
+    real answer rather than a missing one.
     """
 
     program_id: str
@@ -191,7 +195,7 @@ class ProgramSummary(BaseModel):
     faculty: str = ""
     degree_level: str
     created_at: datetime
-    current_stage: str | None = None
+    current_stage: str
     session_status: str | None = None
 
 

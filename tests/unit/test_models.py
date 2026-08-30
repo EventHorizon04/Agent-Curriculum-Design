@@ -259,6 +259,9 @@ def test_isced_code_is_still_validated_against_the_taxonomy():
 
 
 def test_program_summary_minimal() -> None:
+    """current_stage is required and session_status is not: progress is derived
+    from the program's own rows and so always known, while "no run has ever
+    started" is a real answer a session status has to be able to give."""
     from datetime import datetime
 
     from curriculum_agent.models import ProgramSummary
@@ -269,8 +272,9 @@ def test_program_summary_minimal() -> None:
         name_en="Computer Science",
         degree_level="bachelor",
         created_at=datetime(2026, 7, 1, 9, 0, 0),
+        current_stage="intake",
     )
-    assert s.current_stage is None
+    assert s.current_stage == "intake"
     assert s.session_status is None
 
 

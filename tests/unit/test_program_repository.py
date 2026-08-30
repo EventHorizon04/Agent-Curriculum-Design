@@ -37,15 +37,35 @@ def _session_row(
     )
 
 
-def _mock_db(programs: list[ProgramTable], sessions: list[SessionTable]) -> MagicMock:
-    """AsyncSessionLocal mock whose execute() returns programs then sessions."""
-    prog_result = MagicMock()
-    prog_result.scalars.return_value.all.return_value = programs
-    sess_result = MagicMock()
-    sess_result.scalars.return_value.all.return_value = sessions
+def _mock_db(
+    programs: list[ProgramTable],
+    sessions: list[SessionTable],
+    *,
+    evidence: list[str] | None = None,
+    skills: list[str] | None = None,
+    needs: list[str] | None = None,
+    plos: list[str] | None = None,
+) -> MagicMock:
+    """AsyncSessionLocal mock replaying list_all's queries in the order it runs
+    them: programs, sessions, then the program ids owning rows in each of the
+    four artifact tables progress is derived from."""
+
+    def _result(rows: object) -> MagicMock:
+        result = MagicMock()
+        result.scalars.return_value.all.return_value = rows
+        return result
 
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[prog_result, sess_result])
+    mock_session.execute = AsyncMock(
+        side_effect=[
+            _result(programs),
+            _result(sessions),
+            _result(evidence or []),
+            _result(skills or []),
+            _result(needs or []),
+            _result(plos or []),
+        ]
+    )
     mock_ctx = MagicMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -61,7 +81,9 @@ async def test_list_all_empty() -> None:
     assert result == []
 
 
-async def test_list_all_program_without_session_has_null_stage() -> None:
+async def test_list_all_bare_program_reports_intake() -> None:
+    """A program with nothing under it has still completed intake — the program
+    row is intake's output."""
     repo = ProgramRepository()
     programs = [_program_row("cs", datetime(2026, 7, 1))]
     with patch(
@@ -71,11 +93,42 @@ async def test_list_all_program_without_session_has_null_stage() -> None:
         result = await repo.list_all()
     assert len(result) == 1
     assert result[0].program_id == "cs"
-    assert result[0].current_stage is None
+    assert result[0].current_stage == "intake"
     assert result[0].session_status is None
 
 
-async def test_list_all_uses_latest_session_per_program() -> None:
+async def test_list_all_reports_progress_made_without_any_session() -> None:
+    """The regression: the per-stage REST routes the stage pages call write no
+    session row, so progress read off the session table was permanently absent
+    for a designer working page by page, and the rail showed nothing reached."""
+    repo = ProgramRepository()
+    programs = [_program_row("cs", datetime(2026, 7, 1))]
+    with patch(
+        "curriculum_agent.data.repositories.AsyncSessionLocal",
+        return_value=_mock_db(programs, [], evidence=["cs"], skills=["cs"], needs=["cs"]),
+    ):
+        result = await repo.list_all()
+    assert result[0].current_stage == "skill_extraction"
+    assert result[0].session_status is None
+
+
+async def test_list_all_prefers_stored_rows_over_what_a_session_claims() -> None:
+    """A session records where its own run stopped, which is not the same as how
+    far the program got — deleting a program's PLOs must move progress back."""
+    repo = ProgramRepository()
+    programs = [_program_row("cs", datetime(2026, 7, 1))]
+    sessions = [
+        _session_row("s1", "cs", "plo_report", "completed", datetime(2026, 7, 2, 10, 0)),
+    ]
+    with patch(
+        "curriculum_agent.data.repositories.AsyncSessionLocal",
+        return_value=_mock_db(programs, sessions, evidence=["cs"]),
+    ):
+        result = await repo.list_all()
+    assert result[0].current_stage == "stakeholder_needs"
+
+
+async def test_list_all_takes_session_status_from_the_latest_session() -> None:
     repo = ProgramRepository()
     programs = [_program_row("cs", datetime(2026, 7, 1))]
     sessions = [
@@ -84,11 +137,11 @@ async def test_list_all_uses_latest_session_per_program() -> None:
     ]
     with patch(
         "curriculum_agent.data.repositories.AsyncSessionLocal",
-        return_value=_mock_db(programs, sessions),
+        return_value=_mock_db(programs, sessions, plos=["cs"]),
     ):
         result = await repo.list_all()
-    assert result[0].current_stage == "plo_synthesis"
     assert result[0].session_status == "suspended"
+    assert result[0].current_stage == "plo_synthesis"
 
 
 async def test_list_all_preserves_program_order() -> None:
