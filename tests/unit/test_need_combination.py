@@ -370,6 +370,10 @@ async def test_a_group_whose_sentence_cannot_be_written_is_marked_for_review(
     A comma-joined skill list is exactly what _require_plo_ready rejects, so
     shipping one unmarked would hand plo_synthesis a Need it can only guess from.
     The marker is what puts it in front of the designer at the checkpoint.
+
+    Which marker depends on why the sentence is missing — this simulates a
+    provider that never answered, so the Need says so and re-running the stage is
+    the fix. test_need_statement_failure_kind.py covers the split itself.
     """
 
     async def always_fails(model, messages, **kw):  # noqa: ANN001, ANN003
@@ -390,7 +394,7 @@ async def test_a_group_whose_sentence_cannot_be_written_is_marked_for_review(
     )
 
     assert state["needs"]
-    assert all(n["statement_th"].startswith(nc._REVIEW_MARKER_TH) for n in state["needs"])
+    assert all(n["statement_th"].startswith(nc._PROVIDER_MARKER_TH) for n in state["needs"])
 
 
 # --- the generated sentence must be usable as a PLO ------------------------
