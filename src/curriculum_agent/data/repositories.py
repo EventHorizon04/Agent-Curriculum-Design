@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -473,6 +474,14 @@ class SessionRepository:
             await db.commit()
 
 
+# The two callers that write to llm_cache, as stored in LLMCacheTable.kind.
+# They live beside the repository rather than in prune_cache because they are
+# column values, and a stage reaching into the pruning tool for the name of the
+# row it is writing has the dependency backwards.
+CACHE_KIND_EXTRACTION = "extraction"
+CACHE_KIND_CLUSTERING = "clustering"
+
+
 class LLMCacheRepository:
     async def get(self, evidence_hash: str) -> tuple[str, str] | None:
         """Return (model, result_json) for the given hash, or None on miss."""
@@ -482,19 +491,68 @@ class LLMCacheRepository:
                 return None
             return (row.model, row.result_json)
 
-    async def set(self, evidence_hash: str, model: str, result_json: str) -> None:
+    async def set(
+        self,
+        evidence_hash: str,
+        model: str,
+        result_json: str,
+        *,
+        kind: str,
+        contract: str,
+    ) -> None:
+        """Store one payload, recording which caller and contract produced it.
+
+        `kind` and `contract` are keyword-only because neither is read on the way
+        back out: the hash already covers both, so they cannot change what gets
+        hit. They exist for prune_cache, which has to explain why a row is
+        unreachable, and passing them positionally next to `model` would make
+        three interchangeable strings in a row.
+        """
         async with AsyncSessionLocal() as session:
             existing = await session.get(LLMCacheTable, evidence_hash)
             if existing is None:
                 session.add(
                     LLMCacheTable(
                         evidence_hash=evidence_hash,
+                        kind=kind,
                         model=model,
+                        contract=contract,
                         result_json=result_json,
                         created_at=datetime.utcnow(),
                     )
                 )
             else:
+                # created_at is deliberately left alone — see LLMCacheTable.
+                existing.kind = kind
                 existing.model = model
+                existing.contract = contract
                 existing.result_json = result_json
             await session.commit()
+
+    async def all_rows(self) -> list[LLMCacheTable]:
+        """Every row, for the sweep. The payloads come along: they are the bulk
+        of the table, but a sweep that streamed keys and then fetched each row
+        would hold the table open for the length of a maintenance run to save
+        memory nobody is short of at this size."""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(LLMCacheTable))
+            return list(result.scalars().all())
+
+    async def delete_hashes(self, hashes: Sequence[str]) -> int:
+        """Drop the named rows, returning how many went. No-op on an empty list —
+        a bare `IN ()` is a syntax error in Postgres, and "delete nothing" is the
+        normal outcome of a sweep that found nothing."""
+        if not hashes:
+            return 0
+        async with AsyncSessionLocal() as session:
+            # Same cast as delete_cascade: execute() is typed as returning a
+            # Result, and only the CursorResult a DML statement actually yields
+            # carries rowcount.
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(LLMCacheTable).where(LLMCacheTable.evidence_hash.in_(list(hashes)))
+                ),
+            )
+            await session.commit()
+            return result.rowcount or 0

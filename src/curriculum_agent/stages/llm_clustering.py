@@ -8,7 +8,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from curriculum_agent.config import settings
-from curriculum_agent.data.repositories import LLMCacheRepository
+from curriculum_agent.data.repositories import CACHE_KIND_CLUSTERING, LLMCacheRepository
 from curriculum_agent.llm import complete_heavy
 from curriculum_agent.prompts.cluster_skills import (
     build_cluster_skills_prompt,
@@ -240,5 +240,11 @@ async def cluster_skill_names(
     else:
         groups = await _cluster_map_reduce(names, target_clusters)
 
-    await cache.set(cache_key, settings.heavy_model, json.dumps(groups))
+    await cache.set(
+        cache_key,
+        settings.heavy_model,
+        json.dumps(groups),
+        kind=CACHE_KIND_CLUSTERING,
+        contract=_CLUSTERING_CONTRACT,
+    )
     return groups

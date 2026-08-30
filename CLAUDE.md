@@ -121,7 +121,8 @@ src/curriculum_agent/
   stages/              ← intake, stakeholder_needs, skill_extraction,
                           need_combination, llm_clustering, plo_synthesis,
                           plo_report (+ smart_rules)
-  data/                ← repositories, postgres, minio_store
+  data/                ← repositories, postgres, minio_store,
+                          prune_threads / prune_cache (maintenance sweeps)
   scrapers/            ← per-site job scrapers
   parsers/             ← document parsers (มคอ.1; the Tika parser went with
                           the intake document upload)
@@ -206,6 +207,25 @@ tests/integration/     ← LLM mocked, full stages
   a failed drop leaks a thread. `uv run python -m curriculum_agent.data.prune_threads`
   reports what is unreachable (add `--delete` to drop it) and is the sweep for
   those, and for rows written before any of this existed.
+- **A stale LLM cache row is invisible, not harmless.** `llm_cache` (formerly
+  `llm_extraction_cache` — `llm_clustering` shares it with `skill_extraction`) is
+  keyed on a hash of the input, the model, and a fingerprint of the prompt and
+  response schema. That makes a stale entry impossible to hit and impossible to
+  find: switch a slot's provider or edit a prompt and every row written before
+  the change stays forever, unread. `kind` and `contract` are stored as columns
+  for exactly that reason — both are already inside the key, so they change
+  nothing about what gets hit; they exist so a sweep can say *why* a row is
+  unreachable. `uv run python -m curriculum_agent.data.prune_cache` reports
+  `stale-model` / `stale-contract` / `orphaned-kind` (add `--delete` to drop
+  them), judging each row against the slot **its own kind** resolves to —
+  extraction and clustering sit on different models, so one global "is this the
+  current model" check would call half the table stale. `--older-than DAYS` is a
+  separate flag because it reaches live rows too: it is the only sweep for the
+  garbage no column can detect — evidence text edited in place, a program renamed
+  or moved to another field (both are in the extraction key), a program deleted.
+  `created_at` is never touched on overwrite, and that is deliberate: everything
+  deciding the payload is in the key, so a second write stores the value already
+  there and the first computation is the row's real age.
 - **Never merge or cluster skills across a KSEC bucket.** `need_combination` buckets `ExtractedSkill`s by `ksec_category` before any clustering runs, and clustering stays inside one bucket. The buckets are `K`, `S`, `EC` — `E` and `C` skills deliberately share the `EC` bucket, and `resolve_need_ksec` hands back a standalone `E` or `C` for a group whose members turn out to be purely one of them. This is what makes "a Need has exactly one KSEC tag" a structural guarantee rather than a rule someone has to remember — don't add a grouping path that clusters across buckets, even to reduce the Need count.
 - **Don't classify evidence with an LLM.** `requirement` is derived in code from
   `StakeholderType` (`classify_evidence_type`); `need`/`want`/`unclassified` are

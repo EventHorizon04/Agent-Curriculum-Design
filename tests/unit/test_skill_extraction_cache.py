@@ -126,12 +126,18 @@ async def test_what_extraction_stores_is_what_a_later_run_reads_back():
     )
 
     stored: dict[str, tuple[str, str]] = {}
+    kinds: dict[str, tuple[str, str]] = {}
 
     async def fake_get(_self, key: str):
         return stored.get(key)
 
-    async def fake_set(_self, key: str, model: str, payload: str) -> None:
+    async def fake_set(_self, key: str, model: str, payload: str, *, kind: str, contract: str):
         stored[key] = (model, payload)
+        # Not read back on a hit — recorded so the assertion below can state
+        # that the row carries the labels prune_cache classifies it by. A set
+        # that stored the wrong kind would leave the sweep judging extraction
+        # rows against the clustering slot's model.
+        kinds[key] = (kind, contract)
 
     calls = 0
 
@@ -152,3 +158,6 @@ async def test_what_extraction_stores_is_what_a_later_run_reads_back():
         await se.run(dict(state))
 
     assert calls == 1, "second pass re-extracted — the cache write is unreadable"
+    ((written_kind, written_contract),) = kinds.values()
+    assert written_kind == "extraction"
+    assert written_contract == se._EXTRACTION_CONTRACT

@@ -138,10 +138,28 @@ class SessionTable(Base):
 
 
 class LLMCacheTable(Base):
-    __tablename__ = "llm_extraction_cache"
+    # Not "llm_extraction_cache": skill extraction was the only caller when the
+    # table was created, and LLM clustering has shared it since. The old name
+    # read as a promise that clustering results were not cached.
+    __tablename__ = "llm_cache"
 
-    # SHA-256(text_slice + "\x00" + model_name) — model name is baked into the hash
+    # SHA-256 over everything that decides the answer — the input text, the
+    # model, the contract fingerprint, and whatever else the caller varies.
     evidence_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Which caller wrote the row: prune_cache.EXTRACTION or .CLUSTERING. Already
+    # implied by the contract fingerprint, so it changes nothing about what gets
+    # hit; it is a column so a sweep can judge each caller against the slot that
+    # caller actually resolves to, which differ.
+    kind: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(128))
+    # Short hash of the response schema and the prompt that produced the payload
+    # (_EXTRACTION_CONTRACT / _CLUSTERING_CONTRACT). Also inside the key, and a
+    # column for the same reason: editing a prompt orphans every row it wrote,
+    # and a hash cannot be asked which prompt produced it.
+    contract: Mapped[str] = mapped_column(String(64))
     result_json: Mapped[str] = mapped_column(Text)
+    # When the payload was first computed — never touched on overwrite, and that
+    # is the intended reading. Everything that decides the payload is inside the
+    # key, so a second write to a live hash stores the value already there; the
+    # first computation is the row's real age, which is what --older-than wants.
     created_at: Mapped[datetime] = mapped_column(DateTime)

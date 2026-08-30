@@ -11,6 +11,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from curriculum_agent.config import settings
+from curriculum_agent.data.prune_cache import EXTRACTION
 from curriculum_agent.data.repositories import LLMCacheRepository, SkillRepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_extraction
@@ -360,7 +361,13 @@ async def run(state: AgentState) -> AgentState:
             async with _sem:
                 try:
                     result = await complete_extraction(_ExtractedSkillsResponse, messages)
-                    await _cache.set(cache_key, settings.extraction_model, result.model_dump_json())
+                    await _cache.set(
+                        cache_key,
+                        settings.extraction_model,
+                        result.model_dump_json(),
+                        kind=EXTRACTION,
+                        contract=_EXTRACTION_CONTRACT,
+                    )
                 except Exception as exc:
                     logger.warning(
                         f"LLM skill extraction failed for {evidence.evidence_id} "
