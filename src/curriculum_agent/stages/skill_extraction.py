@@ -40,6 +40,80 @@ _WS_RE = re.compile(r"\s+")
 _MIN_SPAN_CHARS = 12
 
 
+# How much evidence text goes into one extraction call, and how far the next
+# window reaches back. The model used to see `raw_text_th[:1200]` and nothing
+# else: a twenty-page สภาวิชาชีพ standard was read down to its first paragraph
+# and the log said nothing, so the heaviest source in a corpus could yield fewer
+# skills than a short job posting. The overlap exists because a window boundary
+# lands mid-sentence, and a capability described across it belongs to neither
+# window without it — duplicates it creates cost nothing, since the per-evidence
+# dedupe collapses them.
+_CHUNK_CHARS = 1200
+_CHUNK_OVERLAP = 150
+
+# Windows per evidence item. One LLM call each, so this is the ceiling on what a
+# single pathological document can cost the corpus — a 200-page PDF pasted into
+# one evidence row would otherwise be worth 150 calls on its own. Anything past
+# it is reported, never dropped quietly: `chunk_evidence_text` returns how much
+# it left unread and `run` logs it against the evidence id.
+_MAX_CHUNKS = 12
+
+# A window is only cut back to a word boundary if enough of it survives; below
+# this the boundary search is abandoned and the window is cut at the limit.
+_CHUNK_MIN_USEFUL = _CHUNK_CHARS // 2
+
+
+def chunk_evidence_text(text: str) -> tuple[list[str], int]:
+    """Split one evidence item into overlapping windows, with what was left out.
+
+    Returns (chunks, characters_unread). Windows are cut back to the last space
+    or newline before the limit so a quotable phrase is not split mid-word —
+    which matters because `evidence_span_th` has to be copied verbatim, and a
+    half-word at the edge of a window is a span the model cannot quote.
+
+    The count of unread characters is returned rather than logged here so the
+    caller can name the evidence item it belongs to. It is never silently zero:
+    a document longer than _MAX_CHUNKS windows reports exactly what it lost.
+    """
+    stripped = text.strip()
+    if not stripped:
+        return [], 0
+    if len(stripped) <= _CHUNK_CHARS:
+        return [stripped], 0
+
+    chunks: list[str] = []
+    start = 0
+    # How far the windows have actually read. Not `start`, which the overlap
+    # pulls back behind the last window's end — subtracting it would count the
+    # overlapped tail as unread when it has been read twice.
+    covered = 0
+    while start < len(stripped) and len(chunks) < _MAX_CHUNKS:
+        end = start + _CHUNK_CHARS
+        if end < len(stripped):
+            boundary = max(
+                stripped.rfind(" ", start, end),
+                stripped.rfind("\n", start, end),
+            )
+            if boundary > start + _CHUNK_MIN_USEFUL:
+                end = boundary
+            # Absorb a tail shorter than the overlap rather than opening a window
+            # for it: that window would be almost entirely re-read text, and it
+            # costs a provider call like any other.
+            if len(stripped) - end < _CHUNK_OVERLAP:
+                end = len(stripped)
+        window = stripped[start:end].strip()
+        if window:
+            chunks.append(window)
+        covered = end
+        if end >= len(stripped):
+            return chunks, 0
+        # max(): the window always advances, whatever the boundary search chose,
+        # so a pathological text cannot spin here.
+        start = max(end - _CHUNK_OVERLAP, start + 1)
+
+    return chunks, len(stripped) - covered
+
+
 def normalize_for_match(text: str) -> str:
     """Collapse whitespace, trim, lowercase — for substring comparison only."""
     return _WS_RE.sub(" ", text).strip().lower()
@@ -226,16 +300,22 @@ async def run(state: AgentState) -> AgentState:
     _cache = LLMCacheRepository()
 
     evidences = [StakeholderEvidence.model_validate(d) for d in classified]
-    # One call per evidence item, in flight together under a ceiling. Awaiting
-    # them one after another costs len(evidence) x per-call latency, which a
-    # hosted provider makes fatal: ~90s per call over fourteen items overruns the
-    # 300s wait_for in api/routes/needs.py several times over.
+    # One call per window of evidence text, all in flight together under a
+    # ceiling. Awaiting them one after another costs len(windows) x per-call
+    # latency, which a hosted provider makes fatal: ~90s per call over fourteen
+    # items overruns the 300s wait_for in api/routes/needs.py several times over.
     _sem = asyncio.Semaphore(max(1, settings.llm_max_concurrency))
 
-    async def _extract_one(
+    async def _extract_chunk(
         evidence: StakeholderEvidence,
+        chunk: str,
+        index: int,
     ) -> _ExtractedSkillsResponse | None:
-        text_slice = evidence.raw_text_th[:1200]
+        # The window is what the model reads and therefore what the entry is
+        # keyed on — not the evidence id, so two documents sharing a passage
+        # share its extraction, and lengthening a document still hits on every
+        # window whose text did not move.
+        #
         # field_th/program_name_th are in the key, not just the fingerprint: the
         # fingerprint intentionally covers only the schema-and-instructions
         # contract (see _extraction_contract_fingerprint), which does not vary per
@@ -251,7 +331,7 @@ async def run(state: AgentState) -> AgentState:
         # resolved to the same string; the moment they differ every write becomes
         # a permanent miss and the whole corpus is re-extracted on every run.
         cache_key = hashlib.sha256(
-            f"{text_slice}\x00{evidence.classification}\x00{settings.extraction_model}"
+            f"{chunk}\x00{evidence.classification}\x00{settings.extraction_model}"
             f"\x00{_EXTRACTION_CONTRACT}\x00{field_th}\x00{program_name_th}".encode()
         ).hexdigest()
 
@@ -260,7 +340,7 @@ async def run(state: AgentState) -> AgentState:
         if cached is not None and cached[0] == settings.extraction_model:
             try:
                 result = _ExtractedSkillsResponse.model_validate_json(cached[1])
-                logger.debug(f"Cache hit for evidence {evidence.evidence_id}")
+                logger.debug(f"Cache hit for evidence {evidence.evidence_id} window {index}")
             except ValidationError as exc:
                 # Belt-and-braces: the contract fingerprint should already have
                 # missed on any incompatible entry. Treat a surviving one as a
@@ -270,7 +350,7 @@ async def run(state: AgentState) -> AgentState:
 
         if result is None:
             messages = build_extract_skills_prompt(
-                text_slice,
+                chunk,
                 evidence.classification,
                 field_th=field_th,
                 program_name_th=program_name_th,
@@ -282,11 +362,45 @@ async def run(state: AgentState) -> AgentState:
                     result = await complete_extraction(_ExtractedSkillsResponse, messages)
                     await _cache.set(cache_key, settings.extraction_model, result.model_dump_json())
                 except Exception as exc:
-                    logger.warning(f"LLM skill extraction failed for {evidence.evidence_id}: {exc}")
+                    logger.warning(
+                        f"LLM skill extraction failed for {evidence.evidence_id} "
+                        f"window {index}: {exc}"
+                    )
         return result
 
-    # Each item's outcome is its own: _extract_one swallows provider errors into
-    # None, so one bad item cannot take the corpus down. gather preserves input
+    async def _extract_one(
+        evidence: StakeholderEvidence,
+    ) -> _ExtractedSkillsResponse | None:
+        """Every window of one evidence item, merged back into one result.
+
+        Merged rather than deduped here: the caller already collapses repeated
+        names within an evidence item, which is also what makes the overlap
+        between windows free.
+        """
+        chunks, unread = chunk_evidence_text(evidence.raw_text_th)
+        if unread:
+            logger.warning(
+                f"Evidence {evidence.evidence_id} is {len(evidence.raw_text_th)} characters — "
+                f"read the first {len(evidence.raw_text_th) - unread} in {_MAX_CHUNKS} windows "
+                f"and left {unread} unread. Split the source into separate evidence items, or "
+                "raise _MAX_CHUNKS in stages/skill_extraction.py."
+            )
+        if not chunks:
+            return None
+
+        parts = await asyncio.gather(
+            *(_extract_chunk(evidence, chunk, i) for i, chunk in enumerate(chunks))
+        )
+        answered = [p for p in parts if p is not None]
+        if not answered:
+            # Every window failed. Distinct from an item the model read and found
+            # nothing in, which returns an empty response — the caller counts the
+            # two differently.
+            return None
+        return _ExtractedSkillsResponse(skills=[s for p in answered for s in p.skills])
+
+    # Each item's outcome is its own: _extract_chunk swallows provider errors into
+    # None, so one bad window cannot take the corpus down. gather preserves input
     # order, which keeps the run reproducible.
     results = await asyncio.gather(*(_extract_one(e) for e in evidences))
 
