@@ -7,6 +7,7 @@ from loguru import logger
 from curriculum_agent.data.repositories import NeedRepository, PLORepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import PLO
+from curriculum_agent.stages.plo_synthesis import cited_need_ids
 
 
 async def run(state: AgentState) -> AgentState:
@@ -45,9 +46,13 @@ async def run(state: AgentState) -> AgentState:
             )
 
     # Derived from the data rather than read off AgentState: a Need ends up with
-    # no PLO either because it lost the MAX_CORE_PLOS cut or because its synthesis
-    # failed, and the designer needs to see both. Computed the same way in the UI.
-    cited = {nid for p in plos for nid in p.source_need_ids}
+    # no PLO because it lost the MAX_CORE_PLOS cut, because its synthesis failed,
+    # or because a merge superseded the outcome that used to cite it. All three
+    # belong in front of the designer, and all three are the same question — which
+    # is why `cited_need_ids` answers it here and for the merge endpoint alike.
+    # This list is also the pool a merge selects from: a Need is behind at most
+    # one outcome, so absence from the citations is what makes it available again.
+    cited = cited_need_ids(plos)
     not_synthesized = [nid for nid in needs_by_id if nid not in cited]
 
     core = sum(1 for p in plos if not p.is_optional)

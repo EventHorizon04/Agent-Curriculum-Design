@@ -60,6 +60,28 @@ def next_plo_id(existing_ids: Iterable[str], *, is_optional: bool) -> str:
     return format_plo_id(index, is_optional=is_optional)
 
 
+def cited_need_ids(plos: Iterable[PLO]) -> set[str]:
+    """Every Need id the given outcomes trace to.
+
+    The one definition of "this Need has been used". A Need is behind at most one
+    PLO, so its absence here is what puts it back in the pool a designer can
+    merge from — derived rather than stored, so deleting a PLO returns its Needs
+    on its own and no flag can outlive the outcome that set it.
+    """
+    return {need_id for plo in plos for need_id in plo.source_need_ids}
+
+
+def plos_citing(plos: Iterable[PLO], need_ids: Iterable[str]) -> list[PLO]:
+    """The outcomes a merge over `need_ids` would supersede.
+
+    Every PLO that cites any of the Needs, not only ones citing all of them: the
+    invariant is one outcome per Need, so an outcome sharing a single Need with
+    the merge cannot survive it.
+    """
+    wanted = set(need_ids)
+    return [plo for plo in plos if wanted & set(plo.source_need_ids)]
+
+
 def synthesis_order(needs: list[Need]) -> list[Need]:
     """Most-demanded first, `need_id` breaking ties so numbering is reproducible."""
     return sorted(needs, key=lambda n: (-n.demand_score, n.need_id))

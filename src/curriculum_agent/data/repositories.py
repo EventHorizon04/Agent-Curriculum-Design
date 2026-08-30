@@ -337,6 +337,45 @@ class PLORepository:
                         setattr(existing, k, v)
             await session.commit()
 
+    async def replace(self, program_id: str, remove_plo_ids: list[str], add: list[PLO]) -> int:
+        """Drop some outcomes and write others, in one transaction.
+
+        The designer-driven merge needs both halves to land together: the PLOs it
+        supersedes are gone and the one replacing them exists, or neither is true.
+        Doing it as a delete followed by an insert leaves a window where the
+        program has lost outcomes and gained nothing, and if the insert then fails
+        the designer is looking at a curriculum with holes in it.
+
+        Deleting first also frees the plo_id the new outcome wants: `plo_id` is
+        the primary key and `next_plo_id` hands back the lowest free number, so a
+        merge normally reuses the lowest slot it just emptied.
+
+        Returns the number of rows removed.
+        """
+        async with AsyncSessionLocal() as session:
+            removed = 0
+            if remove_plo_ids:
+                result = cast(
+                    CursorResult[Any],
+                    await session.execute(
+                        delete(PLOTable).where(
+                            PLOTable.program_id == program_id,
+                            PLOTable.plo_id.in_(remove_plo_ids),
+                        )
+                    ),
+                )
+                removed = result.rowcount
+            for plo in add:
+                data = plo.model_dump(mode="json")
+                existing = await session.get(PLOTable, plo.plo_id)
+                if existing is None:
+                    session.add(PLOTable(**data))
+                else:
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+            await session.commit()
+            return removed
+
     async def list_by_program(self, program_id: str) -> list[PLO]:
         async with AsyncSessionLocal() as session:
             result = await session.execute(

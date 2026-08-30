@@ -19,10 +19,11 @@ _HOSTED_PROVIDERS = frozenset({"openrouter", "opentyphoon"})
 
 
 # Every helper below takes the provider rather than reading settings.llm_provider,
-# because two endpoints are in play: the pipeline's default, and whichever one
+# because three endpoints are in play: the pipeline's default (light), whichever
+# one the heavy slot is routed to (settings.heavy_provider), and whichever one
 # skill_extraction is routed to (settings.extraction_provider). A helper that
-# resolved the provider itself would silently send extraction's model to the
-# default endpoint, which fails as an unknown-model error far from its cause.
+# resolved the provider itself would silently send one slot's model to another
+# slot's endpoint, which fails as an unknown-model error far from its cause.
 
 
 def _base_url(provider: str) -> str:
@@ -56,6 +57,11 @@ def _extra_body(provider: str) -> dict[str, Any]:
     return {"keep_alive": -1}
 
 
+def _heavy_provider() -> str:
+    """Provider for the heavy slot. Settings resolves None to llm_provider."""
+    return settings.heavy_provider or settings.llm_provider
+
+
 def _extraction_provider() -> str:
     """Provider for skill_extraction. Settings resolves None to llm_provider."""
     return settings.extraction_provider or settings.llm_provider
@@ -70,12 +76,19 @@ def _key_state(provider: str) -> str:
         return "MISSING"
 
 
+def _describe_slot(label: str, provider: str, model: str) -> str:
+    return (
+        f"{label}: provider={provider} base_url={_base_url(provider)} "
+        f"api_key={_key_state(provider)} model={model}"
+    )
+
+
 def describe_target() -> str:
     """Which LLM endpoints and models this process talks to, as one log line.
 
-    Both are reported, because they can differ: skill_extraction has its own
-    provider, and "the wrong model answered" is impossible to diagnose from a
-    line that names only the default one.
+    All three slots are reported, because they can differ: heavy and
+    skill_extraction each have their own provider, and "the wrong model
+    answered" is impossible to diagnose from a line that names only one of them.
 
     Never includes an API key. It reports only whether one is configured, which
     is the part that is actually useful when a call fails — the value itself is a
@@ -83,15 +96,12 @@ def describe_target() -> str:
     Base URLs are safe: they are public endpoints, and for Ollama the host is the
     operator's own machine.
     """
-    provider = settings.llm_provider
-    extraction = _extraction_provider()
-    return (
-        f"LLM target: provider={provider} base_url={_base_url(provider)} "
-        f"api_key={_key_state(provider)} light={settings.light_model} "
-        f"heavy={settings.heavy_model} | extraction: provider={extraction} "
-        f"base_url={_base_url(extraction)} api_key={_key_state(extraction)} "
-        f"model={settings.extraction_model}"
+    slots = (
+        _describe_slot("light", settings.llm_provider, settings.light_model),
+        _describe_slot("heavy", _heavy_provider(), settings.heavy_model),
+        _describe_slot("extraction", _extraction_provider(), settings.extraction_model),
     )
+    return "LLM target: " + " | ".join(slots)
 
 
 def log_target() -> None:
@@ -103,8 +113,10 @@ def log_target() -> None:
 def _get_client(provider: str) -> instructor.AsyncInstructor:
     """Lazy per-provider singleton — created on first call, not at import time.
 
-    Cached on the provider so the two endpoints in play get one client each
-    rather than one client that silently belongs to whichever stage called first.
+    Cached on the provider so the endpoints in play get one client each rather
+    than one client that silently belongs to whichever stage called first.
+    Slots that share a provider share the client, which is what makes the
+    all-on-one-endpoint arrangement cost one connection pool rather than three.
     """
     logger.info(f"Creating LLM client for provider '{provider}' at {_base_url(provider)}")
     return instructor.from_openai(
@@ -160,9 +172,9 @@ async def complete_heavy(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """Heavy model used for clustering and PLO synthesis."""
+    """Heavy model used for clustering and PLO synthesis — see Settings.heavy_provider."""
     return await _complete(
-        settings.llm_provider, settings.heavy_model, response_model, messages, **kwargs
+        _heavy_provider(), settings.heavy_model, response_model, messages, **kwargs
     )
 
 
@@ -189,14 +201,14 @@ async def warmup_models() -> None:
 
     Hosted providers are skipped — there is no local VRAM to warm, and the
     warm-up call would spend a real request (and, on a paid provider, real money)
-    on a prompt whose answer is thrown away. Both targets are considered, since
-    only one of them may be the local one.
+    on a prompt whose answer is thrown away. All three slots are considered,
+    since only some of them may be the local one.
     """
     local = {
         model
         for provider, model in (
             (settings.llm_provider, settings.light_model),
-            (settings.llm_provider, settings.heavy_model),
+            (_heavy_provider(), settings.heavy_model),
             (_extraction_provider(), settings.extraction_model),
         )
         if provider not in _HOSTED_PROVIDERS

@@ -92,7 +92,9 @@ def test_postgres_dsn_langgraph_keeps_the_psycopg_form():
 
 
 def test_model_defaults_follow_the_ollama_provider():
-    s = Settings(_env_file=None, llm_provider="ollama")
+    # heavy_provider=None collapses the three endpoints onto llm_provider, which
+    # is the arrangement someone running fully local wants.
+    s = Settings(_env_file=None, llm_provider="ollama", heavy_provider=None)
     assert s.light_model == "gemma4:31b-cloud"
     assert s.heavy_model == "gemma4:31b-cloud"
 
@@ -100,7 +102,7 @@ def test_model_defaults_follow_the_ollama_provider():
 def test_model_defaults_follow_the_openrouter_provider():
     # The provider is read at instance level, not at class-definition time, so
     # switching it in .env must switch the model defaults with it.
-    s = Settings(_env_file=None, llm_provider="openrouter")
+    s = Settings(_env_file=None, llm_provider="openrouter", heavy_provider=None)
     assert s.light_model == "meta-llama/llama-3.3-70b-instruct"
     assert s.heavy_model == "meta-llama/llama-3.3-70b-instruct"
 
@@ -108,17 +110,22 @@ def test_model_defaults_follow_the_openrouter_provider():
 def test_the_default_provider_is_thai_first():
     """Pinned because it is a decision, not an accident: the prompts and the
     stored statements are Thai, so the default endpoint serves Thai-first models.
-    Changing it should require changing this line and saying why."""
+    Changing it should require changing this line and saying why.
+
+    It governs the two stages whose output is Thai prose a designer reads back:
+    light (Need sentences, the SMART soft judge) and extraction.
+    """
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
     assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
-    assert s.heavy_model == "typhoon-v2.5-30b-a3b-instruct"
+    assert s.extraction_model == "typhoon-v2.5-30b-a3b-instruct"
 
 
 def test_explicit_models_survive_the_provider_default():
     s = Settings(
         _env_file=None,
         llm_provider="ollama",
+        heavy_provider=None,
         light_model="typhoon2:8b",
         heavy_model="qwen2.5:14b",
     )
@@ -148,14 +155,37 @@ def test_cors_origins_can_be_emptied_for_same_origin_serving():
     assert s.cors_origins == []
 
 
-def test_skill_extraction_gets_its_own_provider_and_model():
-    """Extraction fans out one call per evidence item, so it is what exhausts a
-    provider's token quota first. It runs on OpenRouter while everything a
-    designer reads stays on the Thai-first default."""
+def test_heavy_gets_its_own_provider_and_model():
+    """The shipped split: clustering and PLO synthesis run on OpenRouter, the
+    stages that write Thai prose stay on the Thai-first default."""
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
-    assert s.extraction_provider == "openrouter"
-    assert s.extraction_model == "meta-llama/llama-3.3-70b-instruct"
+    assert s.heavy_provider == "openrouter"
+    assert s.heavy_model == "meta-llama/llama-3.3-70b-instruct"
+    assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
+
+
+def test_heavy_provider_unset_follows_the_default_provider():
+    """Same contract as extraction_provider: None means "one endpoint for
+    everything", and the model default follows the provider that wins."""
+    s = Settings(_env_file=None, llm_provider="ollama", heavy_provider=None)
+    assert s.heavy_provider == "ollama"
+    assert s.heavy_model == "gemma4:31b-cloud"
+
+
+def test_an_explicit_heavy_model_survives_the_provider_default():
+    s = Settings(_env_file=None, heavy_model="qwen/qwen3-235b-a22b")
+    assert s.heavy_provider == "openrouter"
+    assert s.heavy_model == "qwen/qwen3-235b-a22b"
+
+
+def test_skill_extraction_runs_on_the_thai_first_default():
+    """Extraction reads Thai evidence and names Thai skills, so it stays on the
+    Thai-first endpoint. It is the fan-out stage, so it is also what exhausts a
+    quota first — moving it is one EXTRACTION_PROVIDER line."""
+    s = Settings(_env_file=None)
+    assert s.extraction_provider == "opentyphoon"
+    assert s.extraction_model == "typhoon-v2.5-30b-a3b-instruct"
 
 
 def test_extraction_provider_unset_follows_the_default_provider():

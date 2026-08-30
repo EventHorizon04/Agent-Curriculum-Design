@@ -15,7 +15,8 @@ def _settings(**overrides: object) -> Settings:
 
 @pytest.fixture
 def typhoon(monkeypatch: pytest.MonkeyPatch) -> Settings:
-    """The shipped arrangement: OpenTyphoon by default, OpenRouter for extraction.
+    """The shipped arrangement: OpenTyphoon for light and extraction, OpenRouter
+    for heavy.
 
     The module-level name is replaced rather than the singleton mutated: llm.py
     binds `settings` at import, so a test that mutated the shared object would
@@ -50,15 +51,35 @@ def test_opentyphoon_without_a_key_names_the_variable_to_set(
         llm._api_key("opentyphoon")
 
 
-def test_extraction_resolves_to_a_different_endpoint_than_the_rest(typhoon: Settings) -> None:
-    """The whole point of the split: skill extraction talks to OpenRouter while
-    everything a designer reads stays on the Thai-first model."""
+def test_heavy_resolves_to_a_different_endpoint_than_the_rest(typhoon: Settings) -> None:
+    """The whole point of the split: clustering and PLO synthesis talk to
+    OpenRouter while the stages that write Thai prose stay on the Thai model."""
+    heavy = llm._heavy_provider()
+
+    assert heavy == "openrouter"
+    assert llm._base_url(heavy) == typhoon.openrouter_base_url
+    assert llm._api_key(heavy) == _ROUTER_KEY
+    assert llm._base_url(typhoon.llm_provider) == typhoon.opentyphoon_base_url
+
+
+def test_heavy_follows_the_default_provider_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One endpoint for the whole pipeline stays a supported arrangement."""
+    settings = _settings(llm_provider="ollama", heavy_provider=None, extraction_provider=None)
+    monkeypatch.setattr(llm, "settings", settings)
+
+    assert llm._heavy_provider() == "ollama"
+
+
+def test_extraction_shares_the_thai_first_endpoint(typhoon: Settings) -> None:
+    """Extraction reads Thai evidence and names Thai skills, so it sits on the
+    same endpoint as light rather than on heavy's."""
     extraction = llm._extraction_provider()
 
-    assert extraction == "openrouter"
-    assert llm._base_url(extraction) == typhoon.openrouter_base_url
-    assert llm._api_key(extraction) == _ROUTER_KEY
-    assert llm._base_url(typhoon.llm_provider) == typhoon.opentyphoon_base_url
+    assert extraction == "opentyphoon"
+    assert llm._base_url(extraction) == typhoon.opentyphoon_base_url
+    assert llm._api_key(extraction) == _TYPHOON_KEY
 
 
 def test_extraction_follows_the_default_provider_when_unset(
@@ -66,7 +87,7 @@ def test_extraction_follows_the_default_provider_when_unset(
 ) -> None:
     """One endpoint for the whole pipeline is a supported arrangement — someone
     running fully local should not have to also name a provider for extraction."""
-    settings = _settings(llm_provider="ollama", extraction_provider=None)
+    settings = _settings(llm_provider="ollama", heavy_provider=None, extraction_provider=None)
     monkeypatch.setattr(llm, "settings", settings)
 
     assert llm._extraction_provider() == "ollama"
@@ -81,9 +102,12 @@ def test_describe_target_names_both_endpoints_and_no_key(typhoon: Settings) -> N
 
     assert _TYPHOON_KEY not in described
     assert _ROUTER_KEY not in described
-    assert "provider=opentyphoon" in described
-    assert "extraction: provider=openrouter" in described
+    assert "light: provider=opentyphoon" in described
+    assert "heavy: provider=openrouter" in described
+    assert "extraction: provider=opentyphoon" in described
     assert typhoon.openrouter_base_url in described
+    assert typhoon.opentyphoon_base_url in described
+    assert typhoon.heavy_model in described
     assert typhoon.extraction_model in described
     assert "api_key=set" in described
 

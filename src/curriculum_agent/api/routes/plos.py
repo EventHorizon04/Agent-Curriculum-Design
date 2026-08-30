@@ -209,9 +209,14 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     Program is looked up first: a missing program is a 404, not a 422 blaming
     the Needs. Need ids are validated only after the program exists.
     """
-    from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS  # noqa: PLC0415
+    from curriculum_agent.stages.need_grouping import (  # noqa: PLC0415
+        MAX_CORE_PLOS,
+        MIN_NEEDS,
+    )
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
+        cited_need_ids,
         next_plo_id,
+        plos_citing,
         synthesize_from_needs,
     )
 
@@ -232,37 +237,75 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     is_optional = all(n.is_optional for n in selected)
     existing = await _repo.list_by_program(program_id)
 
-    # The 6-10 policy is a property of the stored set, not of one stage's output.
-    # This endpoint appends without removing the PLOs the merged Needs already
-    # produced, so without this guard a designer merging repeatedly walks the core
-    # count past the ceiling plo_synthesis just enforced. Refusing is the honest
-    # answer: which outcomes the merge replaces is the designer's call, not one
-    # this route can make by deleting rows on their behalf. Optional PLOs are
-    # outside the count here for the same reason they are in synthesis.
-    if not is_optional:
-        core = sum(1 for p in existing if not p.is_optional)
-        if core >= MAX_CORE_PLOS:
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    f"หลักสูตรนี้มี PLO หลักครบ {MAX_CORE_PLOS} ข้อแล้ว "
-                    "กรุณาลบ PLO ที่การรวมนี้จะมาแทนที่ก่อน แล้วจึงรวมใหม่"
-                ),
-            )
+    # One outcome per Need. Every PLO citing any selected Need is replaced by this
+    # merge rather than left standing beside it: this endpoint used to append, so a
+    # Need ended up behind both its own outcome and the merged one, and two PLOs
+    # claiming the same evidence read as two independent market demands in the
+    # มคอ.2 matrix when they are one. Replacing is also what a designer means by
+    # "merge" — the outcomes the merge supersedes are exactly the ones it covers.
+    superseded = plos_citing(existing, body.need_ids)
+    superseded_ids = {p.plo_id for p in superseded}
+    surviving = [p for p in existing if p.plo_id not in superseded_ids]
 
-    existing_ids = [p.plo_id for p in existing]
+    current_core = sum(1 for p in existing if not p.is_optional)
+    projected_core = sum(1 for p in surviving if not p.is_optional) + (0 if is_optional else 1)
+
+    # The 6-10 policy is a property of the stored set, not of one stage's output,
+    # and a replacing merge moves the count in both directions: folding several
+    # outcomes into one lowers it, merging Needs nothing cites yet raises it. Both
+    # bounds are therefore checked here. Optional PLOs are outside the count, for
+    # the same reason they are in synthesis.
+    if projected_core > MAX_CORE_PLOS:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"การรวมนี้จะทำให้มี PLO หลัก {projected_core} ข้อ เกินเพดาน "
+                f"{MAX_CORE_PLOS} ข้อ เลือก Need ที่มี PLO อยู่แล้วเข้ามารวมด้วย "
+                "เพื่อให้การรวมนี้แทนที่ PLO เดิมแทนที่จะเพิ่มข้อใหม่"
+            ),
+        )
+    # Only when this merge is what takes the count below the floor. A program that
+    # is already short of six — too few Needs to begin with — must not have every
+    # further merge refused for a shortfall it did not cause.
+    if projected_core < MIN_NEEDS and projected_core < current_core:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"การรวมนี้จะเหลือ PLO หลัก {projected_core} ข้อ ต่ำกว่านโยบายขั้นต่ำ "
+                f"{MIN_NEEDS} ข้อ รวม Need ที่ยังไม่มี PLO ขึ้นมาเป็นข้อใหม่ก่อน "
+                "แล้วจึงรวมข้อที่ซ้ำซ้อนกัน"
+            ),
+        )
+
+    # A Need cited only by an outcome this merge supersedes loses its PLO and
+    # returns to the pool. That is the correct outcome — it is no longer behind
+    # anything — but it is not something the designer asked for, so it is named
+    # rather than left to be noticed on the report page.
+    released = sorted(cited_need_ids(superseded) - set(body.need_ids))
+    if released:
+        logger.warning(
+            f"Merging {len(selected)} Need(s) supersedes {sorted(superseded_ids)}, which "
+            f"leaves Need(s) {released} without an outcome — they return to the pool"
+        )
+
     plo = await synthesize_from_needs(
         program,
         selected,
         program_id,
         {n.need_id for n in all_needs},
-        next_plo_id(existing_ids, is_optional=is_optional),
+        # Numbered from what survives, so the merge reuses the lowest slot it is
+        # about to empty instead of counting past ids that are being deleted.
+        next_plo_id([p.plo_id for p in surviving], is_optional=is_optional),
         note_th=body.note_th,
     )
     if plo is None:
+        # Nothing has been deleted yet: the supersede and the insert happen
+        # together below, so a failed synthesis leaves the set exactly as it was.
         raise HTTPException(status_code=502, detail="สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่")
 
-    await PLORepository().bulk_insert([plo])
+    removed = await PLORepository().replace(program_id, sorted(superseded_ids), [plo])
+    if removed:
+        logger.info(f"Merge into {plo.plo_id} replaced {removed} PLO row(s)")
     return plo
 
 
