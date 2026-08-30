@@ -49,8 +49,16 @@ def build_summarize_need_prompt(
     bloom_level: str,
     *,
     note_th: str | None = None,
+    program_context: str | None = None,
 ) -> list[dict[str, str]]:
     """Turn one group of related skills into a single market-demand sentence.
+
+    `program_context` is the program's field and degree level, from intake — the
+    only thing here that says which program the sentence is for. It settles the
+    wording a bare skill name leaves open ("การดูแล" in a nursing program is not
+    the same demand as in an engineering one) and nothing more: the rule below
+    forbids adding a capability the skill group never named, because the PLO
+    drafted from this sentence has to trace to the evidence behind those skills.
 
     Sees the extracted skills and nothing else. Evidence text used to be pasted in
     as samples; it is gone on purpose — the skills already carry what extraction
@@ -63,6 +71,14 @@ def build_summarize_need_prompt(
     the group's Bloom level, and name the two degenerate shapes — a vague
     placeholder and a comma-joined skill list — that _NeedStatement rejects.
     """
+    # Only added alongside a context line: without one there is nothing to
+    # over-read, and the rule would be an instruction about a field the prompt
+    # never named.
+    context_rule = (
+        "- เขียนโดยตีความทักษะตามบริบทหลักสูตรที่ระบุ แต่บริบทนั้นใช้เลือกถ้อยคำเท่านั้น ห้ามเพิ่มเนื้อหาที่ไม่มีในกลุ่มทักษะ\n"
+        if program_context
+        else ""
+    )
     system = (
         "คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ความต้องการของตลาดแรงงาน\n"
         "จากกลุ่มทักษะที่ให้มา จงสรุปเป็น 'ความต้องการของตลาด' หนึ่งประโยค\n"
@@ -75,7 +91,8 @@ def build_summarize_need_prompt(
         "(2) วัตถุหรือผลงานที่เจาะจง (3) บริบทของงานที่ใช้ความสามารถนั้น\n"
         "- หนึ่งประโยคคือหนึ่งสมรรถนะ ห้ามยัดหลายเรื่องที่ไม่เกี่ยวกันไว้ในประโยคเดียว\n"
         "- ระดับความยากต้องตรงกับระดับ Bloom ที่ระบุให้ ไม่สูงหรือต่ำกว่านั้น\n"
-        "- ห้ามใช้คำกว้างที่ไม่บอกว่าคืออะไร เช่น 'ทักษะที่จำเป็น' "
+        + context_rule
+        + "- ห้ามใช้คำกว้างที่ไม่บอกว่าคืออะไร เช่น 'ทักษะที่จำเป็น' "
         "'ความรู้ที่เกี่ยวข้อง' 'สมรรถนะด้านต่างๆ'\n"
         "- ห้ามวนกลับมาพูดว่า 'ตามที่ตลาดต้องการ' ต้องบอกให้ชัดว่าตลาดต้องการอะไร\n"
         "- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกันด้วยเครื่องหมายจุลภาค "
@@ -91,7 +108,9 @@ def build_summarize_need_prompt(
     label = _KSEC_LABEL_TH.get(ksec, ksec)
     bloom_label = _BLOOM_LABEL_TH.get(bloom_level, bloom_level)
     keywords = ", ".join(skill_names[:30])
+    context_line = f"บริบทหลักสูตร: {program_context}\n" if program_context else ""
     user = (
+        f"{context_line}"
         f"หมวดสมรรถนะ: {label} ({ksec})\n"
         f"ระดับที่ตลาดเรียกร้อง: {bloom_label} ({bloom_level})\n"
         f"ทักษะในกลุ่มนี้: {keywords}"

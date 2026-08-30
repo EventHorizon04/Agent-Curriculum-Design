@@ -167,14 +167,29 @@ tests/integration/     ← LLM mocked, full stages
   window whose text did not move. `_MAX_CHUNKS` bounds what one pathological
   document costs, and whatever it leaves unread is logged against the evidence
   id; don't reintroduce a cap that says nothing.
-- **`need_combination` reads the extracted skills and nothing else.** No evidence
-  text reaches the stage: the sentence for each Need is written from its member
+- **`need_combination` reads the extracted skills plus the program's own context — never evidence text.** The sentence for each Need is written from its member
   skill names, and `demand_score` is computed from the evidence ids and
   stakeholder types carried on those skills. `POST /needs/combine/run` therefore does not load the
   evidence table at all and has no evidence precondition. Don't reintroduce
   `classified_evidence` here — extraction already read that evidence, and the raw
   quotes only gave the light model longer Thai to drift on. Traceability is
   unaffected: `Need.source_evidence_ids` still comes from the member skills.
+
+  The one thing besides the skills that reaches both LLM calls is
+  `build_program_context_th(state["metadata"])` — the field and degree level the
+  designer typed at intake, as one Thai line ("หลักสูตรระดับปริญญาตรี สาขาพยาบาลศาสตร์").
+  A bare skill name is ambiguous on its own: "การดูแล" groups with clinical work
+  in a nursing program and with facility operations in an engineering one, and
+  nothing else in either prompt says which program it is. It is metadata, not
+  evidence, so it frames the reading and nothing more — the clustering prompt
+  states outright that an off-field skill is still market demand and still
+  belongs to exactly one group, and the summarize prompt forbids adding a
+  capability the skill group never named, since the PLO drafted from that
+  sentence has to trace to the evidence behind those skills. A program with no
+  `field` gets `None` and the pre-context prompts byte-for-byte. The context is
+  in the clustering **cache key** for the same reason `target_clusters` is: it
+  reaches the prompt, so two programs whose skill names coincide must not share
+  an entry.
 - **`demand_score` is two blocks, not a table of per-type weights.**
   `0.30 × (สภาวิชาชีพ named it? 1 : 0) + 0.70 × share of the corpus that named it`
   — `stages/demand.py`. Only `PROFESSIONAL_COUNCIL` buys the mandate block, which

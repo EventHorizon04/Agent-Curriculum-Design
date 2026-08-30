@@ -17,6 +17,7 @@ from curriculum_agent.models import (
     Need,
     StakeholderType,
 )
+from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.summarize_need import (
     MIN_STATEMENT_CHARS,
     build_summarize_need_prompt,
@@ -154,6 +155,7 @@ class _Group(BaseModel):
 async def _build_groups(
     skills: list[ExtractedSkill],
     stakeholder_type_by_evidence: dict[str, str],
+    program_context: str | None = None,
 ) -> list[_Group]:
     """Cluster within each KSEC bucket and score every resulting group.
 
@@ -163,6 +165,10 @@ async def _build_groups(
 
     `stakeholder_type_by_evidence` is built from the skills by the caller, so
     scoring stays inside what extraction produced.
+
+    `program_context` is the program's field and degree level. It settles what an
+    ambiguous skill name means before the names are grouped by it — it is intake
+    metadata, not evidence, so nothing about a Need's evidence trail changes.
     """
     groups: list[_Group] = []
     buckets = bucket_by_ksec(skills)
@@ -187,7 +193,7 @@ async def _build_groups(
         target = targets.get(ksec)
         logger.info(f"Clustering {len(names)} unique {ksec.value} skills into about {target}")
         name_clusters = validate_assignments(
-            [("", g) for g in await cluster_skill_names(names, target)], names
+            [("", g) for g in await cluster_skill_names(names, target, program_context)], names
         )
         for _, name_indices in name_clusters:
             member_positions = sorted({p for ni in name_indices for p in index_groups[ni]})
@@ -223,6 +229,9 @@ async def run(state: AgentState) -> AgentState:
     program_id = state.get("program_id", "unknown")
     # Optional designer guidance for this run; absent on a plain re-run.
     note_th = state.get("designer_note")
+    # None for a program stored before intake collected a field, which is exactly
+    # the pre-context behaviour: say nothing rather than a stub line.
+    program_context = build_program_context_th(state.get("metadata") or {})
     skill_dicts = state.get("extracted_skills", [])
     skills = [ExtractedSkill.model_validate(d) for d in skill_dicts]
     logger.info(f"Stage 3b: need_combination from {len(skills)} skills")
@@ -244,7 +253,7 @@ async def run(state: AgentState) -> AgentState:
         (s.source_evidence_id, s.source_stakeholder_type.value) for s in skills
     )
 
-    groups = await _build_groups(skills, scoring_corpus)
+    groups = await _build_groups(skills, scoring_corpus, program_context)
 
     needs: list[Need] = []
     for group in groups:
@@ -256,6 +265,7 @@ async def run(state: AgentState) -> AgentState:
                     group.ksec.value,
                     group.bloom_level.value,
                     note_th=note_th,
+                    program_context=program_context,
                 ),
                 max_retries=_STATEMENT_ATTEMPTS,
             )

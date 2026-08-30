@@ -141,7 +141,9 @@ async def test_each_bucket_is_clustered_against_its_own_share(monkeypatch):
 
     seen: dict[int, int | None] = {}
 
-    async def recording_cluster(names: list[str], target: int | None = None):
+    async def recording_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ):
         seen[len(names)] = target
         return [list(range(len(names)))]
 

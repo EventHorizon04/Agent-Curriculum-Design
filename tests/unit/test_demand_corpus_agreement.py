@@ -94,7 +94,9 @@ async def test_the_silent_evidence_item_is_out_of_both_corpora(extracted, monkey
     by — one of two items named each capability, not one of three."""
     assert len(extracted) == 2
 
-    async def fake_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def fake_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
@@ -117,7 +119,9 @@ async def test_a_single_skill_need_scores_exactly_what_its_skill_did(extracted, 
     """The designer sees both numbers side by side, so an identical capability
     must not carry two different demands."""
 
-    async def fake_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def fake_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)

@@ -47,7 +47,9 @@ async def _run_with(monkeypatch: pytest.MonkeyPatch, error: Exception) -> list[d
     async def failing_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
         raise error
 
-    async def fake_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def fake_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [[i for i in range(len(names))]]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)

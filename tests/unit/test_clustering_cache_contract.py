@@ -46,7 +46,9 @@ def test_contract_fingerprint_is_stable_across_calls():
 def test_contract_fingerprint_changes_when_a_prompt_changes(monkeypatch: pytest.MonkeyPatch):
     before = lc._clustering_contract_fingerprint()
 
-    def _reworded(names: list[str]) -> list[dict[str, str]]:
+    def _reworded(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[dict[str, str]]:
         return [
             {"role": "system", "content": "cluster them however you like"},
             {"role": "user", "content": ""},
@@ -150,3 +152,68 @@ async def test_valid_cached_grouping_is_reused_without_recomputing(
 
     recompute.assert_not_awaited()
     assert groups == [[0, 2], [1]]
+
+
+async def test_cache_key_separates_programs_with_different_contexts(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The context goes into the prompt, so it has to go into the key.
+
+    Same reasoning as target_clusters: the contract fingerprint covers only the
+    instructions that do not vary per call, so without this a nursing program
+    would be served the grouping computed for an engineering one — the same skill
+    names, read against a different field.
+    """
+    seen: list[str] = []
+
+    async def capture(self, key: str):  # noqa: ANN001, ANN202
+        seen.append(key)
+        return None
+
+    monkeypatch.setattr(lc.LLMCacheRepository, "get", capture)
+    monkeypatch.setattr(lc.LLMCacheRepository, "set", AsyncMock())
+    monkeypatch.setattr(lc, "_cluster_pass", AsyncMock(return_value=[("g", [0, 1, 2])]))
+
+    await lc.cluster_skill_names(list(_NAMES), None, "หลักสูตรสาขาพยาบาลศาสตร์")
+    await lc.cluster_skill_names(list(_NAMES), None, "หลักสูตรสาขาวิศวกรรมซอฟต์แวร์")
+    await lc.cluster_skill_names(list(_NAMES))
+
+    assert len(seen) == 3
+    assert len(set(seen)) == 3, "cache key ignores the program context"
+
+
+async def test_program_context_reaches_the_clustering_prompt(monkeypatch: pytest.MonkeyPatch):
+    """Threading it through the key is not enough — the model has to see it."""
+    captured: dict[str, str | None] = {}
+
+    async def capture_pass(names, target, program_context=None):  # noqa: ANN001, ANN202
+        captured["context"] = program_context
+        return [("g", list(range(len(names))))]
+
+    monkeypatch.setattr(lc.LLMCacheRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(lc.LLMCacheRepository, "set", AsyncMock())
+    monkeypatch.setattr(lc, "_cluster_pass", capture_pass)
+
+    await lc.cluster_skill_names(list(_NAMES), None, "หลักสูตรสาขาพยาบาลศาสตร์")
+    assert captured["context"] == "หลักสูตรสาขาพยาบาลศาสตร์"
+
+
+def test_contract_fingerprint_covers_the_context_branch(monkeypatch: pytest.MonkeyPatch):
+    """Rewording the context instructions must invalidate old entries too.
+
+    The fingerprint samples the prompts by building them. Build them only without
+    a program context and half the instructions never reach the hash: entries
+    produced under an older context rule keep matching, which is the exact defect
+    the fingerprint exists to prevent.
+    """
+    before = lc._clustering_contract_fingerprint()
+    real = lc.build_cluster_skills_prompt
+
+    def _reworded_context(names, target=None, program_context=None):  # noqa: ANN001, ANN202
+        messages = real(names, target, program_context)
+        if program_context:
+            messages[0] = {"role": "system", "content": "group them however the field suggests"}
+        return messages
+
+    monkeypatch.setattr(lc, "build_cluster_skills_prompt", _reworded_context)
+    assert lc._clustering_contract_fingerprint() != before

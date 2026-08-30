@@ -34,3 +34,35 @@ def test_merge_prompt_numbers_every_label():
     system = msgs[0]["content"]
     assert "groups" in system
     assert "Do not use indices that are not present in the list." in system
+
+
+def test_cluster_prompt_carries_the_program_context() -> None:
+    """The field frames how a skill name is read — 'การดูแล' means one thing in
+    nursing and another in facility management."""
+    system = build_cluster_skills_prompt(
+        ["การดูแลผู้ป่วย", "SQL"],
+        program_context="หลักสูตรระดับปริญญาตรี สาขาพยาบาลศาสตร์",
+    )[0]["content"]
+    assert "หลักสูตรระดับปริญญาตรี สาขาพยาบาลศาสตร์" in system
+
+
+def test_cluster_prompt_forbids_dropping_off_field_skills() -> None:
+    """Context must frame the grouping, never license a filter.
+
+    Every skill reaching this call was extracted from real evidence, so a model
+    that reads 'this program is nursing' as 'leave the SQL skills out' would drop
+    market demand. validate_assignments repairs a partial cover, but the
+    instruction must not invite one in the first place.
+    """
+    system = build_cluster_skills_prompt(["SQL"], program_context="หลักสูตรสาขาพยาบาลศาสตร์")[0][
+        "content"
+    ]
+    assert "never drop" in system.lower()
+
+
+def test_no_program_context_leaves_the_prompt_unchanged() -> None:
+    """Programs created before intake collected a field keep the old prompt."""
+    names = ["Python", "SQL"]
+    assert build_cluster_skills_prompt(names, 4) == build_cluster_skills_prompt(
+        names, 4, program_context=None
+    )

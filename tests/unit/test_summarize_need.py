@@ -67,3 +67,34 @@ def test_the_prompt_asks_for_the_fields_the_caller_actually_parses() -> None:
     system = build_summarize_need_prompt(["ทักษะตัวอย่าง"], "S", "apply")[0]["content"]
     for field in _NeedStatement.model_fields:
         assert field in system, f"the prompt never names '{field}', which the caller parses"
+
+
+def test_summarize_prompt_carries_the_program_context() -> None:
+    """The sentence becomes a PLO for one specific program, so the writer has to
+    know which field it is being written for."""
+    messages = build_summarize_need_prompt(
+        ["การดูแลผู้ป่วย"],
+        "S",
+        "apply",
+        program_context="หลักสูตรระดับปริญญาตรี สาขาพยาบาลศาสตร์",
+    )
+    assert "หลักสูตรระดับปริญญาตรี สาขาพยาบาลศาสตร์" in messages[1]["content"]
+
+
+def test_summarize_prompt_forbids_inventing_content_from_the_context() -> None:
+    """Context frames the wording; it is not new evidence.
+
+    Every PLO must trace to the evidence behind its Need, so a sentence that
+    adds a capability the skill group never named would be an untraceable PLO.
+    """
+    system = build_summarize_need_prompt(
+        ["การดูแลผู้ป่วย"], "S", "apply", program_context="หลักสูตรสาขาพยาบาลศาสตร์"
+    )[0]["content"]
+    assert "ห้ามเพิ่มเนื้อหาที่ไม่มีในกลุ่มทักษะ" in system
+
+
+def test_no_program_context_leaves_the_summarize_prompt_unchanged() -> None:
+    """Programs created before intake collected a field keep the old prompt."""
+    assert build_summarize_need_prompt(["x"], "S", "apply") == build_summarize_need_prompt(
+        ["x"], "S", "apply", program_context=None
+    )

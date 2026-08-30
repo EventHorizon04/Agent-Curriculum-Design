@@ -53,7 +53,9 @@ async def _fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
 def _patch_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     """Cluster each bucket into singletons; summarize echoes the first skill name."""
 
-    async def fake_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def fake_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
@@ -98,7 +100,9 @@ async def test_ethics_and_character_skills_form_one_ec_need(monkeypatch: pytest.
         _skill("ความรับผิดชอบต่อหน้าที่", KSECCategory.C, "S2", "E2"),
     ]
 
-    async def one_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def one_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [list(range(len(names)))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
@@ -121,7 +125,9 @@ async def test_an_all_ethics_group_keeps_the_standalone_e_tag(monkeypatch: pytes
         _skill("ความซื่อสัตย์ในวิชาชีพ", KSECCategory.E, "S2", "E2"),
     ]
 
-    async def one_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def one_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [list(range(len(names)))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
@@ -146,7 +152,9 @@ async def test_needs_carry_their_source_stakeholder_types(monkeypatch: pytest.Mo
         _skill("วิเคราะห์ข้อมูล", KSECCategory.S, "S2", "E2", stype=StakeholderType.ALUMNI),
     ]
 
-    async def one_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def one_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [list(range(len(names)))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
@@ -188,7 +196,9 @@ async def test_freq_counts_mentions_not_unique_names(monkeypatch: pytest.MonkeyP
         _skill("วิเคราะห์ข้อมูล", KSECCategory.S, "S2", "E2"),
     ]
 
-    async def one_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def one_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [list(range(len(names)))]
 
     async def fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
@@ -308,7 +318,9 @@ async def test_evidence_text_in_the_state_never_reaches_the_prompt(
         seen.append(messages)
         return await _fake_summarize(model, messages)
 
-    async def fake_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def fake_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
@@ -379,7 +391,9 @@ async def test_a_group_whose_sentence_cannot_be_written_is_marked_for_review(
     async def always_fails(model, messages, **kw):  # noqa: ANN001, ANN003
         raise RuntimeError("model unavailable")
 
-    async def fake_cluster(names: list[str], target: int | None = None) -> list[list[int]]:
+    async def fake_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
         return [list(range(len(names)))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)

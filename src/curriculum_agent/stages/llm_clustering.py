@@ -122,10 +122,16 @@ def _clustering_contract_fingerprint() -> str:
         sort_keys=True,
     )
     # Only the system messages carry instructions; the user message is the name
-    # list, which the key already covers.
+    # list, which the key already covers. The clustering prompt is sampled twice
+    # because half its instructions only appear when a program context is given:
+    # sampling the context-free build alone would leave a reworded context rule
+    # outside the hash, and entries produced under the old wording would keep
+    # matching — the very defect this fingerprint exists to prevent. The sample
+    # value is a placeholder; the real context is per-call and lives in the key.
     prompts = "\x00".join(
         [
             build_cluster_skills_prompt([])[0]["content"],
+            build_cluster_skills_prompt([], None, "context sample")[0]["content"],
             build_merge_clusters_prompt([])[0]["content"],
         ]
     )
@@ -155,19 +161,19 @@ def is_valid_partition(groups: list[list[int]], n: int) -> bool:
 
 
 async def _cluster_pass(
-    names: list[str], target_clusters: int | None = None
+    names: list[str], target_clusters: int | None = None, program_context: str | None = None
 ) -> list[tuple[str, list[int]]]:
     """One heavy-model clustering call over `names`, validated."""
     result = await complete_heavy(
         ClusterAssignmentsResponse,
-        build_cluster_skills_prompt(names, target_clusters),
+        build_cluster_skills_prompt(names, target_clusters, program_context),
         temperature=0,
     )
     return validate_assignments([(c.label_th, c.member_indices) for c in result.clusters], names)
 
 
 async def _cluster_map_reduce(
-    names: list[str], target_clusters: int | None = None
+    names: list[str], target_clusters: int | None = None, program_context: str | None = None
 ) -> list[list[int]]:
     """Cluster per batch, then merge equivalent cluster labels across batches.
 
@@ -178,7 +184,7 @@ async def _cluster_map_reduce(
     labelled: list[tuple[str, list[int]]] = []
     offset = 0
     for batch in split_batches(names):
-        for label, indices in await _cluster_pass(batch):
+        for label, indices in await _cluster_pass(batch, None, program_context):
             labelled.append((label, [offset + i for i in indices]))
         offset += len(batch)
 
@@ -193,7 +199,7 @@ async def _cluster_map_reduce(
 
 
 async def cluster_skill_names(
-    names: list[str], target_clusters: int | None = None
+    names: list[str], target_clusters: int | None = None, program_context: str | None = None
 ) -> list[list[int]]:
     """Group skill names by meaning using the heavy model.
 
@@ -203,6 +209,10 @@ async def cluster_skill_names(
     re-runs on identical input are deterministic while a change to either
     contract invalidates the affected entries. A cached grouping that does not
     partition the names exactly once is discarded rather than trusted.
+
+    `program_context` names the program these skills belong to, so the same names
+    read against a different field group differently. It is in the key for the
+    same reason `target_clusters` is.
     """
     if not names:
         return []
@@ -215,10 +225,18 @@ async def cluster_skill_names(
     # The target is in the key because it goes into the prompt: the contract
     # fingerprint covers only the instructions that do not vary per call, so
     # without this a bucket asked for four groups would be served an entry
-    # produced when it was asked for eight.
+    # produced when it was asked for eight. The program context is in the key on
+    # the same grounds: it reaches the prompt, so two programs whose skill names
+    # coincide must not share an entry.
     cache_key = hashlib.sha256(
         "\x00".join(
-            [*names, settings.heavy_model, _CLUSTERING_CONTRACT, str(target_clusters)]
+            [
+                *names,
+                settings.heavy_model,
+                _CLUSTERING_CONTRACT,
+                str(target_clusters),
+                str(program_context),
+            ]
         ).encode()
     ).hexdigest()
     cached = await cache.get(cache_key)
@@ -236,9 +254,11 @@ async def cluster_skill_names(
             )
 
     if len(names) <= SINGLE_PASS_MAX:
-        groups = [indices for _, indices in await _cluster_pass(names, target_clusters)]
+        groups = [
+            indices for _, indices in await _cluster_pass(names, target_clusters, program_context)
+        ]
     else:
-        groups = await _cluster_map_reduce(names, target_clusters)
+        groups = await _cluster_map_reduce(names, target_clusters, program_context)
 
     await cache.set(
         cache_key,
