@@ -207,8 +207,18 @@ tests/integration/     ← LLM mocked, full stages
   a length floor, the no-list rule, and `find_vague_phrase` on top of the
   code-token guard; Instructor retries with the offending phrase quoted. A group
   that still fails ships a `[ต้องทบทวน]`-marked fallback for the designer to rewrite —
-  never a quietly-degraded Need. Keep the Need in the market's voice
-  ("ตลาดแรงงานต้องการ..."); restating it from the graduate's side is `plo_synthesis`'s job.
+  never a quietly-degraded Need. **A Need states a requirement; it must not be a
+  finished PLO.** The opening is free — "ต้องการ...", "ต้องการบัณฑิตที่...",
+  "ต้องการหลักสูตรที่..." and "บัณฑิตต้องมี..." are all fine, and the mandatory
+  "ตลาดแรงงานต้องการ..." prefix is gone: it carried nothing the rest of the sentence
+  did not and spent characters against the 40-character floor. What is still
+  forbidden is the finished outcome form ("บัณฑิตวิเคราะห์...ได้"), because
+  `plo_synthesis` receives only this sentence — a Need already written as a PLO
+  leaves that stage nothing to do but copy, and the report can no longer show the
+  step from what was asked for to what a graduate must therefore be able to do.
+  The rule lives in `build_summarize_need_prompt` and is pinned by
+  `test_summarize_need.py`; `_CIRCULAR_PHRASES_TH` is unaffected, since a trailing
+  "ตามที่ตลาดต้องการ" says nothing whatever the sentence opened with.
 - **A checkpoint thread has to be dropped explicitly.** LangGraph's rows live in
   their own `langgraph` schema with no foreign key back to `programs`, so
   `delete_cascade` cannot reach them — and a suspended checkpoint holds a full

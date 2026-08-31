@@ -74,8 +74,12 @@ _VAGUE_HEAD_RE = re.compile(
     r"(ที่จำเป็น|ที่เกี่ยวข้อง|ที่หลากหลาย|ต่าง\s*ๆ)"
 )
 
-# Restating the frame instead of answering it: "ตลาดแรงงานต้องการผู้ที่มีทักษะ
-# ตามที่ตลาดต้องการ". Circular by construction, so plain substrings are enough.
+# Restating the question instead of answering it: "ต้องการบัณฑิตที่มีทักษะตามที่
+# ตลาดต้องการ". Circular by construction, so plain substrings are enough — and
+# independent of how the sentence opens, which is why this list survived the
+# opening becoming free (see build_summarize_need_prompt). A Need may now begin
+# "ต้องการ...", "ต้องการหลักสูตรที่..." or "บัณฑิตต้องมี..."; none of that makes a
+# trailing "ตามที่ตลาดต้องการ" say anything.
 _CIRCULAR_PHRASES_TH: tuple[str, ...] = (
     "ตามที่ตลาดต้องการ",
     "ตามความต้องการของตลาด",

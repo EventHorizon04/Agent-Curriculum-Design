@@ -98,3 +98,52 @@ def test_no_program_context_leaves_the_summarize_prompt_unchanged() -> None:
     assert build_summarize_need_prompt(["x"], "S", "apply") == build_summarize_need_prompt(
         ["x"], "S", "apply", program_context=None
     )
+
+
+# The wordings a Need sentence may open with. Hardcoded rather than imported for
+# the same reason as _EXPECTED_LABEL_TH above: asserting against the module's own
+# string would let a dropped option pass, since both sides would read the same
+# shortened list.
+_ALLOWED_OPENINGS_TH = (
+    "ต้องการ...",
+    "ต้องการบัณฑิตที่...",
+    "ต้องการหลักสูตรที่...",
+    "บัณฑิตต้องมี...",
+)
+
+
+@pytest.mark.parametrize("opening", _ALLOWED_OPENINGS_TH)
+def test_summarize_prompt_offers_every_allowed_opening(opening: str) -> None:
+    """The sentence no longer has to open with "ตลาดแรงงานต้องการ".
+
+    That prefix carried no information the rest of the sentence did not, and it
+    spent characters against a 40-character floor. What the stage actually needs
+    is that the sentence state a requirement -- who needs what -- and several
+    Thai framings do that equally well. Naming them in the prompt is what stops
+    the model from picking one and repeating it across every Need.
+    """
+    system = build_summarize_need_prompt(["การดูแลผู้ป่วย"], "S", "apply")[0]["content"]
+
+    assert opening in system
+
+
+def test_summarize_prompt_still_refuses_to_write_a_finished_plo() -> None:
+    """The Need/PLO boundary, which the opening rule used to carry by itself.
+
+    plo_synthesis is handed nothing but this sentence, so a Need already written
+    as "บัณฑิตวิเคราะห์...ได้" leaves that stage nothing to do but copy, and the
+    report can no longer show the step from what the market asked for to what a
+    graduate must therefore be able to do. "บัณฑิตต้องมี..." is a requirement and is
+    allowed; a finished outcome is not.
+    """
+    system = build_summarize_need_prompt(["การดูแลผู้ป่วย"], "S", "apply")[0]["content"]
+
+    assert "ห้ามเขียนเป็นผลลัพธ์การเรียนรู้" in system
+
+
+def test_summarize_prompt_no_longer_mandates_the_labour_market_frame() -> None:
+    """Pinned as a decision: the rule that forced one opening is gone, and
+    bringing it back should mean changing this line and saying why."""
+    system = build_summarize_need_prompt(["การดูแลผู้ป่วย"], "S", "apply")[0]["content"]
+
+    assert "มุมมองของ 'ตลาดแรงงานต้องการอะไร'" not in system

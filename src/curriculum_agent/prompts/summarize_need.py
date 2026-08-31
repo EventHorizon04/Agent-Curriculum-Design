@@ -70,6 +70,17 @@ def build_summarize_need_prompt(
     the three parts a PLO needs (capability, specific object, work context) at
     the group's Bloom level, and name the two degenerate shapes — a vague
     placeholder and a comma-joined skill list — that _NeedStatement rejects.
+
+    What the rules no longer ask for is a fixed opening. "ตลาดแรงงานต้องการ..."
+    used to be mandatory; it carried nothing the rest of the sentence did not and
+    spent characters against a 40-character floor, so several framings are now
+    offered — "ต้องการบัณฑิตที่...", "ต้องการหลักสูตรที่...", "บัณฑิตต้องมี...".
+    The boundary that opening used to carry is stated on its own instead: the
+    sentence may be a requirement, but not a finished PLO. plo_synthesis is
+    handed nothing but this sentence, so a Need already written as
+    "บัณฑิตวิเคราะห์...ได้" leaves that stage nothing to do but copy, and the
+    report can no longer show the step from what was asked for to what a graduate
+    must therefore be able to do.
     """
     # Only added alongside a context line: without one there is nothing to
     # over-read, and the rule would be an instruction about a field the prompt
@@ -85,8 +96,11 @@ def build_summarize_need_prompt(
         "ประโยคนี้จะถูกนำไปเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) หนึ่งข้อโดยตรง "
         "จึงต้องเจาะจงพอที่จะเขียน PLO ได้ทันทีโดยไม่ต้องเดาเนื้อหาเพิ่ม\n\n"
         "กติกา:\n"
-        "- เขียนเป็นประโยคเดียว มุมมองของ 'ตลาดแรงงานต้องการอะไร' "
-        "ไม่ใช่มุมมองผู้เรียนหรือผลลัพธ์การเรียนรู้\n"
+        "- เขียนเป็นประโยคเดียวที่ระบุ 'ข้อกำหนด' ขึ้นต้นได้หลายแบบ เช่น "
+        "'ต้องการ...' 'ต้องการบัณฑิตที่...' 'ต้องการหลักสูตรที่...' หรือ 'บัณฑิตต้องมี...' "
+        "เลือกแบบที่อ่านเป็นธรรมชาติที่สุดกับเนื้อหา ไม่ต้องใช้แบบเดียวกันทุกข้อ\n"
+        "- ห้ามเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) ที่เสร็จรูปแล้ว เช่น 'บัณฑิตวิเคราะห์...ได้' "
+        "ประโยคนี้คือสิ่งที่ถูกเรียกร้อง ส่วนการแปลงเป็น PLO เป็นขั้นถัดไป\n"
         "- ต้องมีครบ 3 ส่วน: (1) ความสามารถที่ลงมือทำได้จริง "
         "(2) วัตถุหรือผลงานที่เจาะจง (3) บริบทของงานที่ใช้ความสามารถนั้น\n"
         "- หนึ่งประโยคคือหนึ่งสมรรถนะ ห้ามยัดหลายเรื่องที่ไม่เกี่ยวกันไว้ในประโยคเดียว\n"
@@ -94,7 +108,7 @@ def build_summarize_need_prompt(
         + context_rule
         + "- ห้ามใช้คำกว้างที่ไม่บอกว่าคืออะไร เช่น 'ทักษะที่จำเป็น' "
         "'ความรู้ที่เกี่ยวข้อง' 'สมรรถนะด้านต่างๆ'\n"
-        "- ห้ามวนกลับมาพูดว่า 'ตามที่ตลาดต้องการ' ต้องบอกให้ชัดว่าตลาดต้องการอะไร\n"
+        "- ห้ามวนกลับมาพูดว่า 'ตามที่ตลาดต้องการ' ต้องบอกให้ชัดว่าต้องการอะไร\n"
         "- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกันด้วยเครื่องหมายจุลภาค "
         "(ใช้จุลภาคได้ไม่เกิน 2 ตัว)\n"
         f"- ความยาว 1-2 บรรทัด และต้องไม่สั้นกว่า {MIN_STATEMENT_CHARS} ตัวอักษร\n"
