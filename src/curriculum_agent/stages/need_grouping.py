@@ -20,25 +20,48 @@ from curriculum_agent.models import BLOOM_ORDER, BloomLevel, ExtractedSkill, KSE
 MIN_NEEDS = 6
 MAX_CORE_PLOS = 10
 
+# How much of a Need has to survive each scope axis for the Need to keep its
+# place. Half, because a full pipeline run measured where the line actually sits:
+# on ten Needs from a real programme, every threshold from 0.34 to 0.60 filtered
+# exactly the three institution-side Needs and nothing else, while the any rule
+# this replaces (>0) caught one of the three and let the other two through — one
+# of them straight into the second-highest-demand core PLO. Above 0.75 it starts
+# taking Needs that belong.
+#
+# 0.5 is the middle of the interval the data supports, not a round number chosen
+# first: 0.34 and 0.60 both sit on its edges, so half leaves the most room before
+# the answer changes.
+#
+# It is still one programme's ten Needs. Treat it as the best available estimate,
+# not a constant that has earned permanence — scripts/eval_scope_guard.py is what
+# revisits it, and a wider corpus may well move it.
+SCOPE_PASS_RATIO = 0.5
+
 
 def is_in_scope(need: Need) -> bool:
     """Is this Need eligible to become a PLO of this program at all?
 
     The third policy deciding which Needs become PLOs, which is why it lives here
     beside the other two rather than at its point of use. Both axes are judged per
-    skill by the extraction model and rolled up into counters at need_combination
-    under an any rule — one qualifying member per axis is enough.
+    skill by the extraction model, rolled up into counters at need_combination,
+    and read here as shares of the members.
 
-    Returns a bare bool. "Which axis did it fail?" is already readable off the
-    Need's own counters ("0 of 8"), which is finer than an enum could be and
-    cannot drift out of step with them.
+    A share, not "at least one". The any rule this replaces looked like the safe
+    choice while the per-skill recall was the only number anyone had — but
+    clustering mixes skills from several evidence items into one Need, so a Need
+    survives an any rule as long as a single member escapes the flags. On a real
+    programme that meant a Need whose members were flagged six times out of seven
+    still became the second-highest-demand core PLO, describing something the
+    institution does rather than something a graduate does.
 
-    `and` rather than `or`: the two axes were measured to overlap completely on
-    the evidence available, so the data cannot choose between them and policy has
-    to. Failing either one disqualifies a Need, because one that is not a graduate
-    capability cannot be written as a PLO at all, not merely written about the
-    wrong field. The permissive side is already spent on the any rule a level
-    down.
+    Returns a bare bool. "Which axis did it fail, and by how much?" is readable
+    off the Need's own counters ("1 of 7"), which is finer than an enum could be
+    and cannot drift out of step with them.
+
+    `and` rather than `or`: the two axes were measured to overlap almost
+    completely, so the data cannot choose between them and policy has to. Failing
+    either one disqualifies a Need, because one that is not a graduate capability
+    cannot be written as a PLO at all, not merely written about the wrong field.
 
     `classification` is not consulted, and a `requirement` gets no exemption —
     that is a decision, not an oversight. "requirement wins" settles whether a
@@ -54,7 +77,10 @@ def is_in_scope(need: Need) -> bool:
     trustworthy enough to filter on, the retreat is to stop calling this in one
     place and leave the flags on display at the checkpoint instead.
     """
-    return need.is_field_relevant and need.is_graduate_capability
+    return (
+        need.in_field_ratio >= SCOPE_PASS_RATIO
+        and need.graduate_capability_ratio >= SCOPE_PASS_RATIO
+    )
 
 
 _WS_RE = re.compile(r"\s+")

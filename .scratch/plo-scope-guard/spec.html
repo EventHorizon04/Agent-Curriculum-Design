@@ -916,7 +916,7 @@ tr.is-flag td:first-child { box-shadow: inset 3px 0 0 var(--flag); }
             <tr><td><code>ExtractedSkill</code></td><td><code>is_graduate_capability</code></td><td class="num"><code>bool = True</code></td><td><code>server_default true</code></td></tr>
             <tr><td><code>Need</code></td><td><code>in_field_skill_count</code></td><td class="num"><code>int</code></td><td><code>jsonb_array_length(member_skill_ids)</code></td></tr>
             <tr><td><code>Need</code></td><td><code>graduate_capability_skill_count</code></td><td class="num"><code>int</code></td><td><code>jsonb_array_length(member_skill_ids)</code></td></tr>
-            <tr><td><code>Need</code></td><td><code>is_field_relevant</code><br><code>is_graduate_capability</code></td><td class="num"><code>@property</code></td><td><code>count &gt; 0</code></td></tr>
+            <tr><td><code>Need</code></td><td><code>in_field_ratio</code><br><code>graduate_capability_ratio</code></td><td class="num"><code>@property</code></td><td><code>count / จำนวนสมาชิก</code></td></tr>
           </tbody>
         </table>
       </div>
@@ -968,11 +968,35 @@ tr.is-flag td:first-child { box-shadow: inset 3px 0 0 var(--flag); }
 
       <p>อยู่ใน <code>stages/need_grouping.py</code> ข้าง <code>MIN_NEEDS</code> และ <code>MAX_CORE_PLOS</code> — เป็น policy ตัวที่สามที่ตัดสินว่า Need ไหนได้เป็น PLO เหมือนกันกับสองค่าเดิม</p>
 
-      <pre>def is_in_scope(need: Need) -> bool:
-    <span class="cm">"""ผ่านต้องผ่านทั้งสองแกน; ถูกกันเมื่อ OFF แกนใดแกนหนึ่ง."""</span>
-    return need.is_field_relevant and need.is_graduate_capability</pre>
+      <pre><span class="cm"># ครึ่งหนึ่งของสมาชิกต้องผ่านแต่ละแกน — เลือกจากการกวาดค่าบนผลรันจริง ไม่ใช่เลขกลม</span>
+SCOPE_PASS_RATIO = <b>0.5</b>
 
-      <p>คืน <code>bool</code> เท่านั้น — เหตุผลว่าตกเพราะแกนไหนมาจาก counter สองตัวบน <code>Need</code> ฟรี ๆ ตัวไหนเป็น 0 คือแกนนั้น และได้ละเอียดกว่า enum ด้วย (“0 ใน 8” ไม่ใช่แค่ <code>off_field</code>)</p>
+def is_in_scope(need: Need) -> bool:
+    <span class="cm">"""ผ่านต้องผ่านทั้งสองแกน; ถูกกันเมื่อสัดส่วนแกนใดต่ำกว่าเกณฑ์."""</span>
+    return (need.in_field_ratio &gt;= SCOPE_PASS_RATIO
+            and need.graduate_capability_ratio &gt;= SCOPE_PASS_RATIO)</pre>
+
+      <div class="note note--stop">
+        <span class="note__label">แก้หลังรัน pipeline เต็มครั้งแรก — เดิมเป็นกฎ any (<code>count &gt; 0</code>)</span>
+        <p>เหตุผลเดิมคือ recall รายทักษะ 56% ยังไม่พอจะตัดแรง ซึ่งฟังขึ้นตอนที่นั่นเป็นตัวเลขเดียวที่มี. สิ่งที่ยังไม่มีใครวัดคือ <strong>clustering รวมทักษะข้าม evidence</strong> ทำให้ Need รอดกฎ any ตราบใดที่มีสมาชิกหลุดธงแค่ตัวเดียว</p>
+        <p>ผลจริง: Need ที่สมาชิกติดธงนอกสาขา <strong>6 ใน 7</strong> และติดธงไม่ใช่สมรรถนะบัณฑิต <strong>5 ใน 7</strong> กลายเป็น <strong>core PLO อันดับสอง</strong> ทั้งที่พูดถึงสิ่งที่สถาบันทำ</p>
+      </div>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>threshold</th><th>กรองได้</th><th>ควรกรองแต่รอด</th><th>กรองผิด</th></tr></thead>
+          <tbody>
+            <tr class="is-flag"><td><code>&gt; 0</code> (กฎ any เดิม)</td><td class="num">1</td><td class="num"><strong>2</strong></td><td class="num">0</td></tr>
+            <tr><td class="num">0.34</td><td class="num">3</td><td class="num">0</td><td class="num">0</td></tr>
+            <tr><td class="num"><strong>0.50</strong></td><td class="num"><strong>3</strong></td><td class="num"><strong>0</strong></td><td class="num"><strong>0</strong></td></tr>
+            <tr><td class="num">0.60</td><td class="num">3</td><td class="num">0</td><td class="num">0</td></tr>
+            <tr class="is-flag"><td class="num">0.75</td><td class="num">4</td><td class="num">0</td><td class="num"><strong>1</strong></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="fig__k">Need สิบใบจากการรัน pipeline เต็มบนหลักสูตรจริง. 0.5 อยู่กลางช่วงที่ข้อมูลรองรับ (0.34–0.60) จึงทนต่อการเลื่อนได้มากที่สุด — ยังเป็นหลักสูตรเดียว <code>scripts/eval_scope_guard.py</code> คือตัวที่ทบทวนค่านี้</p>
+
+      <p>คืน <code>bool</code> เท่านั้น — เหตุผลว่าตกเพราะแกนไหนและเท่าไรมาจาก counter สองตัวบน <code>Need</code> ฟรี ๆ (“1 ใน 7” ไม่ใช่แค่ <code>off_field</code>)</p>
 
       <div class="note note--why">
         <span class="note__label">ทำไม any ที่ระดับ skill แต่ and ที่ระดับแกน</span>
@@ -1180,8 +1204,8 @@ tr.is-flag td:first-child { box-shadow: inset 3px 0 0 var(--flag); }
           <div class="defrow__v">กฎแบบ “<code>administrator</code> / <code>program_committee</code> ไม่เข้าสู่ PLO” เขียนง่ายกว่าและดูถูกเสมอ. เฉลยมนุษย์เก็บ Need ของผู้บริหาร อ.ผู้รับผิดชอบ และ อ.ผู้สอน ไว้<strong>ครบทุกใบ</strong> ตัดเฉพาะเนื้อหาบางส่วนที่เขาพูด</div>
         </div>
         <div class="defrow">
-          <div class="defrow__k">majority แทน any</div>
-          <div class="defrow__v">false positive 1/29 แต่ recall 56% — ธงที่ติดเชื่อได้ ที่ไม่ติดพลาดครึ่งหนึ่ง. ตัดแรงบนสัญญาณครึ่งใบคือตัดของถูกทิ้ง</div>
+          <div class="defrow__k">กลับไปใช้กฎ any<br>(<code>count &gt; 0</code>)</div>
+          <div class="defrow__v">เคยเป็นแบบนั้นและวัดแล้วว่าไม่พอ — Need ที่สมาชิกติดธง 6 ใน 7 ยังกลายเป็น core PLO อันดับสอง เพราะ clustering รวมทักษะข้าม evidence ทำให้เหลือสมาชิกหลุดธงหนึ่งตัวเสมอ</div>
         </div>
         <div class="defrow">
           <div class="defrow__k">ให้โมเดลตัดทิ้งเอง</div>

@@ -33,17 +33,25 @@ interface NeedSummary {
   source_stakeholder_types?: string[]
 }
 
+/** Mirrors SCOPE_PASS_RATIO in need_grouping.py — half a Need's members have to
+ *  clear each axis. Duplicated the way MIN_CORE and MAX_CORE are: the page states
+ *  the policy it is reporting against rather than inferring it from the numbers. */
+const SCOPE_PASS_RATIO = 0.5
+
 /** Why a Need produced no PLO. Derived, never stored: the counters say it. */
 type ExclusionReason = 'off_field' | 'not_graduate' | 'both' | 'lost_on_demand'
 
 function exclusionReason(n: NeedSummary): ExclusionReason {
   // Missing counters mean nobody ever judged this Need — it predates the guard,
   // and it has to read as it read before the guard existed.
-  const inField = n.in_field_skill_count ?? 1
-  const isGrad = n.graduate_capability_skill_count ?? 1
-  if (inField === 0 && isGrad === 0) return 'both'
-  if (inField === 0) return 'off_field'
-  if (isGrad === 0) return 'not_graduate'
+  const total = n.member_skill_ids?.length ?? 0
+  const ratio = (count: number | undefined) =>
+    count === undefined || total === 0 ? 1 : count / total
+  const offField = ratio(n.in_field_skill_count) < SCOPE_PASS_RATIO
+  const offGrad = ratio(n.graduate_capability_skill_count) < SCOPE_PASS_RATIO
+  if (offField && offGrad) return 'both'
+  if (offField) return 'off_field'
+  if (offGrad) return 'not_graduate'
   return 'lost_on_demand'
 }
 

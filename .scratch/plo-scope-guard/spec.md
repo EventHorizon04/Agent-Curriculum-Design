@@ -339,7 +339,7 @@ source text เดียวกัน (มาตรฐานสภาวิชา
 | `ExtractedSkill` | `is_graduate_capability` (**ใหม่**) | `bool = True` |
 | `Need` | `in_field_skill_count` (**ใหม่**) | `int = 0`, store |
 | `Need` | `graduate_capability_skill_count` (**ใหม่**) | `int = 0`, store |
-| `Need` | `is_field_relevant` / `is_graduate_capability` | `@property` = `count > 0` |
+| `Need` | `in_field_ratio` / `graduate_capability_ratio` | `@property` = `count / len(member_skill_ids)` |
 | `ProgramCreateRequest` | `scope_th` (**ใหม่**) | `str = ""` |
 
 ```python
@@ -378,13 +378,13 @@ def _default_counts_to_all_members(cls, data: Any) -> Any:
 
 @property
 def is_field_relevant(self) -> bool:
-    """กฎ any: สมาชิกในสาขาอย่างน้อยหนึ่งคนก็พอ"""
-    return self.in_field_skill_count > 0
+    """สัดส่วนสมาชิกที่ผ่านแกนนี้ — model รายงานสิ่งที่วัดได้ ไม่ตัดสินเส้นแบ่ง"""
+    return self.in_field_skill_count / len(self.member_skill_ids)
 
 @property
 def is_graduate_capability(self) -> bool:
-    """กฎ any เหมือนกัน — ดู is_in_scope() ใน need_grouping.py"""
-    return self.graduate_capability_skill_count > 0
+    """เช่นเดียวกัน เส้นแบ่งอยู่ที่ SCOPE_PASS_RATIO ใน need_grouping.py"""
+    return self.graduate_capability_skill_count / len(self.member_skill_ids)
 ```
 
 #### 3.4.2 เหตุผลของแต่ละข้อ (อย่าลบ อ่านก่อนแก้)
@@ -401,8 +401,15 @@ def is_graduate_capability(self) -> bool:
    `need_combination.py:202`. `cited_need_ids` derive เพราะเป็นความสัมพันธ์ PLO→Need ที่
    เปลี่ยนทุกครั้งที่ลบ PLO — ธงสองแกนไม่เปลี่ยนหลัง group ถูกสร้าง (re-extract สร้าง Need
    ใหม่อยู่ดี). derive ยังบังคับให้ทุกหน้าจอที่โชว์ Need ต้อง join `skills` กลับ
-4. **กฎ any อยู่บน model ที่เดียว** — `@property` = `count > 0` ไม่ใช่ปล่อยให้ selection กับ
-   checkpoint เขียน `count > 0` คนละที่แล้ว drift
+4. **model รายงานสัดส่วน เส้นแบ่งอยู่ที่ `need_grouping` ที่เดียว** — `@property`
+   คืน `count / len(member_skill_ids)` ส่วน `SCOPE_PASS_RATIO` อยู่ข้าง `MIN_NEEDS` /
+   `MAX_CORE_PLOS` ตามหลักที่ว่า policy ว่า Need ไหนได้เป็น PLO อยู่ที่โมดูลเดียว
+
+   > **แก้หลังรัน pipeline เต็มครั้งแรก** — เดิมเป็น `@property` = `count > 0` (กฎ any)
+   > ซึ่ง**ฝัง "มากกว่าศูนย์" ไว้ใน model จนที่ eval เอื้อมไม่ถึง**. ปัญหาไม่ใช่แค่ที่ทาง:
+   > clustering รวมทักษะข้าม evidence ทำให้ Need รอดกฎ any ตราบใดที่มีสมาชิกหลุดธง
+   > แค่ตัวเดียว. บนโปรแกรมจริง Need ที่สมาชิกติดธง **6 ใน 7** ยังกลายเป็น core PLO
+   > อันดับสอง ทั้งที่พูดถึงสิ่งที่**สถาบัน**ทำ ไม่ใช่สิ่งที่บัณฑิตทำ
 5. **ชื่อเดียวกับ `ExtractedSkill`** — precedent อยู่ในโมเดลเดียวกัน: `ksec_category` และ
    `bloom_level` อยู่ทั้งสองชั้น ชื่อเดียวกัน โดย Need เป็นค่าที่รวมขึ้นมา
    (`resolve_need_ksec`, `merge_bloom`). ชื่อแบบ `has_in_field_skill` ตั้งตาม*วิธีคำนวณ*
@@ -499,17 +506,38 @@ grad_capable = sum(1 for m in members if m.is_graduate_capability)
 วางที่ `need_grouping.py` **ข้าง `MIN_NEEDS` / `MAX_CORE_PLOS`**
 
 ```python
+# ครึ่งหนึ่งของสมาชิกต้องผ่านแต่ละแกน — เลือกจากการกวาดค่าบนผลรัน pipeline จริง
+# ไม่ใช่จากเลขกลม: บน Need สิบใบของหลักสูตรจริง ทุกค่าตั้งแต่ 0.34 ถึง 0.60
+# กรอง Need ฝั่งสถาบันครบทั้งสามใบและไม่กรองใบอื่นเลย; 0.75 ขึ้นไปเริ่มกรองผิด
+# 0.5 อยู่กลางช่วงที่ข้อมูลรองรับ จึงทนต่อการเลื่อนได้มากที่สุด
+# ยังเป็นข้อมูลจากหลักสูตรเดียว — scripts/eval_scope_guard.py คือตัวที่ทบทวนค่านี้
+SCOPE_PASS_RATIO = 0.5
+
+
 def is_in_scope(need: Need) -> bool:
     """Need ใบนี้มีสิทธิ์เป็น PLO ของหลักสูตรนี้ไหม — ผ่านต้องผ่านทั้งสองแกน
 
-    สองแกนถูกตัดสินรายทักษะโดย extraction model แล้วรวมขึ้นเป็น counter บน Need
-    ที่ need_combination (กฎ any: สมาชิกหนึ่งคนผ่านก็พอ ต่อแกน)
+    สองแกนถูกตัดสินรายทักษะโดย extraction model รวมขึ้นเป็น counter ที่
+    need_combination แล้วอ่านที่นี่เป็น**สัดส่วนของสมาชิก**
 
-    คืน bool เท่านั้น — "ตกเพราะแกนไหน" อ่านได้จาก counter บน Need เองอยู่แล้ว
-    ("0 ใน 8") ซึ่งละเอียดกว่า enum และไม่มีวันไม่ตรงกับ counter
+    คืน bool เท่านั้น — "ตกเพราะแกนไหน และเท่าไร" อ่านได้จาก counter บน Need เอง
+    ("1 ใน 7") ซึ่งละเอียดกว่า enum และไม่มีวันไม่ตรงกับ counter
     """
-    return need.is_field_relevant and need.is_graduate_capability
+    return (
+        need.in_field_ratio >= SCOPE_PASS_RATIO
+        and need.graduate_capability_ratio >= SCOPE_PASS_RATIO
+    )
 ```
+
+> **แก้หลังรัน pipeline เต็มครั้งแรก — เดิมเป็นกฎ any (`count > 0`)**
+>
+> เหตุผลเดิมคือ recall รายทักษะ 56% ยังไม่พอจะตัดแรง ซึ่งฟังขึ้นตอนที่นั่นเป็นตัวเลข
+> เดียวที่มี. สิ่งที่ยังไม่มีใครวัดคือ **clustering รวมทักษะข้าม evidence** ทำให้ Need
+> รอดกฎ any ตราบใดที่มีสมาชิกหลุดธงแค่ตัวเดียว — ผลจริงคือ Need ที่สมาชิกติดธงนอกสาขา
+> **6 ใน 7** และติดธงไม่ใช่สมรรถนะบัณฑิต **5 ใน 7** กลายเป็น core PLO อันดับสอง
+>
+> การกวาดค่าบน Need สิบใบเดียวกัน: กฎ any (>0) พลาด 2 ใน 3 ใบที่ควรกรอง; 0.34-0.60
+> กรองครบ 3 ใบและกรองผิด 0; 0.75 ขึ้นไปเริ่มกินใบที่ควรอยู่
 
 **ทำไมอยู่ที่นี่**: โมดูลนี้มีเหตุผลกำกับอยู่แล้วว่าทำไม policy ถึงอยู่ตรงนี้ และ predicate นี้
 คือ policy **ตัวที่สามที่ตัดสินว่า Need ไหนได้เป็น PLO** เหมือนกันเป๊ะกับสองค่าเดิม.
@@ -519,8 +547,7 @@ def is_in_scope(need: Need) -> bool:
 **ทำไม `and` ทั้งที่ ticket 12 บอกว่าแยกไม่ออกจากข้อมูล**: `and`/`or` ให้ตัวเลขเท่ากันเป๊ะ
 บนชุดที่วัด (NOISE 5/9, CORE 1/29 ทั้งสี่กฎ) จึงเลือกจากข้อมูลไม่ได้ ต้องเลือกจากนโยบาย —
 และนโยบายคือ "ตกแกนใดแกนหนึ่งก็ถูกกัน" เพราะ Need ที่ไม่ใช่สมรรถนะบัณฑิตเขียนเป็น PLO
-ไม่ได้เลย ไม่ใช่แค่ผิดสาขา. ที่ระดับ skill กฎ any เป็นฝั่งปล่อยผ่านอยู่แล้ว การซ้อน `and`
-ที่ระดับ Need จึงไม่ได้แปลว่ากรองแรง
+ไม่ได้เลย ไม่ใช่แค่ผิดสาขา
 
 **`is_in_scope` เป็นสวิตช์เดียวของ fallback ทั้งหมด** — ถ้า eval ไม่ผ่าน การถอยคือหยุดเรียก
 predicate นี้ที่จุดเดียว แล้วเหลือธงไว้ให้ designer ดูที่ checkpoint (หัวข้อ 3.10)
@@ -749,9 +776,10 @@ UI เป็นงานรอบถัดไปหลัง ticket 06 ปิด
 
 **ระดับ Need เป็นตัวตั้งเกณฑ์ ระดับ skill เป็น diagnostic**
 
-กฎ any ทำให้ตัวเลข skill **หลอก**: Need ที่มีสมาชิก 8 ตัวถูกกรองก็ต่อเมื่อ **ทั้ง 8 ตัว**
-ติดธง — recall 56% ที่ระดับ skill จึงกลายเป็นตัวเลขที่ต่ำกว่านั้นมากที่ระดับ Need
-และนั่นคือตัวที่ตัดสินว่า PLO หลุดหรือไม่
+การรวมขึ้นระดับ Need ทำให้ตัวเลข skill **หลอก**: recall 56% ที่ระดับ skill กลายเป็น
+ตัวเลขที่ต่ำกว่านั้นมากที่ระดับ Need และนั่นคือตัวที่ตัดสินว่า PLO หลุดหรือไม่.
+การรันจริงครั้งแรกวัดได้ว่าภายใต้กฎ any เดิม Need ถูกกรองเพียง **1 ใน 10** ทั้งที่มี
+สามใบที่ควรถูกกรอง — ซึ่งเป็นตัวที่ทำให้เกณฑ์เปลี่ยนเป็นสัดส่วน (หัวข้อ 3.6)
 
 **ไม่วัดที่ระดับ PLO** — ต้องจ่ายค่า synthesis ทุกรอบเพื่อวัดสิ่งที่ระดับ Need ตัดสินไปแล้ว
 PLO ที่หลุดคือ PLO ที่ Need หลุดผ่านมา ไม่มีทางหลุดเพิ่มที่ชั้นนั้น
@@ -991,9 +1019,10 @@ irreversible action ก่อนจุดที่ยังถอยได้ ([
 
 | test | ยืนยันอะไร |
 |---|---|
-| ตารางความจริงครบ 4 ช่อง: (in>0, grad>0)=True; อีกสามช่อง=False | `and` ตามข้อ 3.6 |
+| ตารางความจริงครบ 4 ช่อง: ผ่านทั้งสองแกน=True; อีกสามช่อง=False | `and` ตามข้อ 3.6 |
 | Need ที่ default ทุกอย่าง (counter = จำนวนสมาชิก) → `is_in_scope` = True | **predicate เป็น no-op เมื่อไม่มี scope** — ข้อห้าม 4.1 |
-| `Need.is_field_relevant` / `is_graduate_capability` = `count > 0` | กฎ any อยู่ที่เดียว |
+| `Need.in_field_ratio` / `graduate_capability_ratio` = `count / จำนวนสมาชิก` | model รายงานสัดส่วน เส้นแบ่งอยู่ที่ `SCOPE_PASS_RATIO` ที่เดียว |
+| Need ที่สมาชิกติดธง 6 ใน 7 ต้องถูกกรอง; ติดธง 2 ใน 6 ต้องรอด | เคสจริงที่ทำให้เกณฑ์เปลี่ยนจาก any |
 
 ### 5.5 counter — `tests/unit/test_need_combination.py`
 

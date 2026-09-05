@@ -18,7 +18,12 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
-from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS, MIN_NEEDS, is_in_scope
+from curriculum_agent.stages.need_grouping import (
+    MAX_CORE_PLOS,
+    MIN_NEEDS,
+    SCOPE_PASS_RATIO,
+    is_in_scope,
+)
 from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
@@ -359,8 +364,8 @@ async def run(state: AgentState) -> AgentState:
     # and the report lists it.
     filtered = [n for n in needs if not is_in_scope(n)]
     if filtered:
-        off_field = sum(1 for n in filtered if not n.is_field_relevant)
-        off_grad = sum(1 for n in filtered if not n.is_graduate_capability)
+        off_field = sum(1 for n in filtered if n.in_field_ratio < SCOPE_PASS_RATIO)
+        off_grad = sum(1 for n in filtered if n.graduate_capability_ratio < SCOPE_PASS_RATIO)
         # The two figures stay separate even though they will usually be equal.
         # The day they disagree is the day the two axes have started to measure
         # different things, and this line is where that shows up without an eval.

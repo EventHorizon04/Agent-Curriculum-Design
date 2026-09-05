@@ -42,27 +42,58 @@ def _need(**overrides: object) -> Need:
         (0, 0, False),
     ],
 )
-def test_a_need_is_in_scope_only_when_both_axes_have_a_member(
+def test_a_need_is_in_scope_only_when_both_axes_clear_the_threshold(
     in_field: int, graduate: int, expected: bool
 ) -> None:
     """`and`, not `or`.
 
-    The two axes were measured to overlap completely, so the data cannot choose
-    between them — the policy does, and the policy is that failing either one
-    disqualifies a Need. The permissive side is already spent on the any rule one
-    level down, where a single qualifying member carries the whole group.
+    The two axes were measured to overlap almost completely, so the data cannot
+    choose between them — the policy does, and the policy is that failing either
+    one disqualifies a Need. A Need that is not a graduate capability cannot be
+    written as a PLO at all, not merely written about the wrong field.
     """
     need = _need(in_field_skill_count=in_field, graduate_capability_skill_count=graduate)
     assert is_in_scope(need) is expected
 
 
-def test_the_any_rule_lives_on_the_model_and_nowhere_else() -> None:
-    """`count > 0` is written once, as a property. Selection and the checkpoint
-    both read it, and neither gets to spell out its own threshold."""
-    assert _need(in_field_skill_count=1).is_field_relevant is True
-    assert _need(in_field_skill_count=0).is_field_relevant is False
-    assert _need(graduate_capability_skill_count=1).is_graduate_capability is True
-    assert _need(graduate_capability_skill_count=0).is_graduate_capability is False
+def test_the_model_reports_shares_and_the_threshold_lives_in_one_place() -> None:
+    """The Need reports what was measured; where the cut falls is policy, and
+    policy for which Needs become PLOs is written once in need_grouping.
+
+    A share rather than a flag is what makes the cut movable at all — the flag it
+    replaces hard-coded "more than zero" into the model, where the eval could not
+    reach it."""
+    need = _need(in_field_skill_count=1, graduate_capability_skill_count=2)
+    assert len(need.member_skill_ids) == 3
+    assert need.in_field_ratio == pytest.approx(1 / 3)
+    assert need.graduate_capability_ratio == pytest.approx(2 / 3)
+
+
+def test_a_need_flagged_on_most_of_its_members_no_longer_survives() -> None:
+    """The case that forced the threshold, taken from a full pipeline run.
+
+    Six of this Need's seven members were flagged off-field and five of seven as
+    institutional activity, and under the old "one qualifying member is enough"
+    rule it still became the second-highest-demand core PLO — an outcome about
+    what the institution does, not about what a graduate can do."""
+    need = _need(
+        member_skill_ids=[f"s{i}" for i in range(7)],
+        in_field_skill_count=1,
+        graduate_capability_skill_count=2,
+    )
+    assert is_in_scope(need) is False
+
+
+def test_a_need_flagged_on_a_minority_of_its_members_still_survives() -> None:
+    """The other half of the same trade. One or two flags among many members is
+    the extractor being unsure, not the Need being out of scope — and a Need
+    filtered by mistake is a PLO that vanishes with nobody told."""
+    need = _need(
+        member_skill_ids=[f"s{i}" for i in range(6)],
+        in_field_skill_count=4,
+        graduate_capability_skill_count=6,
+    )
+    assert is_in_scope(need) is True
 
 
 def test_a_need_that_never_carried_the_counters_reads_as_fully_in_scope() -> None:
@@ -114,7 +145,7 @@ def test_an_explicit_zero_survives_the_default_and_disqualifies_the_need() -> No
     need = _need(in_field_skill_count=0, graduate_capability_skill_count=3)
 
     assert need.in_field_skill_count == 0
-    assert need.is_field_relevant is False
+    assert need.in_field_ratio == 0.0
     assert is_in_scope(need) is False
 
 

@@ -330,14 +330,25 @@ class Need(BaseModel):
         return data
 
     @property
-    def is_field_relevant(self) -> bool:
-        """Any rule: one in-field member is enough to keep the whole Need."""
-        return self.in_field_skill_count > 0
+    def in_field_ratio(self) -> float:
+        """Share of member rows the extractor judged inside the program's field.
+
+        A share rather than a flag: where the cut falls is policy, and policy for
+        which Needs become PLOs lives in need_grouping with the other two bounds.
+        This model reports what was measured and stops there.
+        """
+        return self._ratio(self.in_field_skill_count)
 
     @property
-    def is_graduate_capability(self) -> bool:
-        """Same any rule. Both are read together by need_grouping.is_in_scope."""
-        return self.graduate_capability_skill_count > 0
+    def graduate_capability_ratio(self) -> float:
+        """Share of member rows that describe something a graduate does."""
+        return self._ratio(self.graduate_capability_skill_count)
+
+    def _ratio(self, count: int) -> float:
+        # A Need always has at least one member (min_length=1), so the guard is
+        # for dicts that arrived without the list rather than for real rows.
+        total = len(self.member_skill_ids)
+        return count / total if total else 1.0
 
 
 # --------------------------- Stage 3 -----------------------------
