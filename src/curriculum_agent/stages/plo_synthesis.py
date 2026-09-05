@@ -18,7 +18,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
-from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS, MIN_NEEDS
+from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS, MIN_NEEDS, is_in_scope
 from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
@@ -346,7 +346,31 @@ async def run(state: AgentState) -> AgentState:
             "run need_combination successfully before PLO synthesis"
         )
 
+    # Every stored id, not just the ones that survive the filter: this is the
+    # check that a PLO cites a Need that exists, not a second selection step.
     known_need_ids = {n.need_id for n in needs}
+
+    # Before the series split, so it covers optional PLOs too — off-field is
+    # off-field whether the outcome is core or supplementary — and before the
+    # ceiling below, which is the part that actually matters: filtering after the
+    # ceiling would let out-of-scope Needs occupy slots in the top ten and then
+    # be dropped, yielding seven PLOs while in-scope Needs waited further down
+    # the queue. A filtered Need is not deleted: it stays stored, still traceable,
+    # and the report lists it.
+    filtered = [n for n in needs if not is_in_scope(n)]
+    if filtered:
+        off_field = sum(1 for n in filtered if not n.is_field_relevant)
+        off_grad = sum(1 for n in filtered if not n.is_graduate_capability)
+        # The two figures stay separate even though they will usually be equal.
+        # The day they disagree is the day the two axes have started to measure
+        # different things, and this line is where that shows up without an eval.
+        logger.warning(
+            f"Stage 4: กรอง Need นอกขอบเขตออก {len(filtered)} ใบ "
+            f"(นอกสาขา {off_field}, ไม่ใช่สมรรถนะบัณฑิต {off_grad}): "
+            f"{', '.join(n.need_id for n in filtered)}"
+        )
+        needs = [n for n in needs if is_in_scope(n)]
+
     logger.info(f"Stage 4: synthesizing one PLO per Need ({len(needs)} Needs)")
 
     # Number each series independently, most-demanded first, so PLO1 is the
@@ -381,9 +405,18 @@ async def run(state: AgentState) -> AgentState:
 
     core = sum(1 for p in plos if not p.is_optional)
     if core < MIN_NEEDS:
+        # Naming the cause on this line, not on a separate one: a designer has to
+        # tell "not enough in-scope evidence" apart from "too few Needs to begin
+        # with" (which need_combination warns about), and two warnings in
+        # different parts of the log leave them to join it up themselves.
+        cause = (
+            f"กรอง Need นอกขอบเขตออก {len(filtered)} ใบก่อนร่าง (หลักฐานในขอบเขตไม่พอ)"
+            if filtered
+            else "need_combination should have enforced this"
+        )
         logger.warning(
             f"Stage 4 produced {core} core PLOs, below the {MIN_NEEDS} minimum policy — "
-            "need_combination should have enforced this; review at the checkpoint"
+            f"{cause}; review at the checkpoint"
         )
 
     if not any(

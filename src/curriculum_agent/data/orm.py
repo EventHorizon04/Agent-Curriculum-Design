@@ -24,6 +24,10 @@ class ProgramTable(Base):
     duration_years: Mapped[int] = mapped_column(Integer)
     faculty: Mapped[str] = mapped_column(Text)
     university: Mapped[str] = mapped_column(Text)
+    # Nullable in the column, "" on the Pydantic side, following isced_code and
+    # name_th respectively. The repository normalises None to "" on read: a None
+    # reaching the extraction cache key would hash the string "None".
+    scope_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     program_goals_th: Mapped[list[str]] = mapped_column(JSONB)
     professional_council: Mapped[str | None] = mapped_column(Text, nullable=True)
     accreditation_body: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -63,6 +67,7 @@ class SkillTable(Base):
     source_stakeholder_type: Mapped[str] = mapped_column(String(50), default="employer")
     classification: Mapped[str] = mapped_column(String(20), default="unclassified")
     is_field_relevant: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_graduate_capability: Mapped[bool] = mapped_column(Boolean, default=True)
     extraction_method: Mapped[str] = mapped_column(String(20))
     confidence: Mapped[float] = mapped_column(Float)
     importance_score: Mapped[float] = mapped_column(Float, default=0.0)
@@ -85,6 +90,8 @@ class NeedTable(Base):
     demand_score: Mapped[float] = mapped_column(Float)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
     classification_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    in_field_skill_count: Mapped[int] = mapped_column(Integer, default=0)
+    graduate_capability_skill_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class PLOTable(Base):

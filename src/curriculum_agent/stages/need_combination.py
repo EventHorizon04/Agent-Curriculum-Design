@@ -150,6 +150,8 @@ class _Group(BaseModel):
     classification_coverage: dict[str, int]
     stakeholder_coverage: dict[StakeholderType, int]
     stakeholder_types: list[StakeholderType]
+    in_field_skill_count: int
+    graduate_capability_skill_count: int
 
 
 async def _build_groups(
@@ -218,6 +220,16 @@ async def _build_groups(
                     is_optional=is_optional_group(cls_coverage),
                     classification_coverage=cls_coverage,
                     stakeholder_coverage=stk_coverage,
+                    # Member rows, not distinct names. classify_skills already
+                    # ORs the field flag across every row sharing a name, and
+                    # counting that way here would push the number to the total
+                    # whenever a name recurs, leaving the designer a ratio that is
+                    # always 8/8. The any rule these feed reads the same either
+                    # way; only the fraction shown at the checkpoint differs.
+                    in_field_skill_count=sum(1 for m in members if m.is_field_relevant),
+                    graduate_capability_skill_count=sum(
+                        1 for m in members if m.is_graduate_capability
+                    ),
                     stakeholder_types=[t for t in StakeholderType if t in present],
                 )
             )
@@ -314,6 +326,8 @@ async def run(state: AgentState) -> AgentState:
                 demand_score=group.demand_score,
                 is_optional=group.is_optional,
                 classification_coverage=group.classification_coverage,
+                in_field_skill_count=group.in_field_skill_count,
+                graduate_capability_skill_count=group.graduate_capability_skill_count,
             )
         )
 

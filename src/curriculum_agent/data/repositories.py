@@ -87,7 +87,14 @@ class ProgramRepository:
             row = await session.get(ProgramTable, program_id)
             if row is None:
                 return None
-            return ProgramMetadata.model_validate(_row_to_dict(row))
+            data = _row_to_dict(row)
+            # The column is nullable (rows predate the field) while the model
+            # says `str = ""`. Left as None it would reach the extraction cache
+            # key through str() and hash the literal "None", quietly giving every
+            # pre-scope program a key of its own.
+            if data.get("scope_th") is None:
+                data["scope_th"] = ""
+            return ProgramMetadata.model_validate(data)
 
     async def exists(self, program_id: str) -> bool:
         async with AsyncSessionLocal() as session:

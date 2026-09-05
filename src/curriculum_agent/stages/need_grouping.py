@@ -5,7 +5,7 @@ from collections.abc import Iterable
 
 from loguru import logger
 
-from curriculum_agent.models import BLOOM_ORDER, BloomLevel, ExtractedSkill, KSECCategory
+from curriculum_agent.models import BLOOM_ORDER, BloomLevel, ExtractedSkill, KSECCategory, Need
 
 # Project policy: 6-10 main Needs, which become main PLOs one-to-one. Both bounds
 # live here because they are one policy and the clustering that has to respect
@@ -19,6 +19,33 @@ from curriculum_agent.models import BLOOM_ORDER, BloomLevel, ExtractedSkill, KSE
 # (want-based) PLOs are outside this count, as they are outside the 6 floor.
 MIN_NEEDS = 6
 MAX_CORE_PLOS = 10
+
+
+def is_in_scope(need: Need) -> bool:
+    """Is this Need eligible to become a PLO of this program at all?
+
+    The third policy deciding which Needs become PLOs, which is why it lives here
+    beside the other two rather than at its point of use. Both axes are judged per
+    skill by the extraction model and rolled up into counters at need_combination
+    under an any rule — one qualifying member per axis is enough.
+
+    Returns a bare bool. "Which axis did it fail?" is already readable off the
+    Need's own counters ("0 of 8"), which is finer than an enum could be and
+    cannot drift out of step with them.
+
+    `and` rather than `or`: the two axes were measured to overlap completely on
+    the evidence available, so the data cannot choose between them and policy has
+    to. Failing either one disqualifies a Need, because one that is not a graduate
+    capability cannot be written as a PLO at all, not merely written about the
+    wrong field. The permissive side is already spent on the any rule a level
+    down.
+
+    This is also the whole fallback switch: if the eval says the flags are not
+    trustworthy enough to filter on, the retreat is to stop calling this in one
+    place and leave the flags on display at the checkpoint instead.
+    """
+    return need.is_field_relevant and need.is_graduate_capability
+
 
 _WS_RE = re.compile(r"\s+")
 _BLOOM_RANK = {level: i for i, level in enumerate(BLOOM_ORDER)}

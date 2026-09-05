@@ -144,6 +144,7 @@ class _SkillItem(BaseModel):
     bloom_level: Literal["remember", "understand", "apply", "analyze", "evaluate", "create"]
     evidence_span_th: str = Field(min_length=_MIN_SPAN_CHARS)
     is_field_relevant: bool = True
+    is_graduate_capability: bool = True
     confidence: float = Field(ge=0.0, le=1.0, default=0.8)
 
     @field_validator("skill_name_th", "evidence_span_th", mode="before")
@@ -290,6 +291,10 @@ async def run(state: AgentState) -> AgentState:
     metadata = state.get("metadata") or {}
     field_th = str(metadata.get("field", ""))
     program_name_th = str(metadata.get("name_th", ""))
+    # Empty for every program whose designer left it blank, which reproduces the
+    # pre-scope prompt exactly. Never None: the repository normalises the nullable
+    # column, and str() here would otherwise hash the word "None" into the key.
+    scope_th = str(metadata.get("scope_th") or "")
     logger.info(f"Stage 2: skill_extraction from {len(classified)} evidence items")
 
     # --- Step 1: LLM skill extraction per evidence item (cache-first) ---
@@ -331,9 +336,16 @@ async def run(state: AgentState) -> AgentState:
         # light_model and stored as heavy_model, which only worked because the two
         # resolved to the same string; the moment they differ every write becomes
         # a permanent miss and the whole corpus is re-extracted on every run.
+        # scope_th joins field_th/program_name_th here for the same reason and is
+        # appended unconditionally: two programs with different scope statements
+        # must not share an entry, and after this change ships there is no older
+        # key worth preserving — the new schema field moved _EXTRACTION_CONTRACT,
+        # so every row written before it is already a miss. A conditional append
+        # would buy back nothing and leave a branch to maintain forever.
         cache_key = hashlib.sha256(
             f"{chunk}\x00{evidence.classification}\x00{settings.extraction_model}"
-            f"\x00{_EXTRACTION_CONTRACT}\x00{field_th}\x00{program_name_th}".encode()
+            f"\x00{_EXTRACTION_CONTRACT}\x00{field_th}\x00{program_name_th}"
+            f"\x00{scope_th}".encode()
         ).hexdigest()
 
         result: _ExtractedSkillsResponse | None = None
@@ -355,6 +367,7 @@ async def run(state: AgentState) -> AgentState:
                 evidence.classification,
                 field_th=field_th,
                 program_name_th=program_name_th,
+                scope_th=scope_th,
             )
             # Only the provider call is rationed; a cache hit above never waited
             # for a slot it did not need.
@@ -539,6 +552,10 @@ async def run(state: AgentState) -> AgentState:
                     normalize_need_name(s["skill_name_th"]), "unclassified"
                 ),
                 is_field_relevant=bool(s.get("is_field_relevant", True)),
+                # Raw per-row flag, like is_field_relevant beside it and unlike
+                # `classification` above: two rows for the same skill name may
+                # disagree, and need_combination counts rows on purpose.
+                is_graduate_capability=bool(s.get("is_graduate_capability", True)),
                 extraction_method="llm",
                 confidence=s.get("confidence", 0.8),
                 importance_score=importance_by_name.get(

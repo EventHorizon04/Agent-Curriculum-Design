@@ -149,6 +149,13 @@ class ProgramCreateRequest(BaseModel):
     duration_years: int = Field(ge=1, le=8)
     faculty: str
     university: str
+    # What the program covers, in the designer's own words: positive side only,
+    # itemised ("หลักสูตรนี้ครอบคลุม A, B, C และ D"). Reaches the extraction model in
+    # the *system* prompt as the yardstick for is_field_relevant and nothing else —
+    # see prompts/extract_skills.py. Empty is fine and is the common case: a program
+    # that writes nothing gets the pre-existing prompt byte for byte, and the scope
+    # guard turns into a no-op on its own because every flag defaults to True.
+    scope_th: str = ""
     professional_council: str | None = None
     accreditation_body: str | None = None
     subject_benchmark_ref: str | None = None
@@ -242,6 +249,16 @@ class ExtractedSkill(BaseModel):
     # Set by the extraction model: does this belong to the program's field at
     # all? A False here yields `unclassified` unless the skill is mandated.
     is_field_relevant: bool = True
+    # Set by the extraction model: is this something a graduate can do, or is it
+    # an activity of the institution / the programme / its teachers ("บริหารจัดการ
+    # โครงสร้างหลักสูตร")? Deliberately a second flag rather than more values on the
+    # first: the two axes do not overlap — "การสร้างเครือข่ายความร่วมมือระดับสากล" is
+    # squarely in an international college's field and still not a graduate
+    # capability — and separate bools are the only shape measured to work.
+    # Collapsing the two later is possible; splitting them later is not.
+    # Unlike is_field_relevant, this one never touches `classification`: see
+    # classify_skills for why a rule here would be dead on the cases it should catch.
+    is_graduate_capability: bool = True
     extraction_method: Literal["llm", "manual"]
     confidence: float = Field(ge=0, le=1)
     # Per-skill-name demand, computed before grouping. Orders the raw-skill table.
@@ -278,6 +295,49 @@ class Need(BaseModel):
     demand_score: float = Field(ge=0, le=1)
     is_optional: bool = False
     classification_coverage: dict[str, int] = Field(default_factory=dict)
+    # How many member *rows* carry each flag — not how many distinct skill names,
+    # which is a different number whenever one name was extracted from several
+    # evidence items (see need_combination for why the raw per-row count is the
+    # useful one). The denominator is len(member_skill_ids), already on the Need,
+    # which is why these are plain ints rather than a coverage dict.
+    in_field_skill_count: int = 0
+    graduate_capability_skill_count: int = 0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_counts_to_all_members(cls, data: Any) -> Any:
+        """A Need that never carried these counts reads as though every member
+        passed both axes — the same thing the migration writes into pre-existing
+        rows, for the same reason.
+
+        Absent is not zero here. Zero means "the extractor judged every member
+        out of scope" and disqualifies the Need; absent means nobody ever asked,
+        which has to leave behaviour exactly as it was. Rows written before the
+        columns existed are backfilled by the migration, but a Need also arrives
+        as a plain dict — from a LangGraph checkpoint suspended across the deploy,
+        or from a client — and those never touch the migration.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Copy first: plo_synthesis validates every entry of state["needs"] in
+        # place, so writing into the argument would quietly add two keys to the
+        # LangGraph checkpoint payload the caller owns.
+        data = {**data}
+        members = data.get("member_skill_ids") or []
+        for key in ("in_field_skill_count", "graduate_capability_skill_count"):
+            if data.get(key) is None:
+                data[key] = len(members)
+        return data
+
+    @property
+    def is_field_relevant(self) -> bool:
+        """Any rule: one in-field member is enough to keep the whole Need."""
+        return self.in_field_skill_count > 0
+
+    @property
+    def is_graduate_capability(self) -> bool:
+        """Same any rule. Both are read together by need_grouping.is_in_scope."""
+        return self.graduate_capability_skill_count > 0
 
 
 # --------------------------- Stage 3 -----------------------------

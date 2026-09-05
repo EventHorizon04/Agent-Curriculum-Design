@@ -13,14 +13,24 @@ interface FormState {
   university: string
   faculty: string
   field: string
+  scope_th: string
   degree_level: string
   duration_years: number
 }
 
 const INITIAL: FormState = {
-  university: '', faculty: '', field: '',
+  university: '', faculty: '', field: '', scope_th: '',
   degree_level: 'bachelor', duration_years: 4,
 }
+
+// Shown under the scope field. Every line answers a measured result: an
+// exclusion list scored worse than writing nothing at all, and so did a broad or
+// vague statement, so an empty box beats a half-hearted one.
+const SCOPE_HINTS = [
+  'เขียนเฉพาะสิ่งที่หลักสูตรครอบคลุม แจกแจงเป็นรายการ 3-4 อย่าง',
+  'อย่าเขียนรายการ "ไม่รวมถึง" — จากการทดสอบ รายการกันออกทำให้ระบบตัดสินแย่ลงกว่าไม่เขียนอะไรเลย',
+  'เขียนกว้าง ๆ หรือลอย ๆ แย่กว่าไม่เขียน — ถ้ายังแจกแจงไม่ได้ ให้เว้นว่างไว้ก่อน',
+]
 
 export default function Intake() {
   const navigate = useNavigate()
@@ -54,6 +64,7 @@ export default function Intake() {
         university: form.university,
         faculty: form.faculty,
         field: form.field,
+        scope_th: form.scope_th.trim(),
         degree_level: form.degree_level,
         duration_years: Number(form.duration_years),
       })
@@ -129,6 +140,22 @@ export default function Intake() {
           name="field" value={form.field} onChange={handleChange}
           placeholder="ความสัมพันธ์ระหว่างประเทศ"
         />
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            ขอบเขตของหลักสูตร (ไม่บังคับ)
+          </label>
+          <textarea
+            name="scope_th" rows={3} value={form.scope_th} onChange={handleChange}
+            placeholder="หลักสูตรนี้ครอบคลุม… (แจกแจง 3-4 รายการ)"
+            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <ul className="mt-1 space-y-0.5 text-xs text-gray-500">
+            {SCOPE_HINTS.map(hint => (
+              <li key={hint}>{hint}</li>
+            ))}
+          </ul>
+        </div>
 
         <hr className="border-gray-100" />
 

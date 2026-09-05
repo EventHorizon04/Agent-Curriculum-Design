@@ -212,6 +212,7 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     from curriculum_agent.stages.need_grouping import (  # noqa: PLC0415
         MAX_CORE_PLOS,
         MIN_NEEDS,
+        is_in_scope,
     )
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
         cited_need_ids,
@@ -281,6 +282,18 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     # returns to the pool. That is the correct outcome — it is no longer behind
     # anything — but it is not something the designer asked for, so it is named
     # rather than left to be noticed on the report page.
+    # Deliberately not filtered here, and deliberately not a 422 either: picking
+    # these Needs is a person's decision, and this endpoint is the only way to
+    # override the guard — which is why no separate override control exists. The
+    # line is here so an out-of-scope PLO can be traced back to the moment someone
+    # asked for it.
+    out_of_scope = [n for n in selected if not is_in_scope(n)]
+    if out_of_scope:
+        logger.warning(
+            f"Merge includes {len(out_of_scope)} out-of-scope Need(s): "
+            f"{', '.join(n.need_id for n in out_of_scope)} — designer's choice, not filtered"
+        )
+
     released = sorted(cited_need_ids(superseded) - set(body.need_ids))
     if released:
         logger.warning(
