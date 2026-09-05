@@ -456,3 +456,106 @@ def test_a_statement_that_cannot_become_a_plo_is_rejected(statement: str, reason
 )
 def test_a_specific_market_sentence_passes(statement: str) -> None:
     assert nc._NeedStatement(statement_th=statement).statement_th == statement
+
+
+def _flagged(
+    name: str,
+    sid: str,
+    eid: str,
+    *,
+    in_field: bool = True,
+    graduate: bool = True,
+    classification: str = "need",
+) -> ExtractedSkill:
+    return _skill(name, KSECCategory.S, sid, eid, classification=classification).model_copy(
+        update={"is_field_relevant": in_field, "is_graduate_capability": graduate}
+    )
+
+
+async def _needs_from(
+    skills: list[ExtractedSkill], monkeypatch: pytest.MonkeyPatch
+) -> list[dict[str, object]]:
+    _patch_llm(monkeypatch)
+    _patch_repo(monkeypatch)
+    state = await nc.run(
+        {
+            "program_id": "cs-test",
+            "extracted_skills": [s.model_dump(mode="json") for s in skills],
+        }
+    )
+    return state["needs"]
+
+
+async def test_two_rows_sharing_a_skill_name_are_counted_separately(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The counters are over member *rows*, not distinct skill names.
+
+    Clustering works on deduplicated names, so it is tempting to count the same
+    way — and `classification` genuinely does, ORed across every row sharing a
+    name. Doing that here would push the number to the total whenever a name
+    recurs across evidence items, and the fraction the designer reads at the
+    checkpoint would be 8/8 for every Need ever produced.
+    """
+    skills = [
+        _flagged("การแปลเอกสารธุรกิจ", "S1", "E1", in_field=True),
+        _flagged("การแปลเอกสารธุรกิจ", "S2", "E2", in_field=False),
+    ]
+
+    needs = await _needs_from(skills, monkeypatch)
+
+    (need,) = needs
+    assert sorted(need["member_skill_ids"]) == ["S1", "S2"]
+    assert need["in_field_skill_count"] == 1
+    assert need["graduate_capability_skill_count"] == 2
+
+
+async def test_neither_counter_can_exceed_the_member_count(monkeypatch: pytest.MonkeyPatch):
+    """The denominator the designer sees is len(member_skill_ids), which is why
+    these are plain ints rather than a coverage dict. A count taken over anything
+    but that list would read as "9 of 8"."""
+    skills = [
+        _flagged("การแปลเอกสารธุรกิจ", "S1", "E1"),
+        _flagged("การแปลเอกสารธุรกิจ", "S2", "E2", graduate=False),
+        _flagged("การล่ามการเจรจา", "S3", "E1", in_field=False),
+        _flagged("การตรวจแก้งานแปล", "S4", "E3"),
+    ]
+
+    needs = await _needs_from(skills, monkeypatch)
+
+    assert needs
+    for need in needs:
+        total = len(need["member_skill_ids"])
+        assert 0 <= need["in_field_skill_count"] <= total
+        assert 0 <= need["graduate_capability_skill_count"] <= total
+
+
+async def test_a_requirement_skill_judged_off_field_still_counts_as_off_field(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The two axes are read straight off the row and never through
+    `classification`.
+
+    A rule routed through classification would be dead on exactly the cases it
+    was written for: a skill named by a professional council or by the
+    institution's own vision comes out `requirement` no matter what either flag
+    says, because requirement wins. That precedence is not the thing to change —
+    selection has to read the flags directly instead.
+    """
+    skills = [
+        _flagged(
+            "การบริหารจัดการและพัฒนาแหล่งรายได้",
+            "S1",
+            "E1",
+            in_field=False,
+            graduate=False,
+            classification="requirement",
+        )
+    ]
+
+    needs = await _needs_from(skills, monkeypatch)
+
+    (need,) = needs
+    assert need["classification_coverage"] == {"requirement": 1}
+    assert need["in_field_skill_count"] == 0
+    assert need["graduate_capability_skill_count"] == 0

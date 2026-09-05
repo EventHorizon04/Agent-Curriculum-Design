@@ -189,3 +189,73 @@ async def test_old_contract_cache_entry_is_re_extracted_not_raised(
     llm.assert_awaited_once()
     assert len(state["extracted_skills"]) == 1
     assert state["extracted_skills"][0]["evidence_span_th"]
+
+
+def test_the_fingerprint_hashes_a_prompt_that_carries_no_scope_statement():
+    """The fingerprint is a promise about the *shape* of a stored payload, and a
+    shape does not vary per program.
+
+    A scope statement inside it would give every program its own contract value.
+    prune_cache judges a row stale by comparing the contract it was written under
+    against the current one, so it would then report `stale-contract` for the
+    entire table — the one signal that tool exists to give would stop meaning
+    anything on the day this shipped.
+    """
+    hashed_system_prompt = se.build_extract_skills_prompt("", "")[0]["content"]
+
+    assert "ขอบเขตของหลักสูตรนี้" not in hashed_system_prompt
+
+
+async def test_two_programs_with_different_scopes_store_the_same_contract(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Same claim as above, taken from the other end: what actually lands in the
+    `contract` column for two programs whose scope statements differ.
+
+    Asserting on the fingerprint function alone would not catch a `run` that
+    computed a per-program contract of its own on the way to the cache write.
+    """
+    writes: list[str] = []
+
+    async def capture_set(self, key, model, payload, *, kind, contract):  # noqa: ANN001, ANN202
+        writes.append(contract)
+
+    monkeypatch.setattr(se.LLMCacheRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(se.LLMCacheRepository, "set", capture_set)
+    monkeypatch.setattr(se.SkillRepository, "delete_by_program", AsyncMock(return_value=0))
+    monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
+
+    fresh = se._ExtractedSkillsResponse(
+        skills=[
+            se._SkillItem(
+                skill_name_th="วิเคราะห์ข้อมูลขนาดใหญ่",
+                skill_name_en="Data Analysis",
+                ksec_category="S",
+                bloom_level="analyze",
+                evidence_span_th="วิเคราะห์ข้อมูลขนาดใหญ่เพื่อสนับสนุนการตัดสินใจ",
+                confidence=0.9,
+            )
+        ]
+    )
+    monkeypatch.setattr(se, "complete_extraction", AsyncMock(return_value=fresh))
+
+    for scope in ("หลักสูตรนี้ครอบคลุมการพัฒนาซอฟต์แวร์และการวิเคราะห์ข้อมูล", "หลักสูตรนี้ครอบคลุมการแปลและการล่าม"):
+        await se.run(
+            {
+                "program_id": "cs-test",
+                "classified_evidence": [_EVIDENCE],
+                "metadata": {"scope_th": scope},
+            }
+        )
+
+    assert writes == [se._EXTRACTION_CONTRACT, se._EXTRACTION_CONTRACT]
+
+
+def test_the_graduate_capability_flag_is_inside_what_the_fingerprint_hashes():
+    """The one-off re-extraction this ships with is deliberate, and it happens
+    because the new response field moves the fingerprint. If the flag were absent
+    from the hashed schema, every pre-existing cache row would still be a hit and
+    would replay skills that were never judged on either axis."""
+    schema = json.dumps(se._ExtractedSkillsResponse.model_json_schema(), sort_keys=True)
+
+    assert "is_graduate_capability" in schema

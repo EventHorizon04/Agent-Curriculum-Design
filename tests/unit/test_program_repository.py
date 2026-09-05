@@ -209,3 +209,46 @@ async def test_delete_cascade_commits_once() -> None:
         await repo.delete_cascade("cs")
 
     mock_session.commit.assert_awaited_once()
+
+
+def _get_db(row: ProgramTable | None) -> MagicMock:
+    mock_session = AsyncMock()
+    mock_session.get = AsyncMock(return_value=row)
+    mock_ctx = MagicMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+    return mock_ctx
+
+
+async def test_get_reads_a_missing_scope_statement_back_as_an_empty_string() -> None:
+    """The column is nullable — every program created before the scope guard has
+    NULL there — while the Pydantic side says `str = ""`.
+
+    Left as None it reaches the extraction cache key through str() and hashes the
+    literal "None", which is a different key from the empty one. Every pre-scope
+    program would then quietly get a cache namespace of its own and re-extract its
+    whole corpus, and the resemblance to a correct key is what would make it hard
+    to spot.
+    """
+    row = _program_row("cs", datetime(2026, 7, 1))
+    row.scope_th = None
+
+    repo = ProgramRepository()
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_get_db(row)):
+        program = await repo.get("cs")
+
+    assert program is not None
+    assert program.scope_th == ""
+
+
+async def test_get_returns_a_stored_scope_statement_unchanged() -> None:
+    scope = "หลักสูตรนี้ครอบคลุมการแปลเอกสารธุรกิจ การล่ามการเจรจา และการตรวจแก้งานแปล"
+    row = _program_row("cs", datetime(2026, 7, 1))
+    row.scope_th = scope
+
+    repo = ProgramRepository()
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_get_db(row)):
+        program = await repo.get("cs")
+
+    assert program is not None
+    assert program.scope_th == scope

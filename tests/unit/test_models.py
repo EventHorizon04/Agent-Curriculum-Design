@@ -473,3 +473,70 @@ def test_plo_no_longer_carries_a_specificity_flag():
         "classification_rationale_th",
     ):
         assert gone not in PLO.model_fields
+
+
+# ---- PLO scope guard ---------------------------------------------------
+
+
+def _valid_skill_kwargs() -> dict:
+    return {
+        "skill_id": "S1",
+        "program_id": "cs-test",
+        "skill_name_th": "วิเคราะห์ข้อมูลขนาดใหญ่",
+        "ksec_category": KSECCategory.S,
+        "bloom_level": BloomLevel.ANALYZE,
+        "evidence_span_th": "ต้องวิเคราะห์ข้อมูลขนาดใหญ่ได้",
+        "source_evidence_id": "E1",
+        "source_stakeholder_type": StakeholderType.EMPLOYER,
+        "extraction_method": "llm",
+        "confidence": 0.9,
+        "importance_score": 0.5,
+    }
+
+
+def test_a_skill_that_was_never_judged_on_the_graduate_axis_reads_as_a_capability() -> None:
+    """Defaulting to True is what keeps the pipeline behaving as it did for every
+    skill row that predates the flag — the same reason the migration gives the
+    column a server_default of true, and the same reason is_field_relevant
+    defaults the way it does. False would mark every stored skill an institutional
+    activity and disqualify every Need built from them."""
+    skill = ExtractedSkill(**_valid_skill_kwargs())
+
+    assert skill.is_graduate_capability is True
+    assert skill.is_field_relevant is True
+
+
+def test_the_two_skill_axes_stay_two_fields() -> None:
+    """Separate bools, not one enum with four values. The 56% recall figure was
+    measured on this shape and on no other, and the second field is what pushed
+    the field flag from 3/9 to 5/9 even with no scope statement present at all.
+    Collapsing them later is possible; splitting them later is not."""
+    assert ExtractedSkill.model_fields["is_field_relevant"].annotation is bool
+    assert ExtractedSkill.model_fields["is_graduate_capability"].annotation is bool
+
+
+def test_a_program_may_be_created_without_a_scope_statement() -> None:
+    """The intake field is optional, and leaving it blank is the common case: the
+    program then gets the extraction prompt byte for byte as it was, and the guard
+    turns into a no-op on its own."""
+    req = ProgramCreateRequest(**_valid_create_kwargs())
+
+    assert req.scope_th == ""
+
+
+def test_a_scope_statement_survives_the_trip_to_program_metadata() -> None:
+    scope = "หลักสูตรนี้ครอบคลุมการแปลเอกสารธุรกิจ การล่ามการเจรจา และการตรวจแก้งานแปล"
+    meta = ProgramMetadata(program_id="cs-1", scope_th=scope, **_valid_create_kwargs())
+
+    assert meta.scope_th == scope
+
+
+def test_program_metadata_deserializes_a_row_written_before_the_scope_column() -> None:
+    """Stored rows have no scope_th at all, and ProgramRepository.get validates
+    straight off the row. A required field here would 500 every read of every
+    program created before this shipped."""
+    row = {"program_id": "cs-1", **_valid_create_kwargs()}
+
+    meta = ProgramMetadata.model_validate(row)
+
+    assert meta.scope_th == ""

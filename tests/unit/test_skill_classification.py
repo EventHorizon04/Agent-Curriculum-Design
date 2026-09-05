@@ -103,3 +103,36 @@ def test_missing_evidence_class_defaults_to_general():
     result = classify_skills([_raw("ทักษะลึกลับ", "E9")], {})
 
     assert result["ทักษะลึกลับ"] == "want"
+
+
+def test_the_graduate_capability_flag_changes_no_classification():
+    """The two scope axes are read straight off the skill row and never through
+    `classification`.
+
+    A rule like "not a graduate capability → unclassified" is dead on exactly the
+    cases it would be written for: the institutional statements it targets come
+    from requirement evidence, and requirement wins over everything downstream. So
+    the flag would be ignored precisely where it matters while quietly reclassifying
+    ordinary market skills everywhere else. None of the five precedence rules here
+    moves.
+    """
+    institutional = [
+        {**_raw("การบริหารจัดการและพัฒนาแหล่งรายได้", "E1"), "is_graduate_capability": False},
+        {**_raw("การบริหารจัดการและพัฒนาแหล่งรายได้", "E2"), "is_graduate_capability": False},
+    ]
+
+    assert classify_skills(institutional, {"E1": "general", "E2": "general"}) == (
+        classify_skills(
+            [_raw("การบริหารจัดการและพัฒนาแหล่งรายได้", eid) for eid in ("E1", "E2")],
+            {"E1": "general", "E2": "general"},
+        )
+    )
+
+
+def test_a_requirement_skill_stays_a_requirement_when_it_is_not_a_graduate_capability():
+    result = classify_skills(
+        [{**_raw("การบริหารหลักสูตร", "E1"), "is_graduate_capability": False}],
+        {"E1": "requirement"},
+    )
+
+    assert result["การบริหารหลักสูตร"] == "requirement"
