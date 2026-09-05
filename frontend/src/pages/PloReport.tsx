@@ -24,6 +24,27 @@ interface NeedSummary {
   statement_th?: string
   ksec_category: string
   demand_score?: number
+  /** Members that passed each scope axis. Absent on the report's own
+   *  needs_by_id payload for older rows; treated as "passed" when missing, the
+   *  same default the model and the migration use. */
+  in_field_skill_count?: number
+  graduate_capability_skill_count?: number
+  member_skill_ids?: string[]
+  source_stakeholder_types?: string[]
+}
+
+/** Why a Need produced no PLO. Derived, never stored: the counters say it. */
+type ExclusionReason = 'off_field' | 'not_graduate' | 'both' | 'lost_on_demand'
+
+function exclusionReason(n: NeedSummary): ExclusionReason {
+  // Missing counters mean nobody ever judged this Need — it predates the guard,
+  // and it has to read as it read before the guard existed.
+  const inField = n.in_field_skill_count ?? 1
+  const isGrad = n.graduate_capability_skill_count ?? 1
+  if (inField === 0 && isGrad === 0) return 'both'
+  if (inField === 0) return 'off_field'
+  if (isGrad === 0) return 'not_graduate'
+  return 'lost_on_demand'
 }
 
 interface ReportCounts {
@@ -55,6 +76,20 @@ interface TraceEvidence {
   stakeholder_type: string
   classification: string
   raw_text_th: string
+}
+
+interface TraceSkill {
+  skill_id: string
+  skill_name_th: string
+  evidence_span_th: string
+  is_field_relevant: boolean
+  is_graduate_capability: boolean
+}
+
+/** `/needs/{id}/trace` — only the members are read here; the evidence rows it
+ *  also returns are already quoted through each skill's span. */
+interface NeedTraceResponse {
+  skills: TraceSkill[]
 }
 
 interface PLOTrace {
@@ -98,11 +133,21 @@ function countsFrom(plos: PLO[]): ReportCounts {
 /** A hairline tag. The letter is the code — K, S, EC carry their own meaning and
  *  a colour per category would only add five hues that mean nothing to a reader
  *  who has not memorised the key. Colour on this page means "mandate" alone. */
-function Tag({ children, mono = false }: { children: React.ReactNode; mono?: boolean }) {
+function Tag({
+  children,
+  mono = false,
+  tone = 'plain',
+}: {
+  children: React.ReactNode
+  mono?: boolean
+  // `seal` is the record's red — reserved for what the designer has to read, not
+  // for anything merely notable.
+  tone?: 'plain' | 'seal'
+}) {
+  const toned =
+    tone === 'seal' ? 'border-seal bg-seal-soft text-seal' : 'border-rule text-mute'
   return (
-    <span
-      className={`rounded-sm border border-rule px-1.5 py-px text-xs text-mute ${mono ? 'data' : ''}`}
-    >
+    <span className={`rounded-sm border px-1.5 py-px text-xs ${toned} ${mono ? 'data' : ''}`}>
       {children}
     </span>
   )
@@ -351,7 +396,7 @@ export default function PloReport() {
             ส่งออก CHECO และ มคอ.2 ยังไม่เปิดใช้
           </p>
 
-          {unusedNeeds.length > 0 && <UnusedNeeds needs={unusedNeeds} />}
+          {unusedNeeds.length > 0 && <UnusedNeeds needs={unusedNeeds} programId={programId} />}
 
           <p className="border-t border-rule pt-4 text-sm text-mute">
             ตรวจเสร็จแล้ว อนุมัติและปิด session ได้ที่{' '}
@@ -370,8 +415,14 @@ export default function PloReport() {
  * synthesis failed. Listed rather than counted: a demand the market raised and
  * the program did not answer is a decision the designer should make knowingly.
  */
-function UnusedNeeds({ needs }: { needs: NeedSummary[] }) {
+function UnusedNeeds({ needs, programId }: { needs: NeedSummary[]; programId: string }) {
+  // One list, ordered by demand, with the reason carried per row rather than by
+  // grouping. Separate sections per reason read worse than they sound: the two
+  // scope axes agree on nearly every Need, so an "off-field" heading and a "not a
+  // graduate capability" heading would list the same rows twice.
   const ordered = [...needs].sort((a, b) => (b.demand_score ?? 0) - (a.demand_score ?? 0))
+  const guarded = ordered.filter((n) => exclusionReason(n) !== 'lost_on_demand')
+
   return (
     <section id="unused-needs" className="border-t border-rule pt-5">
       <h2 className="eyebrow">Need ที่ไม่ได้เป็น PLO</h2>
@@ -379,20 +430,136 @@ function UnusedNeeds({ needs }: { needs: NeedSummary[] }) {
         เพดาน PLO หลักคือ {MAX_CORE} ข้อ เรียงตาม demand score — Need เหล่านี้ยังเก็บไว้
         พร้อมหลักฐานเดิม แต่ไม่ได้ถูกแปลงเป็นผลลัพธ์การเรียนรู้
       </p>
-      <ul className="mt-3 space-y-2">
+      <ul className="mt-3 border-t border-rule">
         {ordered.map((n) => (
-          <li key={n.need_id} className="flex items-baseline gap-3 text-sm">
-            <span className="data shrink-0 text-xs text-faint">{n.need_id}</span>
-            <span className="min-w-0 flex-1 text-body">{n.statement_th ?? '—'}</span>
-            {n.demand_score !== undefined && (
-              <span className="data shrink-0 text-xs text-mute">
-                {(n.demand_score * 100).toFixed(0)}%
-              </span>
-            )}
-          </li>
+          <UnusedNeedRow key={n.need_id} need={n} programId={programId} />
         ))}
       </ul>
+
+      {guarded.length > 0 && <ScopeRerunNote count={guarded.length} />}
     </section>
+  )
+}
+
+const REASON_TH: Record<Exclude<ExclusionReason, 'lost_on_demand'>, string> = {
+  off_field: 'นอกสาขา',
+  not_graduate: 'ไม่ใช่สมรรถนะบัณฑิต',
+  both: 'นอกขอบเขตหลักสูตร',
+}
+
+function UnusedNeedRow({ need: n, programId }: { need: NeedSummary; programId: string }) {
+  const [open, setOpen] = useState(false)
+  const reason = exclusionReason(n)
+  const guarded = reason !== 'lost_on_demand'
+  const total = n.member_skill_ids?.length
+  const passed =
+    reason === 'not_graduate' ? n.graduate_capability_skill_count : n.in_field_skill_count
+  // A mandate the guard filtered anyway. `classification` never reaches the
+  // filter, so a professional council's requirement is dropped on the model's
+  // word like anything else — worth seeing before the set is approved.
+  const mandated = guarded && n.source_stakeholder_types?.includes('professional_council')
+
+  return (
+    <li className="border-b border-rule py-2.5">
+      <div className="flex items-baseline gap-3 text-sm">
+        <span className="data shrink-0 text-xs text-faint">{n.need_id}</span>
+        <span className="min-w-0 flex-1 text-body">{n.statement_th ?? '—'}</span>
+        {n.demand_score !== undefined && (
+          <span className="data shrink-0 text-xs text-mute">
+            {(n.demand_score * 100).toFixed(0)}%
+          </span>
+        )}
+      </div>
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {guarded ? (
+          <>
+            <Tag tone="seal">{REASON_TH[reason]}</Tag>
+            {mandated && <Tag tone="seal">สภาวิชาชีพระบุไว้</Tag>}
+            {total !== undefined && passed !== undefined && (
+              <span className="data text-xs text-mute">
+                สมาชิกผ่าน {passed}/{total}
+              </span>
+            )}
+            {/* Scanning the chips is enough to sort the list; deciding whether the
+                model read it wrong needs the skill names that got it filtered,
+                which is why they are a click away rather than always on. */}
+            <button
+              onClick={() => setOpen((v) => !v)}
+              aria-expanded={open}
+              className="text-xs text-mute underline underline-offset-2 transition-colors hover:text-body"
+            >
+              {open ? 'ซ่อนทักษะที่ทำให้ถูกกัน' : 'ดูทักษะที่ทำให้ถูกกัน'}
+            </button>
+          </>
+        ) : (
+          <Tag>แพ้เพดาน</Tag>
+        )}
+      </div>
+
+      {open && <GuardedNeedDetail programId={programId} needId={n.need_id} />}
+    </li>
+  )
+}
+
+/** The members and the quoted evidence behind one filtered Need, fetched on
+ *  demand — most rows in this list are never opened. */
+function GuardedNeedDetail({ programId, needId }: { programId: string; needId: string }) {
+  const [trace, setTrace] = useState<NeedTraceResponse | null>(null)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    api
+      .get<NeedTraceResponse>(`/programs/${programId}/needs/${needId}/trace`)
+      .then((r) => setTrace(r.data))
+      .catch(() => setError('โหลดทักษะไม่สำเร็จ ลองเปิดใหม่อีกครั้ง'))
+  }, [programId, needId])
+
+  if (error) return <p className="mt-2 text-xs text-seal">{error}</p>
+  if (!trace) return <p className="mt-2 text-xs text-faint">กำลังโหลด…</p>
+
+  return (
+    <ul className="mt-2 space-y-2 border-l border-rule pl-3">
+      {trace.skills.map((s) => (
+        <li key={s.skill_id} className="text-xs">
+          <div className="flex flex-wrap items-baseline gap-x-2">
+            <span className="text-body">{s.skill_name_th}</span>
+            {!s.is_field_relevant && <span className="text-seal">นอกสาขา</span>}
+            {!s.is_graduate_capability && <span className="text-seal">ไม่ใช่สมรรถนะบัณฑิต</span>}
+          </div>
+          <p className="mt-0.5 text-faint">“{s.evidence_span_th}”</p>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/** Shown once per page, not once per row: editing the scope statement re-runs
+ *  the whole program, so repeating it beside every filtered Need would be the
+ *  same instruction n times. */
+function ScopeRerunNote({ count }: { count: number }) {
+  return (
+    <div className="mt-4 border-l-2 border-seal bg-field px-3 py-2.5 text-sm text-mute">
+      <p>
+        <span className="data">{count}</span> Need ถูกกันเพราะอยู่นอกขอบเขตของหลักสูตร
+        ทุกใบยังเก็บไว้ครบและกู้กลับได้
+      </p>
+      <p className="mt-1.5">
+        <span className="text-body">ถ้าตัดสินผิด:</span> แก้ “ขอบเขตของหลักสูตร” ที่หน้า{' '}
+        <Link to="/intake" className="underline underline-offset-2 hover:text-body">
+          Intake
+        </Link>{' '}
+        แล้วรัน <span className="text-body">สกัดทักษะ</span> ใหม่ทั้งโปรแกรม — Need
+        จะถูกสร้างใหม่ตามไปเอง (ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ)
+      </p>
+      <p className="mt-1.5">
+        <span className="text-body">ถ้าตัดสินถูกแต่ยังอยากได้:</span> เลือกมันที่หน้า{' '}
+        <Link to="/plo-synthesis" className="underline underline-offset-2 hover:text-body">
+          PLO Synthesis
+        </Link>{' '}
+        แล้วกด “รวมเป็น PLO เดียว” — ตรงนั้นไม่กัน
+      </p>
+    </div>
   )
 }
 

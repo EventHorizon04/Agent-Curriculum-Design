@@ -1,0 +1,482 @@
+<title>Need ที่ถูกกัน — สามทางเลือก</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&family=Sarabun:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+/* Palette lifted from frontend/src/index.css so these mockups can be judged
+   against the real page rather than against a prettier hypothetical one. */
+:root {
+  --ink: #16232b;
+  --ink-raised: #24373f;
+  --field: #f2f4f1;
+  --rule: #ccd5cf;
+  --mute: #64777d;
+  --faint: #93a4a6;
+  --seal: #a3302a;
+  --seal-soft: #f0e0dd;
+  --paper: #ffffff;
+
+  --f-head: "IBM Plex Sans Thai", system-ui, sans-serif;
+  --f-body: "Sarabun", "IBM Plex Sans Thai", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ink: #dde5e3;
+    --ink-raised: #c6d3d0;
+    --field: #131b1f;
+    --rule: #2c3b40;
+    --mute: #8fa2a6;
+    --faint: #6b7d80;
+    --seal: #d9776f;
+    --seal-soft: #2a1917;
+    --paper: #1a2429;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ink: #dde5e3;
+  --ink-raised: #c6d3d0;
+  --field: #131b1f;
+  --rule: #2c3b40;
+  --mute: #8fa2a6;
+  --faint: #6b7d80;
+  --seal: #d9776f;
+  --seal-soft: #2a1917;
+  --paper: #1a2429;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--field);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 15px;
+  line-height: 1.7;
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 940px; margin: 0 auto; padding: 40px 28px 90px; }
+
+h1, h2, h3 { font-family: var(--f-head); font-weight: 600; margin: 0; line-height: 1.35; text-wrap: balance; }
+
+.eyebrow {
+  font-family: var(--f-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .14em;
+  text-transform: uppercase;
+  color: var(--mute);
+}
+
+.data { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+code { font-family: var(--f-mono); font-size: .88em; }
+
+.lede { color: var(--mute); max-width: 68ch; margin-top: 10px; }
+
+header.page { border-bottom: 1px solid var(--rule); padding-bottom: 22px; margin-bottom: 34px; }
+header.page h1 { font-size: 27px; margin-top: 8px; }
+
+/* --- option shell ------------------------------------------------------ */
+
+.option { margin-top: 46px; }
+
+.option__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 8px;
+}
+
+.option__tag {
+  font-family: var(--f-head);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: .1em;
+  color: var(--seal);
+}
+
+.option__head h2 { font-size: 19px; }
+
+.option__note { color: var(--mute); font-size: 14px; margin-top: 10px; max-width: 70ch; }
+
+/* the mock UI itself sits on paper, like the real page */
+.mock {
+  background: var(--paper);
+  border: 1px solid var(--rule);
+  margin-top: 18px;
+  padding: 22px 24px 24px;
+}
+
+.mock + .mock { margin-top: 12px; }
+
+.mock__title { font-family: var(--f-head); font-size: 11px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--mute); }
+.mock__sub { font-size: 13.5px; color: var(--mute); margin-top: 4px; max-width: 66ch; }
+
+/* --- need rows --------------------------------------------------------- */
+
+.needs { list-style: none; margin: 14px 0 0; padding: 0; border-top: 1px solid var(--rule); }
+
+.need { border-bottom: 1px solid var(--rule); padding: 12px 0; display: grid; gap: 6px; }
+
+.need__top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.need__id { font-family: var(--f-mono); font-size: 11px; color: var(--faint); }
+.need__statement { flex: 1 1 22ch; min-width: 0; }
+.need__demand { font-family: var(--f-mono); font-size: 12px; color: var(--mute); }
+
+.need__meta { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12.5px; color: var(--mute); align-items: center; }
+
+.skills { color: var(--mute); font-size: 13px; }
+.skills b { font-weight: 500; color: var(--ink); }
+
+.ratio { font-family: var(--f-mono); font-size: 12px; }
+.ratio--bad { color: var(--seal); }
+
+.chip {
+  font-family: var(--f-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  padding: 1px 8px;
+  border: 1px solid var(--rule);
+  color: var(--mute);
+  white-space: nowrap;
+}
+
+.chip--field { border-color: var(--seal); color: var(--seal); background: var(--seal-soft); }
+.chip--grad { border-color: var(--ink-raised); color: var(--ink-raised); }
+.chip--mandate { border-color: var(--seal); color: var(--seal); }
+
+.span {
+  font-size: 12.5px;
+  color: var(--mute);
+  border-left: 2px solid var(--rule);
+  padding-left: 10px;
+  font-style: normal;
+}
+
+.act {
+  font-size: 12.5px;
+  color: var(--mute);
+  background: var(--field);
+  border-left: 2px solid var(--seal);
+  padding: 8px 12px;
+  margin-top: 12px;
+}
+
+.act b { color: var(--ink); font-weight: 500; }
+
+.summary { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13.5px; color: var(--mute); margin-top: 14px; }
+.summary a { color: var(--mute); text-underline-offset: 3px; }
+
+/* --- decisions --------------------------------------------------------- */
+
+.decide { margin-top: 60px; border-top: 2px solid var(--ink); padding-top: 22px; }
+.decide h2 { font-size: 19px; }
+
+.q { border-bottom: 1px solid var(--rule); padding: 16px 0; }
+.q__k { font-family: var(--f-head); font-weight: 600; font-size: 15px; }
+.q__body { color: var(--mute); font-size: 14px; margin-top: 4px; max-width: 72ch; }
+.q__body b { color: var(--ink); font-weight: 500; }
+
+:focus-visible { outline: 2px solid var(--seal); outline-offset: 3px; }
+
+@media (max-width: 640px) {
+  .wrap { padding: 28px 18px 70px; }
+  .need__top { gap: 6px; }
+}
+</style>
+
+<div class="wrap">
+
+<header class="page">
+  <div class="eyebrow">Prototype · ticket 06</div>
+  <h1>Need ที่ถูกกัน โชว์ยังไงให้ตัดสินได้ในไม่กี่วินาที</h1>
+  <p class="lede">
+    วันนี้หน้า PLO report มีก้อนเดียวชื่อ <em>“Need ที่ไม่ได้เป็น PLO”</em> ซึ่งรวมทุกสาเหตุไว้ด้วยกัน
+    ตอนนี้สาเหตุมีสามแบบ และ designer ต้องทำคนละอย่างกับแต่ละแบบ — สามทางเลือกข้างล่างใช้
+    palette และโครงเดียวกับหน้าจริง ต่างกันแค่วิธีจัดก้อน
+  </p>
+</header>
+
+<!-- ============ A ============ -->
+<section class="option">
+  <div class="option__head">
+    <span class="option__tag">ทางเลือก A</span>
+    <h2>สามก้อนแยกกัน</h2>
+  </div>
+  <p class="option__note">
+    หนึ่งสาเหตุ หนึ่งหัวข้อ พร้อมประโยคบอกว่าต้องทำอะไรกับก้อนนั้น
+  </p>
+
+  <div class="mock">
+    <div class="mock__title">แพ้ demand — ไม่ต้องทำอะไร</div>
+    <div class="mock__sub">เพดาน PLO หลักคือ 10 ข้อ เรียงตาม demand score. Need เหล่านี้อยู่ในขอบเขตหลักสูตร แค่ได้คะแนนไม่ถึง</div>
+    <ul class="needs">
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-4f2a</span>
+          <span class="need__statement">ต้องการบัณฑิตที่ใช้เครื่องมือจัดการคำศัพท์เฉพาะทางในงานแปลได้</span>
+          <span class="need__demand">31%</span>
+        </div>
+      </li>
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-8c01</span>
+          <span class="need__statement">ต้องการบัณฑิตที่ทำงานร่วมกับทีมข้ามวัฒนธรรมในโครงการระยะสั้นได้</span>
+          <span class="need__demand">27%</span>
+        </div>
+      </li>
+    </ul>
+  </div>
+
+  <div class="mock">
+    <div class="mock__title">นอกสาขาของหลักสูตร</div>
+    <div class="mock__sub">โมเดลอ่านแล้วเห็นว่าไม่เข้าข่ายสาขาที่ระบุไว้ — ตรวจว่าตัดสินถูกไหม ถ้าผิดแปลว่า scope statement ยังไม่คม</div>
+    <ul class="needs">
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-1d77</span>
+          <span class="need__statement">ต้องการบัณฑิตที่พัฒนาระบบจัดเก็บและค้นคืนข้อมูลวิดีโอขนาดใหญ่ได้</span>
+          <span class="need__demand">44%</span>
+        </div>
+        <div class="need__meta">
+          <span class="ratio ratio--bad">อยู่ในสาขา 0 / 5</span>
+          <span class="chip chip--mandate">มีข้อกำหนดจากสภาวิชาชีพ</span>
+        </div>
+        <div class="skills">
+          <b>การจัดการฐานข้อมูลแบบเวกเตอร์</b> · <b>การจัดการระบบรับและจัดเก็บเนื้อหาดิจิทัล</b> · <b>การปรับปรุงประสิทธิภาพการเข้ารหัสวิดีโอ</b>
+        </div>
+        <div class="span">“…ต้องมีประสบการณ์ออกแบบ pipeline สำหรับข้อมูลวิดีโอปริมาณมาก…”</div>
+      </li>
+    </ul>
+    <div class="act">
+      <b>ถ้าโมเดลตัดสินผิด:</b> แก้ “ขอบเขตของหลักสูตร” ที่หน้า Intake แล้วรัน
+      <b>สกัดทักษะ</b> ใหม่ทั้งโปรแกรม — Need จะถูกสร้างใหม่ตามไปเอง
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="mock__title">ไม่ใช่สมรรถนะของบัณฑิต</div>
+    <div class="mock__sub">เป็นภารกิจของสถาบัน หลักสูตร หรืออาจารย์ ไม่ใช่สิ่งที่คนเรียนจบทำ — เขียนเป็น PLO ไม่ได้ตั้งแต่ต้น</div>
+    <ul class="needs">
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-93be</span>
+          <span class="need__statement">ต้องการหลักสูตรที่บริหารจัดการทรัพยากรและพัฒนาศักยภาพอาจารย์อย่างต่อเนื่อง</span>
+          <span class="need__demand">52%</span>
+        </div>
+        <div class="need__meta">
+          <span class="ratio ratio--bad">เป็นสมรรถนะบัณฑิต 0 / 3</span>
+        </div>
+        <div class="skills">
+          <b>การจัดบริการวิชาการแก่สังคม</b> · <b>การบริหารจัดการหลักสูตร</b> · <b>การบริหารจัดการและพัฒนาศักยภาพอาจารย์</b>
+        </div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ B ============ -->
+<section class="option">
+  <div class="option__head">
+    <span class="option__tag">ทางเลือก B</span>
+    <h2>ก้อนเดียว ป้ายบอกเหตุผลรายรายการ</h2>
+  </div>
+  <p class="option__note">
+    เก็บโครงเดิมของหน้า (หนึ่งหัวข้อ) แล้วให้ป้ายทำงานแทน — เรียงตาม demand เหมือนเดิม
+    สิ่งที่ต้องลงมือจึงไม่ได้อยู่รวมกันเป็นก้อน แต่กระจายตามลำดับคะแนน
+  </p>
+
+  <div class="mock">
+    <div class="mock__title">Need ที่ไม่ได้เป็น PLO</div>
+    <div class="mock__sub">ทุกใบยังเก็บไว้พร้อมหลักฐานเดิม เรียงตาม demand score</div>
+    <ul class="needs">
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-93be</span>
+          <span class="need__statement">ต้องการหลักสูตรที่บริหารจัดการทรัพยากรและพัฒนาศักยภาพอาจารย์อย่างต่อเนื่อง</span>
+          <span class="need__demand">52%</span>
+        </div>
+        <div class="need__meta">
+          <span class="chip chip--grad">ไม่ใช่สมรรถนะบัณฑิต 0/3</span>
+        </div>
+      </li>
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-1d77</span>
+          <span class="need__statement">ต้องการบัณฑิตที่พัฒนาระบบจัดเก็บและค้นคืนข้อมูลวิดีโอขนาดใหญ่ได้</span>
+          <span class="need__demand">44%</span>
+        </div>
+        <div class="need__meta">
+          <span class="chip chip--field">นอกสาขา 0/5</span>
+          <span class="chip chip--mandate">สภาวิชาชีพ</span>
+        </div>
+      </li>
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-4f2a</span>
+          <span class="need__statement">ต้องการบัณฑิตที่ใช้เครื่องมือจัดการคำศัพท์เฉพาะทางในงานแปลได้</span>
+          <span class="need__demand">31%</span>
+        </div>
+        <div class="need__meta">
+          <span class="chip">แพ้เพดาน</span>
+        </div>
+      </li>
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-8c01</span>
+          <span class="need__statement">ต้องการบัณฑิตที่ทำงานร่วมกับทีมข้ามวัฒนธรรมในโครงการระยะสั้นได้</span>
+          <span class="need__demand">27%</span>
+        </div>
+        <div class="need__meta">
+          <span class="chip">แพ้เพดาน</span>
+        </div>
+      </li>
+    </ul>
+    <div class="summary">
+      <span><span class="data">2</span> ถูกกันด้วย scope guard</span>
+      <span><span class="data">2</span> แพ้เพดาน</span>
+      <a href="#">ดูรายละเอียดทักษะที่ทำให้ถูกกัน</a>
+    </div>
+  </div>
+</section>
+
+<!-- ============ C ============ -->
+<section class="option">
+  <div class="option__head">
+    <span class="option__tag">ทางเลือก C</span>
+    <h2>สองก้อน — “ยอมรับได้” กับ “ต้องอ่าน”</h2>
+  </div>
+  <p class="option__note">
+    แบ่งตาม<strong>สิ่งที่ designer ต้องทำ</strong> ไม่ใช่ตามกลไกที่กันมันออก:
+    แพ้เพดานคือไม่ต้องทำอะไร ส่วนสองแกนรวมกันคือของที่ต้องอ่านว่าโมเดลตัดสินถูกไหม
+    โดยมีป้ายบอกว่าแกนไหน
+  </p>
+
+  <div class="mock">
+    <div class="mock__title">ถูกกันโดย scope guard — ต้องตรวจ</div>
+    <div class="mock__sub">โมเดลตัดสินว่าไม่ควรเป็น PLO ของหลักสูตรนี้ ทุกใบยังเก็บไว้ครบและกู้กลับได้</div>
+    <ul class="needs">
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-93be</span>
+          <span class="need__statement">ต้องการหลักสูตรที่บริหารจัดการทรัพยากรและพัฒนาศักยภาพอาจารย์อย่างต่อเนื่อง</span>
+          <span class="need__demand">52%</span>
+        </div>
+        <div class="need__meta">
+          <span class="chip chip--grad">ไม่ใช่สมรรถนะบัณฑิต</span>
+          <span class="ratio">0 / 3 สมาชิกผ่าน</span>
+        </div>
+        <div class="skills">
+          <b>การจัดบริการวิชาการแก่สังคม</b> · <b>การบริหารจัดการหลักสูตร</b> · <b>การบริหารจัดการและพัฒนาศักยภาพอาจารย์</b>
+        </div>
+      </li>
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-1d77</span>
+          <span class="need__statement">ต้องการบัณฑิตที่พัฒนาระบบจัดเก็บและค้นคืนข้อมูลวิดีโอขนาดใหญ่ได้</span>
+          <span class="need__demand">44%</span>
+        </div>
+        <div class="need__meta">
+          <span class="chip chip--field">นอกสาขา</span>
+          <span class="ratio">0 / 5 สมาชิกผ่าน</span>
+          <span class="chip chip--mandate">สภาวิชาชีพระบุไว้</span>
+        </div>
+        <div class="skills">
+          <b>การจัดการฐานข้อมูลแบบเวกเตอร์</b> · <b>การจัดการระบบรับและจัดเก็บเนื้อหาดิจิทัล</b> · <b>การปรับปรุงประสิทธิภาพการเข้ารหัสวิดีโอ</b>
+        </div>
+        <div class="span">“…ต้องมีประสบการณ์ออกแบบ pipeline สำหรับข้อมูลวิดีโอปริมาณมาก…”</div>
+      </li>
+    </ul>
+    <div class="act">
+      <b>ถ้าโมเดลตัดสินผิด:</b> แก้ “ขอบเขตของหลักสูตร” ที่หน้า Intake แล้วรัน
+      <b>สกัดทักษะ</b> ใหม่ทั้งโปรแกรม — Need จะถูกสร้างใหม่ตามไปเอง<br>
+      <b>ถ้าตัดสินถูกแต่ยังอยากได้:</b> เลือกมันที่หน้า PLO Synthesis แล้วกด “รวมเป็น PLO เดียว” — ระบบไม่กันตรงนั้น
+    </div>
+  </div>
+
+  <div class="mock">
+    <div class="mock__title">แพ้ demand — ไม่ต้องทำอะไร</div>
+    <div class="mock__sub">อยู่ในขอบเขตหลักสูตร แต่คะแนนไม่ถึงเพดาน 10 ข้อ</div>
+    <ul class="needs">
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-4f2a</span>
+          <span class="need__statement">ต้องการบัณฑิตที่ใช้เครื่องมือจัดการคำศัพท์เฉพาะทางในงานแปลได้</span>
+          <span class="need__demand">31%</span>
+        </div>
+      </li>
+      <li class="need">
+        <div class="need__top">
+          <span class="need__id">N-8c01</span>
+          <span class="need__statement">ต้องการบัณฑิตที่ทำงานร่วมกับทีมข้ามวัฒนธรรมในโครงการระยะสั้นได้</span>
+          <span class="need__demand">27%</span>
+        </div>
+      </li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============ decisions ============ -->
+<section class="decide">
+  <h2>สิ่งที่ต้องตัดสินจาก mockup นี้</h2>
+
+  <div class="q">
+    <div class="q__k">1 · จัดก้อนแบบไหน</div>
+    <div class="q__body">
+      A แยกตามกลไกที่กันมันออก · B ไม่แยกเลย ใช้ป้าย · C แยกตาม<b>สิ่งที่ต้องลงมือทำ</b>.
+      ข้อมูลที่มี: ธงสองแกน<b>ทับกันเกือบทุกใบ</b>บนคลังที่ evidence อยู่ในสาขาทั้งหมด
+      แปลว่าก้อน “นอกสาขา” กับ “ไม่ใช่สมรรถนะบัณฑิต” ของทางเลือก A จะมีสมาชิกซ้ำกันเป็นประจำ
+      ซึ่งเป็นเหตุผลที่ทำให้ A อ่านสับสนกว่าที่คิดตอนออกแบบ
+    </div>
+  </div>
+
+  <div class="q">
+    <div class="q__k">2 · แต่ละรายการแสดงอะไรบ้าง</div>
+    <div class="q__body">
+      ตอนนี้ mockup แสดง: statement · demand score · สัดส่วนสมาชิกที่ผ่าน (<code>0 / 5</code>) ·
+      ชื่อทักษะสมาชิก · evidence span หนึ่งบรรทัด · ป้ายสภาวิชาชีพ.
+      <b>อันไหนเกิน อันไหนขาด</b> — span ยาวสุดในชุดจริงคือหลายบรรทัด ตัดทิ้งหรือให้กดขยาย
+    </div>
+  </div>
+
+  <div class="q">
+    <div class="q__k">3 · อยู่ที่หน้าไหน</div>
+    <div class="q__body">
+      หน้า <b>PLO Report</b> มีก้อน “Need ที่ไม่ได้เป็น PLO” อยู่แล้ว — ต่อยอดที่นั่นได้เลย.
+      แต่หน้า <b>PLO Synthesis</b> คือที่ที่ designer กด “รวมเป็น PLO เดียว” ซึ่งเป็นทาง override
+      ทางเดียว. โชว์ที่เดียว สองที่ หรือโชว์เต็มที่ report แล้วมีบรรทัดสรุปที่ synthesis
+    </div>
+  </div>
+
+  <div class="q">
+    <div class="q__k">4 · ถ้อยคำ “ต้องรันอะไรใหม่บ้าง”</div>
+    <div class="q__body">
+      กลไกจริง: scope statement อยู่ใน <b>cache key ของการสกัดทักษะ</b> → แก้ scope =
+      สกัดใหม่ทั้งโปรแกรม → need combination รันตามเพราะใช้ checkpoint เดียวกัน.
+      mockup เขียนว่า <em>“แก้ที่หน้า Intake แล้วรันสกัดทักษะใหม่ทั้งโปรแกรม —
+      Need จะถูกสร้างใหม่ตามไปเอง”</em> — <b>ชัดพอไหม</b> และควรมีปุ่มลัดไปหน้า Intake ไหม
+      (ระบบไม่ re-run ให้เอง โดยเจตนา — ชน rule 7)
+    </div>
+  </div>
+
+  <div class="q">
+    <div class="q__k">5 · ป้ายสภาวิชาชีพควรมีไหม</div>
+    <div class="q__body">
+      การรัน eval จริงพบว่า <b>guard กรอง Need ที่มีสมาชิกเป็นข้อกำหนดจากสภาวิชาชีพ 1-2 ใบต่อรอบ</b>
+      — <code>classification</code> ไม่เคยไปถึงตัวกรอง. ป้ายนี้ทำให้ designer เห็นก่อนอนุมัติ
+      แต่ก็เป็นการแก้ปัญหาที่ UI ทั้งที่รากอยู่ที่นโยบาย (จุดที่ยังไม่ตัดสินข้อ 8)
+    </div>
+  </div>
+</section>
+
+</div>
