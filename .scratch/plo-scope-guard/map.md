@@ -174,7 +174,8 @@ rule 7 (HITL ทุก stage boundary)
   clustering รวมทักษะข้าม evidence ทำให้ Need รอดกฎ any ตราบใดที่มีสมาชิกหลุดธงตัวเดียว —
   ของจริงคือ Need ที่สมาชิกติดธง 6 ใน 7 กลายเป็น core PLO อันดับสอง. กวาดค่าบน Need
   สิบใบ: any พลาด 2 ใน 3 ใบที่ควรกรอง ส่วน 0.34-0.60 กรองครบและไม่กรองผิด.
-  แลกกับ core PLO ลดจาก 3 เหลือ 2 — PLO ที่หายคือ PLO ที่ไม่ควรมีตั้งแต่แรก
+  แลกกับ core PLO ลดจาก 3 เหลือ 2 — PLO ที่หายคือ PLO ที่ไม่ควรมีตั้งแต่แรก.
+  ผลเต็มพร้อมข้อจำกัด: [`research/14-full-pipeline-run.md`](research/14-full-pipeline-run.md)
 
 ## Not yet specified
 
