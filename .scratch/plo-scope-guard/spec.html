@@ -1,0 +1,1343 @@
+<title>PLO Scope Guard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600;700&family=Sarabun:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<style>
+:root {
+  --ground: #f4f6f8;
+  --surface: #ffffff;
+  --surface-2: #eef1f5;
+  --ink: #16212e;
+  --ink-2: #3d4e60;
+  --muted: #6a7a8c;
+  --line: #dbe1e8;
+  --line-strong: #b9c4d0;
+  --accent: #1f4e8c;
+  --accent-soft: #e6edf7;
+  --flag: #a6540b;
+  --flag-soft: #fbf0e2;
+  --pass: #2c6a4c;
+  --pass-soft: #e6f1eb;
+  --shadow: 0 1px 2px rgba(22, 33, 46, .06), 0 8px 24px -16px rgba(22, 33, 46, .3);
+
+  --f-head: "IBM Plex Sans Thai", "Noto Sans Thai", system-ui, sans-serif;
+  --f-body: "Sarabun", "IBM Plex Sans Thai", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", monospace;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --ground: #0e151e;
+    --surface: #151e29;
+    --surface-2: #1b2633;
+    --ink: #e4ebf2;
+    --ink-2: #b9c6d4;
+    --muted: #8b9baa;
+    --line: #26323f;
+    --line-strong: #3a4756;
+    --accent: #7ba7dd;
+    --accent-soft: #17263a;
+    --flag: #dda45f;
+    --flag-soft: #2a2115;
+    --pass: #6cba93;
+    --pass-soft: #16271f;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .8);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --ground: #0e151e;
+  --surface: #151e29;
+  --surface-2: #1b2633;
+  --ink: #e4ebf2;
+  --ink-2: #b9c6d4;
+  --muted: #8b9baa;
+  --line: #26323f;
+  --line-strong: #3a4756;
+  --accent: #7ba7dd;
+  --accent-soft: #17263a;
+  --flag: #dda45f;
+  --flag-soft: #2a2115;
+  --pass: #6cba93;
+  --pass-soft: #16271f;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px -16px rgba(0, 0, 0, .8);
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--f-body);
+  font-size: 16px;
+  line-height: 1.72;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--f-head);
+  font-weight: 600;
+  line-height: 1.3;
+  text-wrap: balance;
+  margin: 0;
+}
+
+code, kbd, pre { font-family: var(--f-mono); font-size: .875em; }
+
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: .18em; }
+
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+/* ---------- shell ---------- */
+
+.masthead {
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.masthead__inner {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 40px 32px 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.eyebrow {
+  font-family: var(--f-head);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.masthead h1 {
+  font-size: clamp(28px, 4vw, 40px);
+  letter-spacing: -.01em;
+}
+
+.masthead p {
+  margin: 0;
+  max-width: 68ch;
+  color: var(--ink-2);
+}
+
+.statusbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 28px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  margin-top: 4px;
+}
+
+.statusbar div {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.statusbar dt, .statusbar .k {
+  font-family: var(--f-head);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.statusbar .v {
+  font-family: var(--f-head);
+  font-size: 15px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.layout {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 32px 96px;
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: 56px;
+  align-items: start;
+}
+
+/* ---------- toc ---------- */
+
+.toc {
+  position: sticky;
+  top: 24px;
+  padding-top: 40px;
+  font-family: var(--f-head);
+  font-size: 13.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.toc__label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding-bottom: 8px;
+}
+
+.toc a {
+  color: var(--ink-2);
+  text-decoration: none;
+  padding: 4px 10px 4px 12px;
+  border-left: 2px solid var(--line);
+  display: flex;
+  gap: 9px;
+}
+
+.toc a:hover { color: var(--accent); border-left-color: var(--accent); background: var(--accent-soft); }
+.toc a .n { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+.main { padding-top: 40px; min-width: 0; display: flex; flex-direction: column; gap: 52px; }
+
+section { scroll-margin-top: 20px; }
+
+section > h2 {
+  font-size: 23px;
+  letter-spacing: -.005em;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--ink);
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+section > h2 .n {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+section > * + * { margin-top: 18px; }
+
+h3 {
+  font-size: 17px;
+  margin-top: 34px !important;
+}
+
+h4 {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--ink-2);
+  margin-top: 24px !important;
+}
+
+p, ul, ol { margin: 0; max-width: 74ch; }
+ul, ol { padding-left: 22px; }
+li + li { margin-top: 6px; }
+li::marker { color: var(--muted); }
+
+strong { font-weight: 600; color: var(--ink); }
+
+.lede { font-size: 17px; color: var(--ink-2); max-width: 70ch; }
+
+/* ---------- inline code / kbd ---------- */
+
+p code, li code, td code, th code, dd code {
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  padding: .08em .34em;
+  white-space: nowrap;
+}
+
+pre {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  line-height: 1.62;
+  color: var(--ink-2);
+  box-shadow: var(--shadow);
+}
+
+pre b { color: var(--ink); font-weight: 500; }
+pre .cm { color: var(--muted); }
+pre .del { color: var(--flag); text-decoration: line-through; text-decoration-thickness: 1px; }
+pre .add { color: var(--pass); }
+
+/* ---------- callouts ---------- */
+
+.note {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line-strong);
+  background: var(--surface);
+  border-radius: 4px;
+  padding: 14px 18px;
+  font-size: 15px;
+}
+
+.note--why { border-left-color: var(--accent); }
+.note--stop { border-left-color: var(--flag); background: var(--flag-soft); }
+.note--open { border-left-color: var(--line-strong); background: var(--surface-2); }
+
+.note__label {
+  font-family: var(--f-head);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .11em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.note--why .note__label { color: var(--accent); }
+.note--stop .note__label { color: var(--flag); }
+
+.note p, .note ul { max-width: 68ch; }
+.note > * + * { margin-top: 8px; }
+
+/* ---------- data figures ---------- */
+
+.figures {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.fig { background: var(--surface); padding: 14px 16px; display: flex; flex-direction: column; gap: 2px; }
+.fig__n { font-family: var(--f-head); font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -.02em; line-height: 1.15; }
+.fig__n small { font-size: 15px; font-weight: 500; color: var(--muted); }
+.fig__k { font-size: 13px; color: var(--muted); line-height: 1.45; }
+.fig--flag .fig__n { color: var(--flag); }
+.fig--pass .fig__n { color: var(--pass); }
+.fig--accent .fig__n { color: var(--accent); }
+
+/* ---------- tables ---------- */
+
+.tablewrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+
+table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+
+th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tbody tr:last-child td { border-bottom: 0; }
+
+th {
+  font-family: var(--f-head);
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--surface-2);
+  white-space: nowrap;
+}
+
+td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+tr.is-flag td:first-child { box-shadow: inset 3px 0 0 var(--flag); }
+
+/* ---------- pipeline diagram ---------- */
+
+.diagram {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 26px 24px 22px;
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+}
+
+.diagram__title {
+  font-family: var(--f-head);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 20px;
+}
+
+.pipe { display: flex; align-items: stretch; gap: 0; min-width: 720px; }
+
+.stage {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 4px;
+  position: relative;
+}
+
+.stage__box {
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--surface-2);
+  padding: 10px 8px;
+  text-align: center;
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  line-height: 1.35;
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stage--touched .stage__box {
+  border-color: var(--accent);
+  border-width: 2px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.stage__tag {
+  font-family: var(--f-head);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-align: center;
+}
+
+.stage__what {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-2);
+  text-align: center;
+  min-height: 52px;
+}
+
+.stage--touched .stage__what { color: var(--ink); }
+
+.arrow {
+  align-self: flex-start;
+  margin-top: 40px;
+  color: var(--line-strong);
+  font-size: 14px;
+  flex: 0 0 14px;
+  text-align: center;
+}
+
+.hitl {
+  margin-top: 6px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--muted);
+  border-top: 1px dashed var(--line-strong);
+  padding-top: 5px;
+}
+
+/* ---------- flow (vertical steps) ---------- */
+
+.flow { display: flex; flex-direction: column; gap: 0; max-width: 640px; }
+
+.flow__row {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.flow__rail { display: flex; flex-direction: column; align-items: center; height: 100%; }
+
+.flow__dot {
+  width: 11px; height: 11px; border-radius: 50%;
+  border: 2px solid var(--line-strong);
+  background: var(--surface);
+  margin-top: 7px;
+  flex: 0 0 auto;
+}
+
+.flow__row--new .flow__dot { border-color: var(--accent); background: var(--accent); }
+.flow__line { width: 2px; flex: 1; background: var(--line); min-height: 16px; }
+
+.flow__body { padding-bottom: 16px; }
+
+.flow__name {
+  font-family: var(--f-mono);
+  font-size: 13.5px;
+  color: var(--ink);
+}
+
+.flow__row--new .flow__name { color: var(--accent); font-weight: 500; }
+
+.flow__desc { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+
+.pill {
+  display: inline-block;
+  font-family: var(--f-head);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid currentColor;
+  vertical-align: 2px;
+  margin-left: 7px;
+}
+
+.pill--new { color: var(--accent); }
+.pill--keep { color: var(--muted); }
+
+/* ---------- axis cards ---------- */
+
+.axes { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+
+.axis {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--accent);
+  border-radius: 4px;
+  padding: 18px 20px;
+  box-shadow: var(--shadow);
+}
+
+.axis h3 { margin: 0 0 6px !important; font-size: 16px; }
+.axis p { font-size: 14.5px; color: var(--ink-2); }
+.axis > * + * { margin-top: 8px; }
+
+.axis__field {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+.axis__eg { font-size: 13.5px; color: var(--muted); font-style: normal; }
+.axis__eg b { color: var(--flag); font-weight: 500; }
+
+/* ---------- definition rows ---------- */
+
+.deflist { display: flex; flex-direction: column; gap: 0; border-top: 1px solid var(--line); }
+.defrow { display: grid; grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); gap: 20px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.defrow__k { font-family: var(--f-mono); font-size: 13px; color: var(--ink); line-height: 1.6; }
+.defrow__v { font-size: 14.5px; color: var(--ink-2); }
+.defrow__v > * + * { margin-top: 6px; }
+
+/* ---------- footer ---------- */
+
+.colophon {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 28px 32px 64px;
+  border-top: 1px solid var(--line);
+  font-size: 13.5px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 32px;
+}
+
+@media (max-width: 940px) {
+  .layout { grid-template-columns: 1fr; gap: 0; padding: 0 22px 72px; }
+  .toc { position: static; padding-top: 28px; flex-direction: row; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); padding-bottom: 20px; }
+  .toc__label { width: 100%; }
+  .toc a { border-left: 0; border: 1px solid var(--line); border-radius: 3px; padding: 3px 9px; font-size: 12.5px; }
+  .masthead__inner { padding: 30px 22px 22px; }
+  .colophon { padding: 24px 22px 56px; }
+  .defrow { grid-template-columns: 1fr; gap: 4px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+
+<header class="masthead">
+  <div class="masthead__inner">
+    <div class="eyebrow">Implementation spec · Curriculum Design Agent</div>
+    <h1>กัน PLO ไม่ให้หลุดขอบเขตหลักสูตร</h1>
+    <p class="lede">ปิดช่องที่ <code>plo_synthesis</code> หยิบ Need ที่ไม่ควรเป็น PLO ของหลักสูตรนี้ขึ้นมาร่างเป็น PLO เพียงเพราะ <code>demand_score</code> สูง — ด้วยธงสองแกนที่ตัดสินตั้งแต่ชั้นสกัดทักษะ แล้วรวมขึ้นมากรองที่ชั้นเลือก Need</p>
+    <div class="statusbar">
+      <div><span class="k">ที่มา</span><span class="v">wayfinder map</span></div>
+      <div><span class="k">ticket ที่ปิดแล้ว</span><span class="v">11 / 12</span></div>
+      <div><span class="k">ยังไม่ตัดสิน</span><span class="v">8 จุด</span></div>
+      <div><span class="k">ไฟล์ที่แตะ</span><span class="v">11 + 1 migration</span></div>
+      <div><span class="k">ต้อง re-extract</span><span class="v">1 รอบ</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc" aria-label="สารบัญ">
+    <div class="toc__label">สารบัญ</div>
+    <a href="#problem"><span class="n">1</span> ปัญหาและสองแกน</a>
+    <a href="#pipeline"><span class="n">2</span> จุดที่แทรกเข้า pipeline</a>
+    <a href="#files"><span class="n">3</span> ไฟล์ที่แตะ</a>
+    <a href="#scope"><span class="n">4</span> scope statement</a>
+    <a href="#prompt"><span class="n">5</span> prompt กับสคีมา</a>
+    <a href="#cache"><span class="n">6</span> cache กับ contract</a>
+    <a href="#models"><span class="n">7</span> model กับ migration</a>
+    <a href="#combination"><span class="n">8</span> need_combination</a>
+    <a href="#predicate"><span class="n">9</span> is_in_scope()</a>
+    <a href="#synthesis"><span class="n">10</span> plo_synthesis</a>
+    <a href="#merge"><span class="n">11</span> merge route</a>
+    <a href="#checkpoint"><span class="n">12</span> checkpoint</a>
+    <a href="#eval"><span class="n">13</span> eval protocol</a>
+    <a href="#never"><span class="n">14</span> สิ่งที่ต้องไม่ทำ</a>
+    <a href="#tests"><span class="n">15</span> test ที่ต้องมี</a>
+    <a href="#order"><span class="n">16</span> ลำดับการลงมือ</a>
+    <a href="#open"><span class="n">17</span> จุดที่ยังไม่ตัดสิน</a>
+  </nav>
+
+  <main class="main">
+
+    <!-- ============ 1 ============ -->
+    <section id="problem">
+      <h2><span class="n">01</span> ปัญหาและสองแกน</h2>
+
+      <p><code>demand_score</code> วัดว่า “ตลาดพูดถึงเรื่องนี้บ่อยแค่ไหน” อย่างเดียว ไม่ได้วัดว่าเรื่องนั้นเป็นของหลักสูตรนี้หรือเปล่า. ทักษะที่วิสัยทัศน์สถาบันหรือผู้บริหารพูดถึงซ้ำ ๆ จึงไต่ขึ้นอันดับต้น ๆ แล้วกลายเป็น PLO ทั้งที่ไม่ใช่สิ่งที่บัณฑิตทำ หรือไม่ใช่สาขาของหลักสูตรเลย</p>
+
+      <p><code>ExtractedSkill.is_field_relevant</code> มีอยู่แล้วในโค้ด แต่<strong>ตายที่ <code>need_combination</code></strong> — ไม่มีอะไรกรองด้วยมัน <code>cluster_skills.py:36</code> สั่งเก็บทักษะนอกสาขาไว้ในกลุ่มโดยเจตนา และ <code>demand_score</code> ก็ไม่มีเทอมของสาขาเลย</p>
+
+      <div class="axes">
+        <div class="axis">
+          <h3>อยู่ในสาขาไหม</h3>
+          <p>Need ที่ตลาดต้องการจริง แต่อยู่นอกขอบเขตของหลักสูตรนี้</p>
+          <p class="axis__eg">เช่น <b>การพัฒนาซอฟต์แวร์</b> ในหลักสูตรการแปลภาษา</p>
+          <div class="axis__field"><code>is_field_relevant</code> · มีอยู่แล้ว</div>
+        </div>
+        <div class="axis">
+          <h3>บัณฑิตทำได้ไหม</h3>
+          <p>Need ที่เป็นกิจกรรมของสถาบัน หลักสูตร หรืออาจารย์ ไม่ใช่สมรรถนะของคนที่เรียนจบ</p>
+          <p class="axis__eg">เช่น <b>การบริหารจัดการโครงสร้างหลักสูตร</b>, <b>การวัดและประเมินผลลัพธ์การเรียนรู้</b></p>
+          <div class="axis__field"><code>is_graduate_capability</code> · เพิ่มใหม่</div>
+        </div>
+      </div>
+
+      <div class="note note--why">
+        <span class="note__label">ทำไมต้องสองแกน ไม่ใช่แกนเดียว</span>
+        <p>สองแกนไม่ทับกันในเชิงความหมาย: <em>“การสร้างเครือข่ายความร่วมมือระดับสากล”</em> อยู่ในสาขาของวิทยาลัยนานาชาติเต็ม ๆ แต่ไม่ใช่สิ่งที่บัณฑิตคนหนึ่งทำ</p>
+        <p>และมีเหตุผลเชิงตัวเลขด้วย — การเพิ่มช่อง <code>is_graduate_capability</code> เข้าไปในสคีมา<strong>ดันธงสาขาขึ้นเอง</strong>จาก 3/9 เป็น 5/9 ทั้งที่ไม่มี scope statement เลย ช่องที่สองจึงมีมูลค่าแม้ในวันที่มันตอบซ้ำกับช่องแรกทุกตัว</p>
+      </div>
+
+      <div class="figures">
+        <div class="fig fig--accent"><div class="fig__n">56<small>%</small></div><div class="fig__k">noise ที่ธงจับได้ (ระดับ skill)</div></div>
+        <div class="fig fig--pass"><div class="fig__n">3<small>%</small></div><div class="fig__k">false positive บน CORE</div></div>
+        <div class="fig"><div class="fig__n">100<small>%</small></div><div class="fig__k">สองแกนทับกัน — ไม่มีทักษะใดติดธงแกนเดียว</div></div>
+        <div class="fig fig--flag"><div class="fig__n">8 <small>→ 0</small></div><div class="fig__k">ทักษะที่ลอกวลีจาก scope statement หลังย้ายไป system prompt</div></div>
+      </div>
+
+      <p><strong>เพดานอยู่แค่ครึ่งเดียว และนั่นเป็นข้อมูลนำเข้าของทุกการตัดสินใจข้างล่าง</strong> — guard นี้เป็นตัวคัดกรองรอบแรก ไม่ใช่ตัวกรองที่เชื่อได้ 100% คนที่ checkpoint คือด่านจริง</p>
+
+      <h3>สิ่งที่ไม่ทำ</h3>
+      <ul>
+        <li><strong>ปุ่ม override แยก</strong> — <code>POST /plos/from-needs</code> ไม่กรองอยู่แล้วโดยเจตนา จึงเป็นทาง override อยู่ในตัว</li>
+        <li><strong>อาการหลุด scope แบบอื่น</strong> — กว้างเกินหลักสูตร ผิดระดับปริญญา generic ใช้ได้ทุกหลักสูตร งานนี้จับเฉพาะ “นอกสาขาเลย” กับ “ไม่ใช่สมรรถนะบัณฑิต”</li>
+        <li><strong>แก้ clustering prompt หรือ summarize prompt</strong> — scope statement ไม่เข้า <code>build_program_context_th</code> ทำแล้วล้าง clustering cache ทั้งหมด และส่งสัญญาณขัดกับ <code>cluster_skills.py:36</code></li>
+        <li><strong>เทอม field-relevance ใน <code>demand_score</code></strong> — ปนสัญญาณ “ตลาดต้องการแค่ไหน” กับ “อยู่ในสาขาไหม” แล้วอ่านคะแนนไม่ออกทั้งคู่</li>
+        <li><strong>เกณฑ์ scope ใน SMART gate</strong> — ถึงจุดนั้นจ่ายค่า synthesis ไปแล้ว</li>
+      </ul>
+    </section>
+
+    <!-- ============ 2 ============ -->
+    <section id="pipeline">
+      <h2><span class="n">02</span> จุดที่แทรกเข้า pipeline</h2>
+
+      <p>ธงถูกตัดสินที่ชั้นสกัด รวมขึ้นเป็นตัวเลขที่ชั้นรวม Need และถูกใช้กรองที่ชั้นเลือก — สามจุด ในสามไฟล์ ไม่มีชั้นไหนตัดสินซ้ำ</p>
+
+      <div class="diagram">
+        <div class="diagram__title">6-stage pipeline · จุดที่เปลี่ยนมีขอบสีคราม</div>
+        <div class="pipe">
+          <div class="stage">
+            <div class="stage__tag">stage 1</div>
+            <div class="stage__box">intake</div>
+            <div class="stage__what">— <span style="color:var(--accent)">เพิ่มช่อง scope statement</span></div>
+            <div class="hitl">checkpoint</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="stage">
+            <div class="stage__tag">stage 2</div>
+            <div class="stage__box">stakeholder_<br>needs</div>
+            <div class="stage__what">ไม่แตะ</div>
+            <div class="hitl">checkpoint</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="stage stage--touched">
+            <div class="stage__tag">stage 3a</div>
+            <div class="stage__box">skill_<br>extraction</div>
+            <div class="stage__what">ธงสองแกนถูกตัดสินที่นี่ · scope เข้า system prompt</div>
+            <div class="hitl">&nbsp;</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="stage stage--touched">
+            <div class="stage__tag">stage 3b</div>
+            <div class="stage__box">need_<br>combination</div>
+            <div class="stage__what">นับธงของสมาชิกเป็น counter บน Need</div>
+            <div class="hitl">checkpoint ร่วม</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="stage stage--touched">
+            <div class="stage__tag">stage 4</div>
+            <div class="stage__box">plo_<br>synthesis</div>
+            <div class="stage__what">กรองด้วย <code>is_in_scope()</code> ก่อนเรียงและก่อนเพดาน</div>
+            <div class="hitl">checkpoint</div>
+          </div>
+          <div class="arrow">→</div>
+          <div class="stage">
+            <div class="stage__tag">stage 5</div>
+            <div class="stage__box">plo_report</div>
+            <div class="stage__what">แสดง Need ที่ถูกกัน <span style="color:var(--muted)">(ticket 06)</span></div>
+            <div class="hitl">checkpoint</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note note--why">
+        <span class="note__label">ทำไมกรองที่ stage 4 ไม่ใช่ที่ stage 3b</span>
+        <p>immutable rule 6 บังคับว่า Need ที่ไม่ถูกใช้ต้อง<strong>ยังถูกสร้าง ยังถูกเก็บ และยังสาวกลับไปหาหลักฐานได้</strong> การกรองที่ <code>need_combination</code> คือการไม่สร้างมันตั้งแต่แรก ซึ่งทำให้ designer ไม่มีทางรู้ว่าระบบตัดสินอะไรไป และแก้ให้ถูกไม่ได้</p>
+      </div>
+    </section>
+
+    <!-- ============ 3 ============ -->
+    <section id="files">
+      <h2><span class="n">03</span> ไฟล์ที่แตะ</h2>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>ไฟล์</th><th>เปลี่ยนอะไร</th><th>ผลข้างเคียง</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>models.py</code></td>
+              <td><code>ProgramCreateRequest.scope_th</code> (สืบทอดถึง <code>ProgramMetadata</code>), <code>ExtractedSkill.is_graduate_capability</code>, <code>Need</code> counter สองตัว + property สองตัว</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><code>data/orm.py</code></td>
+              <td>คอลัมน์ใหม่สามตารางให้ตรงกับ migration</td>
+              <td>—</td>
+            </tr>
+            <tr class="is-flag">
+              <td><code>prompts/extract_skills.py</code></td>
+              <td>รับ <code>scope_th</code>, เพิ่มกติกาสองข้อและ field ใหม่ในสคีมาที่บรรยาย</td>
+              <td><code>_EXTRACTION_CONTRACT</code> ขยับ</td>
+            </tr>
+            <tr class="is-flag">
+              <td><code>stages/skill_extraction.py</code></td>
+              <td><code>_SkillItem.is_graduate_capability</code>, ส่ง <code>scope_th</code>, ต่อ scope เข้า cache key</td>
+              <td><strong>cache miss ทั้งตาราง</strong></td>
+            </tr>
+            <tr>
+              <td><code>stages/need_combination.py</code></td>
+              <td>นับ counter สองตัวตอนสร้าง <code>_Group</code> แล้วส่งต่อลง <code>Need</code></td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><code>stages/need_grouping.py</code></td>
+              <td><code>is_in_scope(need)</code> ตัวใหม่ ข้าง <code>MIN_NEEDS</code> / <code>MAX_CORE_PLOS</code></td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><code>stages/plo_synthesis.py</code></td>
+              <td>กรองก่อน <code>synthesis_order</code>, log, เติมสาเหตุใน warning <code>MIN_NEEDS</code></td>
+              <td>เลข PLO เปลี่ยนได้</td>
+            </tr>
+            <tr>
+              <td><code>api/routes/plos.py</code></td>
+              <td><code>logger.warning</code> เมื่อ merge หยิบ Need นอกขอบเขต — <strong>ไม่กรอง</strong></td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><code>frontend/src/pages/Intake.tsx</code></td>
+              <td><code>&lt;textarea&gt;</code> ไม่บังคับกรอก + helper text ที่เพาะรูป C_narrow</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><code>scripts/eval_scope_guard.py</code> <em>ใหม่</em></td>
+              <td>eval manual — สองเคส สอง baseline</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><code>migrations/versions/</code></td>
+              <td>หนึ่งไฟล์: <code>programs.scope_th</code>, <code>skills.is_graduate_capability</code>, <code>needs</code> counter สองคอลัมน์ + backfill</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td>checkpoint / <code>plo_report</code> / exporter</td>
+              <td><strong>ยังไม่ตัดสิน</strong> — รอ ticket 06</td>
+              <td>—</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============ 4 ============ -->
+    <section id="scope">
+      <h2><span class="n">04</span> scope statement</h2>
+
+      <p>ช่อง free text ช่องเดียวที่ intake เก็บลง <code>ProgramCreateRequest.scope_th</code> (สืบทอดถึง <code>ProgramMetadata</code>) ค่าเริ่มต้นเป็นสตริงว่าง</p>
+
+      <h4>รูปที่พิสูจน์แล้วว่าใช้ได้</h4>
+      <p><strong>เขียนแคบ แจกแจงเป็นรายการ ฝั่งบวกล้วน</strong> — บอกว่าหลักสูตรครอบคลุมอะไร ไม่ใช่ไม่ครอบคลุมอะไร</p>
+
+      <pre>หลักสูตรนี้ครอบคลุมการแปลเอกสารธุรกิจและกฎหมายจีน-ไทย การล่ามการเจรจา
+ธุรกิจ การตรวจแก้งานแปลที่ได้จากเครื่อง (post-editing) และความรู้ด้าน
+วัฒนธรรมและมารยาททางธุรกิจจีนที่จำเป็นต่องานแปลและล่าม</pre>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>variant</th><th>รูป</th><th>จับ noise ได้</th><th>false positive</th></tr></thead>
+          <tbody>
+            <tr><td><code>A_none</code></td><td>ไม่มี scope (control)</td><td class="num">3/9 · 33%</td><td class="num">0/29</td></tr>
+            <tr><td><code>B_broad</code></td><td>บรรยายกว้าง</td><td class="num">2/8 · 25%</td><td class="num">0/29</td></tr>
+            <tr><td><strong><code>C_narrow</code></strong></td><td><strong>แจกแจง 4 รายการ</strong></td><td class="num"><strong>4/8 · 50%</strong></td><td class="num">0/27</td></tr>
+            <tr class="is-flag"><td><code>D_with_exclusions</code></td><td>มีรายการ “ไม่รวมถึง”</td><td class="num"><strong>0/8 · 0%</strong></td><td class="num"><strong>1</strong>/27</td></tr>
+            <tr><td><code>E_vague</code></td><td>ลอย ๆ</td><td class="num">2/8 · 25%</td><td class="num">0/27</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note note--stop">
+        <span class="note__label">สองแบบที่แย่กว่าไม่เขียนอะไรเลย</span>
+        <p><strong>รายการ “ไม่รวมถึง” ได้ศูนย์</strong> และเป็น variant เดียวที่สร้าง false positive — มันจับเฉพาะของที่อยู่ในรายการเป๊ะ ๆ แล้วปิดวิจารณญาณกับอย่างอื่น</p>
+        <p><strong>เขียนกว้างหรือลอย ๆ ได้ 25% ต่ำกว่า control ที่ 33%</strong> — scope ที่ไม่คมไม่ใช่แค่ไม่ช่วย แต่ทำให้โมเดลมั่นใจผิด</p>
+        <p>ฝั่งลบไม่มีมาตรฐานไทยฉบับไหนเพาะให้ได้เลย (grep <code>ไม่รวมถึง</code> / <code>มิได้ครอบคลุม</code> ใน มคอ.1 ทั้ง 9 ฉบับ = 0 ครั้ง, ประกาศ กมอ. หลัง 2565 สองฉบับ = 0) — <strong>การที่ฝั่งลบหาไม่ได้กลายเป็นเรื่องดี ไม่ใช่ช่องว่าง</strong></p>
+      </div>
+
+      <h4>ฟอร์มที่ intake</h4>
+      <p><code>&lt;textarea&gt;</code> ต่อจากช่อง “สาขาวิชา / ภาควิชา” ก่อนระดับปริญญา <strong>ไม่บังคับกรอก</strong>. helper text ต้องมีสามข้อความนี้ เพราะแต่ละข้อมาจากแถวในตารางข้างบน</p>
+      <ol>
+        <li>เขียนเฉพาะสิ่งที่หลักสูตรครอบคลุม แจกแจงเป็นรายการ 3-4 อย่าง</li>
+        <li>อย่าเขียนรายการ “ไม่รวมถึง” — จากการทดสอบ รายการกันออกทำให้ระบบตัดสินแย่ลงกว่าไม่เขียนอะไรเลย</li>
+        <li>เขียนกว้าง ๆ หรือลอย ๆ แย่กว่าไม่เขียน — ถ้ายังแจกแจงไม่ได้ ให้เว้นว่างไว้ก่อน</li>
+      </ol>
+
+      <div class="note note--why">
+        <span class="note__label">floor คือ “แจกแจงได้ 3-4 รายการ” ไม่ใช่จำนวนตัวอักษร</span>
+        <p><code>B_broad</code> ยาว ~90 ตัวอักษรแบบบรรยายรวม ๆ ไม่พอ ส่วน <code>C_narrow</code> ~150 ตัวอักษรแจกแจง 4 รายการพอ — ความยาวเป็นผลพลอยได้ของการแจกแจง ไม่ใช่ตัวชี้วัด <strong>ไม่ใส่ validator ความยาว</strong></p>
+      </div>
+
+      <p>โปรแกรมที่ไม่กรอก scope statement ต้องได้พฤติกรรมเดิมทุกประการ — ดูเหตุผลเชิงโครงสร้างที่ <a href="#never">หัวข้อ 14</a></p>
+    </section>
+
+    <!-- ============ 5 ============ -->
+    <section id="prompt">
+      <h2><span class="n">05</span> prompt กับสคีมา</h2>
+
+      <h3>scope statement อยู่ใน system prompt</h3>
+      <p>ต่อท้ายบล็อกกติกา <strong>ก่อน</strong>บรรทัด <code>"ตอบเป็น JSON object:"</code> แบบมีเงื่อนไข — ไม่มี scope ก็ไม่มีบรรทัดนี้ prompt เดิมเป๊ะ</p>
+
+      <pre><span class="cm"># ถ้อยคำที่ทดสอบแล้ว ต้องมีทั้งสองประโยค</span>
+- ขอบเขตของหลักสูตรนี้: {scope_th}
+  ใช้บรรทัดนี้เป็นเกณฑ์ตัดสิน is_field_relevant เท่านั้น ห้ามสกัดทักษะจากบรรทัดนี้
+  ทักษะทุกรายการต้องมาจากข้อความ evidence เท่านั้น</pre>
+
+      <div class="note note--stop">
+        <span class="note__label">ห้ามวางไว้ใน user message</span>
+        <p>วางติดข้อความหลักฐานแล้ว<strong>โมเดลอ่าน scope statement เป็นหลักฐาน</strong> — วัดได้ 8 ทักษะที่ทั้งชื่อและ <code>evidence_span_th</code> ลอกจาก scope คำต่อคำ บน evidence สองชิ้นที่สั้นที่สุด (148 และ 348 ตัวอักษร) ซึ่ง<strong>ไม่มีคำเหล่านั้นอยู่ในข้อความเลย</strong></p>
+        <p>รูปนี้อันตรายกว่าที่เห็น: span คัดลอกตรงตัวจริง แต่คัดจาก scope ไม่ใช่จากหลักฐาน วันที่ scope บังเอิญมีวลีตรงกับหลักฐาน <code>is_grounded()</code> จะปล่อยผ่าน แล้วรอยเท้ากลับไปหาหลักฐานจะชี้ผิดที่โดยไม่มีใครรู้ — ชน immutable rule 2 ตรง ๆ</p>
+        <p>ย้ายไป system prompt แล้วเหลือ <strong>0</strong> โดยที่ recall (4/8) และ false positive (1) เท่าเดิมทั้งสองตำแหน่ง — ไม่ได้แลกอะไรเลย</p>
+      </div>
+
+      <h3>ธงแกนที่สองในสคีมา</h3>
+      <p>เพิ่ม <code>is_graduate_capability: bool = True</code> ใน <code>_SkillItem</code> และบรรยายไว้ในสคีมาที่ prompt เขียน พร้อมกติกาหนึ่งข้อ</p>
+
+      <pre>- is_graduate_capability = true เมื่อทักษะนั้นเป็นสิ่งที่บัณฑิตคนหนึ่งทำได้เมื่อ
+  สำเร็จการศึกษา; false เมื่อเป็นกิจกรรมหรือภารกิจของสถาบัน/หลักสูตร (เช่น การ
+  บริหารหลักสูตร การจัดหางบประมาณ การสร้างความร่วมมือระดับองค์กร)
+  ให้คงไว้แต่ตั้งเป็น false ห้ามตัดทิ้งเอง</pre>
+
+      <div class="note note--stop">
+        <span class="note__label">ห้ามให้โมเดลตัดทิ้งเอง และห้ามให้เขียนชื่อใหม่</span>
+        <p><strong>กติกาที่สั่งให้ตัดทิ้ง</strong> ลดทักษะจาก noise ได้จริง (9→5) แต่ลาก CORE ลงไปด้วย (29→26) และลากทักษะจากวิสัยทัศน์สถาบันลงไปมากที่สุด (20→14) โดยไม่มีร่องรอยว่าตัดอะไร — ตรวจสอบไม่ได้เลย</p>
+        <p><strong>กติกาที่ให้เขียนชื่อทักษะใหม่</strong> ผลิตการเขียนใหม่ 45 ครั้ง และหลายครั้งแต่งเติมความเฉพาะที่หลักฐานไม่ได้พูด — <em>“การนำเทคโนโลยี AI มาปฏิรูปการศึกษา”</em> กลายเป็น <em>“การใช้ปัญญาประดิษฐ์ในงานแปลและล่าม”</em> ชื่อทักษะไม่ตรงกับ span ที่ต้องคัดลอกตรงตัวอีกต่อไป</p>
+        <p>มนุษย์เขียนใหม่จริง แต่เขียนที่<strong>ระดับ Need</strong> ตอนที่หลักฐานถูกเก็บครบแล้ว ที่ทางของมันคือ <code>summarize_need</code> ไม่ใช่ <code>extract_skills</code></p>
+      </div>
+    </section>
+
+    <!-- ============ 6 ============ -->
+    <section id="cache">
+      <h2><span class="n">06</span> cache กับ contract</h2>
+
+      <div class="deflist">
+        <div class="defrow">
+          <div class="defrow__k">cache_key</div>
+          <div class="defrow__v">
+            <p>ต่อ <code>scope_th</code> เข้าไป<strong>แบบไม่มีเงื่อนไข</strong> — <code>…\x00{field_th}\x00{program_name_th}\x00{scope_th}</code> แม้ว่าง</p>
+            <p class="fig__k">เดิมตั้งใจทำแบบมีเงื่อนไขเพื่อรักษาแถวเก่าให้ยังหยิบได้ แต่ธงใหม่ในสคีมาทำให้ contract ขยับอยู่ดี ไม่มี key เดิมให้รักษาแล้ว conditional จึงเหลือแต่ต้นทุน: branch ที่ต้องมี test คุ้มตลอดไป แลกกับประโยชน์ครั้งเดียวที่ไม่ได้เกิด</p>
+          </div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">_extraction_contract_<br>fingerprint()</div>
+          <div class="defrow__v">
+            <p><strong><code>scope_th</code> ต้องไม่เข้า fingerprint</strong> — เพิ่ม parameter เป็น <code>scope_th: str = ""</code> แบบมีเงื่อนไข แล้ว fingerprint ยังคำนวณจาก prompt ที่ไม่มีบรรทัด scope</p>
+            <p class="fig__k">fingerprint คือสัญญาเรื่อง<strong>รูปร่าง</strong>ของ payload ซึ่งไม่แปรตามโปรแกรม ส่วน scope เป็น per-program input เหมือน <code>field_th</code> ที่อยู่ใน cache key แยก ถ้ามีคนทำให้ scope เข้า fingerprint ทุกโปรแกรมจะมี contract คนละค่า แล้ว <code>prune_cache</code> จะรายงาน <code>stale-contract</code> มั่วทั้งตาราง — เขียนคอมเมนต์กำกับไว้ในโค้ด</p>
+          </div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">การ deploy</div>
+          <div class="defrow__v">
+            <p><strong>re-extract หนึ่งรอบ ทำครั้งเดียวจบ</strong> — ธงใหม่ scope statement และกติกาใหม่ไปพร้อมกันใน migration เดียว ไม่ทยอยแก้แล้วจ่ายสองรอบ</p>
+            <p><strong>ไม่สั่ง <code>prune_cache --delete</code> ก่อน deploy</strong> — นั่นคือเอา irreversible action มาไว้ก่อนจุดที่ยังถอยได้ ถ้าต้อง rollback แถวเก่ายังใช้ได้ถ้ายังไม่ลบ กวาดหลังจากมั่นใจแล้ว</p>
+            <p><strong>ไม่เตือนใน UI</strong> — คำเตือนต้องรู้ว่า cache ของโปรแกรมนี้ stale ซึ่งแปลว่าต้อง query <code>llm_cache</code> เทียบ contract ก่อนเรนเดอร์หน้า โครงสร้างใหม่ทั้งชุดเพื่อข้อความที่แสดงครั้งเดียวในชีวิตของ deployment</p>
+          </div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">หลังรอบใหญ่</div>
+          <div class="defrow__v">โปรแกรมที่แก้ scope statement ทีหลัง re-extract เฉพาะตัวเอง — ผลตรงจากการที่ scope อยู่ใน key ไม่ใช่ใน contract</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 7 ============ -->
+    <section id="models">
+      <h2><span class="n">07</span> model กับ migration</h2>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>ชั้น</th><th>field</th><th>ชนิด</th><th>default / backfill</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>ProgramMetadata</code></td><td><code>scope_th</code></td><td class="num"><code>str = ""</code></td><td><code>""</code></td></tr>
+            <tr><td><code>ExtractedSkill</code></td><td><code>is_field_relevant</code></td><td class="num"><code>bool</code></td><td>มีอยู่แล้ว</td></tr>
+            <tr><td><code>ExtractedSkill</code></td><td><code>is_graduate_capability</code></td><td class="num"><code>bool = True</code></td><td><code>server_default true</code></td></tr>
+            <tr><td><code>Need</code></td><td><code>in_field_skill_count</code></td><td class="num"><code>int</code></td><td><code>jsonb_array_length(member_skill_ids)</code></td></tr>
+            <tr><td><code>Need</code></td><td><code>graduate_capability_skill_count</code></td><td class="num"><code>int</code></td><td><code>jsonb_array_length(member_skill_ids)</code></td></tr>
+            <tr><td><code>Need</code></td><td><code>is_field_relevant</code><br><code>is_graduate_capability</code></td><td class="num"><code>@property</code></td><td><code>count &gt; 0</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h4>ทำไมเป็น counter ไม่ใช่ bool</h4>
+      <p>bool derive จาก counter ได้ แต่ย้อนกลับไม่ได้ และ checkpoint ต้องบอก designer ว่า <em>“3 ใน 8 skill อยู่ในสาขา”</em> ไม่ใช่แค่ <em>“อยู่”</em>. เลือก <code>int</code> ไม่ใช่ <code>dict</code> แบบ <code>classification_coverage</code> เพราะแกนมีสองค่าและตัวหาร <code>len(member_skill_ids)</code> อยู่บน <code>Need</code> อยู่แล้ว</p>
+
+      <h4>ทำไม store ไม่ derive</h4>
+      <p>precedent ที่ใกล้ที่สุดคือ <code>classification_coverage</code> และ <code>stakeholder_coverage</code> ซึ่ง store ทั้งคู่ และคำนวณจาก members ชุดเดียวกันบรรทัดเดียวกัน ส่วน <code>cited_need_ids</code> ที่ derive โดยเจตนาเป็นความสัมพันธ์ PLO→Need ที่เปลี่ยนทุกครั้งที่ลบ PLO — counter ไม่เปลี่ยนหลัง group ถูกสร้าง และ derive จะบังคับให้ทุกหน้าจอที่แสดง Need ต้อง join <code>skills</code> กลับ</p>
+
+      <div class="note note--stop">
+        <span class="note__label">แก้ระหว่าง implement — spec ฉบับแรกไม่ครอบข้อนี้</span>
+        <p>“ไม่มี key เลย” ต้องต่างจาก “ระบุ 0” — อย่างหลังแปลว่า extractor ตัดสินว่าสมาชิกทุกคนนอกขอบเขต และต้องถูกกรอง อย่างแรกแปลว่าไม่มีใครเคยประเมิน และต้องรักษาพฤติกรรมเดิม</p>
+        <p><code>Need</code> ไม่ได้มาจาก DB อย่างเดียว มันมาเป็น <strong>dict ดิบจาก LangGraph checkpoint ที่ suspend ค้างข้าม deploy</strong> ด้วย ซึ่ง migration ไม่มีทางแตะ. ถ้าไม่มี <code>model_validator(mode="before")</code> ที่เติม <code>len(member_skill_ids)</code> เมื่อ key หายไป <strong>ทุก Need ในเธรดที่ค้างอยู่จะถูกกรองทิ้งทั้งหมดเงียบ ๆ</strong> — พบตอน implement เพราะ test 20 ใบพร้อมกัน</p>
+      </div>
+
+      <h4>ทำไม backfill ไม่ใช่ default 0</h4>
+      <p><code>server_default 0</code> ทำให้ Need เก่าทุกแถวอ่านได้ว่า “ไม่มีสมาชิกไหนอยู่ในสาขา” แล้วกฎ any จะกรองทิ้งทั้งหมด = เปลี่ยนพฤติกรรมของทุกโปรแกรมที่มีอยู่โดยไม่มีใครสั่ง. <code>nullable</code> (“ไม่เคยประเมิน”) ซื่อสัตย์กว่าแต่บังคับ tri-state ให้ทุกผู้บริโภค และ <code>skills.is_field_relevant</code> ก็ตั้ง default <code>True</code> ด้วยเหตุผลเดียวกันมาแล้ว</p>
+
+      <div class="note note--why">
+        <span class="note__label">ชื่อซ้ำกันสองชั้น เป็นเจตนา</span>
+        <p><code>ksec_category</code> และ <code>bloom_level</code> อยู่ทั้งบน <code>ExtractedSkill</code> และ <code>Need</code> ด้วยชื่อเดียวกันอยู่แล้ว โดย Need เป็นค่าที่รวมขึ้นมา (<code>resolve_need_ksec</code>, <code>merge_bloom</code>) ธงสองแกนเดินตาม pattern เดิม ชื่อแบบ <code>has_in_field_skill</code> ตั้งตามวิธีคำนวณ ไม่ใช่ตามความหมาย และจะโกหกทันทีที่ threshold เปลี่ยน</p>
+      </div>
+    </section>
+
+    <!-- ============ 8 ============ -->
+    <section id="combination">
+      <h2><span class="n">08</span> need_combination</h2>
+
+      <p>ที่จุดสร้าง <code>_Group</code> (ราวบรรทัด 202) นับธงของ <code>members</code> ที่มีอยู่ในมือแล้ว แล้วส่งลง <code>Need</code> พร้อม <code>classification_coverage</code> และ <code>stakeholder_coverage</code></p>
+
+      <pre>cls_coverage = classification_coverage([m.classification for m in members])
+<b>in_field = sum(1 for m in members if m.is_field_relevant)</b>
+<b>grad = sum(1 for m in members if m.is_graduate_capability)</b></pre>
+
+      <div class="note note--why">
+        <span class="note__label">นับธงดิบรายแถว ไม่ผ่าน or-by-name</span>
+        <p>โค้ดมีความไม่สม่ำเสมออยู่แล้ว: <code>classification</code> ผ่าน <code>class_by_norm</code> (or-by-name, <code>skill_extraction.py:238</code>) แต่ <code>is_field_relevant</code> เขียนลงแถวแบบดิบ (<code>:541</code>) ชื่อเดียวกันสองแถวจึงมีธงต่างกันได้</p>
+        <p><strong>ไม่แก้</strong> — property <code>count &gt; 0</code> ให้ผลเท่ากันทั้งสองทางอยู่แล้ว (or-by-name คือ any ในกลุ่มย่อย) ต่างกันแค่เศษส่วนที่ designer อ่าน และ or-by-name จะดัน counter เข้าใกล้ total เสมอเมื่อชื่อซ้ำเยอะ จนสัญญาณจืดไม่มีประโยชน์</p>
+        <p>ตัวเลขนี้คือ<strong>จำนวนแถว</strong> ไม่ใช่จำนวนทักษะที่ต่างกัน — เขียนกำกับไว้ทั้งในโค้ดและใน UI</p>
+      </div>
+
+      <p><strong>ไม่กรองที่นี่</strong> ทุก group ยังกลายเป็น Need เหมือนเดิม การกรองเกิดที่ stage 4 เท่านั้น</p>
+    </section>
+
+    <!-- ============ 9 ============ -->
+    <section id="predicate">
+      <h2><span class="n">09</span> <code>is_in_scope()</code></h2>
+
+      <p>อยู่ใน <code>stages/need_grouping.py</code> ข้าง <code>MIN_NEEDS</code> และ <code>MAX_CORE_PLOS</code> — เป็น policy ตัวที่สามที่ตัดสินว่า Need ไหนได้เป็น PLO เหมือนกันกับสองค่าเดิม</p>
+
+      <pre>def is_in_scope(need: Need) -> bool:
+    <span class="cm">"""ผ่านต้องผ่านทั้งสองแกน; ถูกกันเมื่อ OFF แกนใดแกนหนึ่ง."""</span>
+    return need.is_field_relevant and need.is_graduate_capability</pre>
+
+      <p>คืน <code>bool</code> เท่านั้น — เหตุผลว่าตกเพราะแกนไหนมาจาก counter สองตัวบน <code>Need</code> ฟรี ๆ ตัวไหนเป็น 0 คือแกนนั้น และได้ละเอียดกว่า enum ด้วย (“0 ใน 8” ไม่ใช่แค่ <code>off_field</code>)</p>
+
+      <div class="note note--why">
+        <span class="note__label">ทำไม any ที่ระดับ skill แต่ and ที่ระดับแกน</span>
+        <p>ทั้งสองอย่างเป็นการเลือกฝั่งปล่อยผ่าน: Need ผ่านแกนหนึ่งได้ด้วยสมาชิกเพียงคนเดียว (any) เพราะ recall อยู่ที่ 56% — สัญญาณที่พลาดครึ่งหนึ่ง ถ้าใช้ majority จะตัดของถูกทิ้ง. ส่วน <code>and</code> ระหว่างสองแกนไม่ได้ทำให้กรองแรงขึ้นในทางปฏิบัติ เพราะวัดแล้วว่าธงสองแกน<strong>ทับกัน 100%</strong> ไม่มีทักษะตัวใดติดธงแกนเดียว</p>
+      </div>
+    </section>
+
+    <!-- ============ 10 ============ -->
+    <section id="synthesis">
+      <h2><span class="n">10</span> plo_synthesis</h2>
+
+      <div class="diagram">
+        <div class="diagram__title">ลำดับใน <code>run()</code> · ขั้นที่เพิ่มเป็นสีคราม</div>
+        <div class="flow">
+          <div class="flow__row flow__row--new">
+            <div class="flow__rail"><div class="flow__dot"></div><div class="flow__line"></div></div>
+            <div class="flow__body">
+              <div class="flow__name">filter: is_in_scope<span class="pill pill--new">ใหม่</span></div>
+              <div class="flow__desc">Need ที่ถูกกันหลุดออกจากทุกอย่างที่ตามมา</div>
+            </div>
+          </div>
+          <div class="flow__row">
+            <div class="flow__rail"><div class="flow__dot"></div><div class="flow__line"></div></div>
+            <div class="flow__body">
+              <div class="flow__name">แยก core / optional<span class="pill pill--keep">เดิม</span></div>
+              <div class="flow__desc"><code>for is_optional in (False, True)</code> — predicate อยู่ก่อนลูปนี้ จึงครอบทั้งสองซีรีส์</div>
+            </div>
+          </div>
+          <div class="flow__row">
+            <div class="flow__rail"><div class="flow__dot"></div><div class="flow__line"></div></div>
+            <div class="flow__body">
+              <div class="flow__name">synthesis_order()<span class="pill pill--keep">เดิม</span></div>
+              <div class="flow__desc">เรียงตาม <code>-demand_score</code></div>
+            </div>
+          </div>
+          <div class="flow__row">
+            <div class="flow__rail"><div class="flow__dot"></div><div class="flow__line"></div></div>
+            <div class="flow__body">
+              <div class="flow__name">ceiling: MAX_CORE_PLOS<span class="pill pill--keep">เดิม</span></div>
+              <div class="flow__desc">ตัดเหลือ 10 ใบแรก</div>
+            </div>
+          </div>
+          <div class="flow__row">
+            <div class="flow__rail"><div class="flow__dot"></div></div>
+            <div class="flow__body">
+              <div class="flow__name">loop: synthesize_from_needs()<span class="pill pill--keep">เดิม</span></div>
+              <div class="flow__desc">หนึ่ง PLO ต่อหนึ่ง Need</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="note note--why">
+        <span class="note__label">ต้องอยู่ก่อนเพดาน ไม่ใช่แค่ก่อนการเรียง</span>
+        <p>กรองหลังเพดานจะทำให้เพดานหยิบ 10 ใบแรกที่มี Need นอกขอบเขตปนอยู่ แล้วกรองทิ้งเหลือ 7 PLO ทั้งที่ยังมี Need ในขอบเขตอีกหลายใบรออยู่ท้ายแถว</p>
+      </div>
+
+      <div class="note note--stop">
+        <span class="note__label">ห้ามข้ามตอน loop เพื่อเว้นเลข</span>
+        <p>ช่องว่างของเลข PLO มีความหมายอยู่แล้วว่า “Need ใบนี้ร่างไม่สำเร็จ” (<code>plo_synthesis.py:379</code>) ใส่ความหมายที่สองเข้าไปทำให้อ่านไม่ออกทั้งคู่ Need ที่ถูกกันอยู่สถานะเดียวกับ Need ที่แพ้เพดาน — <strong>ไม่ถูกเลือก ไม่ใช่พัง</strong> — และเพดานก็ไม่กินเลข</p>
+      </div>
+
+      <h3>log และ warning</h3>
+      <p>สองบรรทัด: บรรทัดแรกตอนกรอง บอกจำนวนและ <code>need_id</code> ที่ถูกกัน; บรรทัดที่สองคือ warning <code>MIN_NEEDS</code> เดิม (<code>:383</code>) ที่<strong>ต้องเติมสาเหตุเข้าไปในบรรทัดเดียวกัน</strong></p>
+
+      <pre>Stage 4 produced 4 core PLOs, below the 6 minimum policy —
+  <b>กรองออก 5 ใบ (นอกสาขา 5, ไม่ใช่สมรรถนะบัณฑิต 5)</b>; review at the checkpoint</pre>
+
+      <p>ตัวเลขสองแกนจะเท่ากันเกือบเสมอ และ<strong>ความเท่ากันนั้นคือข้อมูล</strong> — วันที่สองตัวไม่เท่ากันคือวันที่สองแกนเริ่มแยกกันจริง เห็นได้จากล็อกทันทีโดยไม่ต้องรัน eval. designer ต้องแยก “evidence ในสาขาไม่พอ” ออกจาก “Need น้อยแต่เดิม” (<code>need_combination.py:320</code>) ให้ได้ ซึ่งทำได้ก็ต่อเมื่อบรรทัดที่บอกว่าต่ำกว่า 6 บอกสาเหตุมาด้วย</p>
+
+      <p><strong>ยังกรองต่อแม้เหลือต่ำกว่า <code>MIN_NEEDS</code></strong> — เติม Need นอกขอบเขตให้ครบโควตาคือการผลิต PLO ที่รู้อยู่แล้วว่าผิดเพื่อให้ตัวเลขสวย</p>
+    </section>
+
+    <!-- ============ 11 ============ -->
+    <section id="merge">
+      <h2><span class="n">11</span> merge route</h2>
+
+      <p><code>POST /plos/from-needs</code> <strong>ไม่กรองทั้งสองแกน</strong> เพิ่มแค่ <code>logger.warning</code> เมื่อ Need ที่ designer เลือกอยู่นอกขอบเขต — แบบเดียวกับบรรทัด <code>released</code> ที่มีอยู่แล้ว</p>
+
+      <ul>
+        <li>designer เลือก Need เองคือการตัดสินใจของคน ไม่ใช่ของ pipeline และนี่คือ<strong>ทาง override เพียงทางเดียว</strong> จึงไม่ต้องมีปุ่ม override แยก</li>
+        <li>ไม่ warn ใน response — เป็นการทวงถามการตัดสินใจที่คนเพิ่งตัดไปแล้ว</li>
+        <li>ไม่ 422 แม้แกน “ไม่ใช่สมรรถนะบัณฑิต”: ธงแกนนั้น<strong>ไม่เคยมาเดี่ยว</strong> (0 จาก 38 ตัว) การกันมันจึงเป็นการกันของชิ้นเดียวกับที่แกนสาขาปล่อยผ่านอยู่ = นโยบายขัดกันเองบน request เดียว. PLO ที่ผิดรูปมี SMART gate เป็นด่านที่ตรงกว่า และ recall 56% ไม่พอจะบล็อกงานที่ถูกต้องของ designer โดยไม่มีทางออก</li>
+      </ul>
+
+      <div class="note note--why">
+        <span class="note__label">floor check เดิมไม่ต้องแก้</span>
+        <p><code>projected_core &lt; MIN_NEEDS <b>and</b> projected_core &lt; current_core</code> กันเคสนี้ไว้แล้ว — โปรแกรมที่การกรองทำให้เหลือ 4 PLO จะไม่ถูกปฏิเสธทุก merge ต่อจากนั้น เพราะเงื่อนไขที่สองบังคับว่า merge นี้ต้องเป็นตัวที่ทำให้ลดลง</p>
+      </div>
+    </section>
+
+    <!-- ============ 12 ============ -->
+    <section id="checkpoint">
+      <h2><span class="n">12</span> checkpoint และ report</h2>
+
+      <div class="note note--open">
+        <span class="note__label">ยังไม่ตัดสิน — ticket 06</span>
+        <p>สิ่งที่รู้แล้ว: <strong>สามก้อน</strong> (“แพ้ demand” / “นอกขอบเขต” / “ไม่ใช่สมรรถนะบัณฑิต”) และ<strong>ไม่ต้องขอ field เพิ่มเลย</strong> — counter สองตัวบน <code>Need</code> บอกได้ว่าใบไหนตกเพราะแกนไหน และบอกเป็นสัดส่วนได้ด้วย</p>
+        <p>สิ่งที่ยังต้องออกแบบ: แต่ละรายการแสดงอะไรถึงตัดสินได้ในไม่กี่วินาที · ข้อความบอกทางไปต่อเมื่อ designer เห็นว่าโมเดลตัดสินผิด (ระบบเตือนอย่างเดียว ไม่ re-run ให้เอง เพราะชน rule 7) · อยู่ที่หน้า checkpoint หรือ <code>plo_report</code> หรือทั้งสอง · ต่อยอดจากรายการ “Need ที่ไม่ถูกใช้” ที่มีอยู่แล้วหรือทำใหม่</p>
+      </div>
+
+      <p>งาน backend ทั้งหมดในเอกสารนี้เริ่มได้โดยไม่ต้องรอข้อนี้ — หน้าจอนี้อ่านข้อมูลที่ส่วนอื่นผลิต ไม่มีใครรอมัน</p>
+
+      <div class="note note--why">
+        <span class="note__label">แต่มันเป็นส่วนที่สำคัญกว่าที่ขนาดของงานบอก</span>
+        <p>guard จับได้ ~56% อีกครึ่งหลุดเข้ามาโดยออกแบบ (any เป็นฝั่งปล่อยผ่าน) → คนที่ checkpoint คือ guard ตัวจริง. และ fallback ของ eval (<a href="#eval">หัวข้อ 13</a>) แขวนอยู่บนหน้านี้ทั้งหมด</p>
+      </div>
+    </section>
+
+    <!-- ============ 13 ============ -->
+    <section id="eval">
+      <h2><span class="n">13</span> eval protocol</h2>
+
+      <p>unit test พิสูจน์ได้แค่ว่า filter ทำงาน ไม่ได้พิสูจน์ว่าธงแม่นพอที่จะให้ filter เชื่อ ซึ่งเป็นสมมติฐานที่ทั้งงานนี้แขวนอยู่</p>
+
+      <div class="deflist">
+        <div class="defrow">
+          <div class="defrow__k">ชุดข้อมูล</div>
+          <div class="defrow__v">
+            <p><strong>TCISM ของจริง</strong> — evidence 14 รายการ เฉลยจาก <code>Needs_to_PLO_TCISM.xlsx</code> วัดแกน “ไม่ใช่สมรรถนะบัณฑิต” เป็นหลัก</p>
+            <p><strong>+ เคสสังเคราะห์</strong> — ยัด job posting จากสาขาอื่นไปเลยเข้าคลัง วัดแกน “นอกสาขา” ที่ TCISM ล้วนไม่มีเคส (evidence ของ TCISM ทุกชิ้นอยู่ในสาขา — มนุษย์เก็บ theme ผู้ประกอบการไว้เป็น PLO4 ด้วยซ้ำ). เฉลยรู้แน่นอน<strong>โดยการก่อสร้าง</strong> ไม่ต้องมี rubric ให้เถียงกัน และไม่ต้องมี LLM judge ที่ถามคำถามเดียวกับที่ระบบเพิ่งตอบ</p>
+            <p>ยัดทั้ง <code>employer</code> และ <code>professional_council</code> รายงานแยกสองก้อน เพื่อ<strong>วัดว่า guard กรองสมรรถนะที่สภาวิชาชีพสั่งไปกี่ใบ</strong></p>
+            <div class="note note--stop">
+              <span class="note__label">แก้หลังรัน eval จริง — spec ฉบับแรกเขียนข้อนี้ผิด</span>
+              <p>เดิมเขียนว่า “requirement wins เป็นกฎที่ตั้งใจให้ guard กรองไม่ได้” และให้รายงานว่า “กรองไม่ได้ N ใบ เพราะเป็น requirement — ถูกต้องตามนโยบาย” <strong>ไม่จริงทั้งคู่</strong></p>
+              <p><code>requirement wins</code> ตัดสิน <strong><code>classification</code> เท่านั้น</strong> ส่วน <code>is_in_scope()</code> อ่าน counter บน <code>Need</code> ซึ่งนับจาก<strong>ธงดิบรายแถว</strong> — <code>classification</code> ไม่เคยไปถึงมันเลย. ทักษะที่สภาวิชาชีพสั่งแล้วโมเดลตีว่านอกสาขา <strong>ถูกกรองเหมือนของอื่นทุกประการ</strong></p>
+              <p>ที่มาของความผิด: ยกกฎมาจาก ticket 04 ซึ่งพูดถึงมันในบริบทของ <code>classification</code> ล้วน ๆ แล้วอนุมานต่อเองว่าปกป้องการกรองด้วย โดยไม่มีใครไล่เส้นทางจาก <code>classification</code> ไปถึง <code>is_in_scope</code> — ซึ่งไม่มีเส้นทางนั้น. การรันจริงยืนยัน: <strong>1-2 Need ต่อรอบถูกกรองทั้งที่มีสมาชิกเป็น <code>requirement</code></strong></p>
+            </div>
+          </div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">ระดับที่วัด</div>
+          <div class="defrow__v">
+            <p><strong>ระดับ Need เป็นตัวตั้งเกณฑ์ ระดับ skill เป็น diagnostic</strong> — กฎ any ทำให้ Need ที่มีสมาชิก 8 ตัวถูกกรองก็ต่อเมื่อทั้ง 8 ตัวติดธง recall 56% ที่ระดับ skill จึงหลอก</p>
+            <p>ไม่วัดที่ระดับ PLO — จ่ายค่า synthesis ทุกรอบเพื่อวัดสิ่งที่ระดับ Need ตัดสินไปแล้ว</p>
+          </div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">เกณฑ์ผ่าน</div>
+          <div class="defrow__v">
+            <p><strong>hard gate: <code>FP = 0</code> ที่ระดับ Need</strong> · recall เป็นตัวเลขที่รายงานเทียบ baseline ไม่ใช่ gate</p>
+            <p>สองฝั่งไม่เท่ากัน: Need ในสาขาที่ถูกกรองผิดคือ PLO ที่หายไปจากหลักสูตรโดยไม่มีใครรู้ ส่วน Need นอกสาขาที่หลุดเข้ามาคือของที่ designer เห็นที่ checkpoint แล้วลบได้ในสามวินาที</p>
+          </div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">baseline</div>
+          <div class="defrow__v">
+            <p><code>B0</code> = branch เดิมก่อนธงใหม่ · <code>B1</code> = branch ใหม่ scope ว่าง</p>
+            <p><code>B1 − B0</code> = ช่องธงที่สองให้อะไร · <code>ผล − B1</code> = scope statement ให้อะไร</p>
+            <p class="fig__k">สมมติฐานเดิมที่ว่า “ไม่มี scope = พฤติกรรมเดิมเป๊ะ จึงเป็น test ในตัว” ใช้ไม่ได้แล้ว: การเพิ่มช่องธงดันธงสาขาจาก 3/9 เป็น 5/9 ทั้งที่ไม่มี scope. ยังจริงที่ระดับ prompt bytes ของบรรทัด scope แต่ไม่จริงที่ระดับผลลัพธ์</p>
+          </div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">metric ทุกรอบ</div>
+          <div class="defrow__v">
+            <ol>
+              <li>recall / FP ที่ระดับ <strong>Need</strong> แยกสองแกนและรวม</li>
+              <li>recall / FP ที่ระดับ skill (diagnostic)</li>
+              <li>overlap ของสองแกน (ตาราง 2×2) — ตัวที่ตัดสินว่าเก็บสองคอลัมน์ไว้ถาวรคุ้มไหม</li>
+              <li><strong>contamination</strong> — ทักษะที่ชื่อหรือ span ลอกวลีจาก scope statement เป็น metric ถาวร ไม่ใช่วัดครั้งเดียวแล้วเลิก เพราะยังไม่รู้ว่า scope ที่ยาวกว่า ~150 ตัวอักษรจะเริ่มปนไหม</li>
+              <li>จำนวน Need ที่ <strong>ถูกกรองทั้งที่มีสมาชิกเป็น <code>requirement</code></strong> — <strong>สัญญาณเตือน ไม่ใช่การยืนยันว่ากฎทำงานถูก</strong>: สมรรถนะที่มีอำนาจตามกฎหมายสั่งไว้ ถูกตัดทิ้งตามคำโมเดลที่ recall แค่ครึ่งเดียว</li>
+            </ol>
+          </div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">ถ้าไม่ผ่าน</div>
+          <div class="defrow__v"><strong>ปิดสวิตช์กรอง เหลือแต่ติดธงให้ designer ดูที่ checkpoint</strong> — หน้านั้นมีอยู่แล้ว การถอยจึงไม่ต้องเขียนอะไรใหม่ และเป็นเหตุผลเพิ่มที่ <code>is_in_scope()</code> ต้องเป็น predicate เดียวเรียกที่เดียว</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">รันเมื่อไหร่</div>
+          <div class="defrow__v">
+            <p><strong>manual</strong> — สคริปต์ใน <code>scripts/</code> รันเมื่อแตะ prompt เปลี่ยน model หรือย้าย slot. ไม่ใช่ CI: เรียก LLM จริง 28–70 call ต่อรอบ และไม่ deterministic พอจะเป็น gate สีแดง/เขียว</p>
+            <p>สิ่งที่อยู่ใน CI คือ unit test ของ <code>is_in_scope()</code> และ cache key ซึ่ง deterministic ล้วน — eval เป็นเครื่องมือตัดสินใจของคน ไม่ใช่ด่านอัตโนมัติ</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 14 ============ -->
+    <section id="never">
+      <h2><span class="n">14</span> สิ่งที่ต้องไม่ทำ</h2>
+
+      <p class="lede">ทุกข้อข้างล่างเคยถูกพิจารณาแล้วปฏิเสธด้วยหลักฐาน ไม่ใช่ด้วยรสนิยม — เขียนไว้เพราะทุกข้อ<strong>ดูเหมือนการทำให้ง่ายขึ้น</strong>ในสายตาคนที่ไม่ได้อ่านที่มา</p>
+
+      <div class="deflist">
+        <div class="defrow">
+          <div class="defrow__k">branch “โปรแกรมนี้มี<br>scope statement ไหม”</div>
+          <div class="defrow__v">ไม่ต้องมี — โปรแกรมที่ไม่มี scope จะมีธงเป็น <code>True</code> ทุกแถวจาก default → counter = total → <code>is_in_scope()</code> ผ่านหมด → <strong>กลายเป็น no-op เอง</strong>. คนถัดไปจะเพิ่ม branch นี้เข้ามาโดยคิดว่ามันหลุด</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k"><code>scope_th</code> เข้า<br>contract fingerprint</div>
+          <div class="defrow__v">ทุกโปรแกรมจะมี contract คนละค่า แล้ว <code>prune_cache</code> รายงาน <code>stale-contract</code> มั่วทั้งตาราง</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">ยุบสองแกนเป็นแกนเดียว</div>
+          <div class="defrow__v">ช่องที่สองดันธงสาขาจาก 3/9 เป็น 5/9 ทั้งที่ไม่มี scope — <strong>มีมูลค่าแม้ตอบซ้ำ</strong>. “ธงเดียวที่มีนิยามรวมสองเกณฑ์” อาจให้ 5/9 เท่าเดิมหรือกลับไป 3/9 ไม่มีใครวัด ยุบตอนนี้คือเดา</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">ให้แกนใหม่มีผลต่อ<br><code>classification</code></div>
+          <div class="defrow__v">precedence 5 ข้อไม่ขยับ. กฎแบบ <code>is_graduate_capability=False → unclassified</code> เป็น dead rule บนตัวอย่างที่มันควรจับพอดี — “การบริหารจัดการแหล่งรายได้” มาจากวิสัยทัศน์สถาบัน → evidence เป็น <code>requirement</code> → <strong>requirement wins ทับกฎใหม่ทันที</strong></div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">กรองที่ระดับ stakeholder</div>
+          <div class="defrow__v">กฎแบบ “<code>administrator</code> / <code>program_committee</code> ไม่เข้าสู่ PLO” เขียนง่ายกว่าและดูถูกเสมอ. เฉลยมนุษย์เก็บ Need ของผู้บริหาร อ.ผู้รับผิดชอบ และ อ.ผู้สอน ไว้<strong>ครบทุกใบ</strong> ตัดเฉพาะเนื้อหาบางส่วนที่เขาพูด</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">majority แทน any</div>
+          <div class="defrow__v">false positive 1/29 แต่ recall 56% — ธงที่ติดเชื่อได้ ที่ไม่ติดพลาดครึ่งหนึ่ง. ตัดแรงบนสัญญาณครึ่งใบคือตัดของถูกทิ้ง</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">ให้โมเดลตัดทิ้งเอง</div>
+          <div class="defrow__v">ลด noise ได้จริง (9→5) แต่ลาก CORE (29→26) และ institutional (20→14) ลงไปด้วยโดยไม่มีร่องรอย</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">ให้โมเดลเขียนชื่อ<br>ทักษะใหม่ที่ชั้นสกัด</div>
+          <div class="defrow__v">45 การเขียนใหม่ หลายครั้งแต่งเติมความเฉพาะที่หลักฐานไม่ได้พูด ชื่อไม่ตรงกับ span ที่ต้องคัดลอกตรงตัว = ชน rule 2. ที่ทางของการเขียนใหม่คือ <code>summarize_need</code></div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">รายการ “ไม่รวมถึง” ใน<br>scope statement</div>
+          <div class="defrow__v">0/8 เทียบ control 3/9 และเป็น variant เดียวที่สร้าง false positive — <strong>แย่กว่าไม่มี scope เลย</strong></div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">scope statement ใน<br>user message</div>
+          <div class="defrow__v">โมเดลอ่านเป็นหลักฐานแล้วผลิตทักษะที่ span ลอกจาก scope คำต่อคำ</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">เว้นเลข PLO ให้ Need<br>ที่ถูกกรอง</div>
+          <div class="defrow__v">ช่องว่างแปลว่า “ร่างไม่สำเร็จ” อยู่แล้ว</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">422 ที่ merge route</div>
+          <div class="defrow__v">designer เลือกเองคือการตัดสินใจของคน และนี่คือทาง override ทางเดียว</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">เติม Need นอกขอบเขต<br>ให้ครบ <code>MIN_NEEDS</code></div>
+          <div class="defrow__v">คือการผลิต PLO ที่รู้อยู่แล้วว่าผิดเพื่อให้ตัวเลขสวย — กรองต่อแล้ว log ให้ designer เห็นที่ checkpoint</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">รวมตัวเลขสองแกน<br>ใน warning เป็นตัวเดียว</div>
+          <div class="defrow__v">ตัวเลขสองแกนจะเท่ากันเกือบเสมอ และความเท่ากันนั้นคือข้อมูล — วันที่ไม่เท่ากันคือวันที่สองแกนเริ่มแยกกันจริง รวมแล้วสัญญาณนั้นหายไปตลอดกาล</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">อ้าง AUN-QA</div>
+          <div class="defrow__v">AUN-QA <strong>ไม่มีข้อความเรื่องขอบเขตสาขาเลย</strong> — grep <code>distinctive</code> / <code>unique</code> / <code>boundary</code> / <code>identity</code> ใน v3 และ v4 ได้ 0 ทั้งหมด. ถ้าจะอ้างมาตรฐาน อ้าง traceability (rule 2) หรือ ISCED-F ได้ AUN-QA ไม่ได้</div>
+        </div>
+        <div class="defrow">
+          <div class="defrow__k">prune cache ก่อน deploy</div>
+          <div class="defrow__v">เอา irreversible action มาไว้ก่อนจุดที่ยังถอยได้ — ถ้าต้อง rollback แถวเก่ายังใช้ได้ถ้ายังไม่ลบ</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ 15 ============ -->
+    <section id="tests">
+      <h2><span class="n">15</span> test ที่ต้องมี</h2>
+
+      <ol>
+        <li><strong>cache key — replay ไม่ใช่ assert ราย call site.</strong> เก็บ entry แล้วเล่นซ้ำ ตามบทเรียนของ <code>test_skill_extraction_cache.py</code> การ assert แต่ละจุดแยกกันคือสิ่งที่ปล่อยให้ key/store mismatch หลุดมาแล้วครั้งหนึ่ง</li>
+        <li><strong>contract fingerprint ไม่ขยับตาม <code>scope_th</code></strong> — โปรแกรมสอง scope ต่างกันต้องได้ contract เดียวกัน และ cache key ต่างกัน</li>
+        <li><strong>predicate เป็น no-op เมื่อไม่มี scope</strong> — Need ที่ backfill มาต้องผ่านทุกใบ จำนวน PLO ต้องไม่เปลี่ยน</li>
+        <li><strong>migration backfill</strong> — Need เก่าได้ counter เท่ากับ <code>len(member_skill_ids)</code> ไม่ใช่ 0</li>
+        <li><strong>ตำแหน่งการกรอง</strong> — 12 Need ที่มี 2 ใบนอกขอบเขตอยู่อันดับ <code>demand_score</code> สูงสุด ต้องได้ <strong>10 PLO ไม่ใช่ 8</strong>. เคสนี้คือตัวพิสูจน์ว่ากรองก่อนเพดาน ไม่ใช่หลัง</li>
+        <li><strong>optional series ก็ถูกกรอง</strong> — นอกสาขาก็คือนอกสาขา ไม่ว่าหลักหรือเสริม</li>
+        <li><strong>merge route ไม่กรอง</strong> — Need นอกขอบเขตยัง merge ได้ ตอบ 200 และมี log</li>
+        <li><strong>Pydantic validator ก่อน integration test</strong> — ถ้า validator ผิด ทุก test ที่อยู่ถัดไปเชื่อไม่ได้</li>
+      </ol>
+
+      <p class="fig__k">ไฟล์ที่แตะ: <code>test_extract_skills_prompt.py</code> · <code>test_extraction_cache_contract.py</code> · <code>test_skill_extraction_cache.py</code> · <code>test_need_grouping.py</code> (หรือ <code>test_scope_guard.py</code> ใหม่) · <code>test_need_combination.py</code> · <code>test_migration_backfill.py</code> · <code>test_plo_synthesis_guard.py</code> · <code>test_api_plos.py</code> · <code>test_models.py</code></p>
+    </section>
+
+    <!-- ============ 16 ============ -->
+    <section id="order">
+      <h2><span class="n">16</span> ลำดับการลงมือ</h2>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>ขั้น</th><th>ทำอะไร</th><th>เงื่อนไข</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="num">1</td>
+              <td>models + migration (ทุก field ในไฟล์เดียว) พร้อม test ของ backfill</td>
+              <td>ต้องไปพร้อมกัน — จ่าย re-extract รอบเดียว</td>
+            </tr>
+            <tr>
+              <td class="num">2</td>
+              <td>prompt + สคีมา + cache key + fingerprint</td>
+              <td>จุดที่ contract ขยับ ทำทีเดียวกับขั้น 1</td>
+            </tr>
+            <tr>
+              <td class="num">3</td>
+              <td><code>need_combination</code> นับ counter</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td class="num">4</td>
+              <td><code>is_in_scope()</code> + การกรองใน <code>plo_synthesis</code> + log</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td class="num">5</td>
+              <td>intake UI + merge route log</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td class="num">6</td>
+              <td>รัน eval ครั้งแรก เก็บ <code>B0</code> ไว้<strong>ก่อน</strong>เริ่มขั้น 1</td>
+              <td>ต้องเก็บก่อน ไม่งั้นวัด <code>B1 − B0</code> ไม่ได้อีกเลย</td>
+            </tr>
+            <tr>
+              <td class="num">7</td>
+              <td>checkpoint UI</td>
+              <td>รอ ticket 06</td>
+            </tr>
+            <tr>
+              <td class="num">8</td>
+              <td><code>prune_cache --delete</code></td>
+              <td>หลังมั่นใจว่าไม่ rollback</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note note--stop">
+        <span class="note__label">ขั้น 6 ต้องทำก่อนขั้น 1 ทั้งที่อยู่ท้ายตาราง</span>
+        <p><code>B0</code> คือผลของ branch เดิมก่อนธงใหม่ — พอ merge ขั้น 1-2 ไปแล้วจะเก็บมันไม่ได้อีกโดยไม่ย้อน branch. รัน eval บน branch ปัจจุบันแล้ว commit ผลไว้ก่อนแตะอะไรทั้งสิ้น</p>
+      </div>
+    </section>
+
+    <!-- ============ 17 ============ -->
+    <section id="open">
+      <h2><span class="n">17</span> จุดที่ยังไม่ตัดสิน</h2>
+
+      <p>แปดจุดที่ ticket ไม่ได้ตอบ — <strong>อย่าเดาแทน</strong> แต่ละจุดมีใบที่ควรเป็นคนตอบกำกับไว้. จุดที่ 8 ไม่ได้มาจากการวางแผน แต่โผล่ตอนรัน eval จริง</p>
+
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>#</th><th>เรื่อง</th><th>ใบที่ควรตอบ</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td>ของตั้งต้นในฟอร์ม intake — static placeholder หรือ auto-seed จาก ISCED-F / ประกาศ กมอ.<br><span class="fig__k">spec นี้สั่งเฉพาะ static placeholder ซึ่งเป็นส่วนที่ทั้งสองทางต้องมีเหมือนกัน</span></td><td>02 หรือใบใหม่</td></tr>
+            <tr><td class="num">2</td><td>เพดานความยาวของ <code>scope_th</code> — ทดสอบเฉพาะ ~150 ตัวอักษร<br><span class="fig__k">ไม่ใส่ validator เพราะการเดาเลขจะกลายเป็นกฎที่ไม่มีใครอธิบายได้ แต่ metric contamination จะจับอาการนี้ถ้าเกิด</span></td><td>07 รอบแรกที่รันจริง</td></tr>
+            <tr><td class="num">3</td><td>แต่ละรายการในก้อน “นอกขอบเขต” ที่ checkpoint แสดงอะไร</td><td>06</td></tr>
+            <tr><td class="num">4</td><td>ถ้อยคำ “แก้ scope statement แล้วต้องรันอะไรใหม่บ้าง”</td><td>06</td></tr>
+            <tr><td class="num">5</td><td>สามก้อนอยู่ที่ checkpoint, <code>plo_report</code>, หรือทั้งสอง</td><td>06</td></tr>
+            <tr><td class="num">6</td><td><code>plo_report</code> / มคอ.2 exporter ต้องรายงาน Need ที่ถูกกันไหม รายงานให้ใคร</td><td>06 แล้วแตกใบใหม่</td></tr>
+            <tr><td class="num">7</td><td><code>summarize_need</code> ควรเห็นธงรายสมาชิกไหม และถ้าเห็นควรทำอะไร</td><td>ยังไม่มีใบ</td></tr>
+            <tr class="is-flag"><td class="num">8</td><td><strong><code>requirement</code> ควรข้าม <code>is_in_scope</code> ไหม</strong> — สภาวิชาชีพสั่งแล้ว guard ยังกรองทิ้งได้ตามคำโมเดล<br><span class="fig__k">(ก) ปล่อยตามนี้ · (ข) ให้ข้ามเหมือนที่มันข้าม <code>unclassified</code> อยู่แล้ว · (ค) ไม่ข้าม แต่ยกเป็นก้อนแยกที่ checkpoint ให้ตัดสินก่อนเสมอ</span></td><td>ยังไม่มีใบ — พบตอนรัน eval จริง</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>สองข้อขัดแย้งที่บันทึกไว้ ไม่ได้แก้</h3>
+
+      <div class="note note--stop">
+        <span class="note__label">อย่าไป “แก้” ระหว่างทาง</span>
+        <p><strong>เฉลยมนุษย์ของ TCISM มี 4 PLO</strong> ส่วน immutable rule 6 กำหนด 6-10 และ <code>MIN_NEEDS = 6</code></p>
+        <p><strong>theme ของมนุษย์ตัดข้าม KSEC</strong> (theme A ผสม K+S, theme C ผสม K+E) ส่วนกฎห้าม cluster ข้าม bucket → <code>need_combination</code> ผลิต theme แบบนั้นไม่ได้เชิงโครงสร้าง</p>
+        <p>ทั้งสองข้อต้องเป็น map ใหม่หรือการทบทวน immutable rule ไม่ใช่งานรอบนี้ และ<strong>ไม่ใช่เหตุผลให้ผ่อนการกรอง</strong></p>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<footer class="colophon">
+  <span>ที่มา: wayfinder map <code>.scratch/plo-scope-guard/</code></span>
+  <span>ticket ที่ปิดแล้ว 11 ใบ · ค้าง 1 ใบ (06)</span>
+  <span>ตัวเลขทุกตัวมาจาก prototype บนหลักสูตรจริง ไม่ใช่การประมาณ</span>
+</footer>

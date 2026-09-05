@@ -16,3 +16,10 @@ frontend/dist/
 _extracted/
 curriculum-design-agent.zip
 .superpowers/
+
+# Wayfinder efforts under .scratch/ are tracked as documents, but never the
+# corpora they were measured against: those hold verbatim stakeholder text from
+# a real institution's internal documents, and the source PDFs are large and
+# publicly available elsewhere.
+.scratch/**/eval/baseline/
+.scratch/**/sources/

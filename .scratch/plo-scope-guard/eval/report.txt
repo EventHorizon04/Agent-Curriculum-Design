@@ -1,0 +1,42 @@
+=== case: tcism
+
+variant      FP (in-scope filtered)   recall (out-of-scope)
+B1                              0/9                       —
+scoped                          0/7                       —
+
+--- B1
+    Need ทั้งหมด 10 · ในขอบเขต 9 · นอกขอบเขต 0 · ไม่มีเฉลย 1
+    skill: 68 · overlap {'both_off': 8, 'field_only': 0, 'grad_only': 2, 'neither': 58}
+    contamination: ชื่อลอกจาก scope 0 · span หาไม่พบ 2
+
+--- scoped
+    Need ทั้งหมด 10 · ในขอบเขต 7 · นอกขอบเขต 0 · ไม่มีเฉลย 3
+    skill: 62 · overlap {'both_off': 9, 'field_only': 5, 'grad_only': 2, 'neither': 46}
+    contamination: ชื่อลอกจาก scope 0 · span หาไม่พบ 0
+
+=== case: tcism+injected
+
+variant      FP (in-scope filtered)   recall (out-of-scope)
+B1                              0/7              2/2 (100%)
+scoped                          0/8              1/1 (100%)
+
+--- B1
+    Need ทั้งหมด 11 · ในขอบเขต 7 · นอกขอบเขต 2 · ไม่มีเฉลย 2
+    skill: 124 · overlap {'both_off': 10, 'field_only': 42, 'grad_only': 0, 'neither': 72}
+    contamination: ชื่อลอกจาก scope 0 · span หาไม่พบ 2
+    ⚠ Need ที่ถูกกรองทั้งที่มีสมาชิกเป็น requirement: 2
+        การจัดการกระบวนการนำเข้าและจัดเก็บข้อมูลวิดีโอ, การจัดการฐานข้อมูล Vector และ Structured Stores, การจัดการระบบการนำเข้าข้อมูลเอกสาร
+        การพัฒนาผลิตภัณฑ์และบริการที่มีความซับซ้อนสูง
+      `requirement` ไม่ได้ปกป้อง Need จากการกรอง — มันตัดสิน `classification` เท่านั้น ส่วน is_in_scope อ่านธงดิบ
+
+--- scoped
+    Need ทั้งหมด 10 · ในขอบเขต 8 · นอกขอบเขต 1 · ไม่มีเฉลย 1
+    skill: 116 · overlap {'both_off': 9, 'field_only': 46, 'grad_only': 1, 'neither': 60}
+    contamination: ชื่อลอกจาก scope 0 · span หาไม่พบ 1
+    ⚠ Need ที่ถูกกรองทั้งที่มีสมาชิกเป็น requirement: 1
+        การจัดการฐานข้อมูลแบบเวกเตอร์และแบบโครงสร้าง, การจัดการระบบรับและจัดเก็บเนื้อหาดิจิทัล, การปรับปรุงประสิทธิภาพการเข้ารหัสวิดีโอ
+      `requirement` ไม่ได้ปกป้อง Need จากการกรอง — มันตัดสิน `classification` เท่านั้น ส่วน is_in_scope อ่านธงดิบ
+
+เกณฑ์: false positive ที่ระดับ Need = 0 เป็น hard gate; recall เป็นตัวเลขรายงาน
+ไม่ใช่ gate — Need ในขอบเขตที่ถูกกรองผิดคือ PLO ที่หายไปโดยไม่มีใครรู้ ส่วน Need
+นอกขอบเขตที่หลุดมา designer ลบได้ที่ checkpoint
