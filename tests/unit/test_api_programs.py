@@ -400,3 +400,91 @@ def test_intake_stage_exports_only_run() -> None:
         "low_grounding_fields",
     ):
         assert not hasattr(intake, name), f"{name} should have been deleted"
+
+
+def _update_env(existing: dict | None = None):
+    """Repository and graph doubles for PUT /programs/{id}."""
+    from curriculum_agent.api.main import app as _app
+    from curriculum_agent.models import ProgramMetadata
+
+    stored = ProgramMetadata(
+        program_id="computer-science", created_at=_NOW, **(existing or VALID_PROGRAM)
+    )
+    mock_repo = AsyncMock()
+    mock_repo.get = AsyncMock(return_value=stored)
+    mock_repo.upsert = AsyncMock()
+
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    @contextmanager
+    def env():
+        with (
+            patch("curriculum_agent.api.routes.programs.ProgramRepository", return_value=mock_repo),
+            patch.object(_app.state, "graph", mock_graph, create=True),
+        ):
+            yield mock_repo, mock_graph
+
+    return env()
+
+
+def test_update_program_keeps_the_id_and_the_creation_time() -> None:
+    """The id is a foreign key on every evidence item, skill, Need and PLO the
+    program owns, and on its checkpoint thread. Re-slugging it from a changed
+    field would orphan all of them to make one string read better."""
+    with _update_env() as (repo, _):
+        resp = client.put(
+            "/programs/computer-science",
+            json={**VALID_PROGRAM, "field": "Data Science", "scope_th": "ครอบคลุมการวิเคราะห์ข้อมูล"},
+        )
+
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.json()}"
+    body = resp.json()
+    assert body["program_id"] == "computer-science"
+    assert body["created_at"] == _NOW.isoformat()
+    assert body["field"] == "Data Science"
+    assert body["scope_th"] == "ครอบคลุมการวิเคราะห์ข้อมูล"
+    saved = repo.upsert.await_args.args[0]
+    assert saved.program_id == "computer-science"
+    assert saved.created_at == _NOW
+
+
+def test_update_program_refreshes_the_checkpoint_copy_of_the_metadata() -> None:
+    """A thread suspended mid-pipeline carries its own snapshot of AgentState;
+    a stage resuming from it would otherwise read the pre-edit field."""
+    with _update_env() as (_, graph):
+        client.put("/programs/computer-science", json={**VALID_PROGRAM, "field": "Data Science"})
+
+    graph.ainvoke.assert_awaited_once()
+    payload = graph.ainvoke.await_args.args[0]
+    assert payload["metadata"]["field"] == "Data Science"
+    config = graph.ainvoke.await_args.kwargs["config"]
+    assert config["configurable"]["thread_id"] == "computer-science"
+
+
+def test_update_program_404_when_the_program_does_not_exist() -> None:
+    from curriculum_agent.api.main import app as _app
+
+    mock_repo = AsyncMock()
+    mock_repo.get = AsyncMock(return_value=None)
+    mock_repo.upsert = AsyncMock()
+    mock_graph = MagicMock()
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    with (
+        patch("curriculum_agent.api.routes.programs.ProgramRepository", return_value=mock_repo),
+        patch.object(_app.state, "graph", mock_graph, create=True),
+    ):
+        resp = client.put("/programs/missing", json=VALID_PROGRAM)
+
+    assert resp.status_code == 404, f"got {resp.status_code}"
+    mock_repo.upsert.assert_not_awaited()
+    mock_graph.ainvoke.assert_not_awaited()
+
+
+def test_update_program_requires_api_key_when_configured(monkeypatch) -> None:
+    import curriculum_agent.config as cfg
+
+    monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
+    resp = client.put("/programs/computer-science", json=VALID_PROGRAM)
+    assert resp.status_code == 401, f"got {resp.status_code}"

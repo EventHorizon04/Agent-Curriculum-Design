@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { useProgram } from '../hooks/useProgram'
@@ -39,6 +39,46 @@ export default function Intake() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  // The page is a form for one program, not a create-only form: with a program
+  // selected it shows that program and saves back to it. `creating` is how a
+  // designer starts a second one without first deselecting the first.
+  const [creating, setCreating] = useState(false)
+  const [loaded, setLoaded] = useState<FormState | null>(null)
+  const editing = Boolean(programId) && !creating
+
+  useEffect(() => {
+    if (!programId || creating) return
+    let cancelled = false
+    api
+      .get<Partial<FormState>>(`/programs/${programId}`)
+      .then((r) => {
+        if (cancelled) return
+        const next: FormState = {
+          university: r.data.university ?? '',
+          faculty: r.data.faculty ?? '',
+          field: r.data.field ?? '',
+          scope_th: r.data.scope_th ?? '',
+          degree_level: r.data.degree_level ?? 'bachelor',
+          duration_years: r.data.duration_years ?? 4,
+        }
+        setForm(next)
+        // Kept so the save can tell which fields actually moved — two of them
+        // invalidate the extracted skills and the designer has to be told.
+        setLoaded(next)
+      })
+      .catch(() => setError('โหลดข้อมูลหลักสูตรไม่สำเร็จ — ตรวจสอบว่า backend รันอยู่'))
+    return () => {
+      cancelled = true
+    }
+  }, [programId, creating])
+
+  function startNewProgram() {
+    setCreating(true)
+    setForm(INITIAL)
+    setLoaded(null)
+    setError('')
+    setSuccess('')
+  }
 
   function handleChange(
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
@@ -59,18 +99,35 @@ export default function Intake() {
     }
 
     setLoading(true)
+    const payload = {
+      university: form.university,
+      faculty: form.faculty,
+      field: form.field,
+      scope_th: form.scope_th.trim(),
+      degree_level: form.degree_level,
+      duration_years: Number(form.duration_years),
+    }
     try {
-      const resp = await api.post('/programs/', {
-        university: form.university,
-        faculty: form.faculty,
-        field: form.field,
-        scope_th: form.scope_th.trim(),
-        degree_level: form.degree_level,
-        duration_years: Number(form.duration_years),
-      })
-      const newId = resp.data.program_id
-      setProgramId(newId)
-      setSuccess(`บันทึกหลักสูตร "${form.field}" สำเร็จ (รหัส: ${newId})`)
+      if (editing) {
+        await api.put(`/programs/${programId}`, payload)
+        setLoaded({ ...form, scope_th: payload.scope_th })
+        // Only these two reach the skill-extraction cache key, so only these two
+        // leave the stored skills answering a question nobody is asking any more.
+        const stale =
+          loaded !== null &&
+          (loaded.field !== payload.field || loaded.scope_th.trim() !== payload.scope_th)
+        setSuccess(
+          stale
+            ? 'บันทึกแล้ว — สาขาวิชาหรือขอบเขตเปลี่ยนไป ทักษะที่สกัดไว้เดิมยังตัดสินด้วยค่าเก่าอยู่ ให้รัน "สกัดทักษะ" ใหม่ทั้งโปรแกรม'
+            : 'บันทึกการแก้ไขแล้ว'
+        )
+      } else {
+        const resp = await api.post('/programs/', payload)
+        const newId = resp.data.program_id
+        setProgramId(newId)
+        setCreating(false)
+        setSuccess(`บันทึกหลักสูตร "${form.field}" สำเร็จ (รหัส: ${newId})`)
+      }
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status: number; data: unknown } }
       if (axiosErr.response) {
@@ -88,16 +145,37 @@ export default function Intake() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-800">ขั้นตอนที่ 1 — ข้อมูลหลักสูตร</h1>
         <p className="text-gray-500 text-sm mt-1">
-          กรอกข้อมูลพื้นฐานของหลักสูตรเพื่อเริ่มกระบวนการออกแบบ OBE
+          {editing
+            ? 'ข้อมูลของหลักสูตรที่กำลังทำอยู่ — แก้ไขแล้วกดบันทึกได้'
+            : 'กรอกข้อมูลพื้นฐานของหลักสูตรเพื่อเริ่มกระบวนการออกแบบ OBE'}
         </p>
         <p className="mt-1 text-xs text-gray-500">
           วิสัยทัศน์ พันธกิจ และอัตลักษณ์ ให้บันทึกเป็นหลักฐานที่หน้า Stakeholder Needs
           (ประเภท "วิสัยทัศน์/พันธกิจ/อัตลักษณ์")
         </p>
         {programId && (
-          <div className="mt-2 inline-flex items-center gap-2 bg-blue-50 border border-blue-100 text-blue-700 text-xs font-medium px-3 py-1 rounded-full">
-            <span className="w-1.5 h-1.5 bg-blue-500 rounded-full"></span>
-            หลักสูตรปัจจุบัน: {programId}
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
+              <span className="h-1.5 w-1.5 rounded-full bg-blue-500"></span>
+              {editing ? `กำลังแก้ไข: ${programId}` : `หลักสูตรปัจจุบัน: ${programId}`}
+            </span>
+            {editing ? (
+              <button
+                type="button"
+                onClick={startNewProgram}
+                className="cursor-pointer text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+              >
+                สร้างหลักสูตรใหม่แทน
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setCreating(false)}
+                className="cursor-pointer text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+              >
+                กลับไปแก้ไข {programId}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -108,14 +186,18 @@ export default function Intake() {
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-3 mb-4 text-sm flex items-center justify-between">
+        <div className="mb-4 flex items-center justify-between gap-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
           <span>✓ {success}</span>
-          <button
-            onClick={() => navigate('/stakeholder-needs')}
-            className="underline font-medium hover:text-green-900 ml-4"
-          >
-            ไปที่หน้าหลักฐาน →
-          </button>
+          {/* After an edit the next step is whichever stage the change
+              invalidated, so the page does not pretend to know it. */}
+          {!editing && (
+            <button
+              onClick={() => navigate('/stakeholder-needs')}
+              className="ml-4 font-medium underline hover:text-green-900"
+            >
+              ไปที่หน้าหลักฐาน →
+            </button>
+          )}
         </div>
       )}
 
@@ -187,7 +269,11 @@ export default function Intake() {
           type="submit" disabled={loading}
           className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-medium rounded-lg py-2.5 text-sm transition-colors cursor-pointer disabled:cursor-not-allowed"
         >
-          {loading ? 'กำลังบันทึก...' : 'บันทึกและเริ่มกระบวนการ'}
+          {loading
+            ? 'กำลังบันทึก...'
+            : editing
+              ? 'บันทึกการแก้ไข'
+              : 'บันทึกและเริ่มกระบวนการ'}
         </button>
       </form>
     </div>

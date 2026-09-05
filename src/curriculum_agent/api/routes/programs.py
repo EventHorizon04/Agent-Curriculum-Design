@@ -81,6 +81,55 @@ async def get_program(program_id: str) -> ProgramMetadata:
     return result
 
 
+@router.put(
+    "/{program_id}", response_model=ProgramMetadata, dependencies=[Depends(require_api_key)]
+)
+async def update_program(
+    program_id: str, req: ProgramCreateRequest, request: Request
+) -> ProgramMetadata:
+    """Replace a program's metadata, keeping its id and its creation time.
+
+    The id never moves, even when `field` — the thing it was slugged from — does.
+    Every evidence item, skill, Need and PLO carries it as a foreign key, and so
+    does the LangGraph thread holding any suspended checkpoint; renaming it would
+    orphan all of them to make one string read better. An id that no longer
+    matches the field it came from is the smaller wrong.
+
+    Two of these fields reach the extraction cache key (`field`, `scope_th`), so
+    changing either means the program's existing skills were judged against a
+    question that is no longer being asked. The route does not re-run anything —
+    every stage boundary is the designer's to cross — but it says so in the
+    response.
+    """
+    repo = ProgramRepository()
+    existing = await repo.get(program_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
+
+    updated = ProgramMetadata(
+        program_id=program_id,
+        created_at=existing.created_at,
+        **req.model_dump(),
+    )
+    await repo.upsert(updated)
+
+    if (req.field, req.scope_th) != (existing.field, existing.scope_th):
+        logger.info(
+            f"Program '{program_id}': field or scope changed — stored skills were "
+            "extracted under the previous values; re-run skill extraction to refresh them"
+        )
+
+    # Keep the checkpoint's copy of the metadata in step with the row. A thread
+    # suspended mid-pipeline carries its own snapshot of AgentState, and a stage
+    # resuming from it would otherwise read the old field.
+    graph = request.app.state.graph
+    await graph.ainvoke(
+        {"program_id": program_id, "metadata": updated.model_dump(mode="json")},
+        config={"configurable": {"thread_id": program_id}},
+    )
+    return updated
+
+
 @router.delete("/{program_id}", status_code=204, dependencies=[Depends(require_api_key)])
 async def delete_program(program_id: str, request: Request) -> None:
     repo = ProgramRepository()
