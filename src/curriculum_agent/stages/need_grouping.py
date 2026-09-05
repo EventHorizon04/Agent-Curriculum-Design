@@ -40,6 +40,16 @@ def is_in_scope(need: Need) -> bool:
     wrong field. The permissive side is already spent on the any rule a level
     down.
 
+    `classification` is not consulted, and a `requirement` gets no exemption —
+    that is a decision, not an oversight. "requirement wins" settles whether a
+    skill is a mandate, which is a different question from whether the capability
+    belongs to this programme: a professional council can require something this
+    programme is the wrong place to teach. A Need filtered while carrying a
+    mandate is flagged on the report so a designer sees it before approving the
+    set, and the merge route will still take it if they decide otherwise. Neither
+    of those is this function's business. Do not add a `classification` check
+    here on the assumption that one was forgotten.
+
     This is also the whole fallback switch: if the eval says the flags are not
     trustworthy enough to filter on, the retreat is to stop calling this in one
     place and leave the flags on display at the checkpoint instead.

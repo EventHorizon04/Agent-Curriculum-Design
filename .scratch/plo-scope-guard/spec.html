@@ -570,7 +570,7 @@ tr.is-flag td:first-child { box-shadow: inset 3px 0 0 var(--flag); }
     <div class="statusbar">
       <div><span class="k">ที่มา</span><span class="v">wayfinder map</span></div>
       <div><span class="k">ticket ที่ปิดแล้ว</span><span class="v">11 / 12</span></div>
-      <div><span class="k">ยังไม่ตัดสิน</span><span class="v">8 จุด</span></div>
+      <div><span class="k">ยังไม่ตัดสิน</span><span class="v">7 จุด</span></div>
       <div><span class="k">ไฟล์ที่แตะ</span><span class="v">11 + 1 migration</span></div>
       <div><span class="k">ต้อง re-extract</span><span class="v">1 รอบ</span></div>
     </div>
@@ -1100,6 +1100,7 @@ tr.is-flag td:first-child { box-shadow: inset 3px 0 0 var(--flag); }
               <p>เดิมเขียนว่า “requirement wins เป็นกฎที่ตั้งใจให้ guard กรองไม่ได้” และให้รายงานว่า “กรองไม่ได้ N ใบ เพราะเป็น requirement — ถูกต้องตามนโยบาย” <strong>ไม่จริงทั้งคู่</strong></p>
               <p><code>requirement wins</code> ตัดสิน <strong><code>classification</code> เท่านั้น</strong> ส่วน <code>is_in_scope()</code> อ่าน counter บน <code>Need</code> ซึ่งนับจาก<strong>ธงดิบรายแถว</strong> — <code>classification</code> ไม่เคยไปถึงมันเลย. ทักษะที่สภาวิชาชีพสั่งแล้วโมเดลตีว่านอกสาขา <strong>ถูกกรองเหมือนของอื่นทุกประการ</strong></p>
               <p>ที่มาของความผิด: ยกกฎมาจาก ticket 04 ซึ่งพูดถึงมันในบริบทของ <code>classification</code> ล้วน ๆ แล้วอนุมานต่อเองว่าปกป้องการกรองด้วย โดยไม่มีใครไล่เส้นทางจาก <code>classification</code> ไปถึง <code>is_in_scope</code> — ซึ่งไม่มีเส้นทางนั้น. การรันจริงยืนยัน: <strong>1-2 Need ต่อรอบถูกกรองทั้งที่มีสมาชิกเป็น <code>requirement</code></strong></p>
+              <p><strong>ตัดสินแล้วว่าให้เป็นแบบนี้ต่อไป</strong> — <code>requirement</code> ไม่ได้รับการยกเว้น: “requirement wins” ตัดสินว่าทักษะเป็น<strong>ข้อกำหนด</strong>ไหม ซึ่งคนละคำถามกับว่า<strong>สมรรถนะนั้นเป็นของหลักสูตรนี้ไหม</strong> สภาวิชาชีพสั่งสิ่งที่หลักสูตรนี้ไม่ใช่ที่ทางที่จะสอนได้. แทนที่จะยกเว้นในโค้ด: <strong>ติดป้ายที่ report</strong> ให้ designer เห็นก่อนอนุมัติ และ <strong>merge route ไม่กัน</strong> จึงหยิบกลับได้</p>
             </div>
           </div>
         </div>
@@ -1305,7 +1306,7 @@ tr.is-flag td:first-child { box-shadow: inset 3px 0 0 var(--flag); }
     <section id="open">
       <h2><span class="n">17</span> จุดที่ยังไม่ตัดสิน</h2>
 
-      <p>แปดจุดที่ ticket ไม่ได้ตอบ — <strong>อย่าเดาแทน</strong> แต่ละจุดมีใบที่ควรเป็นคนตอบกำกับไว้. จุดที่ 8 ไม่ได้มาจากการวางแผน แต่โผล่ตอนรัน eval จริง</p>
+      <p>เจ็ดจุดที่ ticket ไม่ได้ตอบ — <strong>อย่าเดาแทน</strong> แต่ละจุดมีใบที่ควรเป็นคนตอบกำกับไว้</p>
 
       <div class="tablewrap">
         <table>
@@ -1318,7 +1319,7 @@ tr.is-flag td:first-child { box-shadow: inset 3px 0 0 var(--flag); }
             <tr><td class="num">5</td><td>สามก้อนอยู่ที่ checkpoint, <code>plo_report</code>, หรือทั้งสอง</td><td>06</td></tr>
             <tr><td class="num">6</td><td><code>plo_report</code> / มคอ.2 exporter ต้องรายงาน Need ที่ถูกกันไหม รายงานให้ใคร</td><td>06 แล้วแตกใบใหม่</td></tr>
             <tr><td class="num">7</td><td><code>summarize_need</code> ควรเห็นธงรายสมาชิกไหม และถ้าเห็นควรทำอะไร</td><td>ยังไม่มีใบ</td></tr>
-            <tr class="is-flag"><td class="num">8</td><td><strong><code>requirement</code> ควรข้าม <code>is_in_scope</code> ไหม</strong> — สภาวิชาชีพสั่งแล้ว guard ยังกรองทิ้งได้ตามคำโมเดล<br><span class="fig__k">(ก) ปล่อยตามนี้ · (ข) ให้ข้ามเหมือนที่มันข้าม <code>unclassified</code> อยู่แล้ว · (ค) ไม่ข้าม แต่ยกเป็นก้อนแยกที่ checkpoint ให้ตัดสินก่อนเสมอ</span></td><td>ยังไม่มีใบ — พบตอนรัน eval จริง</td></tr>
+
           </tbody>
         </table>
       </div>
