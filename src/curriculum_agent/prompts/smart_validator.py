@@ -17,6 +17,12 @@ def build_smart_soft_judge_prompt(
     statement. The institutional half of Relevant is settled in code from
     Need.source_stakeholder_types.
 
+    R names no source of demand of its own. It used to add "and reflects what the
+    labour market wants", which was not checkable from this prompt — the market is
+    not in it, only the Needs are — and which misdirects once the Needs shown come
+    from a professional council or the institution: a correctly-sourced PLO gets
+    marked down for not sounding like a job ad.
+
     Time-bound defaults to true: a PLO carries "by the end of the program" by
     convention, so silence about time is correct and only a conflicting horizon is
     a finding.
@@ -28,8 +34,8 @@ def build_smart_soft_judge_prompt(
         "measurable_ok: สังเกตได้ และประเมินได้จริงด้วยเครื่องมือทางการศึกษา "
         "(ข้อสอบ ชิ้นงาน การปฏิบัติ แฟ้มผลงาน) — การไม่มีคำห้ามยังไม่นับว่าวัดได้\n"
         "achievable_ok: ระดับ Bloom สมเหตุสมผลกับระดับคุณวุฒิ และบรรลุได้ภายในระยะเวลาหลักสูตร\n"
-        "relevant_needs_ok: ตอบสนองความต้องการของผู้มีส่วนได้ส่วนเสียที่อ้างถึงจริง "
-        "และสะท้อนสมรรถนะที่ตลาดแรงงานต้องการ\n"
+        "relevant_needs_ok: ตอบสนอง Need ที่ให้มาในข้อความนี้จริง ไม่ใช่แค่เกี่ยวข้องกันกว้างๆ "
+        "ตัดสินจาก Need ที่ให้มาเท่านั้น ห้ามอ้างกรอบอื่นที่ไม่ได้แสดงไว้\n"
         "time_bound_ok: ค่าเริ่มต้นเป็น true — PLO ถือว่าบรรลุ 'เมื่อสิ้นสุดหลักสูตร' โดยปริยาย "
         "ให้ตอบ false เฉพาะเมื่อข้อความระบุกรอบเวลาอื่นที่ขัดกัน เช่น 'ภายในปีที่ 2'\n"
         "notes_th: เหตุผลสั้นๆ สำหรับข้อที่ไม่ผ่าน"

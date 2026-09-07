@@ -126,8 +126,7 @@ class _NeedStatement(BaseModel):
             )
         if looks_like_a_skill_list(trimmed):
             raise ValueError(
-                "statement_th เป็นการนำชื่อทักษะมาต่อกันด้วยจุลภาค "
-                "ให้เขียนเป็นประโยคความต้องการของตลาดหนึ่งประโยค"
+                "statement_th เป็นการนำชื่อทักษะมาต่อกันด้วยจุลภาค ให้เขียนเป็นประโยคความต้องการหนึ่งประโยค"
             )
         vague = find_vague_phrase(trimmed)
         if vague:

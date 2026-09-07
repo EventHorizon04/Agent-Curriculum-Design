@@ -51,6 +51,20 @@ def test_vision_appears_nowhere() -> None:
     assert "วิสัยทัศน์" not in _built()
 
 
+def test_relevant_is_judged_against_the_cited_needs_and_nothing_else() -> None:
+    """R had a second clause asking whether the PLO reflected what the labour
+    market wants. It was never checkable from this prompt — the market is not in
+    it, only the Needs are — and it contradicted the docstring above, which says R
+    is judged against the Needs the PLO cites. Worse, the Needs shown may come
+    from a professional council or the institution, so a judge taking the clause
+    literally marks a correctly-sourced PLO down for not sounding like a job ad.
+    """
+    system = build_smart_soft_judge_prompt("PLO", "bachelor", 4, _NEEDS)[0]["content"]
+
+    assert "ตลาดแรงงาน" not in system
+    assert "Need ที่ให้มา" in system
+
+
 def test_measurable_asks_about_real_assessment_not_just_wording() -> None:
     """Pin the measurable_ok line itself, not the shared preamble — "ประเมิน"
     alone also occurs in "SMART ประเมิน 5 ข้อ" and would pass regardless of
