@@ -152,3 +152,25 @@ def test_the_graduate_capability_rule_asks_for_a_flag_rather_than_a_deletion():
 
     assert "ให้คงไว้แต่ตั้งเป็น false" in rule
     assert "ห้ามตัดทิ้งเอง" in rule
+
+
+def test_the_task_line_does_not_narrow_the_corpus_to_the_labour_market():
+    """Evidence comes from every StakeholderType, not from job postings alone.
+
+    The opening line asked for "ทักษะที่ตลาดแรงงานต้องการ", which is the wrong
+    question in front of a สภาวิชาชีพ standard, an alumni interview, or the
+    institution's own vision — and institutional_direction is the one source the
+    prompt then asks the model to flag rather than drop, so it has to be read,
+    not filtered out by the framing.
+    """
+    system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+
+    assert "ตลาดแรงงาน" not in system
+
+
+def test_the_task_line_says_the_evidence_may_come_from_any_stakeholder():
+    """The prompt is never told the stakeholder type — only requirement/general —
+    so if the framing does not say the source varies, nothing does."""
+    system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+
+    assert "ผู้มีส่วนได้ส่วนเสีย" in system

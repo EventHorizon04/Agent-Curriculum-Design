@@ -10,6 +10,16 @@ def build_extract_skills_prompt(
 ) -> list[dict[str, str]]:
     """Extract skills from one evidence item, tagged and judged for field fit.
 
+    The task line names no single source of demand. It used to ask for
+    "ทักษะที่ตลาดแรงงานต้องการ", which is the wrong question in front of most of the
+    corpus: evidence carries every StakeholderType, and the prompt is told only
+    `requirement`/`general`, never which type it is reading. A สภาวิชาชีพ standard,
+    an alumni interview and the institution's own vision were all being mined for
+    what a labour market wants. institutional_direction is the sharpest case,
+    because the rules below then ask the model to *flag* institutional activity
+    rather than drop it — a framing that filters it out before the flag is
+    reached defeats the flag.
+
     `field_th` and `program_name_th` are what make the "no off-field skills" rule
     answerable — before they existed the model was told to exclude skills outside
     the program's field without being told what the field was. They default to
@@ -35,7 +45,10 @@ def build_extract_skills_prompt(
     """
     system = (
         "คุณเป็นผู้เชี่ยวชาญวิเคราะห์ทักษะจากข้อความ\n"
-        "จากข้อความ evidence จงระบุทักษะที่ตลาดแรงงานต้องการ\n\n"
+        "จากข้อความ evidence จงระบุทักษะหรือสมรรถนะที่ข้อความนั้นเรียกร้อง\n"
+        "evidence มาจากผู้มีส่วนได้ส่วนเสียได้หลายกลุ่ม เช่น ผู้ใช้บัณฑิต สภาวิชาชีพ ศิษย์เก่า "
+        "ชุมชน หรือทิศทางของสถาบันเอง ไม่ใช่ประกาศรับสมัครงานเท่านั้น "
+        "ให้อ่านตามสิ่งที่ข้อความนั้นเรียกร้องจริง\n\n"
         "กติกา:\n"
         "- แต่ละทักษะต้องเป็น 'วลี' หรือกลุ่มคำที่สื่อความสามารถ ห้ามเป็นคำโดดคำเดียว\n"
         "- ทักษะแต่ละรายการต้องไม่ซ้ำและไม่คาบเกี่ยวกัน (unique, independent) "
