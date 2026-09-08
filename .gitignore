@@ -23,3 +23,14 @@ curriculum-design-agent.zip
 # publicly available elsewhere.
 .scratch/**/eval/baseline/
 .scratch/**/sources/
+
+# Tooling state, not project work: installed skill bundles and their lockfile.
+.agents/
+skills-lock.json
+
+# The TCISM test set the scope-guard work was measured against. Same reason the
+# .scratch corpora above are excluded: verbatim stakeholder text from one real
+# institution's internal documents, plus that program's human-authored answer
+# key. Referenced by .scratch/plo-scope-guard/ but never committed with it.
+Data/ความต้องการของผู้มีส่วนได้ส่วนเสีย การแป.docx
+Data/Needs_to_PLO_TCISM.xlsx
