@@ -120,3 +120,27 @@ def test_list_sessions_returns_list():
         resp = client.get("/programs/p1/sessions")
     assert resp.status_code == 200
     assert len(resp.json()) == 1
+
+
+async def test_a_failed_graph_run_stores_the_reason():
+    """The reason a run died reaches the session row, not just the log.
+
+    `_run_graph` catches everything a stage raises — which is now where a missing
+    precondition is reported — and used to record only the word "failed".
+    """
+    from curriculum_agent.api.routes.sessions import _run_graph
+
+    graph = MagicMock()
+    graph.ainvoke = AsyncMock(
+        side_effect=ValueError("ไม่มี evidence สำหรับโปรแกรมนี้ กรุณาเพิ่ม evidence ก่อน")
+    )
+    repo = MagicMock()
+    repo.set_status = AsyncMock()
+
+    with patch("curriculum_agent.api.routes.sessions.SessionRepository", return_value=repo):
+        await _run_graph(graph, {"configurable": {"thread_id": "t"}}, {}, "sess-1")
+
+    repo.set_status.assert_awaited_once()
+    args, kwargs = repo.set_status.await_args
+    assert args[:2] == ("sess-1", "failed")
+    assert "evidence" in (kwargs.get("message") or args[2])

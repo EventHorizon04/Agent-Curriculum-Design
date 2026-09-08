@@ -53,8 +53,12 @@ async def _run_graph(
         else:
             await repo.set_status(session_id, "completed")
     except Exception as exc:
+        # The reason goes on the row, not only into the log. A stage refusing to
+        # run for want of evidence, skills or Needs is a message the designer can
+        # act on — it is the same precondition the stage pages answer 422 with —
+        # and a bare "failed" sent them to an engineer to read the log instead.
         logger.error(f"Graph run failed for session {session_id}: {exc}")
-        await repo.set_status(session_id, "failed")
+        await repo.set_status(session_id, "failed", message=str(exc))
 
 
 @router.post("/", response_model=SessionInfo)

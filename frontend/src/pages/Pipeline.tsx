@@ -113,9 +113,20 @@ function SessionCard({
         </span>
       </div>
 
+      {/* The same column carries a suspension's review prompt and a failed
+          run's reason — a stage refusing to run for want of evidence, skills or
+          Needs. A failed session used to show a bare FAILED with the reason only
+          in the server log, while the same precondition hit from a stage page
+          answers with it in Thai. */}
       {session.suspended_message && session.status === 'suspended' && (
         <p style={{ margin: '8px 0 4px', fontSize: 12, color: '#92400e' }}>
           ⏸ {session.suspended_message}
+        </p>
+      )}
+
+      {session.suspended_message && session.status === 'failed' && (
+        <p style={{ margin: '8px 0 4px', fontSize: 12, color: '#b91c1c' }}>
+          ✕ {session.suspended_message}
         </p>
       )}
 

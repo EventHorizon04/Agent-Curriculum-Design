@@ -460,12 +460,20 @@ class SessionRepository:
             rows = result.scalars().all()
             return [SessionInfo.model_validate(_row_to_dict(row)) for row in rows]
 
-    async def set_status(self, session_id: str, status: str) -> None:
+    async def set_status(self, session_id: str, status: str, message: str | None = None) -> None:
+        """Set the status, and the message explaining it when there is one.
+
+        Writes the same column `set_suspended` uses — it is the session's
+        message, not only a suspension's — and only when a message is given, so
+        resuming a run does not blank the note from the checkpoint it came from.
+        """
         async with AsyncSessionLocal() as db:
             row = await db.get(SessionTable, session_id)
             if row is None:
                 return
             row.status = status
+            if message is not None:
+                row.suspended_message = message
             row.updated_at = datetime.utcnow()
             await db.commit()
 
