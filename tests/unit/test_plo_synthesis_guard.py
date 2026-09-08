@@ -24,24 +24,53 @@ _METADATA = {
 }
 
 
-async def test_run_raises_when_no_needs() -> None:
-    """Stage 4 must raise ValueError before hitting LLM when Needs is empty."""
+async def test_run_raises_when_needs_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An empty list is need_combination's answer, and the message says so.
+
+    It must not send the designer to re-run need_combination — that stage ran and
+    reported honestly — and it must not fall back to the stored Needs, which
+    would synthesise PLOs from rows this run did not produce.
+    """
+    loader = AsyncMock(return_value=[_need("N1")])
+    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+
     state: AgentState = {
         "program_id": "test",
         "needs": [],
         "metadata": _METADATA,
     }
-    with pytest.raises(ValueError, match="no Needs"):
+    with pytest.raises(ValueError, match="need_combination"):
         await run(state)
 
+    loader.assert_not_awaited()
 
-async def test_run_raises_when_needs_missing() -> None:
-    """Stage 4 must raise ValueError when the needs key is missing."""
-    state: AgentState = {
-        "program_id": "test",
-        "metadata": _METADATA,
-    }
-    with pytest.raises(ValueError, match="no Needs"):
+
+async def test_run_reads_stored_needs_when_the_key_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing key means the stage was entered directly, not that there is
+    nothing to synthesise — the stored set is what POST /plos/run would have
+    handed over, so the graph reads the same thing."""
+    needs = [_need("N1")]
+    _patch_llm(monkeypatch, needs)
+    loader = AsyncMock(return_value=needs)
+    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+
+    state: AgentState = {"program_id": "test", "metadata": _METADATA}
+    result = await run(state)
+
+    loader.assert_awaited_once_with("test")
+    assert len(result["plos"]) == 1
+
+
+async def test_run_raises_when_nothing_is_stored_either(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing in state and nothing on record: the Needs stage has to run."""
+    monkeypatch.setattr(ps.NeedRepository, "list_by_program", AsyncMock(return_value=[]))
+
+    state: AgentState = {"program_id": "test", "metadata": _METADATA}
+    with pytest.raises(ValueError, match="ยังไม่มี Need"):
         await run(state)
 
 

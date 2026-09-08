@@ -222,10 +222,23 @@ async def test_freq_counts_mentions_not_unique_names(monkeypatch: pytest.MonkeyP
     assert state["needs"][0]["freq"] == 2  # two mentions, one name
 
 
-async def test_empty_skills_yields_no_needs(monkeypatch: pytest.MonkeyPatch):
-    _patch_repo(monkeypatch)
-    state = await nc.run({"program_id": "cs-test", "extracted_skills": []})
-    assert state["needs"] == []
+async def test_empty_skills_stops_the_run_instead_of_yielding_no_needs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An empty extraction is reported here, not carried forward.
+
+    It used to return `needs == []`, which walked on through the shared
+    checkpoint to plo_synthesis — the stage that then failed, naming this one.
+    The stored Needs still survive: the raise happens before delete_by_program.
+    """
+    delete = AsyncMock()
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", delete)
+    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+
+    with pytest.raises(ValueError, match="skill_extraction"):
+        await nc.run({"program_id": "cs-test", "extracted_skills": []})
+
+    delete.assert_not_awaited()
 
 
 async def test_no_upper_cap_on_core_needs(monkeypatch: pytest.MonkeyPatch):

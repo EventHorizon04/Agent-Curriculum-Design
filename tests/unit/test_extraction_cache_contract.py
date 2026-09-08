@@ -93,7 +93,14 @@ async def test_cache_key_actually_incorporates_the_contract(monkeypatch: pytest.
     monkeypatch.setattr(se.LLMCacheRepository, "get", capture)
     monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
     monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
-    monkeypatch.setattr(se, "complete_extraction", AsyncMock(side_effect=RuntimeError("no LLM")))
+    # Answers, but names nothing. A raising mock would exercise the
+    # every-call-failed path instead, which now stops the stage — and this
+    # test is about the key `get` was asked for, not about that path.
+    monkeypatch.setattr(
+        se,
+        "complete_extraction",
+        AsyncMock(return_value=se._ExtractedSkillsResponse(skills=[])),
+    )
 
     monkeypatch.setattr(se, "_EXTRACTION_CONTRACT", "contract-one")
     await se.run({"program_id": "cs-test", "classified_evidence": [_EVIDENCE]})
@@ -127,7 +134,14 @@ async def test_cache_key_incorporates_program_metadata(monkeypatch: pytest.Monke
     monkeypatch.setattr(se.LLMCacheRepository, "get", capture)
     monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
     monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
-    monkeypatch.setattr(se, "complete_extraction", AsyncMock(side_effect=RuntimeError("no LLM")))
+    # Answers, but names nothing. A raising mock would exercise the
+    # every-call-failed path instead, which now stops the stage — and this
+    # test is about the key `get` was asked for, not about that path.
+    monkeypatch.setattr(
+        se,
+        "complete_extraction",
+        AsyncMock(return_value=se._ExtractedSkillsResponse(skills=[])),
+    )
 
     metadata_cs = {"field": "วิทยาการคอมพิวเตอร์", "name_th": "หลักสูตรวิทยาการคอมพิวเตอร์"}
     metadata_nursing = {"field": "พยาบาลศาสตร์", "name_th": "หลักสูตรพยาบาลศาสตร์"}

@@ -102,7 +102,7 @@ async def test_optional_need_yields_optional_plo(
 async def test_no_needs_raises_rather_than_inventing_plos(
     program_metadata: ProgramMetadata, monkeypatch: pytest.MonkeyPatch
 ):
-    with pytest.raises(ValueError, match="no Needs"):
+    with pytest.raises(ValueError, match="need_combination"):
         await ps.run(
             {
                 "program_id": "cs-test",

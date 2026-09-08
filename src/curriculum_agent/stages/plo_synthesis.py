@@ -5,7 +5,7 @@ from collections.abc import Iterable
 from loguru import logger
 from pydantic import BaseModel, model_validator
 
-from curriculum_agent.data.repositories import PLORepository
+from curriculum_agent.data.repositories import NeedRepository, PLORepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light, complete_synthesis
 from curriculum_agent.models import (
@@ -344,11 +344,28 @@ async def run(state: AgentState) -> AgentState:
     metadata = ProgramMetadata.model_validate(metadata_dict)
     note_th = state.get("designer_note")
 
-    needs = [Need.model_validate(d) for d in state.get("needs", [])]
+    need_dicts = state.get("needs")
+    if need_dicts is None:
+        # Same input whichever way this stage was reached: POST /plos/run loads
+        # the Needs and hands them over, and a graph session that gets here
+        # without need_combination in the same run reads the stored set rather
+        # than synthesising from nothing.
+        stored = await NeedRepository().list_by_program(program_id)
+        need_dicts = [n.model_dump(mode="json") for n in stored]
+        logger.info(f"Stage 4: loaded {len(need_dicts)} Needs from storage")
+        if not need_dicts:
+            raise ValueError(
+                f"ยังไม่มี Need สำหรับโปรแกรม '{program_id}' กรุณารันขั้นรวมทักษะเป็น Need ก่อนสังเคราะห์ PLO"
+            )
+    needs = [Need.model_validate(d) for d in need_dicts]
     if not needs:
+        # An empty list, not a missing key: need_combination ran in this session
+        # and returned no groups. It did not fail, so the message must not send
+        # the designer to re-run it and wait for a different answer — the thing
+        # to look at is what it was given.
         raise ValueError(
-            f"Stage 4: no Needs for program '{program_id}' — "
-            "run need_combination successfully before PLO synthesis"
+            f"need_combination รันแล้วแต่ไม่ได้ Need เลยสำหรับโปรแกรม '{program_id}' "
+            "— ตรวจทักษะที่สกัดได้ที่ขั้น Skill Extraction ก่อน"
         )
 
     # Every stored id, not just the ones that survive the filter: this is the

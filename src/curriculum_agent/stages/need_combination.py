@@ -7,7 +7,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, field_validator
 from pydantic import ValidationError as PydanticValidationError
 
-from curriculum_agent.data.repositories import NeedRepository
+from curriculum_agent.data.repositories import NeedRepository, SkillRepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light
 from curriculum_agent.models import (
@@ -243,18 +243,30 @@ async def run(state: AgentState) -> AgentState:
     # None for a program stored before intake collected a field, which is exactly
     # the pre-context behaviour: say nothing rather than a stub line.
     program_context = build_program_context_th(state.get("metadata") or {})
-    skill_dicts = state.get("extracted_skills", [])
+    skill_dicts = state.get("extracted_skills")
+    if skill_dicts is None:
+        # Re-clustering the skills already on record, which is what
+        # POST /needs/combine/run does and what a graph session entering here
+        # after hand-run stages needs too. The expensive per-evidence extraction
+        # is deliberately not repeated.
+        stored = await SkillRepository().list_by_program(program_id)
+        skill_dicts = [sk.model_dump(mode="json") for sk in stored]
+        logger.info(f"Stage 3b: loaded {len(skill_dicts)} skills from storage")
     skills = [ExtractedSkill.model_validate(d) for d in skill_dicts]
     logger.info(f"Stage 3b: need_combination from {len(skills)} skills")
 
     if not skills:
-        # Returns before delete_by_program on purpose, same reasoning as the
-        # matching guard in skill_extraction: producing nothing must not destroy a
-        # previous run's Needs.
-        logger.warning("need_combination: no extracted skills — previous Needs left untouched")
-        state["needs"] = []
-        state["current_stage"] = "need_combination"
-        return state
+        # Raised rather than returned empty, and before delete_by_program so a
+        # previous run's Needs survive — the reasoning behind that guard is
+        # unchanged, only what happens next is: returning an empty list let the
+        # run walk on to plo_synthesis, which then blamed this stage for a state
+        # it had reported honestly. An empty list here is also never answered by
+        # loading the stored skills: extraction having produced nothing must not
+        # be papered over with the previous run's rows.
+        raise ValueError(
+            "ยังไม่มีทักษะที่สกัดไว้สำหรับโปรแกรมนี้ กรุณารัน skill_extraction "
+            "ให้ได้ทักษะก่อนรวมเป็น Need (Need ที่บันทึกไว้เดิมยังอยู่)"
+        )
 
     # Read off the skills, not off the evidence rows: this stage sees only what
     # extraction produced, and the same corpus skill_extraction scored its

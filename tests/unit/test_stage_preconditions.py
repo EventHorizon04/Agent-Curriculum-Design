@@ -1,0 +1,309 @@
+"""Every stage reads the same input whether it was reached by the graph or by
+the per-stage REST route the designer's page calls.
+
+There are two ways to run a stage, and until now they disagreed about where a
+stage's input comes from. The REST routes load it from the repositories and
+answer 422 when there is nothing to load. The graph passed it forward in
+`AgentState` alone, so a session that began after a designer had already run
+some stages by hand started from nothing, walked silently through three stages
+that each produced an empty list, and failed at `plo_synthesis` with a message
+blaming `need_combination` — the one stage that had in fact just run and
+returned normally.
+
+The rule pinned here: a missing key means "this stage was entered directly" and
+the stage loads its own input from the repository; an *empty* key means the
+previous stage ran and produced nothing, and the stage says so instead of
+loading older rows that would hide the failure.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import AsyncMock
+
+import pytest
+
+from curriculum_agent.models import (
+    BloomLevel,
+    ExtractedSkill,
+    KSECCategory,
+    Need,
+    ProgramMetadata,
+    StakeholderEvidence,
+    StakeholderType,
+)
+from curriculum_agent.stages import need_combination as nc
+from curriculum_agent.stages import plo_synthesis as ps
+from curriculum_agent.stages import skill_extraction as se
+from curriculum_agent.stages import stakeholder_needs as sn
+
+PROGRAM = "cs-test"
+
+
+def _evidence(eid: str = "E1") -> StakeholderEvidence:
+    return StakeholderEvidence(
+        evidence_id=eid,
+        program_id=PROGRAM,
+        stakeholder_type=StakeholderType.EMPLOYER,
+        source_name="สถานประกอบการตัวอย่าง",
+        raw_text_th="ต้องการบัณฑิตที่ออกแบบและพัฒนาระบบสารสนเทศขององค์กรได้",
+    )
+
+
+def _skill(sid: str = "S1", eid: str = "E1") -> ExtractedSkill:
+    return ExtractedSkill(
+        skill_id=sid,
+        program_id=PROGRAM,
+        skill_name_th="ออกแบบฐานข้อมูล",
+        ksec_category=KSECCategory.S,
+        bloom_level=BloomLevel.APPLY,
+        evidence_span_th="ออกแบบฐานข้อมูล",
+        source_evidence_id=eid,
+        source_stakeholder_type=StakeholderType.EMPLOYER,
+        classification="need",
+        extraction_method="llm",
+        confidence=0.9,
+        importance_score=0.5,
+    )
+
+
+def _metadata() -> dict[str, object]:
+    """A full ProgramMetadata payload — plo_synthesis validates it before it
+    looks at the Needs, so a partial dict fails on the wrong error."""
+    return ProgramMetadata(
+        program_id=PROGRAM,
+        name_th="วิทยาการคอมพิวเตอร์",
+        name_en="Computer Science",
+        field="Computer Science",
+        degree_level="bachelor",
+        duration_years=4,
+        faculty="วิศวกรรมศาสตร์",
+        university="มหาวิทยาลัยทดสอบ",
+    ).model_dump(mode="json")
+
+
+def _need(nid: str = "N1") -> Need:
+    return Need(
+        need_id=nid,
+        program_id=PROGRAM,
+        statement_th="ต้องการบัณฑิตที่ออกแบบและดูแลระบบฐานข้อมูลขององค์กรให้ใช้งานได้จริง",
+        ksec_category=KSECCategory.S,
+        bloom_level=BloomLevel.APPLY,
+        member_skill_ids=["S1"],
+        source_evidence_ids=["E1"],
+        freq=1,
+        demand_score=0.8,
+    )
+
+
+# --------------------------------------------------------------------------
+# Sync: a missing key is filled from the repository, so a graph run picks up
+# whatever the designer already produced by hand.
+# --------------------------------------------------------------------------
+
+
+async def test_stakeholder_needs_loads_evidence_when_state_carries_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setattr(
+        sn.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
+    )
+    monkeypatch.setattr(sn.EvidenceRepository, "bulk_insert", AsyncMock())
+
+    state = await sn.run({"program_id": PROGRAM})
+
+    assert [e["evidence_id"] for e in state["classified_evidence"]] == ["E1"]
+
+
+async def test_skill_extraction_loads_evidence_when_state_carries_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    loader = AsyncMock(return_value=[_evidence()])
+    monkeypatch.setattr(se.EvidenceRepository, "list_by_program", loader)
+    monkeypatch.setattr(se.SkillRepository, "delete_by_program", AsyncMock(return_value=0))
+    monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
+    monkeypatch.setattr(se.LLMCacheRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
+
+    async def fake_extraction(model, messages, **kw):  # noqa: ANN001, ANN003
+        return se._ExtractedSkillsResponse(
+            skills=[
+                se._SkillItem(
+                    skill_name_th="ออกแบบฐานข้อมูล",
+                    ksec_category="S",
+                    bloom_level="apply",
+                    evidence_span_th="ออกแบบและพัฒนาระบบสารสนเทศ",
+                    confidence=0.9,
+                )
+            ]
+        )
+
+    monkeypatch.setattr(se, "complete_extraction", fake_extraction)
+
+    state = await se.run({"program_id": PROGRAM, "metadata": {"field": "Computer Science"}})
+
+    loader.assert_awaited_once_with(PROGRAM)
+    assert len(state["extracted_skills"]) == 1
+
+
+async def test_need_combination_loads_skills_when_state_carries_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    loader = AsyncMock(return_value=[_skill()])
+    monkeypatch.setattr(nc.SkillRepository, "list_by_program", loader)
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
+    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+
+    async def fake_cluster(names, target=None, program_context=None):  # noqa: ANN001
+        return [[i] for i in range(len(names))]
+
+    async def fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
+        return nc._NeedStatement(
+            statement_th="ต้องการบัณฑิตที่ออกแบบและดูแลระบบฐานข้อมูลขององค์กรให้ใช้งานได้จริง",
+            statement_en="The market needs graduates who design and maintain databases",
+        )
+
+    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(nc, "complete_light", fake_summarize)
+
+    state = await nc.run({"program_id": PROGRAM})
+
+    loader.assert_awaited_once_with(PROGRAM)
+    assert len(state["needs"]) == 1
+
+
+async def test_plo_synthesis_loads_needs_when_state_carries_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    loader = AsyncMock(return_value=[_need()])
+    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+    monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
+    monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())
+
+    async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
+        return ps._SingleDraftResponse(
+            plo=ps._PLODraft(
+                statement_th="ออกแบบและดูแลระบบฐานข้อมูลขององค์กรได้",
+                bloom_level=BloomLevel.APPLY,
+                action_verb_th="ออกแบบ",
+                rationale_th="ความต้องการของสถานประกอบการ",
+                source_need_ids=["N1"],
+            )
+        )
+
+    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
+        return ps._SmartSoftJudge()
+
+    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_light", fake_light)
+
+    state = await ps.run(
+        {
+            "program_id": PROGRAM,
+            "metadata": _metadata(),
+        }
+    )
+
+    loader.assert_awaited_once_with(PROGRAM)
+    assert len(state["plos"]) == 1
+
+
+# --------------------------------------------------------------------------
+# Preconditions: nothing to load, or the previous stage produced nothing.
+# The stage names the stage that has to run, and never loads older rows in
+# place of the empty result.
+# --------------------------------------------------------------------------
+
+
+async def test_stakeholder_needs_says_evidence_is_missing(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sn.EvidenceRepository, "list_by_program", AsyncMock(return_value=[]))
+
+    with pytest.raises(ValueError, match="evidence"):
+        await sn.run({"program_id": PROGRAM})
+
+
+async def test_skill_extraction_blames_evidence_not_itself(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(se.EvidenceRepository, "list_by_program", AsyncMock(return_value=[]))
+
+    with pytest.raises(ValueError, match="evidence"):
+        await se.run({"program_id": PROGRAM, "metadata": {}})
+
+
+async def test_need_combination_refuses_an_empty_extraction_without_deleting_needs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An empty `extracted_skills` is stage 2's answer, not a missing key.
+
+    Loading the stored skills here would cluster the previous run's rows and
+    report success, hiding an extraction that produced nothing.
+    """
+    loader = AsyncMock(return_value=[_skill()])
+    delete = AsyncMock()
+    monkeypatch.setattr(nc.SkillRepository, "list_by_program", loader)
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", delete)
+
+    with pytest.raises(ValueError, match="skill_extraction"):
+        await nc.run({"program_id": PROGRAM, "extracted_skills": []})
+
+    loader.assert_not_awaited()
+    delete.assert_not_awaited()
+
+
+async def test_plo_synthesis_does_not_blame_need_combination_for_an_empty_result(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The message the failing session logged blamed the wrong stage.
+
+    `need_combination` had run and returned normally with no groups; telling the
+    designer to "run need_combination successfully" sends them to the one stage
+    that is not at fault.
+    """
+    loader = AsyncMock(return_value=[_need()])
+    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+
+    with pytest.raises(ValueError) as excinfo:
+        await ps.run(
+            {
+                "program_id": PROGRAM,
+                "metadata": _metadata(),
+                "needs": [],
+            }
+        )
+
+    loader.assert_not_awaited()
+    assert "need_combination" in str(excinfo.value)
+    assert "successfully" not in str(excinfo.value)
+
+
+async def test_skill_extraction_separates_a_failed_provider_from_an_empty_reading(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Every call failing is not the same answer as every call succeeding empty.
+
+    The first is infrastructure — a quota, a dead endpoint — and must stop the
+    run where the cause is known. The second is a real reading of the evidence
+    and keeps the existing behaviour: return empty, leave the stored rows alone.
+    """
+    monkeypatch.setattr(se.SkillRepository, "delete_by_program", AsyncMock(return_value=0))
+    monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
+    monkeypatch.setattr(se.LLMCacheRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
+
+    state_in = {
+        "program_id": PROGRAM,
+        "metadata": {"field": "Computer Science"},
+        "classified_evidence": [_evidence().model_dump(mode="json")],
+    }
+
+    async def every_call_fails(model, messages, **kw):  # noqa: ANN001, ANN003
+        raise RuntimeError("402 in_flight_budget_exhausted")
+
+    monkeypatch.setattr(se, "complete_extraction", every_call_fails)
+    with pytest.raises(RuntimeError, match="ทุก"):
+        await se.run(dict(state_in))
+
+    async def every_call_reads_nothing(model, messages, **kw):  # noqa: ANN001, ANN003
+        return se._ExtractedSkillsResponse(skills=[])
+
+    monkeypatch.setattr(se, "complete_extraction", every_call_reads_nothing)
+    state = await se.run(dict(state_in))
+    assert state["extracted_skills"] == []

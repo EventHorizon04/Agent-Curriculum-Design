@@ -40,8 +40,23 @@ async def run(state: AgentState) -> AgentState:
     ones: the class is now derived from the type, so a stored value that disagrees
     is stale data to correct rather than a human judgement to preserve.
     """
-    raw = state.get("raw_evidence", [])
+    program_id = state.get("program_id", "unknown")
+    raw = state.get("raw_evidence")
+    if raw is None:
+        # Entered directly rather than through intake — a per-stage REST call, or
+        # a graph session resumed after the designer worked the pages by hand.
+        # Loading here is what makes both ways of running this stage read the
+        # same corpus; `intake` still pre-loads it when the run starts there, and
+        # this branch is then never taken.
+        stored = await EvidenceRepository().list_by_program(program_id)
+        raw = [e.model_dump(mode="json") for e in stored]
+        logger.info(f"Stage 1: loaded {len(raw)} evidence items from storage")
     items = [StakeholderEvidence.model_validate(d) for d in raw]
+    if not items:
+        # Said here rather than three stages later. Every stage after this one
+        # produced an empty list quietly, and the run died at plo_synthesis
+        # naming a stage that had run correctly.
+        raise ValueError("ไม่มี evidence สำหรับโปรแกรมนี้ กรุณาเพิ่ม evidence ที่ขั้น Stakeholder Needs ก่อน")
     logger.info(f"Stage 1: classifying {len(items)} evidence items")
 
     classified = [await classify_single(e) for e in items]

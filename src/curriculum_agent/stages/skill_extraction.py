@@ -12,7 +12,11 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from curriculum_agent.config import settings
 from curriculum_agent.data.prune_cache import EXTRACTION
-from curriculum_agent.data.repositories import LLMCacheRepository, SkillRepository
+from curriculum_agent.data.repositories import (
+    EvidenceRepository,
+    LLMCacheRepository,
+    SkillRepository,
+)
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_extraction
 from curriculum_agent.models import (
@@ -286,8 +290,22 @@ async def run(state: AgentState) -> AgentState:
     Grouping into Needs is a separate stage (need_combination); this stage only
     extracts and persists ExtractedSkill rows.
     """
-    classified = state.get("classified_evidence", [])
     program_id = state.get("program_id", "unknown")
+    classified = state.get("classified_evidence")
+    if classified is None:
+        # Reached without stage 1 in the same run: the /needs REST routes load
+        # the corpus themselves, and a graph session that starts here has to do
+        # the same or it extracts from nothing. An *empty* list is a different
+        # thing and is rejected below — stage 1 having found no evidence must not
+        # be answered by re-reading rows it already decided about.
+        stored = await EvidenceRepository().list_by_program(program_id)
+        classified = [e.model_dump(mode="json") for e in stored]
+        logger.info(f"Stage 2: loaded {len(classified)} evidence items from storage")
+    if not classified:
+        raise ValueError(
+            "ไม่มี evidence สำหรับโปรแกรมนี้ กรุณาเพิ่ม evidence "
+            "ที่ขั้น Stakeholder Needs ก่อนรัน Skill Extraction"
+        )
     metadata = state.get("metadata") or {}
     field_th = str(metadata.get("field", ""))
     program_name_th = str(metadata.get("name_th", ""))
@@ -489,10 +507,29 @@ async def run(state: AgentState) -> AgentState:
     state["dropped_ungrounded_count"] = dropped_ungrounded
 
     if not raw_skills:
-        # Returns before delete_by_program on purpose: a run that extracted
-        # nothing (every call failed, or everything failed groundedness) must not
-        # wipe a previous run's good rows. The stale rows stay visible and a
-        # re-run replaces them once it actually produces something.
+        # Two different situations reach this line, and only one of them is an
+        # answer about the evidence.
+        #
+        # Every item coming back None means no provider call succeeded at all —
+        # an exhausted quota, a dead endpoint, a bad key. That is not "this
+        # corpus contains no skills", and returning an empty list for it sent
+        # the run on to need_combination and then to plo_synthesis, which failed
+        # naming a stage that had done nothing wrong. Raise where the cause is
+        # known and still in the log above.
+        #
+        # Anything else — the model read the windows and named nothing, or
+        # everything it named failed groundedness — is a real reading, and keeps
+        # the original behaviour.
+        #
+        # Both paths return before delete_by_program: a run that produced
+        # nothing must not wipe a previous run's good rows.
+        if all(r is None for r in results):
+            raise RuntimeError(
+                f"สกัดทักษะไม่สำเร็จ: การเรียกโมเดลล้มเหลวทุกรายการ "
+                f"({len(evidences)} หลักฐาน) — ตรวจ provider/quota ของ "
+                f"{settings.extraction_model} แล้วรันขั้นนี้ใหม่ "
+                "(ทักษะที่บันทึกไว้เดิมยังอยู่)"
+            )
         logger.warning("Stage 2: no skills extracted — previous rows left untouched")
         state["extracted_skills"] = []
         state["current_stage"] = "skill_extraction"
