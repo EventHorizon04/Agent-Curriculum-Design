@@ -37,6 +37,11 @@ export default function Programs() {
   const [programs, setPrograms] = useState<ProgramSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Which row is asking for confirmation, and which one is mid-request. Both are
+  // ids rather than booleans so a second row cannot inherit the first row's
+  // pending state when the list re-renders.
+  const [pendingId, setPendingId] = useState<string | null>(null)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
   const { setProgramId } = useProgram()
   const navigate = useNavigate()
 
@@ -62,17 +67,24 @@ export default function Programs() {
     navigate(stageRoute(p.current_stage))
   }
 
-  const handleDelete = async (e: React.MouseEvent, p: ProgramSummary) => {
-    e.stopPropagation()
-    if (!window.confirm(`ลบหลักสูตร "${programLabel(p)}" ทั้งหมด? ข้อมูลจะหายถาวรและกู้คืนไม่ได้`)) {
-      return
-    }
+  /** Deletion confirms in the page, not through `window.confirm`.
+   *
+   *  The native dialog returns `false` for "the user cancelled" and for "no
+   *  dialog was ever shown" alike — a browser that suppresses dialogs turns a
+   *  permanently destructive action into a button that silently does nothing,
+   *  with no error to show. An inline confirmation is state we can see. */
+  const confirmDelete = async (p: ProgramSummary) => {
+    setDeletingId(p.program_id)
+    setError(null)
     try {
       await api.delete(`/programs/${p.program_id}`)
+      setPendingId(null)
       await load()
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } }
       setError(axiosErr.response?.data?.detail ?? 'ลบหลักสูตรไม่สำเร็จ')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -115,19 +127,26 @@ export default function Programs() {
             </tr>
           </thead>
           <tbody>
+            {/* The row itself is no longer the click target. Opening a program
+                and deleting it were two handlers on the same event path, with
+                the destructive one relying on stopPropagation to win — and a
+                row is not reachable by keyboard either. The name is a real
+                button; delete is its sibling, not its descendant. */}
             {programs.map((p) => (
-              <tr
-                key={p.program_id}
-                onClick={() => openProgram(p)}
-                className="border-b cursor-pointer hover:bg-gray-50"
-              >
+              <tr key={p.program_id} className="border-b hover:bg-gray-50">
                 <td className="py-2 pr-4">
-                  <div className="font-medium">{programLabel(p)}</div>
-                  <div className="text-xs text-gray-400">
-                    {[p.faculty, p.name_en].filter(Boolean).join(' · ')}
-                    {(p.faculty || p.name_en) && ' · '}
-                    {p.program_id}
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openProgram(p)}
+                    className="w-full text-left"
+                  >
+                    <span className="block font-medium hover:underline">{programLabel(p)}</span>
+                    <span className="block text-xs text-gray-400">
+                      {[p.faculty, p.name_en].filter(Boolean).join(' · ')}
+                      {(p.faculty || p.name_en) && ' · '}
+                      {p.program_id}
+                    </span>
+                  </button>
                 </td>
                 <td className="py-2 pr-4">{DEGREE_LABELS[p.degree_level] ?? p.degree_level}</td>
                 <td className="py-2 pr-4">
@@ -149,13 +168,38 @@ export default function Programs() {
                     </span>
                   )}
                 </td>
-                <td className="py-2 pr-4">
-                  <button
-                    onClick={(e) => handleDelete(e, p)}
-                    className="text-red-600 hover:underline text-xs"
-                  >
-                    ลบ
-                  </button>
+                <td className="py-2 pr-4 text-right whitespace-nowrap">
+                  {pendingId === p.program_id ? (
+                    <span className="inline-flex items-center gap-2">
+                      <span className="text-xs text-gray-500">ลบถาวร กู้คืนไม่ได้</span>
+                      <button
+                        type="button"
+                        onClick={() => confirmDelete(p)}
+                        disabled={deletingId === p.program_id}
+                        className="rounded bg-red-600 px-2 py-1 text-xs text-white hover:bg-red-700 disabled:opacity-50"
+                      >
+                        {deletingId === p.program_id ? 'กำลังลบ...' : 'ยืนยันลบ'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPendingId(null)}
+                        disabled={deletingId === p.program_id}
+                        className="rounded border border-gray-300 px-2 py-1 text-xs text-gray-600 hover:bg-gray-50 disabled:opacity-50"
+                      >
+                        ยกเลิก
+                      </button>
+                    </span>
+                  ) : (
+                    /* Padded on purpose: the hit area used to be the two glyphs
+                       of the label and nothing more. */
+                    <button
+                      type="button"
+                      onClick={() => setPendingId(p.program_id)}
+                      className="rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50 hover:underline"
+                    >
+                      ลบ
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
