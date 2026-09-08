@@ -15,7 +15,7 @@ if sys.platform == "win32":
 
 import pytest
 
-from curriculum_agent.config import settings
+from curriculum_agent.config import Settings, settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
@@ -29,6 +29,22 @@ SMART_PASS = SMARTCheck(specific=True, measurable=True, achievable=True, relevan
 SMART_FAIL = SMARTCheck(
     specific=True, measurable=False, achievable=True, relevant=True, timely=True
 )
+
+
+@pytest.fixture(autouse=True)
+def _settings_env_isolated(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Strip every Settings field from the process environment before a test
+    runs. `Settings(_env_file=None)` stops pydantic-settings reading `.env`, but
+    it never stopped it reading `os.environ` — so a test asserting a *default*
+    passed or failed depending on what the developer's shell happened to carry.
+    `scripts/start-demo.ps1` sets SERVE_FRONTEND and CORS_ORIGINS in the session
+    it runs in, which is enough to fail four config tests in the same terminal
+    afterwards. A test that wants an env var sets it itself with
+    `monkeypatch.setenv`, which still works: this clears at setup, not during
+    the test body."""
+    for name in Settings.model_fields:
+        monkeypatch.delenv(name.upper(), raising=False)
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture(autouse=True)

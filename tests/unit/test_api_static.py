@@ -88,6 +88,12 @@ def test_mount_on_real_app_routes_does_not_shadow_them(dist: Path) -> None:
 
     shadow = FastAPI()
     for route in real_app.routes:
+        # Skip a frontend mount the real app may already carry: with
+        # SERVE_FRONTEND set (scripts/start-demo.ps1 exports it), copying it
+        # would put the real dist ahead of this test's fixture dist and the
+        # assertions below would read the actual built index.html.
+        if getattr(route, "name", None) == "frontend":
+            continue
         shadow.router.routes.append(route)
     mount_frontend(shadow, dist)
     client = TestClient(shadow)
