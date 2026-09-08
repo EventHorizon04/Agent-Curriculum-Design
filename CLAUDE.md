@@ -167,6 +167,27 @@ tests/integration/     ← LLM mocked, full stages
   window whose text did not move. `_MAX_CHUNKS` bounds what one pathological
   document costs, and whatever it leaves unread is logged against the evidence
   id; don't reintroduce a cap that says nothing.
+- **A missing input key and an empty one mean different things to a stage.** There
+  are two ways to run any stage — the graph (`POST /sessions`) and the per-stage
+  REST route a stage page calls — and they used to disagree about where the input
+  comes from. The REST routes load it from the repositories and answer 422 when
+  there is nothing to load; the graph passed it forward in `AgentState` alone, so
+  a session started after some stages had been run by hand began from nothing:
+  three stages each returned an empty list with only a warning, and the run died
+  at `plo_synthesis` blaming `need_combination` — the one stage that had just run
+  and returned normally. Now `state.get(key) is None` means "entered directly"
+  and the stage loads its own input (`EvidenceRepository` /`SkillRepository` /
+  `NeedRepository`), which is exactly what the REST route feeding it would have
+  handed over. An **empty** list is the previous stage's answer and is refused,
+  never answered by loading older rows — that would report success over a failed
+  run. Every refusal is raised **before** `delete_by_program`, so a run that
+  produces nothing still cannot wipe the previous run's rows. `skill_extraction`
+  splits the empty case further: every provider call failing (quota, dead
+  endpoint) raises, while the model reading the evidence and naming nothing keeps
+  returning empty. `_run_graph` stores the raised message on the session row, so
+  the Pipeline page says what a stage page's 422 would have said —
+  `tests/unit/test_stage_preconditions.py` pins all of it.
+
 - **`need_combination` reads the extracted skills plus the program's own context — never evidence text.** The sentence for each Need is written from its member
   skill names, and `demand_score` is computed from the evidence ids and
   stakeholder types carried on those skills. `POST /needs/combine/run` therefore does not load the
