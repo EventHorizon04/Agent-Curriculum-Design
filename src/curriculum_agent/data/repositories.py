@@ -4,7 +4,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, cast
 
-from sqlalchemy import CursorResult, delete, select, update
+from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from curriculum_agent.data.orm import (
@@ -385,9 +385,32 @@ class PLORepository:
             return removed
 
     async def list_by_program(self, program_id: str) -> list[PLO]:
+        """Every PLO for a program, core series first and numerically within it.
+
+        Ordered here because `plo_id` carries meaning: PLO1 is the outcome
+        drafted from the most-demanded Need, and synthesis takes care to keep
+        that order through `asyncio.gather`. Without an ORDER BY the read threw
+        it away again — Postgres returns heap order, and an UPDATE moves a row
+        to the end of it, so editing one outcome reshuffled the มคอ.2 matrix and
+        the UI list. It showed up as a revalidated PLO4 appearing last in the
+        exported workbook.
+
+        `is_optional` first keeps the two series apart (OPT sorts before PLO
+        lexicographically, which would put the supplementary outcomes at the
+        top), then length before value so PLO9 precedes PLO10 rather than
+        following PLO1. Length rather than a cast off a fixed prefix width:
+        both prefixes are three characters today and nothing should depend on
+        that staying true.
+        """
         async with AsyncSessionLocal() as session:
             result = await session.execute(
-                select(PLOTable).where(PLOTable.program_id == program_id)
+                select(PLOTable)
+                .where(PLOTable.program_id == program_id)
+                .order_by(
+                    PLOTable.is_optional,
+                    func.length(PLOTable.plo_id),
+                    PLOTable.plo_id,
+                )
             )
             rows = result.scalars().all()
             return [PLO.model_validate(_row_to_dict(row)) for row in rows]
