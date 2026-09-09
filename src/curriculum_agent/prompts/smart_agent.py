@@ -1,0 +1,193 @@
+"""Prompts for the SMART validation agent, and its repair request.
+
+The rubric wording here is inherited from the light soft judge it replaces
+(`prompts/smart_validator.py`), and four of its clauses have scar tissue behind
+them — keep them:
+
+- Measurable asks whether a real instrument could observe the outcome. The
+  absence of a forbidden word is explicitly *not* evidence of that.
+- Relevant is judged against the Needs shown and nothing else. It used to add
+  "and reflects what the labour market wants", which was not checkable from a
+  prompt the market is not in, and which marked down a correctly-sourced PLO
+  for not sounding like a job ad.
+- Time-bound defaults to true: a PLO carries "by the end of the program" by
+  convention, so silence about time is correct.
+- วิสัยทัศน์ appears nowhere. The institution's direction is a program-level
+  check on `Need.source_stakeholder_types`, not a per-PLO text comparison.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # pragma: no cover
+    from curriculum_agent.stages.smart_agent_tools import ToolObservation
+
+_SYSTEM_TH = """คุณเป็นผู้ตรวจสอบคุณภาพ PLO ตามเกณฑ์ SMART ของหลักสูตรอุดมศึกษาไทย (มคอ./อว.)
+คุณสืบค้นข้อมูลได้ด้วยเครื่องมือ แล้วจึงสรุปผล ตอบเป็น JSON object เดียวต่อหนึ่งรอบ:
+{"reasoning_th": "...", "action": {...}}
+
+action มีสามแบบ
+1) เรียกเครื่องมือ: {"kind":"call_tool","tool":"<ชื่อ>", <อาร์กิวเมนต์>}
+   - check_hard — ผลตรวจเกณฑ์ที่ตัดสินด้วยโค้ด (S กริยาปรากฏในประโยค, M คำที่วัดไม่ได้,
+     R ร่องรอยหลักฐาน) พร้อมจำนวนกริยา Bloom ที่พบ ใส่ statement_th/action_verb_th
+     เพื่อทดลองสำนวนใหม่ก่อนสั่งแก้ก็ได้ **ให้เรียกเครื่องมือนี้เป็นรอบแรกเสมอ**
+   - bloom_lookup — กริยาที่ระบุอยู่ระดับ Bloom ใด เทียบกับระดับที่ PLO ประกาศไว้ (ต้องมี verb_th)
+   - get_need — Need ที่ PLO นี้อ้างถึง (ต้องมี need_id)
+   - get_evidence — ข้อความหลักฐานบางส่วนที่ PLO นี้อ้างถึง อ่านได้ไม่เกิน 3 รายการ (ต้องมี evidence_id)
+   - list_sibling_plos — PLO อื่นในชุดเดียวกัน เพื่อดูว่าซ้ำซ้อนกันหรือไม่
+2) สั่งแก้ประโยค: {"kind":"request_repair","instruction_th":"...",
+   "criteria":["M_forbidden"],"keep_th":"..."}
+   - คุณไม่ได้เขียนประโยคเอง โมเดลที่เขียนภาษาไทยจะแก้ตามคำสั่งของคุณ แล้วคุณตรวจซ้ำ
+   - instruction_th ต้องอยู่ได้ด้วยตัวเอง ระบุว่าอะไรผิดและต้องแก้อย่างไร
+   - keep_th คือสาระที่ต้องคงไว้
+3) สรุปผล: {"kind":"finish", <ผลตรวจ 5 ข้อ>, "findings_th":{...}, "diagnosis_th":"..."}
+
+ผลตรวจ 5 ข้อใน finish (true = ผ่าน)
+- specific_object_ok: กรรมของกริยาเจาะจง ระบุพฤติกรรม/ทักษะ/สมรรถนะที่ชัดเจน
+  ไม่ใช่คำกว้างเช่น 'ความรู้' 'ทักษะที่จำเป็น' และไม่ใช่ประโยคที่ใช้ได้กับทุกหลักสูตร
+  (PLO ที่แทบแยกไม่ออกจาก PLO อื่นในชุด ให้ถือว่าไม่ผ่านข้อนี้)
+- measurable_ok: สังเกตได้ และประเมินได้จริงด้วยเครื่องมือทางการศึกษา
+  (ข้อสอบ ชิ้นงาน การปฏิบัติ แฟ้มผลงาน) — การไม่มีคำห้ามยังไม่นับว่าวัดได้
+- achievable_ok: ระดับ Bloom สมเหตุสมผลกับระดับคุณวุฒิ และบรรลุได้ภายในระยะเวลาหลักสูตร
+- relevant_needs_ok: ตอบสนอง Need ที่ให้มาจริง ตัดสินจาก Need และหลักฐานที่อ้างถึงเท่านั้น
+  ห้ามอ้างกรอบอื่นที่ไม่ได้แสดงไว้
+- time_bound_ok: ค่าเริ่มต้นเป็น true — PLO ถือว่าบรรลุ 'เมื่อสิ้นสุดหลักสูตร' โดยปริยาย
+  ให้ตอบ false เฉพาะเมื่อข้อความระบุกรอบเวลาอื่นที่ขัดกัน เช่น 'ภายในปีที่ 2'
+
+findings_th: เหตุผลสั้น ๆ ต่อข้อที่ไม่ผ่าน ใช้ชื่อรหัสเป็นคีย์
+(S_object, M_assessable, A_level, R_needs, T_horizon)
+diagnosis_th: สรุปให้นักออกแบบหลักสูตรอ่าน ระบุว่าต้องแก้อะไรหรือเหตุใดจึงผ่าน
+
+หมายเหตุ
+- เกณฑ์ที่ตัดสินด้วยโค้ด (S กริยา, M คำห้าม, R หลักฐาน) คุณประกาศว่าผ่านเองไม่ได้
+  โค้ดจะตรวจประโยคสุดท้ายอีกครั้งเสมอ ทางเดียวที่จะแก้ได้คือสั่ง request_repair
+- อย่าเรียกเครื่องมือเดิมด้วยอาร์กิวเมนต์เดิมซ้ำ
+- ถ้าข้อมูลพอแล้วให้สรุปด้วย finish ทันที ไม่ต้องเรียกเครื่องมือให้ครบทุกตัว"""
+
+
+def build_smart_agent_prompt(
+    *,
+    statement_th: str,
+    bloom_level: str,
+    action_verb_th: str,
+    degree_level: str,
+    duration_years: int,
+    need_statements_th: list[str],
+    cited_evidence_ids: list[str],
+    sibling_count: int,
+) -> list[dict[str, str]]:
+    """The opening two turns: the rubric, then this PLO.
+
+    No `note_th` parameter, and none is wanted. The designer's note reaches the
+    draft prompt and nothing else; a validator that could read it could relay
+    the wording into a repair instruction, and the note would arrive at a repair
+    prompt second-hand.
+    """
+    lines = [
+        f"PLO ที่ต้องตรวจ: {statement_th}",
+        f"ระดับ Bloom ที่ประกาศไว้: {bloom_level}",
+        f"action_verb_th: {action_verb_th}",
+        f"ระดับคุณวุฒิ: {degree_level}",
+        f"ระยะเวลาหลักสูตร: {duration_years} ปี",
+    ]
+    if need_statements_th:
+        joined = "\n".join(f"- {n}" for n in need_statements_th)
+        lines.append(f"Need ที่อ้างถึง:\n{joined}")
+    if cited_evidence_ids:
+        lines.append(f"หลักฐานที่อ้างถึง (อ่านได้ด้วย get_evidence): {', '.join(cited_evidence_ids)}")
+    if sibling_count:
+        lines.append(f"มี PLO อื่นในชุดนี้ {sibling_count} รายการ (ดูด้วย list_sibling_plos)")
+    lines.append("เริ่มด้วย check_hard")
+    return [
+        {"role": "system", "content": _SYSTEM_TH},
+        {"role": "user", "content": "\n".join(lines)},
+    ]
+
+
+def build_tool_observation(observation: ToolObservation) -> str:
+    """One tool result as the next user turn."""
+    if not observation.ok:
+        return f"ผลของ {observation.tool}: ปฏิเสธ — {observation.error_th}"
+    payload = json.dumps(observation.payload, ensure_ascii=False, sort_keys=True)
+    return f"ผลของ {observation.tool}:\n{payload}"
+
+
+def build_refusal_observation(reason_th: str) -> str:
+    return f"ระบบปฏิเสธคำสั่งล่าสุด: {reason_th}"
+
+
+def build_repair_observation(
+    *,
+    before_statement: str,
+    after_statement: str,
+    before_failures: list[str],
+    after_failures: list[str],
+) -> str:
+    """The rewrite *and* the code's verdict on it.
+
+    Both, always. Handed only the new sentence, the agent has to trust its own
+    reading of a criterion pure code just decided — and cannot tell a rewrite it
+    likes from a rewrite that passes.
+    """
+    before = ", ".join(before_failures) or "(ไม่มี)"
+    after = ", ".join(after_failures) or "(ไม่มี)"
+    return (
+        "ผลการแก้ประโยค\n"
+        f"ประโยคเดิม: {before_statement}\n"
+        f"ประโยคใหม่: {after_statement}\n"
+        f"เกณฑ์ที่ตัดสินด้วยโค้ด: {before} -> {after}"
+    )
+
+
+def build_agent_repair_prompt(
+    *,
+    statement_th: str,
+    bloom_level: str,
+    action_verb_th: str,
+    degree_level: str,
+    instruction_th: str,
+    criteria: list[str],
+    keep_th: str | None = None,
+) -> list[dict[str, str]]:
+    """Ask the synthesis slot to rewrite one statement.
+
+    **There is no `note_th` parameter, and adding one would be a mistake.** The
+    designer's note reaches the draft prompt only. That invariant used to rest
+    on `_build_fix_prompt` happening not to take the argument; here it rests on
+    the signature.
+
+    The instruction must stand on its own, because the model that wrote the
+    diagnosis is not the model that writes the fix. So the prompt carries the
+    instruction, the original statement, and nothing else — no tool results, no
+    sibling PLOs, no rubric recital.
+    """
+    named = ", ".join(criteria) if criteria else "(ไม่ระบุรหัส)"
+    user = [
+        f"PLO เดิม:\n{statement_th}",
+        f"ระดับ Bloom: {bloom_level}, action_verb_th: {action_verb_th}",
+        f"ระดับคุณวุฒิ: {degree_level}",
+        f"เกณฑ์ที่ไม่ผ่าน: {named}",
+        f"สิ่งที่ต้องแก้:\n{instruction_th}",
+    ]
+    if keep_th:
+        user.append(f"สาระที่ต้องคงไว้: {keep_th}")
+    user.append(
+        "เขียน PLO ใหม่ให้แก้ประเด็นข้างต้น โดยคงสาระเดิมและระดับ Bloom เดิมไว้ "
+        "ถ้าเปลี่ยนกริยาในประโยค ต้องแก้ action_verb_th ให้ตรงกันด้วย "
+        "ตอบเป็น JSON object field เหมือน PLO เดิม"
+    )
+    return [
+        {
+            "role": "system",
+            "content": (
+                "คุณเป็นผู้เชี่ยวชาญ OBE เขียนข้อความ PLO ภาษาไทยสำหรับหลักสูตรอุดมศึกษาไทย "
+                "แก้ประโยคตามที่ผู้ตรวจระบุ โดยคงสาระสำคัญเดิม "
+                "ห้ามใช้คำ รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก "
+                "และใช้กริยาแสดงพฤติกรรมเพียงตัวเดียว "
+                "ตอบเป็น JSON object field เหมือน PLO เดิม"
+            ),
+        },
+        {"role": "user", "content": "\n\n".join(user)},
+    ]

@@ -9,7 +9,7 @@ from curriculum_agent.concurrency import gather_bounded
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import NeedRepository, PLORepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.llm import complete_light, complete_synthesis
+from curriculum_agent.llm import complete_synthesis
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
@@ -18,7 +18,6 @@ from curriculum_agent.models import (
     SMARTCheck,
     StakeholderType,
 )
-from curriculum_agent.prompts.smart_validator import build_smart_soft_judge_prompt
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
 from curriculum_agent.stages.need_grouping import (
     MAX_CORE_PLOS,
@@ -26,11 +25,26 @@ from curriculum_agent.stages.need_grouping import (
     SCOPE_PASS_RATIO,
     is_in_scope,
 )
+from curriculum_agent.stages.smart_agent import (
+    ValidationReason,
+    hard_findings_for,
+    run_smart_agent,
+)
+from curriculum_agent.stages.smart_agent_tools import (
+    EvidenceIndex,
+    SiblingSummary,
+    ToolBudget,
+    ValidationContext,
+)
 from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
     hard_failures,
 )
+
+# Re-exported: SiblingSummary lives with the tools that return it, but callers
+# (the stage, the merge route) reach for it here.
+__all__ = ["SiblingSummary"]
 
 _MAX_RETRIES = 3
 
@@ -130,69 +144,6 @@ class _SingleDraftResponse(BaseModel):
     plo: _PLODraft
 
 
-class _SmartSoftJudge(BaseModel):
-    """The light model's soft verdicts. Every field defaults true so a failed judge
-    call degrades toward 'not flagged' rather than flagging sound work."""
-
-    specific_object_ok: bool = True
-    measurable_ok: bool = True
-    achievable_ok: bool = True
-    relevant_needs_ok: bool = True
-    time_bound_ok: bool = True
-    notes_th: str | None = None
-
-
-class _SmartOutcome(BaseModel):
-    draft: _PLODraft
-    smart_check: SMARTCheck
-    retry_count: int
-    escalated: bool
-    soft_flags: list[str]
-
-
-class SiblingSummary(BaseModel):
-    """What one outcome looks like to the validator judging another.
-
-    Deliberately not a whole PLO. The sibling is context for one question — is
-    this outcome just another one restated? — and handing the validator full
-    rationale and evidence trails for nine other PLOs is nine times the context
-    for information it cannot act on.
-
-    Overlap between siblings can only ever be a *soft* finding. It is a property
-    of the set, and PLOs are validated concurrently: ten validators asked
-    pairwise can each answer "not a duplicate" while the set holds two near
-    twins, or PLO3 and PLO7 can flag each other, both escalate, both get
-    repaired independently, and converge again. Program-level dedup belongs in
-    plo_report, not in ten independent judgements trying to agree.
-    """
-
-    plo_id: str
-    statement_th: str
-    bloom_level: BloomLevel
-    is_optional: bool
-    source_need_ids: list[str]
-
-    @classmethod
-    def from_plo(cls, plo: PLO) -> SiblingSummary:
-        return cls(
-            plo_id=plo.plo_id,
-            statement_th=plo.statement_th,
-            bloom_level=plo.bloom_level,
-            is_optional=plo.is_optional,
-            source_need_ids=list(plo.source_need_ids),
-        )
-
-    @classmethod
-    def from_draft(cls, plo_id: str, draft: _PLODraft, *, is_optional: bool) -> SiblingSummary:
-        return cls(
-            plo_id=plo_id,
-            statement_th=draft.statement_th,
-            bloom_level=draft.bloom_level,
-            is_optional=is_optional,
-            source_need_ids=list(draft.source_need_ids),
-        )
-
-
 class _Slot(BaseModel):
     """A numbered position and the Needs that will fill it.
 
@@ -204,28 +155,6 @@ class _Slot(BaseModel):
     plo_id: str
     needs: list[Need]
     is_optional: bool
-
-
-def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[dict[str, str]]:
-    hints = "\n".join(f"- {CRITERION_FIX_HINTS_TH[c]}" for c in violated)
-    return [
-        {
-            "role": "system",
-            "content": (
-                "คุณเป็นผู้เชี่ยวชาญ OBE ปรับปรุง PLO ที่ไม่ผ่านเกณฑ์ SMART ข้อที่ระบุ "
-                "โดยคงสาระสำคัญเดิม ตอบเป็น JSON object field เหมือน PLO เดิม"
-            ),
-        },
-        {
-            "role": "user",
-            "content": (
-                f"PLO เดิม:\n{draft.statement_th}\n\n"
-                f"เกณฑ์ที่ไม่ผ่าน:\n{hints}\n\n"
-                f"Bloom level: {draft.bloom_level.value}, action_verb_th: {draft.action_verb_th}\n"
-                "เขียน PLO ใหม่ให้ผ่านเกณฑ์ข้างต้นทุกข้อ"
-            ),
-        },
-    ]
 
 
 def _adopt(draft: _PLODraft, authoritative_need_ids: list[str]) -> _PLODraft:
@@ -245,95 +174,6 @@ def _adopt(draft: _PLODraft, authoritative_need_ids: list[str]) -> _PLODraft:
     """
     draft.source_need_ids = list(authoritative_need_ids)
     return draft
-
-
-async def _ensure_smart(
-    draft: _PLODraft,
-    known_need_ids: set[str],
-    metadata: ProgramMetadata,
-    authoritative_need_ids: list[str],
-    need_statements_th: list[str],
-    plo_id: str,
-) -> _SmartOutcome:
-    """Hard fails → per-PLO retry (max _MAX_RETRIES) naming the criterion; soft fails → flags.
-
-    `authoritative_need_ids` are the Need ids this PLO actually derives from (the
-    ones the caller passed into synthesize_from_needs, not whatever the model
-    echoed back). They are pinned onto the draft — and onto every retry's
-    replacement draft — before hard_failures runs, so the gate always judges the
-    ids that will actually ship. Without this, a model that returns one wrong or
-    invented need id would fail R_EVIDENCE, burn all retries against a fix prompt
-    that never mentions need ids (so it cannot repair the field), and escalate a
-    PLO whose real, shipped evidence trail was correct all along.
-    """
-    draft = _adopt(draft, authoritative_need_ids)
-    fails = hard_failures(
-        draft.statement_th, draft.action_verb_th, draft.source_need_ids, known_need_ids
-    )
-    retries = 0
-    while fails and retries < _MAX_RETRIES:
-        retries += 1
-        logger.debug(f"  SMART retry {retries} for PLO {plo_id}: {[f.value for f in fails]}")
-        try:
-            fix = await complete_synthesis(
-                _SingleDraftResponse, _build_fix_prompt(draft, fails), max_retries=2
-            )
-            draft = _adopt(fix.plo, authoritative_need_ids)
-        except Exception as exc:
-            logger.warning(f"  SMART fix attempt {retries} failed: {exc}")
-        fails = hard_failures(
-            draft.statement_th, draft.action_verb_th, draft.source_need_ids, known_need_ids
-        )
-
-    escalated = bool(fails)
-    if escalated:
-        logger.warning(
-            f"  PLO {plo_id} escalated after {retries} retries: {[f.value for f in fails]}"
-        )
-
-    soft_flags: list[str] = []
-    judge = _SmartSoftJudge()
-    try:
-        judge = await complete_light(
-            _SmartSoftJudge,
-            build_smart_soft_judge_prompt(
-                draft.statement_th,
-                metadata.degree_level,
-                metadata.duration_years,
-                need_statements_th,
-            ),
-        )
-    except Exception as exc:
-        # Keep the all-true default: a hiccup must not manufacture soft flags.
-        logger.warning(f"  Soft judge failed for PLO {plo_id}: {exc}")
-
-    for ok, flag in (
-        (judge.specific_object_ok, "S_object"),
-        (judge.measurable_ok, "M_assessable"),
-        (judge.achievable_ok, "A_level"),
-        (judge.relevant_needs_ok, "R_needs"),
-        (judge.time_bound_ok, "T_horizon"),
-    ):
-        if not ok:
-            soft_flags.append(flag)
-
-    # Soft verdicts reach SMARTCheck so `passed` stops reporting success for a
-    # flagged outcome. They still do not escalate — that reads `fails` alone.
-    smart = SMARTCheck(
-        specific=HardCriterion.S_VERB not in fails and judge.specific_object_ok,
-        measurable=HardCriterion.M_FORBIDDEN not in fails and judge.measurable_ok,
-        achievable=judge.achievable_ok,
-        relevant=HardCriterion.R_EVIDENCE not in fails and judge.relevant_needs_ok,
-        timely=judge.time_bound_ok,
-        notes_th=judge.notes_th,
-    )
-    return _SmartOutcome(
-        draft=draft,
-        smart_check=smart,
-        retry_count=retries,
-        escalated=escalated,
-        soft_flags=soft_flags,
-    )
 
 
 async def draft_from_needs(
@@ -388,47 +228,111 @@ async def validate_and_build(
     plo_id: str,
     known_need_ids: set[str],
     siblings: Sequence[SiblingSummary] = (),
+    pending_need_statements_th: Sequence[str] = (),
+    evidence_index: EvidenceIndex | None = None,
 ) -> PLO | None:
-    """Run one draft through the SMART gate and build the outcome that ships.
+    """Run one draft past the validation agent, then judge it in pure code.
+
+    **The last word is the code gate, always.** `hard_failures` runs on the
+    final statement whatever way the agent exited — finished, out of budget,
+    endpoint down — and that call alone sets `smart_escalated`. The agent's only
+    route to the outcome is getting `complete_synthesis` to write a better
+    sentence, which this function then re-judges, so its influence is monotone:
+    it can shrink the failure list and never declare it empty. That is immutable
+    rule 5 held by construction rather than by the agent's good manners.
 
     Never returns None for a *failed verdict*: an escalated PLO is kept for
-    human repair, never dropped (immutable rule 5). None means the outcome could
-    not be constructed at all — see the ValidationError guard below.
+    human repair, never dropped. None means the outcome could not be
+    constructed at all — see the ValidationError guard below.
     """
     authoritative_need_ids = [n.need_id for n in needs]
-    outcome = await _ensure_smart(
-        draft,
-        known_need_ids,
-        metadata,
-        authoritative_need_ids,
-        [n.statement_th for n in needs],
-        plo_id,
+    ctx = ValidationContext(
+        program_id=program_id,
+        plo_id=plo_id,
+        draft=draft,
+        authoritative_need_ids=tuple(authoritative_need_ids),
+        known_need_ids=frozenset(known_need_ids),
+        needs_by_id={n.need_id: n for n in needs},
+        cited_evidence_ids=frozenset(eid for n in needs for eid in n.source_evidence_ids),
+        siblings=list(siblings),
+        pending_need_statements_th=list(pending_need_statements_th),
+        evidence_index=evidence_index,
+        budget=ToolBudget(),
     )
-    validated = outcome.draft
+    result = await run_smart_agent(
+        draft,
+        ctx,
+        metadata,
+        need_statements_th=[n.statement_th for n in needs],
+    )
+
+    # The authoritative gate. Not the agent's reading of it — the same pure
+    # function, on the statement that will actually ship.
+    fails = hard_failures(
+        result.statement_th,
+        result.action_verb_th,
+        list(authoritative_need_ids),
+        known_need_ids,
+    )
+    escalated = bool(fails)
+    if escalated:
+        logger.warning(
+            f"  PLO {plo_id} escalated after {result.repair_count} repair(s): "
+            f"{[f.value for f in fails]}"
+        )
+    logger.info(
+        f"  {plo_id} code gate (authoritative): {[f.value for f in fails]} — "
+        f"{'escalated' if escalated else 'not escalated'}"
+    )
+
+    verdicts = result.soft_verdicts
+    # Soft verdicts reach SMARTCheck so `passed` stops reporting success for a
+    # flagged outcome. They still never escalate — that reads `fails` alone.
+    smart_check = SMARTCheck(
+        specific=HardCriterion.S_VERB not in fails and verdicts["specific_object_ok"],
+        measurable=HardCriterion.M_FORBIDDEN not in fails and verdicts["measurable_ok"],
+        achievable=verdicts["achievable_ok"],
+        relevant=HardCriterion.R_EVIDENCE not in fails and verdicts["relevant_needs_ok"],
+        timely=verdicts["time_bound_ok"],
+        notes_th=result.diagnosis_th,
+        # The hard failures are recorded, not just logged. This is the gap the
+        # old gate left: a designer could see that a PLO escalated and never
+        # which criterion did it.
+        findings=hard_findings_for(fails, [CRITERION_FIX_HINTS_TH[f] for f in fails])
+        + result.soft_findings,
+    )
 
     # Evidence ids are never asked of the model (see build_plo_from_need_prompt) —
     # they are derived entirely from the Needs' own verified evidence trail, so
     # there is nothing here for a model to invent.
     evidence_ids = sorted({eid for n in needs for eid in n.source_evidence_ids})
+    diagnosis = result.diagnosis_th
+    if escalated and result.reason is ValidationReason.FINISHED:
+        # The agent signed off and code disagreed. Say so, or the diagnosis
+        # reads as an explanation of a PLO that passed.
+        named = ", ".join(f.value for f in fails)
+        diagnosis = f"โค้ดตรวจประโยคสุดท้ายแล้วยังไม่ผ่าน ({named}) · {diagnosis or ''}".strip(" ·")
 
     try:
         return PLO(
             plo_id=plo_id,
             program_id=program_id,
-            statement_th=validated.statement_th,
-            statement_en=validated.statement_en,
-            bloom_level=validated.bloom_level,
-            action_verb_th=validated.action_verb_th,
-            smart_check=outcome.smart_check,
+            statement_th=result.statement_th,
+            statement_en=result.statement_en,
+            bloom_level=result.bloom_level,
+            action_verb_th=result.action_verb_th,
+            smart_check=smart_check,
             # Pinned by _adopt before the gate ran; reuse rather than recomputing.
-            source_need_ids=validated.source_need_ids,
+            source_need_ids=result.source_need_ids,
             source_evidence_ids=evidence_ids,
-            rationale_th=validated.rationale_th,
-            distinctive_feature_th=validated.distinctive_feature_th,
+            rationale_th=result.rationale_th,
+            distinctive_feature_th=result.distinctive_feature_th,
             version=1,
-            smart_retry_count=outcome.retry_count,
-            smart_escalated=outcome.escalated,
-            soft_flags=outcome.soft_flags,
+            smart_retry_count=result.repair_count,
+            smart_escalated=escalated,
+            soft_flags=result.soft_flags,
+            smart_validated_by="agent" if result.ran else "code_only",
+            smart_diagnosis_th=diagnosis,
             # Optional only when every contributing Need is optional.
             is_optional=all(n.is_optional for n in needs),
         )
@@ -453,6 +357,7 @@ async def synthesize_from_needs(
     *,
     note_th: str | None = None,
     siblings: Sequence[SiblingSummary] = (),
+    evidence_index: EvidenceIndex | None = None,
 ) -> PLO | None:
     """Draft one PLO from one or more Needs, then run it through the SMART gate.
 
@@ -472,6 +377,7 @@ async def synthesize_from_needs(
         plo_id=plo_id,
         known_need_ids=known_need_ids,
         siblings=siblings,
+        evidence_index=evidence_index,
     )
 
 
@@ -562,6 +468,11 @@ async def run(state: AgentState) -> AgentState:
             for index, need in enumerate(series, start=1)
         ]
 
+    # One index per stage run, shared by every validation: EvidenceRepository
+    # has no get_by_id, so ten validators reading overlapping evidence would
+    # otherwise be ten full-table reads.
+    evidence_index = EvidenceIndex(program_id)
+
     # Phase A: draft every slot. One provider call each, so the per-call ceiling
     # is the right bound here.
     drafts = await gather_bounded(
@@ -616,6 +527,7 @@ async def run(state: AgentState) -> AgentState:
                     # Never itself: an outcome in its own sibling list is a
                     # duplicate the validator will faithfully discover.
                     siblings=[s for s in all_siblings if s.plo_id != slot.plo_id],
+                    evidence_index=evidence_index,
                 )
             )
             for slot, d in produced

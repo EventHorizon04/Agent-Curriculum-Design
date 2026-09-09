@@ -308,6 +308,76 @@ async def test_validation_never_returns_none_for_a_failed_verdict(
     assert plo.smart_escalated is True
 
 
+async def test_the_agent_cannot_declare_a_hard_failure_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The load-bearing guarantee. The validator signs off on a statement that
+    still contains a forbidden word, and pure code escalates it anyway —
+    `hard_failures` runs on the final statement whatever the agent said, so the
+    agent's influence is monotone: it can shrink the failure list, never declare
+    it empty. Immutable rule 5 held by construction.
+    """
+    from tests.support.smart_agent import agent_verdict
+
+    async def signs_off_on_anything(draft, ctx, metadata, **kw):  # noqa: ANN001, ANN003
+        return agent_verdict(draft, diagnosis_th="ผ่านทุกเกณฑ์")
+
+    monkeypatch.setattr(ps, "run_smart_agent", signs_off_on_anything)
+
+    plo = await ps.validate_and_build(
+        ps._PLODraft(
+            statement_th="เข้าใจหลักการออกแบบระบบสารสนเทศ",
+            bloom_level=BloomLevel.UNDERSTAND,
+            action_verb_th="เข้าใจ",
+            source_need_ids=["N1"],
+            rationale_th="เหตุผล",
+        ),
+        metadata=META,
+        needs=[_need("N1", 0.9)],
+        program_id="cs-test",
+        plo_id="PLO1",
+        known_need_ids={"N1"},
+    )
+
+    assert plo is not None
+    assert plo.smart_escalated is True, "the agent talked its way past the code gate"
+    assert plo.smart_check.measurable is False
+    # And the reason is recorded, not just logged — the gap the old gate left.
+    assert [f.criterion.value for f in plo.smart_check.hard_findings] == ["M_forbidden"]
+    assert plo.smart_diagnosis_th is not None
+    assert "M_forbidden" in plo.smart_diagnosis_th
+
+
+async def test_a_code_only_verdict_is_recorded_as_such(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ "the agent judged this and it failed" and "the agent never ran" are
+    different facts, and the UI must not attribute a diagnosis to something that
+    never ran."""
+    from curriculum_agent.stages.smart_agent import ValidationReason, code_only_result
+
+    async def endpoint_down(draft, ctx, metadata, **kw):  # noqa: ANN001, ANN003
+        return code_only_result(
+            draft, ValidationReason.PROVIDER_ERROR, "ไม่ได้ตรวจ (เรียกผู้ตรวจไม่สำเร็จ)"
+        )
+
+    monkeypatch.setattr(ps, "run_smart_agent", endpoint_down)
+
+    plo = await ps.validate_and_build(
+        _draft_for("N1"),
+        metadata=META,
+        needs=[_need("N1", 0.9)],
+        program_id="cs-test",
+        plo_id="PLO1",
+        known_need_ids={"N1"},
+    )
+
+    assert plo is not None
+    assert plo.smart_validated_by == "code_only"
+    assert plo.smart_escalated is False, "an agent that could not run must not escalate"
+    assert plo.soft_flags == []
+
+
 async def test_an_unbuildable_outcome_is_a_gap_not_an_exception(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

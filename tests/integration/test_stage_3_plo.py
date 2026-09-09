@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -17,7 +18,7 @@ from curriculum_agent.stages.plo_synthesis import (
     _SingleDraftResponse,
     run,
 )
-from tests.support.smart_agent import soft_judge_ok
+from tests.support.smart_agent import scripted_agent
 
 
 def _draft_for(need: Need) -> _PLODraft:
@@ -63,7 +64,7 @@ def state(program_metadata: ProgramMetadata, needs: list[Need]) -> dict:
 class _Stubs:
     """The stubs a test may want to assert on, named rather than positional."""
 
-    soft_judge: AsyncMock
+    validator: Any
     bulk_insert: AsyncMock
     delete_by_program: AsyncMock
 
@@ -84,7 +85,7 @@ def _patched(needs: list[Need]) -> Iterator[_Stubs]:
         nid = next(n.need_id for n in needs if n.need_id in body)
         return _SingleDraftResponse(plo=drafts[nid])
 
-    soft_judge = AsyncMock(return_value=soft_judge_ok())
+    validator = scripted_agent()
     bulk_insert = AsyncMock()
     # run() replaces the set rather than upserting into it, so the delete needs
     # stubbing too or the stage opens a real database connection.
@@ -93,13 +94,13 @@ def _patched(needs: list[Need]) -> Iterator[_Stubs]:
     with ExitStack() as stack:
         for target, new in (
             ("complete_synthesis", fake_synthesis),
-            ("complete_light", soft_judge),
+            ("run_smart_agent", validator),
             ("PLORepository.bulk_insert", bulk_insert),
             ("PLORepository.delete_by_program", delete_by_program),
         ):
             stack.enter_context(patch(f"curriculum_agent.stages.plo_synthesis.{target}", new))
         yield _Stubs(
-            soft_judge=soft_judge, bulk_insert=bulk_insert, delete_by_program=delete_by_program
+            validator=validator, bulk_insert=bulk_insert, delete_by_program=delete_by_program
         )
 
 
@@ -146,8 +147,10 @@ async def test_stage_4_smart_validator_called_once_per_need(state: dict, needs: 
     with _patched(needs) as stubs:
         result = await run(state)
 
-    assert stubs.soft_judge.call_count >= len(needs), (
-        "soft judge should be called at least once per Need"
+    # Exactly once per Need, not ">=": the two-phase design finally makes that
+    # exact. The old ">=" hid the gate's own retry calls.
+    assert len(stubs.validator.calls) == len(needs), (
+        "the validator should run exactly once per Need"
     )
     for plo_dict in result["plos"]:
         assert plo_dict["soft_flags"] == [], (
