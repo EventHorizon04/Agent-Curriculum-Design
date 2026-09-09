@@ -95,7 +95,11 @@ def test_model_defaults_follow_the_ollama_provider():
     # heavy_provider=None collapses the three endpoints onto llm_provider, which
     # is the arrangement someone running fully local wants.
     s = Settings(
-        _env_file=None, llm_provider="ollama", heavy_provider=None, synthesis_provider=None
+        _env_file=None,
+        llm_provider="ollama",
+        heavy_provider=None,
+        synthesis_provider=None,
+        validation_provider=None,
     )
     assert s.light_model == "gemma4:31b-cloud"
     assert s.heavy_model == "gemma4:31b-cloud"
@@ -105,7 +109,11 @@ def test_model_defaults_follow_the_openrouter_provider():
     # The provider is read at instance level, not at class-definition time, so
     # switching it in .env must switch the model defaults with it.
     s = Settings(
-        _env_file=None, llm_provider="openrouter", heavy_provider=None, synthesis_provider=None
+        _env_file=None,
+        llm_provider="openrouter",
+        heavy_provider=None,
+        synthesis_provider=None,
+        validation_provider=None,
     )
     assert s.light_model == "meta-llama/llama-3.3-70b-instruct"
     assert s.heavy_model == "meta-llama/llama-3.3-70b-instruct"
@@ -116,13 +124,46 @@ def test_the_default_provider_is_thai_first():
     stored statements are Thai, so the default endpoint serves Thai-first models.
     Changing it should require changing this line and saying why.
 
-    It governs `light` — the Need sentences and the SMART soft judge, the Thai
-    prose a designer actually reads back. Heavy and extraction each run on their
-    own endpoint for reasons pinned in their own tests.
+    It governs `light` — the Need sentences, the Thai prose a designer actually
+    reads back. Heavy, extraction and validation each run on their own endpoint
+    for reasons pinned in their own tests.
     """
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
     assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
+
+
+def test_validation_runs_on_its_own_endpoint():
+    """The SMART validation agent is its own slot, not `heavy`: heavy is LLM
+    clustering and nothing else, and a slot sharing that knob could not be moved
+    without moving clustering. It defaults to the same model family because the
+    loop reasons over tool results rather than writing the Thai a designer
+    reads — that stays with synthesis.
+    """
+    s = Settings(_env_file=None)
+    assert s.validation_provider == "openrouter"
+    assert s.validation_model == "meta-llama/llama-3.3-70b-instruct"
+
+
+def test_the_validation_model_follows_its_own_provider_not_the_default():
+    """Each model falls back to *its own* provider's default. Pointing
+    validation at Ollama and leaving VALIDATION_MODEL unset must not send a
+    Typhoon model name to Ollama."""
+    s = Settings(_env_file=None, llm_provider="opentyphoon", validation_provider="ollama")
+    assert s.validation_model == "gemma4:31b-cloud"
+    assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
+
+
+def test_the_validation_budgets_are_bounded_by_default():
+    """A loop with no ceiling is a stage that never returns. The repair bound is
+    three because that is the SMART gate's long-standing policy — the agent
+    inherits the number rather than introducing a second one for it."""
+    s = Settings(_env_file=None)
+    assert s.validation_max_turns == 8
+    assert s.validation_max_repairs == 3
+    assert s.validation_timeout_seconds == 240
+    # Loops, not calls: a loop is serial, so N loops is N in-flight calls.
+    assert s.validation_max_concurrent_plos == 3
 
 
 def test_explicit_models_survive_the_provider_default():
@@ -131,6 +172,7 @@ def test_explicit_models_survive_the_provider_default():
         llm_provider="ollama",
         heavy_provider=None,
         synthesis_provider=None,
+        validation_provider=None,
         light_model="typhoon2:8b",
         heavy_model="qwen2.5:14b",
     )
@@ -196,7 +238,9 @@ def test_an_explicit_heavy_model_survives_the_provider_default():
 
 
 def test_synthesis_provider_unset_follows_the_default_provider():
-    s = Settings(_env_file=None, llm_provider="ollama", synthesis_provider=None)
+    s = Settings(
+        _env_file=None, llm_provider="ollama", synthesis_provider=None, validation_provider=None
+    )
     assert s.synthesis_provider == "ollama"
     assert s.synthesis_model == "gemma4:31b-cloud"
 

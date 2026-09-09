@@ -71,6 +71,7 @@ def test_heavy_follows_the_default_provider_when_unset(
         heavy_provider=None,
         synthesis_provider=None,
         extraction_provider=None,
+        validation_provider=None,
     )
     monkeypatch.setattr(llm, "settings", settings)
 
@@ -92,7 +93,7 @@ def test_synthesis_stays_on_the_thai_endpoint_while_heavy_leaves(typhoon: Settin
 def test_synthesis_follows_the_default_provider_when_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = _settings(llm_provider="ollama", synthesis_provider=None)
+    settings = _settings(llm_provider="ollama", synthesis_provider=None, validation_provider=None)
     monkeypatch.setattr(llm, "settings", settings)
 
     assert llm._synthesis_provider() == "ollama"
@@ -119,6 +120,7 @@ def test_extraction_follows_the_default_provider_when_unset(
         heavy_provider=None,
         synthesis_provider=None,
         extraction_provider=None,
+        validation_provider=None,
     )
     monkeypatch.setattr(llm, "settings", settings)
 
@@ -126,9 +128,37 @@ def test_extraction_follows_the_default_provider_when_unset(
     assert llm._base_url(llm._extraction_provider()).endswith("/v1")
 
 
-def test_describe_target_names_both_endpoints_and_no_key(typhoon: Settings) -> None:
+def test_validation_runs_on_its_own_hosted_endpoint(typhoon: Settings) -> None:
+    """The agent loop reasons over a Thai sentence plus tool results rather than
+    writing Thai, so it moves off the Thai-first endpoint — but it is its own
+    slot, not heavy's, because heavy is clustering and nothing else."""
+    validation = llm._validation_provider()
+
+    assert validation == "openrouter"
+    assert llm._base_url(validation) == typhoon.openrouter_base_url
+    assert llm._api_key(validation) == _ROUTER_KEY
+
+
+def test_validation_follows_the_default_provider_when_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One endpoint end to end stays a supported arrangement."""
+    settings = _settings(
+        llm_provider="ollama",
+        heavy_provider=None,
+        synthesis_provider=None,
+        extraction_provider=None,
+        validation_provider=None,
+    )
+    monkeypatch.setattr(llm, "settings", settings)
+
+    assert llm._validation_provider() == "ollama"
+    assert llm._base_url(llm._validation_provider()).endswith("/v1")
+
+
+def test_describe_target_names_every_slot_and_no_key(typhoon: Settings) -> None:
     """The line goes to a log file, a terminal, and often a bug report. It says
-    whether a key is configured, never which one — and it names both targets,
+    whether a key is configured, never which one — and it names every slot,
     since "the wrong model answered" cannot be diagnosed from one of them."""
     described = llm.describe_target()
 
@@ -138,12 +168,25 @@ def test_describe_target_names_both_endpoints_and_no_key(typhoon: Settings) -> N
     assert "heavy: provider=openrouter" in described
     assert "synthesis: provider=opentyphoon" in described
     assert "extraction: provider=openrouter" in described
+    assert "validation: provider=openrouter" in described
     assert typhoon.openrouter_base_url in described
     assert typhoon.opentyphoon_base_url in described
     assert typhoon.heavy_model in described
     assert typhoon.synthesis_model in described
     assert typhoon.extraction_model in described
+    assert typhoon.validation_model in described
     assert "api_key=set" in described
+
+
+def test_every_slot_is_reported_and_warmed_from_one_list(typhoon: Settings) -> None:
+    """describe_target and warmup_models both used to enumerate the slots by
+    hand. Five is where such a list stops looking obviously complete, and a slot
+    present in only one of them is a model nobody warms or a model nobody can
+    see in the startup log."""
+    labels = [label for label, _, _ in llm._slots()]
+
+    assert labels == ["light", "heavy", "synthesis", "extraction", "validation"]
+    assert len(set(labels)) == len(labels)
 
 
 def test_describe_target_reports_a_missing_key_instead_of_raising(

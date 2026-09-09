@@ -19,10 +19,11 @@ _HOSTED_PROVIDERS = frozenset({"openrouter", "opentyphoon"})
 
 
 # Every helper below takes the provider rather than reading settings.llm_provider,
-# because four endpoints are in play: the pipeline's default (light), and one
-# each for heavy, plo_synthesis and skill_extraction. A helper that resolved the
-# provider itself would silently send one slot's model to another slot's
-# endpoint, which fails as an unknown-model error far from its cause.
+# because five endpoints are in play: the pipeline's default (light), and one
+# each for heavy, plo_synthesis, skill_extraction and the SMART validation
+# agent. A helper that resolved the provider itself would silently send one
+# slot's model to another slot's endpoint, which fails as an unknown-model error
+# far from its cause.
 
 
 def _base_url(provider: str) -> str:
@@ -71,6 +72,29 @@ def _extraction_provider() -> str:
     return settings.extraction_provider or settings.llm_provider
 
 
+def _validation_provider() -> str:
+    """Provider for the SMART validation agent. Settings resolves None to llm_provider."""
+    return settings.validation_provider or settings.llm_provider
+
+
+def _slots() -> tuple[tuple[str, str, str], ...]:
+    """Every slot as (label, provider, model), resolved now.
+
+    One list, three readers — describe_target, warmup_models, and the config
+    tests. Both of the first two used to enumerate the slots by hand, and five
+    is where such a list stops being obviously complete: a sixth slot added to
+    only one of them would be a model nobody warms or a model nobody can see in
+    the startup log.
+    """
+    return (
+        ("light", settings.llm_provider, settings.light_model),
+        ("heavy", _heavy_provider(), settings.heavy_model),
+        ("synthesis", _synthesis_provider(), settings.synthesis_model),
+        ("extraction", _extraction_provider(), settings.extraction_model),
+        ("validation", _validation_provider(), settings.validation_model),
+    )
+
+
 def _key_state(provider: str) -> str:
     try:
         return "set" if _api_key(provider) else "empty"
@@ -90,9 +114,10 @@ def _describe_slot(label: str, provider: str, model: str) -> str:
 def describe_target() -> str:
     """Which LLM endpoints and models this process talks to, as one log line.
 
-    All three slots are reported, because they can differ: heavy and
-    skill_extraction each have their own provider, and "the wrong model
-    answered" is impossible to diagnose from a line that names only one of them.
+    Every slot is reported, because they can differ: heavy, plo_synthesis,
+    skill_extraction and the SMART validation agent each have their own
+    provider, and "the wrong model answered" is impossible to diagnose from a
+    line that names only one of them.
 
     Never includes an API key. It reports only whether one is configured, which
     is the part that is actually useful when a call fails — the value itself is a
@@ -100,13 +125,9 @@ def describe_target() -> str:
     Base URLs are safe: they are public endpoints, and for Ollama the host is the
     operator's own machine.
     """
-    slots = (
-        _describe_slot("light", settings.llm_provider, settings.light_model),
-        _describe_slot("heavy", _heavy_provider(), settings.heavy_model),
-        _describe_slot("synthesis", _synthesis_provider(), settings.synthesis_model),
-        _describe_slot("extraction", _extraction_provider(), settings.extraction_model),
+    return "LLM target: " + " | ".join(
+        _describe_slot(label, provider, model) for label, provider, model in _slots()
     )
-    return "LLM target: " + " | ".join(slots)
 
 
 def log_target() -> None:
@@ -145,9 +166,14 @@ async def _complete(
 ) -> T:
     """One structured completion against one endpoint.
 
-    The three public wrappers differ only in which provider and model they name,
-    so the call itself lives here — otherwise a change to instructor's contract
-    has to be made three times and will eventually be made twice.
+    The public wrappers differ only in which provider and model they name, so
+    the call itself lives here — otherwise a change to instructor's contract has
+    to be made once per slot and will eventually be made one short.
+
+    `messages` may already carry assistant turns: the validation agent's loop
+    accumulates the conversation and calls its wrapper once per turn. That
+    works because this function passes the list through, so multi-turn needs no
+    support of its own here.
     """
     logger.debug(f"LLM call: {model} ({provider})")
     return await _get_client(provider).chat.completions.create(
@@ -166,7 +192,7 @@ async def complete_light(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """Light model used for classification, Need sentences and SMART validation."""
+    """Light model used for classification and Need sentences."""
     return await _complete(
         settings.llm_provider, settings.light_model, response_model, messages, **kwargs
     )
@@ -219,24 +245,41 @@ async def complete_extraction(
     )
 
 
+async def complete_validation(
+    response_model: type[T],
+    messages: list[dict[str, Any]],
+    **kwargs: Any,
+) -> T:
+    """The SMART validation agent's own endpoint — see Settings.validation_provider.
+
+    The only slot that runs a multi-turn loop: the caller accumulates the
+    message list and calls this once per turn. Nothing here holds state — the
+    list of messages is the whole conversation, and `_complete` already accepts
+    an assistant turn in it, so no multi-turn machinery belongs in this module.
+
+    Not complete_heavy, though it defaults to the same provider and model
+    family: heavy is LLM clustering and nothing else, and a slot sharing that
+    knob could not be moved without moving clustering.
+
+    Not complete_synthesis either, and that is the load-bearing part. This model
+    decides *whether* a statement needs repair; the repair itself goes back
+    through complete_synthesis, so a repair is still never answered by a
+    different model than wrote the draft.
+    """
+    return await _complete(
+        _validation_provider(), settings.validation_model, response_model, messages, **kwargs
+    )
+
+
 async def warmup_models() -> None:
     """Push every locally-served model into Ollama VRAM at startup.
 
     Hosted providers are skipped — there is no local VRAM to warm, and the
     warm-up call would spend a real request (and, on a paid provider, real money)
-    on a prompt whose answer is thrown away. All four slots are considered,
-    since only some of them may be the local one.
+    on a prompt whose answer is thrown away. Every slot is considered, since
+    only some of them may be the local one.
     """
-    local = {
-        model
-        for provider, model in (
-            (settings.llm_provider, settings.light_model),
-            (_heavy_provider(), settings.heavy_model),
-            (_synthesis_provider(), settings.synthesis_model),
-            (_extraction_provider(), settings.extraction_model),
-        )
-        if provider not in _HOSTED_PROVIDERS
-    }
+    local = {model for _, provider, model in _slots() if provider not in _HOSTED_PROVIDERS}
     if not local:
         return
     client = _get_raw_client("ollama")

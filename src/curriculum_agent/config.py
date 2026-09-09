@@ -7,9 +7,9 @@ from typing import Literal
 from pydantic import SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-# Model names to fall back on when LIGHT_MODEL / HEAVY_MODEL / EXTRACTION_MODEL
-# are left unset. Keyed by provider so switching the provider that governs a
-# slot carries that slot's model with it.
+# Model names to fall back on when a slot's *_MODEL is left unset. Keyed by
+# provider so switching the provider that governs a slot carries that slot's
+# model with it.
 _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "ollama": "gemma4:31b-cloud",
     "openrouter": "meta-llama/llama-3.3-70b-instruct",
@@ -73,6 +73,40 @@ class Settings(BaseSettings):
     # window of every evidence item, so it is not what exhausts a quota.
     synthesis_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "opentyphoon"
     synthesis_model: str = ""
+    # The SMART validation agent is its own slot, and specifically NOT `heavy`:
+    # heavy is LLM clustering and nothing else, and a slot sharing that knob
+    # could not be moved without moving clustering. It defaults to OpenRouter —
+    # the same model family as heavy — because the loop reasons over a Thai
+    # sentence plus a set of tool results rather than writing Thai. When it
+    # decides a statement must be repaired it emits an instruction and
+    # synthesis_model rewrites the sentence, so a repair is still never
+    # answered by a different model than wrote the draft.
+    #
+    # It is the most expensive slot per PLO: one draft plus up to
+    # validation_max_turns loop turns plus up to validation_max_repairs repair
+    # drafts, against the previous five calls. That is what
+    # validation_max_concurrent_plos bounds.
+    #
+    # Leave VALIDATION_PROVIDER empty to skip the agent: the stage falls back to
+    # the pure-code verdict, which has to exist anyway for an endpoint outage.
+    # That is the kill switch — there is no feature flag.
+    validation_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
+    validation_model: str = ""
+    validation_max_turns: int = 8
+    # Three, matching the SMART gate's long-standing retry ceiling — the rule is
+    # "max 3 attempts, then escalate", and the agent inherits it rather than
+    # introducing a second number for the same policy.
+    validation_max_repairs: int = 3
+    # In-flight agent *loops*, not calls — deliberately not llm_max_concurrency.
+    # A loop is serial (turn n+1 needs turn n's observation), so N concurrent
+    # loops is N in-flight calls, and bounding here keeps that provable. It also
+    # keeps a deployment that raises the per-call ceiling for extraction from
+    # silently multiplying the validation bill.
+    validation_max_concurrent_plos: int = 3
+    # Wall clock for one PLO's loop. Bounds the whole stage at roughly
+    # ceil(N / concurrency) x this, and turns a hung provider into one
+    # code-only verdict rather than a stage that never returns.
+    validation_timeout_seconds: int = 240
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
     # fans out a call per evidence item, and now one per window of each item
@@ -137,6 +171,8 @@ class Settings(BaseSettings):
             self.synthesis_provider = self.llm_provider
         if self.extraction_provider is None:
             self.extraction_provider = self.llm_provider
+        if self.validation_provider is None:
+            self.validation_provider = self.llm_provider
         # Each model falls back to its own provider's default, not to
         # llm_provider's: pointing heavy at OpenRouter and leaving HEAVY_MODEL
         # unset would otherwise send a Typhoon model name to OpenRouter, which
@@ -149,6 +185,8 @@ class Settings(BaseSettings):
             self.synthesis_model = _PROVIDER_DEFAULT_MODEL[self.synthesis_provider]
         if not self.extraction_model:
             self.extraction_model = _PROVIDER_DEFAULT_MODEL[self.extraction_provider]
+        if not self.validation_model:
+            self.validation_model = _PROVIDER_DEFAULT_MODEL[self.validation_provider]
         return self
 
     @computed_field  # type: ignore[prop-decorator]
