@@ -102,7 +102,7 @@ These are project decisions. If a request conflicts with one, surface the confli
 2. **Every PLO must trace to evidence.** `source_need_ids` and `source_evidence_ids` are non-empty. Evidence itself only carries `requirement`/`general`; `need`/`want`/`unclassified` is decided per skill (`ExtractedSkill.classification`) once every evidence item is extracted, since frequency is a cross-evidence property. Pydantic validators enforce the non-empty trail; do not weaken them.
 3. **Forbidden words in PLO statements:** รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. The Pydantic model rejects these (exception: a PLO with `smart_escalated=True` is kept for human repair) — do not bypass.
 4. **One Bloom action verb per outcome.** Two verbs allowed only if at adjacent levels.
-5. **SMART gate on every synthesized PLO.** Hard criteria (S verb-in-statement, M no-forbidden-word, R evidence-resolves) drive an automated retry loop (max 3, criterion named in the retry prompt) — an unfixed PLO is marked `smart_escalated` for human repair, never silently dropped. Five soft verdicts (S object quality, M assessability, A level plausibility, R answers-its-Needs, T horizon) become `soft_flags` **and** set the matching `SMARTCheck` field, so `passed` means what it says; they never block.
+5. **SMART gate on every synthesized PLO, and the last word is pure code.** Hard criteria (S verb-in-statement, M no-forbidden-word-*used*, R evidence-resolves) are the **floor**: `validate_and_build` runs `hard_failures` on the final statement whatever else happened, and that call alone sets `smart_escalated`. An unfixed PLO is marked for human repair, never silently dropped. A **validation agent** (`stages/smart_agent.py`, its own `VALIDATION_*` slot) investigates through tools — the code verdict, the cited Needs, an excerpt of their evidence, the sibling outcomes, the Thai Bloom table — and instructs repairs (max 3 per PLO) that `complete_synthesis` writes, then re-checks. It **cannot declare a hard failure passed**: `Finish` carries no field that clears one, and the code gate runs afterwards regardless, so its influence is monotone — it can shrink the failure list, never declare it empty. Five soft verdicts (S object quality, M assessability, A level plausibility, R answers-its-Needs, T horizon) become `soft_flags` **and** set the matching `SMARTCheck` field, so `passed` means what it says; they never block. Every failure is recorded as a `SmartFinding` with a Thai reason, and `smart_validated_by` says which validator produced the verdict — an outage yields `code_only` with no manufactured findings, because a validator that could not run must not escalate anything.
 6. **6-10 main PLOs per program, each drafted from one Need.** Both bounds live in `stages/need_grouping.py` — one policy, in the module whose clustering has to respect it. The floor (`MIN_NEEDS`) cannot be enforced by code — too few Needs simply means too few PLOs — so a core count below 6 logs a policy warning for the designer to address at the checkpoint. The ceiling (`MAX_CORE_PLOS`) is enforced **by choosing which Needs to use, not by merging them**: `need_combination` still turns every core group into its own Need, and synthesis takes the 10 highest `demand_score` ones. `need_combination` aims at the ceiling rather than overshooting it blindly: `allocate_cluster_targets` splits `MAX_CORE_PLOS` across the K/S/EC buckets in proportion to their unique skill names, and each bucket's clustering call is asked for about that many groups. It is a target, not a cap — `validate_assignments` still accepts whatever partition comes back, since a skill dropped to hit a number is worse than a Need over budget. The Needs that lose the cut stay stored and visible, still tracing to their evidence — they are unused, not deleted, and both the synthesis log and the PLO report name them. The bounds are a property of the **stored set**, not of one stage's output, and `POST /plos/from-needs` is checked against both. **A Need is behind at most one PLO**: the merge route supersedes every outcome citing a selected Need (`plos_citing`) and writes the merged one in its place, in a single transaction (`PLORepository.replace`). It used to append, which left a Need behind both its own outcome and the merged one — two PLOs claiming the same evidence read as two independent market demands in the มคอ.2 matrix when they are one. Because a merge replaces, it moves the core count in both directions: folding several outcomes into one lowers it, merging Needs nothing cites yet raises it, so the route refuses above `MAX_CORE_PLOS` and below `MIN_NEEDS` — the floor only when *this* merge causes the shortfall, so a program that started with too few Needs is not frozen. The merged outcome is numbered from the surviving ids, so it reuses the lowest slot it frees. A Need cited only by a superseded outcome returns to the pool and is logged. Optional PLOs from want-based Needs (`is_optional=True`) are outside both bounds, in synthesis and in the merge route alike.
 
    Which Needs are still available to merge is **derived, never stored** — `cited_need_ids` over the stored PLOs, used by both `plo_report` and the merge route. Deleting a PLO returns its Needs on its own, and no flag can outlive the outcome that set it.
@@ -120,7 +120,8 @@ src/curriculum_agent/
   prompts/             ← one file per LLM prompt, typed builder fns
   stages/              ← intake, stakeholder_needs, skill_extraction,
                           need_combination, llm_clustering, plo_synthesis,
-                          plo_report (+ smart_rules)
+                          plo_report (+ smart_rules, smart_agent,
+                          smart_agent_tools, bloom_verbs)
   data/                ← repositories, postgres, minio_store,
                           prune_threads / prune_cache (maintenance sweeps)
   scrapers/            ← per-site job scrapers
@@ -140,13 +141,46 @@ tests/integration/     ← LLM mocked, full stages
 - **OBE rules / Bloom verbs / SMART criteria (hard/soft rubric)** → skill `references/obe-principles.md`
 - **Prompt templates for any stage** → skill `references/prompts.md`, then mirrored in `src/curriculum_agent/prompts/`
 - **Data schema decisions** → skill `references/data-schemas.md`, implemented in `src/curriculum_agent/models.py`
-- **SMART hard checks (pure code)** → `src/curriculum_agent/stages/smart_rules.py`
+- **SMART hard checks (pure code)** → `src/curriculum_agent/stages/smart_rules.py`; the forbidden-word scan and the finding codes → `src/curriculum_agent/smart_vocabulary.py`
+- **The SMART validation agent** → `src/curriculum_agent/stages/smart_agent.py` (loop), `smart_agent_tools.py` (what it may see), `prompts/smart_agent.py`
 - **Service config** → `docker-compose.yml`, `.env.example`
 - **DB schema** → managed by Alembic in `migrations/`. Never edit DB by hand.
 
 ## Common pitfalls
 
-- **Don't bypass the SMART retry loop after synthesis.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. Hard checks are pure code (`smart_rules.py`); the soft judge is a separate light-model prompt. Escalated PLOs must stay visible in the UI.
+- **Don't bypass the SMART gate after synthesis.** The synthesis LLM will produce plausible-looking PLOs that fail SMART. Hard checks are pure code (`smart_rules.py`) and the validation agent is a separate slot that instructs repairs rather than writing them. Escalated PLOs must stay visible in the UI.
+- **The agent cannot pass itself, and `hard_failures` after the loop is why.**
+  `validate_and_build` re-runs the pure checks on the final statement on every
+  exit path — finished, out of budget, endpoint down — and that call sets
+  `smart_escalated`. Delete it and immutable rule 5 becomes a request the model
+  can decline: `Finish` has no field that clears a hard failure precisely
+  because nothing downstream would notice if it did. `RequestRepair` has no
+  `statement_th` for the same reason — the Thai a designer submits to MHESI
+  comes from the synthesis slot, always, and a helpful model handed that field
+  would make "a repair is never answered by a different model than wrote the
+  draft" one field away from false.
+- **The forbidden-word check is about words *used*, not substrings.** Thai has
+  no word boundaries, so `word in statement` flagged `รักษา` (holds รัก),
+  `จำแนก`/`จำลอง` (จำ) and `ความรู้`/`เรียนรู้` (รู้). Each hard-failed M, burned
+  all three repairs against a hint about a word the sentence never used, and
+  escalated a sound outcome. `smart_vocabulary.forbidden_words_in` masks a
+  curated compound list first, and both callers — `hard_failures` and
+  `PLO.check_no_forbidden_words` — share it, because two independent scans of
+  one rule is how they came to disagree. Don't reintroduce either the substring
+  test or the second copy.
+- **A verdict field is the validator's output, never a client's input.** `PUT
+  /plos/{id}` used to accept a whole `PLO`, so a caller with the API key could
+  set `smart_escalated=False` with an all-true `smart_check` on a statement no
+  validator had ever passed. It now takes `PLOStatementUpdate` — text only —
+  and marks an edited statement `stale` rather than letting it inherit the old
+  verdict; `POST /plos/{id}/revalidate` is the way back to a real one. The next
+  person who wants a quick edit path will be tempted to widen this again.
+- **`soft_flags` stays `list[str]`.** Narrowing it to `SmartFindingCode` makes
+  any row carrying a code this build no longer knows raise on read — and
+  `R_alignment` was emitted for months — so one stale string would take out a
+  whole program's PLO list on `GET /plos/` rather than one field. The typed
+  detail lives in `smart_check.findings`, which rides inside the existing JSONB
+  column and needed no migration for exactly this reason.
 - **Don't pass full evidence text into synthesis prompts.** Summarize each Need in ≤200 tokens. Full evidence stays in Postgres for drill-down, not in the synthesis prompt.
 - **The extraction cache is keyed on `settings.extraction_model`, and so is what
   it stores.** One name in three places — the key, the hit comparison, and the

@@ -10,7 +10,7 @@ Every prompt template below is mirrored 1:1 in `src/curriculum_agent/prompts/` �
 | `cluster_skills.py` | `stages/llm_clustering.py`, `stages/need_combination.py` | Group/merge skill names by meaning (index-based) |
 | `summarize_need.py` | `stages/need_combination.py` | Turn one skill group into one market-demand sentence (a Need) |
 | `stage_3_plo.py` | `stages/plo_synthesis.py` | Draft one PLO from one or more Needs |
-| `smart_validator.py` | `stages/plo_synthesis.py` | Soft SMART judge (five verdicts — hard checks are pure code) |
+| `smart_agent.py` | `stages/smart_agent.py` | The SMART validation agent: rubric + tool contract, its tool observations, and the repair instruction it hands to synthesis |
 
 There is no `extract_metadata.py` or `suggest_isced.py` either: intake collects program metadata the designer types, with no document upload and no LLM-suggested ISCED code. There is no `classify_evidence.py` or `plo_classify.py`. Evidence classification (`requirement`/`general`) is a pure code lookup from `StakeholderType` — see `stages/stakeholder_needs.py`'s `classify_evidence_type`, no prompt involved. `plo_report` no longer classifies PLOs generic vs specific — it assembles and exports only, also with no LLM call.
 
@@ -208,39 +208,29 @@ need_id: {need_id}
 
 Both templates take an optional `note_th`. When present it is appended to the **user** message under `ข้อกำหนดเพิ่มเติมจากผู้ออกแบบหลักสูตร:`; the system message carries an unconditional line saying the note guides wording and does not override the rules above it. See `prompts/designer_note.py`.
 
-Every draft this prompt produces goes through the SMART hard-check retry loop (below) before it becomes a persisted `PLO` — this prompt alone does not guarantee a SMART-passing statement.
+Every draft this prompt produces goes past the validation agent and then the pure-code gate (below) before it becomes a persisted `PLO` — this prompt alone does not guarantee a SMART-passing statement.
 
 ---
 
-## SMART soft judge prompt
+## SMART validation agent prompts
 
-**Purpose:** the S/M/R **hard** criteria (one Bloom verb present, no forbidden word, non-empty evidence trail) are never checked by an LLM at all — they are pure code in `stages/smart_rules.py` (`hard_failures()`), because they're mechanically checkable and a model is a slower, less reliable way to check them. This prompt covers the five **soft** verdicts that genuinely need judgement. Its output becomes `PLO.soft_flags` for human review *and* is mapped onto the matching `SMARTCheck` fields — it never blocks or retries.
+**Purpose:** the S/M/R **hard** criteria (the declared verb appears in the statement, no forbidden word used, non-empty evidence trail) are never checked by an LLM at all — they are pure code in `stages/smart_rules.py` (`hard_failures()`), because they are mechanically checkable and a model is a slower, less reliable way to check them. The agent covers the five **soft** verdicts that genuinely need judgement, and instructs the repairs that fix the hard ones.
 
-**Model:** light (`complete_light`)
+**Model:** validation (`complete_validation`) — its own slot, and specifically not `heavy` (clustering) or `synthesis` (which writes the Thai).
 
-**File:** `prompts/smart_validator.py` — `build_smart_soft_judge_prompt(statement_th, degree_level, duration_years, need_statements_th)`
+**File:** `prompts/smart_agent.py` — `build_smart_agent_prompt`, `build_tool_observation`, `build_refusal_observation`, `build_repair_observation`, `build_agent_repair_prompt`.
 
-```
-คุณเป็นผู้ตรวจสอบคุณภาพ PLO ตามเกณฑ์ SMART ประเมิน 5 ข้อ ตอบเป็น JSON:
-specific_object_ok: กรรมของกริยาเจาะจง ระบุพฤติกรรม/ทักษะ/สมรรถนะที่ชัดเจน ไม่ใช่คำกว้างเช่น 'ความรู้' 'ทักษะที่จำเป็น'
-measurable_ok: สังเกตได้ และประเมินได้จริงด้วยเครื่องมือทางการศึกษา (ข้อสอบ ชิ้นงาน การปฏิบัติ แฟ้มผลงาน) — การไม่มีคำห้ามยังไม่นับว่าวัดได้
-achievable_ok: ระดับ Bloom สมเหตุสมผลกับระดับคุณวุฒิ และบรรลุได้ภายในระยะเวลาหลักสูตร
-relevant_needs_ok: ตอบสนองความต้องการของผู้มีส่วนได้ส่วนเสียที่อ้างถึงจริง และสะท้อนสมรรถนะที่ตลาดแรงงานต้องการ
-time_bound_ok: ค่าเริ่มต้นเป็น true — PLO ถือว่าบรรลุ 'เมื่อสิ้นสุดหลักสูตร' โดยปริยาย ให้ตอบ false เฉพาะเมื่อข้อความระบุกรอบเวลาอื่นที่ขัดกัน เช่น 'ภายในปีที่ 2'
-notes_th: เหตุผลสั้นๆ สำหรับข้อที่ไม่ผ่าน
+**Shape.** A structured action loop, not native tool-calling: Instructor is in `Mode.JSON` for every slot, so reading a `tool_calls` envelope would mean hand-parsing JSON or keying the shared client cache on `(provider, mode)`, and it would tie the loop to providers that implement tool-calling when running the whole pipeline on one endpoint is supported. The model answers one `ValidationStep` per turn — `reasoning_th` first, so it reasons before it commits — carrying a discriminated action: `call_tool`, `request_repair`, or `finish`. The loop executes the action and appends the result as the next user turn. A malformed action is a Pydantic `ValidationError`, which Instructor re-asks with the error attached.
 
-PLO: {statement_th}
-ระดับคุณวุฒิ: {degree_level}
-ระยะเวลาหลักสูตร: {duration_years} ปี
-Need ที่อ้างถึง:
-- {need_statements_th…}
-```
+The five soft verdicts in `finish` ask exactly what the old judge asked, and the four clauses with scar tissue behind them are unchanged: `measurable_ok` is about a real instrument and not about wording ("การไม่มีคำห้ามยังไม่นับว่าวัดได้"), `relevant_needs_ok` is judged against the Needs shown and nothing else ("ห้ามอ้างกรอบอื่นที่ไม่ได้แสดงไว้"), `time_bound_ok` defaults true, and `วิสัยทัศน์` appears nowhere. `tests/unit/test_smart_agent_prompt.py` pins all four — they are how `obe-principles.md` is held in place, and the prompt is a new place it could drift silently.
 
-`vision_th` does not appear here, and no argument replaces it. R's institutional component is settled structurally — `plo_synthesis.run` checks `Need.source_stakeholder_types` for `institutional_direction` across the whole set and warns once at program level. Asking the judge to compare each PLO against a vision string produced a flag on every PLO in a set, which told the designer nothing.
+**What the prompt says it cannot do.** The system message states outright that the code-decided criteria cannot be declared passed and that the code re-checks the final statement, because a model that believes it can sign off on M spends its turns arguing instead of instructing a repair. It also states that the agent does not write the sentence itself.
 
-`measurable_ok` is deliberately a *different question* from the M hard check: the hard check only scans for forbidden words, and a statement can clear that list while still naming nothing an instrument could observe.
+`build_agent_repair_prompt` has **no `note_th` parameter**, and adding one would be a mistake. The designer's note reaches the draft prompt and nothing else; that invariant used to rest on `_build_fix_prompt` happening not to take the argument, and now rests on the signature. `ValidationContext` omits the note for the same reason — a validator that could read it could relay the wording into an instruction, and the note would reach a repair prompt second-hand.
 
-The hard-fail retry loop this soft judge sits alongside is code, not a prompt: `stages/plo_synthesis.py`'s `_ensure_smart()` calls `hard_failures()`, and on a hard fail re-prompts the PLO-drafting model (`_build_fix_prompt`) naming the specific violated criterion, up to 3 attempts, before setting `smart_escalated=True`. See `obe-principles.md` for the full hard/soft rubric.
+The repair prompt carries the instruction, the original statement, the declared Bloom level and verb, and nothing else — no tool results, no sibling PLOs, no rubric recital. The model that wrote the diagnosis is not the model that writes the fix, so the instruction has to stand on its own. It repeats the forbidden-word list, because a repair is the last model call before a statement ships, and it asks for `action_verb_th` to follow the sentence: a rewrite that changes the verb in the text but not the field fails S forever.
+
+**Tool observations** are Thai text built by the same module, so no prompt string is inlined in stage code. `build_repair_observation` reports the rewrite **and** the code's verdict on it, both before and after — handed only the new sentence, the agent would have to trust its own reading of a criterion pure code had just decided, and could not tell a rewrite it likes from one that passes.
 
 ---
 

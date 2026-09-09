@@ -228,15 +228,21 @@ class BloomLevel(str, Enum):
     EVALUATE = "evaluate"
     CREATE = "create"
 
+class SmartFinding(BaseModel):
+    criterion: SmartFindingCode  # eight codes: three hard, five soft
+    severity: Literal["hard", "soft"]
+    note_th: str  # why, for the designer
+
 class SMARTCheck(BaseModel):
     # Each field combines its hard check (pure code) with the matching soft
-    # verdict from the light-model judge — none of these are hardcoded True.
-    specific: bool   # S_VERB not failed AND judge.specific_object_ok
-    measurable: bool # M_FORBIDDEN not failed AND judge.measurable_ok
-    achievable: bool # judge.achievable_ok (no hard counterpart)
-    relevant: bool   # R_EVIDENCE not failed AND judge.relevant_needs_ok
-    timely: bool     # judge.time_bound_ok (no hard counterpart, defaults true)
+    # verdict from the validation agent — none of these are hardcoded True.
+    specific: bool   # S_VERB not failed AND specific_object_ok
+    measurable: bool # M_FORBIDDEN not failed AND measurable_ok
+    achievable: bool # achievable_ok (no hard counterpart)
+    relevant: bool   # R_EVIDENCE not failed AND relevant_needs_ok
+    timely: bool     # time_bound_ok (no hard counterpart, defaults true)
     notes_th: str | None = None  # rationale or what fails
+    findings: list[SmartFinding] = []  # why each false field is false
 
 class PLO(BaseModel):
     """A Program Learning Outcome — what every graduate can do at graduation."""
@@ -253,9 +259,11 @@ class PLO(BaseModel):
     rationale_th: str  # why this PLO exists, for designer review
     distinctive_feature_th: str | None = None  # what differentiates this PLO
     version: int = 1
-    smart_retry_count: int = 0  # SMART hard-fail fix attempts consumed (max 3)
-    smart_escalated: bool = False  # still hard-failing after retries → human repair
+    smart_retry_count: int = 0  # repair drafts the validator asked for (max 3)
+    smart_escalated: bool = False  # still hard-failing after repairs → human repair
     soft_flags: list[str] = []  # non-blocking: "S_object", "M_assessable", "A_level", "R_needs", "T_horizon"
+    smart_validated_by: str = "legacy"  # agent | code_only | stale | legacy — see below
+    smart_diagnosis_th: str | None = None  # the validator's reason, for the designer
     is_optional: bool = False  # PLO from want-dominant Need(s), exempt from the core-Need count
 ```
 
@@ -269,7 +277,10 @@ Validation rules for PLO (enforce in code):
 - `statement_th` must not contain forbidden words (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก) — see `obe-principles.md`. Exception: a PLO with `smart_escalated=True` may carry them — it exists precisely so a human can repair it, and the SMART gate already failed it loudly.
 - `source_need_ids` must be non-empty (no PLO without a Need behind it), and `source_evidence_ids` must be non-empty (no PLO without an evidence trail) — two separate validators, both hard rejects.
 - `smart_check` all five fields must be `True` to mark the PLO ready
-- Hard vs soft failure handling: S-verb / M-forbidden / R-evidence failures (pure code, `stages/smart_rules.py`) trigger the automated SMART retry loop (max 3, criterion named in the retry prompt; unfixed → `smart_escalated=True`). S-object / A-level / R-alignment concerns come from one light-model judge call and land in `soft_flags` without blocking. Implement per the SMART validation checklist in `obe-principles.md`.
+- Hard vs soft failure handling: S-verb / M-forbidden / R-evidence are pure code (`stages/smart_rules.py`) and are the floor — `validate_and_build` runs them on the final statement whatever the validator said, and that call alone sets `smart_escalated`. The five soft verdicts (`S_object`, `M_assessable`, `A_level`, `R_needs`, `T_horizon`) come from the validation agent, land in `soft_flags` and in the matching `SMARTCheck` field, and never block. Repairs are bounded at 3 per PLO. Implement per the SMART validation checklist in `obe-principles.md`.
+- `SMARTCheck.findings: list[SmartFinding]` carries *why*: `criterion` (one of the eight codes), `severity` (`hard`/`soft`), Thai `note_th`. It rides inside the existing `smart_check` JSONB column, so it needed no migration and rows written before it deserialise on the model's default. Do not make it required and do not give `SMARTCheck` `extra="forbid"` — either makes a pre-migration row unreadable, which loses a whole program's PLO list on GET rather than one field.
+- `soft_flags` stays `list[str]`, not the enum. A row carrying a code this build no longer knows would otherwise raise on read, and `R_alignment` was emitted for months. The typed detail is in `findings`; a validator keeps the flat list and the soft findings in step, exempting a row that has flags but no findings (that is what `legacy` means).
+- `smart_validated_by` distinguishes four facts the UI must not conflate: `agent` (judged and this is the verdict), `code_only` (the validator could not run; the pure checks decided alone), `stale` (a designer edited the statement and nothing has re-judged it — set by `PUT /plos/{id}`), `legacy` (predates the validator). `POST /plos/{id}/revalidate` is what moves a `stale` row back to `agent`.
 
 ## Cross-stage: human-in-the-loop checkpoint
 

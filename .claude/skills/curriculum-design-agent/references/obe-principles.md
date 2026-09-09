@@ -39,7 +39,9 @@ Every PLO must satisfy all five SMART dimensions **before it leaves the PLO synt
 **คำนิยาม:** ผลลัพธ์ที่ระบุจะต้องสามารถสังเกตเห็นได้ (Observable) และสามารถประเมินผลเชิงประจักษ์ได้จริงด้วยเครื่องมือการประเมินทางการศึกษา ทั้งในเชิงปริมาณหรือเชิงคุณภาพ
 
 **Validation rule:**
-- **[hard]** Automatically reject any PLO containing a forbidden unmeasurable word (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก — see [Forbidden words](#forbidden-words-in-plo-statements-thai-context)), since these describe internal mental states rather than observable output.
+- **[hard]** Automatically reject any PLO that *uses* a forbidden unmeasurable word (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก — see [Forbidden words](#forbidden-words-in-plo-statements-thai-context)), since these describe internal mental states rather than observable output.
+  - **Uses, not contains.** Thai has no word boundaries, so a substring scan flags every compound that happens to hold one: `รักษา` (treat//care for) holds รัก, `จำแนก` (classify — itself a sound Understand verb) and `จำลอง` (model/simulate) hold จำ, `ความรู้` and `เรียนรู้` hold รู้. Each of those hard-failed M, spent all three repair rounds against a hint about a word the statement never used, and escalated. `smart_vocabulary.forbidden_words_in` masks a curated list of such compounds before matching, and is the one place a real tokenizer would go. Do not re-implement this as `word in statement`.
+  - Note the consequence, which is correct: `ความรู้` as the *object* of a verb ("บูรณาการความรู้ทางวิศวกรรม…") is a soft `specific_object_ok` finding per S above, not a hard Measurable failure.
 - **[soft]** The action verb must map to an assessable behavior — ask "could a rubric, exam, project, or portfolio review actually score this?" The absence of a forbidden word is *not* evidence of this; a statement can clear the word list and still name nothing a real instrument could observe.
 - Prefer statements where the assessment method is implicit in the verb itself (e.g. "ออกแบบ" → design review; "วิเคราะห์" → case analysis; "นำเสนอ" → presentation rubric).
 
@@ -85,13 +87,13 @@ R has **three components**, checked three different ways:
 
 ### SMART validation checklist (automatable, for the synthesis retry loop)
 
-Three hard checks are pure code (`stages/smart_rules.py`). On any hard-fail, send the PLO back to the LLM with the specific violated criterion named in the retry prompt (not a generic "try again"):
+Three hard checks are pure code (`stages/smart_rules.py`), and they are the **floor**: `plo_synthesis.validate_and_build` runs them on the final statement whatever else happened, and that call alone sets `smart_escalated`.
 
 1. **[S_VERB, hard]** Exactly one recognized Bloom verb present in the statement.
 2. **[M_FORBIDDEN, hard]** No forbidden unmeasurable word present (รู้ / จำ / เข้าใจ / ซาบซึ้ง / ตระหนัก / ศรัทธา / รัก).
 3. **[R_EVIDENCE, hard]** `source_need_ids` evidence trail is non-empty and resolves to a real `Need`/`StakeholderEvidence` record.
 
-Five soft verdicts come from one light-model judge call (`prompts/smart_validator.py`, `build_smart_soft_judge_prompt`). None of them block:
+The **validation agent** (`stages/smart_agent.py`, on its own `VALIDATION_*` slot) investigates and instructs: it reads the pure-code verdict through a `check_hard` tool, may read the cited Needs, an excerpt of their evidence, the sibling outcomes and the Thai Bloom table, and when a statement needs repair it emits an *instruction* that `complete_synthesis` executes — then re-checks what came back. It cannot declare a hard failure passed: `Finish` carries no field that clears one, and the code gate above runs afterwards regardless. Its five soft verdicts still never block:
 
 | Verdict | Asks |
 |---|---|
@@ -101,9 +103,30 @@ Five soft verdicts come from one light-model judge call (`prompts/smart_validato
 | `relevant_needs_ok` | Does the statement actually answer the Needs it cites? |
 | `time_bound_ok` | Defaults true; fails only on a conflicting horizon. |
 
-Hard-fails trigger the automatic retry loop (bounded — max 3 attempts, then `smart_escalated=True` and the PLO is kept for human repair, never dropped). Soft verdicts land in `soft_flags` (`S_object`, `M_assessable`, `A_level`, `R_needs`, `T_horizon`) **and** in the matching `SMARTCheck` field, so `SMARTCheck.passed` stops reporting success for a flagged outcome. When the judge call itself fails, every soft verdict defaults true and a warning is logged — an LLM hiccup degrades toward "not flagged" rather than falsely flagging sound work.
+Repairs are bounded — max 3 per PLO, plus a turn budget and a per-PLO deadline — then `smart_escalated=True` and the PLO is kept for human repair, never dropped. Soft verdicts land in `soft_flags` (`S_object`, `M_assessable`, `A_level`, `R_needs`, `T_horizon`) **and** in the matching `SMARTCheck` field, so `SMARTCheck.passed` stops reporting success for a flagged outcome. When the validator itself cannot run or cannot finish — a dead endpoint, an exhausted budget, a malformed answer — every soft verdict defaults true, no finding is manufactured, and `smart_validated_by="code_only"` records that the pure checks decided alone. An outage degrades toward "not flagged" rather than falsely flagging sound work, and never toward an escalation nobody judged.
 
-R's institutional component is not in this list: it is checked once per program from `Need.source_stakeholder_types`, as described under R above.
+R's institutional component is not in this list: it is checked once per program from `Need.source_stakeholder_types`, as described under R above. It is **not** the agent's job either — do not add a `check_institutional` tool.
+
+### What a verdict records
+
+A verdict is more than pass/fail, because the old gate's surviving hard failures were logged and dropped: a designer could see that a PLO escalated and never which criterion did it.
+
+- `SMARTCheck.findings` — one `SmartFinding` per problem (`criterion`, `severity`, Thai `note_th`), hard and soft in one list. Rides inside the existing `smart_check` JSONB column.
+- `soft_flags` — the same soft codes as a flat list, because five readers want it that way. A validator keeps the two in step.
+- `smart_validated_by` — `agent` / `code_only` / `stale` / `legacy`. "The validator judged this and it failed", "the validator could not run", "a designer edited the statement and nothing has re-judged it" and "this predates the validator" are four different facts, and the UI must not attribute a diagnosis to something that never ran.
+- `smart_diagnosis_th` — the overall reason, in Thai, for the designer to act on.
+
+The tool-call transcript is **not** persisted (it goes to loguru at DEBUG). If it ever must be, it belongs in its own audit table keyed `(program_id, plo_id, run_at)` — not a column on the outcome, which is the response model of five endpoints and is re-upserted on every checkpoint run.
+
+### Sibling context, and why overlap is soft only
+
+`list_sibling_plos` lets the validator see the other outcomes in the set, so "this is indistinguishable from PLO4" becomes checkable — and it is a finding under **S** (`specific_object_ok`), per S's own "could apply equally to almost any program" test. Deliberately not a sixth code.
+
+It can only ever be soft. Redundancy is a property of the *set*, and PLOs are validated concurrently: ten validators asked pairwise can each answer "not a duplicate" while the set holds two near twins, or PLO3 and PLO7 can flag each other, both escalate, both get repaired independently, and converge again. If set-level redundancy needs enforcing, it belongs in `plo_report` as a program-level check — not in ten independent judgements trying to agree.
+
+### The Thai Bloom verb table
+
+`stages/bloom_verbs.py` holds the Thai renderings of the cognitive verb table above, which existed only in English until the validator needed to consult it. It is **advisory**: it feeds `bloom_lookup` and `check_hard`'s verb count, and is wired into no hard check. A PLO using a sound verb the table forgot would otherwise hard-fail Specific and escalate, which is worse than the gap it closes. The table is a judgement call and wants a Thai curriculum specialist's review before it gains any authority.
 
 ## K/S/E/C vs Bloom domain — do not conflate
 
