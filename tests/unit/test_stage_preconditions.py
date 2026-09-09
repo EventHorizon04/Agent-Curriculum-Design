@@ -35,6 +35,7 @@ from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages import skill_extraction as se
 from curriculum_agent.stages import stakeholder_needs as sn
+from tests.support.smart_agent import set_soft_judge
 
 PROGRAM = "cs-test"
 
@@ -190,11 +191,8 @@ async def test_plo_synthesis_loads_needs_when_state_carries_none(
             )
         )
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge()
-
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
 
     state = await ps.run(
         {

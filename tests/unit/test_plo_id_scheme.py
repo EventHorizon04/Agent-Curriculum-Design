@@ -20,6 +20,7 @@ import pytest
 
 from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetadata
 from curriculum_agent.stages import plo_synthesis as ps
+from tests.support.smart_agent import set_soft_judge
 
 
 def _need(nid: str, demand: float, *, optional: bool = False) -> Need:
@@ -102,13 +103,8 @@ def _patch_model(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         )
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
 
 
 async def test_run_numbers_main_plos_by_descending_demand(
@@ -183,11 +179,6 @@ async def test_a_failed_need_leaves_a_gap_rather_than_renumbering(
 ):
     """Renumbering would change what PLO2 means between runs; designers cite these."""
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
     async def flaky_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
         if "Nmid" in messages[-1]["content"]:
             raise RuntimeError("model unavailable for this one")
@@ -202,7 +193,7 @@ async def test_a_failed_need_leaves_a_gap_rather_than_renumbering(
         )
 
     monkeypatch.setattr(ps, "complete_synthesis", flaky_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
 
     needs = [_need("Nhigh", 0.9), _need("Nmid", 0.6), _need("Nlow", 0.3)]
     state = await ps.run(

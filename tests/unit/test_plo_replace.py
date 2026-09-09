@@ -21,6 +21,7 @@ from curriculum_agent.models import (
     ProgramMetadata,
 )
 from curriculum_agent.stages import plo_synthesis as ps
+from tests.support.smart_agent import patch_soft_judge
 
 
 def _need(nid: str, *, is_optional: bool = False) -> Need:
@@ -57,12 +58,9 @@ def _patch_llm(needs: list[Need], delete_mock: AsyncMock, insert_mock: AsyncMock
         nid = next(n.need_id for n in needs if n.need_id in body)
         return ps._SingleDraftResponse(plo=drafts[nid])
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge()
-
     return (
         patch.object(ps, "complete_synthesis", fake_synthesis),
-        patch.object(ps, "complete_light", fake_light),
+        patch_soft_judge(),
         patch.object(ps.PLORepository, "delete_by_program", delete_mock),
         patch.object(ps.PLORepository, "bulk_insert", insert_mock),
     )
@@ -124,7 +122,7 @@ async def test_nothing_is_deleted_when_synthesis_produces_nothing(
     insert_mock = AsyncMock()
     with (
         patch.object(ps, "complete_synthesis", failing_synthesis),
-        patch.object(ps, "complete_light", AsyncMock(return_value=ps._SmartSoftJudge())),
+        patch_soft_judge(),
         patch.object(ps.PLORepository, "delete_by_program", delete_mock),
         patch.object(ps.PLORepository, "bulk_insert", insert_mock),
     ):

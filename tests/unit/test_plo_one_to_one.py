@@ -6,6 +6,7 @@ import pytest
 
 from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetadata
 from curriculum_agent.stages import plo_synthesis as ps
+from tests.support.smart_agent import set_soft_judge
 
 
 def _need(nid: str, optional: bool = False, ksec_category: KSECCategory = KSECCategory.S) -> Need:
@@ -49,13 +50,8 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch, needs: list[Need]) -> AsyncMock:
         calls.append(nid)
         return ps._SingleDraftResponse(plo=drafts[nid])
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
     mock = AsyncMock()
     mock.calls = calls  # type: ignore[attr-defined]
     return mock
@@ -122,13 +118,8 @@ async def test_merging_needs_keeps_every_source_id_and_evidence(
         draft = _draft("N1").model_copy(update={"source_need_ids": ["N1", "N2"]})
         return ps._SingleDraftResponse(plo=draft)
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
 
     plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"}, "PLO1")
 
@@ -157,13 +148,8 @@ async def test_fabricated_model_evidence_ids_are_discarded(
         )
         return ps._SingleDraftResponse(plo=draft)
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
 
     plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"}, "PLO1")
 
@@ -180,13 +166,8 @@ async def test_merged_plo_is_optional_only_when_all_sources_are(
             plo=_draft("N1").model_copy(update={"source_need_ids": ["N1", "N2"]})
         )
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
 
     mixed = await ps.synthesize_from_needs(
         program_metadata,
@@ -244,13 +225,8 @@ async def test_run_skips_failed_need_and_emits_rest(
             raise RuntimeError("model timeout for N2")
         return ps._SingleDraftResponse(plo=drafts[nid])
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge(
-            specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-        )
-
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
 
     state = await ps.run(
         {

@@ -9,6 +9,7 @@ from curriculum_agent.graph import AgentState
 from curriculum_agent.models import BloomLevel, KSECCategory, Need
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages.plo_synthesis import run
+from tests.support.smart_agent import set_soft_judge
 
 _METADATA = {
     "program_id": "test",
@@ -123,11 +124,8 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch, needs: list[Need]) -> None:
         nid = next(n.need_id for n in needs if f"need_id: {n.need_id}\n" in body)
         return ps._SingleDraftResponse(plo=drafts[nid])
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge()
-
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(ps, "complete_light", fake_light)
+    set_soft_judge(monkeypatch)
     monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())
 

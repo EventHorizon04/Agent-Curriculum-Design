@@ -22,6 +22,7 @@ from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
 from curriculum_agent.prompts.summarize_need import build_summarize_need_prompt
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import plo_synthesis as ps
+from tests.support.smart_agent import set_soft_judge
 
 NOTE = "เน้นทักษะด้าน AI และการวิเคราะห์ข้อมูลขนาดใหญ่"
 
@@ -199,15 +200,7 @@ async def test_plo_synthesis_forwards_the_note_to_the_draft_prompt(
         )
 
     monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
-    monkeypatch.setattr(
-        ps,
-        "complete_light",
-        AsyncMock(
-            return_value=ps._SmartSoftJudge(
-                specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True
-            )
-        ),
-    )
+    set_soft_judge(monkeypatch)
     monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())
 

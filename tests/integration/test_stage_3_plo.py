@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
+from dataclasses import dataclass
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -12,16 +15,15 @@ from curriculum_agent.models import (
 from curriculum_agent.stages.plo_synthesis import (
     _PLODraft,
     _SingleDraftResponse,
-    _SmartSoftJudge,
     run,
 )
-
-_SOFT_OK = _SmartSoftJudge(specific_object_ok=True, achievable_ok=True, relevant_alignment_ok=True)
+from tests.support.smart_agent import soft_judge_ok
 
 
 def _draft_for(need: Need) -> _PLODraft:
     return _PLODraft(
-        plo_id=f"PLO-{need.need_id}",
+        # No plo_id: the code owns it, and _PLODraft has had no such field since
+        # the id scheme changed. Pydantic was ignoring it.
         statement_th=f"ออกแบบและพัฒนาระบบสารสนเทศสำหรับงาน {need.need_id} ได้อย่างมีประสิทธิภาพ",
         bloom_level=BloomLevel.CREATE,
         action_verb_th="ออกแบบ",
@@ -57,7 +59,24 @@ def state(program_metadata: ProgramMetadata, needs: list[Need]) -> dict:
     }
 
 
-def _patched(needs: list[Need]):
+@dataclass
+class _Stubs:
+    """The stubs a test may want to assert on, named rather than positional."""
+
+    soft_judge: AsyncMock
+    bulk_insert: AsyncMock
+    delete_by_program: AsyncMock
+
+
+@contextmanager
+def _patched(needs: list[Need]) -> Iterator[_Stubs]:
+    """Every provider and repository call the stage makes, stubbed.
+
+    A context manager over an ExitStack rather than a tuple every caller
+    unpacks positionally: adding a fifth stub used to mean editing all four
+    call sites, and one of them unpacked `p1, _, p3, p4` just to swap the
+    second element for a mock it could count.
+    """
     drafts = {n.need_id: _draft_for(n) for n in needs}
 
     async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
@@ -65,34 +84,28 @@ def _patched(needs: list[Need]):
         nid = next(n.need_id for n in needs if n.need_id in body)
         return _SingleDraftResponse(plo=drafts[nid])
 
-    return (
-        patch(
-            "curriculum_agent.stages.plo_synthesis.complete_synthesis",
-            new=fake_synthesis,
-        ),
-        patch(
-            "curriculum_agent.stages.plo_synthesis.complete_light",
-            new_callable=AsyncMock,
-            return_value=_SOFT_OK,
-        ),
-        patch(
-            "curriculum_agent.stages.plo_synthesis.PLORepository.bulk_insert",
-            new_callable=AsyncMock,
-        ),
-        # run() replaces the set rather than upserting into it, so the delete
-        # needs stubbing too or the stage opens a real database connection.
-        patch(
-            "curriculum_agent.stages.plo_synthesis.PLORepository.delete_by_program",
-            new_callable=AsyncMock,
-            return_value=0,
-        ),
-    )
+    soft_judge = AsyncMock(return_value=soft_judge_ok())
+    bulk_insert = AsyncMock()
+    # run() replaces the set rather than upserting into it, so the delete needs
+    # stubbing too or the stage opens a real database connection.
+    delete_by_program = AsyncMock(return_value=0)
+
+    with ExitStack() as stack:
+        for target, new in (
+            ("complete_synthesis", fake_synthesis),
+            ("complete_light", soft_judge),
+            ("PLORepository.bulk_insert", bulk_insert),
+            ("PLORepository.delete_by_program", delete_by_program),
+        ):
+            stack.enter_context(patch(f"curriculum_agent.stages.plo_synthesis.{target}", new))
+        yield _Stubs(
+            soft_judge=soft_judge, bulk_insert=bulk_insert, delete_by_program=delete_by_program
+        )
 
 
 @pytest.mark.anyio
 async def test_stage_4_produces_one_plo_per_need(state: dict, needs: list[Need]) -> None:
-    p1, p2, p3, p4 = _patched(needs)
-    with p1, p2, p3, p4:
+    with _patched(needs):
         result = await run(state)
 
     plos = result["plos"]
@@ -102,8 +115,7 @@ async def test_stage_4_produces_one_plo_per_need(state: dict, needs: list[Need])
 
 @pytest.mark.anyio
 async def test_stage_4_no_forbidden_words(state: dict, needs: list[Need]) -> None:
-    p1, p2, p3, p4 = _patched(needs)
-    with p1, p2, p3, p4:
+    with _patched(needs):
         result = await run(state)
 
     # The same scan the gate and the model validator use — asserting against a
@@ -119,8 +131,7 @@ async def test_stage_4_no_forbidden_words(state: dict, needs: list[Need]) -> Non
 
 @pytest.mark.anyio
 async def test_stage_4_source_need_ids_non_empty(state: dict, needs: list[Need]) -> None:
-    p1, p2, p3, p4 = _patched(needs)
-    with p1, p2, p3, p4:
+    with _patched(needs):
         result = await run(state)
 
     for plo_dict in result["plos"]:
@@ -132,17 +143,10 @@ async def test_stage_4_source_need_ids_non_empty(state: dict, needs: list[Need])
 
 @pytest.mark.anyio
 async def test_stage_4_smart_validator_called_once_per_need(state: dict, needs: list[Need]) -> None:
-    p1, _, p3, p4 = _patched(needs)
-    soft_judge_mock = AsyncMock(return_value=_SOFT_OK)
-    with (
-        p1,
-        patch("curriculum_agent.stages.plo_synthesis.complete_light", soft_judge_mock),
-        p3,
-        p4,
-    ):
+    with _patched(needs) as stubs:
         result = await run(state)
 
-    assert soft_judge_mock.call_count >= len(needs), (
+    assert stubs.soft_judge.call_count >= len(needs), (
         "soft judge should be called at least once per Need"
     )
     for plo_dict in result["plos"]:

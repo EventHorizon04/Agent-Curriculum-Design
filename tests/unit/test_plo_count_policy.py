@@ -11,6 +11,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages.need_grouping import MIN_NEEDS
+from tests.support.smart_agent import patch_soft_judge
 
 
 def test_policy_bound_comes_from_need_grouping():
@@ -55,12 +56,9 @@ def _patch_llm(needs: list[Need]):
         nid = next(n.need_id for n in needs if f"need_id: {n.need_id}\n" in body)
         return ps._SingleDraftResponse(plo=drafts[nid])
 
-    async def fake_light(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SmartSoftJudge()
-
     return (
         patch.object(ps, "complete_synthesis", fake_synthesis),
-        patch.object(ps, "complete_light", fake_light),
+        patch_soft_judge(),
         patch.object(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0)),
         patch.object(ps.PLORepository, "bulk_insert", AsyncMock()),
     )
