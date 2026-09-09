@@ -78,7 +78,11 @@ function Stop-ApiProcess {
     # version of these scripts is the uv wrapper, which discovery above already
     # covered; this only catches a tree that has drifted from the name filter.
     if (Test-Path $script:ApiPidFile) {
-        $recorded = (Get-Content $script:ApiPidFile -Raw).Trim()
+        # -Raw returns $null for a file that exists but is empty (a start killed
+        # mid-write leaves one), and .Trim() on $null is a terminating error under
+        # Set-StrictMode - the same failure shape as the port-owner lookup below.
+        $recorded = Get-Content $script:ApiPidFile -Raw -ErrorAction SilentlyContinue
+        $recorded = if ($null -eq $recorded) { '' } else { $recorded.Trim() }
         if ($recorded -match '^\d+$') {
             $recordedPid = [int]$recorded
             if ($targets.ProcessId -notcontains $recordedPid) {
@@ -107,10 +111,43 @@ function Clear-PortForApi {
 
     $ours = @(Get-ApiProcess) | Where-Object { $_.ProcessId -eq $owner }
     if (-not $ours) {
-        $name = (Get-Process -Id $owner -ErrorAction SilentlyContinue).ProcessName
-        Write-Host ("   FAIL: port $Port is held by PID $owner ($name), which is not " +
-            "this project's API. Free the port yourself; this script will not kill a " +
-            "process it does not own.") -ForegroundColor Red
+        # Two different situations reach here, and they need different advice.
+        #
+        # Get-ApiProcess asks CIM, so a process CIM cannot see is never "ours"
+        # however plainly it is this project's API — a run started from an
+        # elevated shell or another user's session is invisible to both CIM and
+        # Get-Process from here, which is also why reading .ProcessName off the
+        # result used to end the script with a PropertyNotFoundStrict error under
+        # Set-StrictMode instead of printing this message at all.
+        #
+        # So ask the port itself. If /health answers with this API's payload, the
+        # port is held by a run of this project that this shell merely cannot
+        # query, and saying "not this project's API" would be a lie that sends the
+        # designer looking for the wrong process.
+        $proc = Get-Process -Id $owner -ErrorAction SilentlyContinue
+        $name = if ($null -eq $proc) { 'name unreadable from this shell' } else { $proc.ProcessName }
+
+        $isOurApi = $false
+        try {
+            $health = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" `
+                -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
+            $isOurApi = ($health.Content -like '*"status"*"ok"*')
+        }
+        catch { $isOurApi = $false }
+
+        if ($isOurApi) {
+            Write-Host ("   FAIL: port $Port already serves this project's API (PID $owner, " +
+                "$name), but this shell cannot stop it - the process was started somewhere " +
+                "this one cannot see (an elevated shell, or another user's session). Stop it " +
+                "where it was started, or from an elevated shell run " +
+                "``Stop-Process -Id $owner -Force``.") -ForegroundColor Red
+        }
+        else {
+            Write-Host ("   FAIL: port $Port is held by PID $owner ($name), which is not " +
+                "this project's API. Free the port yourself; this script will not kill a " +
+                "process it does not own. Inspect it with " +
+                "``Get-NetTCPConnection -LocalPort $Port``.") -ForegroundColor Red
+        }
         exit 1
     }
 
