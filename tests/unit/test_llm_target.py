@@ -78,6 +78,32 @@ def test_heavy_follows_the_default_provider_when_unset(
     assert llm._heavy_provider() == "ollama"
 
 
+def test_a_switched_off_validation_slot_resolves_to_no_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_validation_provider` used to read `settings.validation_provider or
+    settings.llm_provider`, which turned the kill switch straight back into a
+    live provider — the switch was documented, and unthrowable."""
+    settings = _settings(llm_provider="opentyphoon", validation_provider="")
+    monkeypatch.setattr(llm, "settings", settings)
+
+    assert llm._validation_provider() == ""
+
+
+def test_the_startup_line_says_a_disabled_slot_is_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropping the line instead would read as a slot that stopped existing, and
+    the startup log is where an operator confirms the switch took."""
+    settings = _settings(llm_provider="opentyphoon", validation_provider="")
+    monkeypatch.setattr(llm, "settings", settings)
+
+    target = llm.describe_target()
+
+    assert "validation: disabled" in target
+    assert "api_key" not in target.split("validation:")[1]
+
+
 def test_synthesis_stays_on_the_thai_endpoint_while_heavy_leaves(typhoon: Settings) -> None:
     """The reason synthesis is its own slot. Both calls used to be `heavy`, so
     this arrangement — clustering on OpenRouter, the PLO statement on the Thai

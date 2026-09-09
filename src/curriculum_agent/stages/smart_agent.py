@@ -363,7 +363,12 @@ async def run_smart_agent(
     refuse. A parallel argument could disagree with it, and the version that
     passed statements without their ids left `get_need` uncallable.
     """
-    if not settings.validation_provider and not settings.llm_provider:
+    # The kill switch. Not `and not settings.llm_provider`: that field is a
+    # Literal with no empty member, so the second half could never be true and
+    # the branch was unreachable -- VALIDATION_PROVIDER= made the API fail to
+    # boot instead, and leaving it unset resolved to llm_provider and ran the
+    # agent anyway.
+    if not settings.validation_provider:
         return code_only_result(
             draft, ValidationReason.DISABLED, "ไม่ได้ตรวจ (ปิดการใช้ validation agent)"
         )

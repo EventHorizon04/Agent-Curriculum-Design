@@ -392,6 +392,33 @@ async def test_a_provider_error_leaves_every_soft_verdict_true(
     assert all(result.soft_verdicts.values())
 
 
+async def test_the_kill_switch_skips_the_agent_without_calling_anything(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`ValidationReason.DISABLED` had no test and was unreachable in the
+    bargain: the guard read `not validation_provider and not llm_provider`, and
+    llm_provider is a Literal with no empty member, so the second half was
+    never true. The documented kill switch ran the agent anyway.
+
+    The assertion that matters is that no call is made -- a switch that still
+    spends a provider call is not a switch."""
+    from curriculum_agent.config import settings as live_settings
+
+    monkeypatch.setattr(live_settings, "validation_provider", "")
+
+    async def must_not_be_called(response_model, messages, **kwargs):  # noqa: ANN001, ANN003
+        raise AssertionError("the agent ran with its provider switched off")
+
+    monkeypatch.setattr(sa, "complete_validation", must_not_be_called)
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.reason is sa.ValidationReason.DISABLED
+    assert result.ran is False
+    assert result.soft_findings == []
+    assert all(result.soft_verdicts.values()), "a validator that did not run must not flag"
+
+
 async def test_the_deadline_produces_a_code_only_verdict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

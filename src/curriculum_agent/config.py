@@ -87,10 +87,20 @@ class Settings(BaseSettings):
     # drafts, against the previous five calls. That is what
     # validation_max_concurrent_plos bounds.
     #
-    # Leave VALIDATION_PROVIDER empty to skip the agent: the stage falls back to
-    # the pure-code verdict, which has to exist anyway for an endpoint outage.
-    # That is the kill switch — there is no feature flag.
-    validation_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
+    # `VALIDATION_PROVIDER=` (empty) skips the agent: the stage keeps the
+    # pure-code verdict, which has to exist anyway for an endpoint outage. That
+    # is the kill switch — there is no feature flag.
+    #
+    # The empty string is in the Literal because that is what a blank line in a
+    # `.env` file produces, and this field is the one place where empty and
+    # None have to mean different things. For every other slot both mean
+    # "follow LLM_PROVIDER" — a provider is all they select. Here the setting
+    # also answers *whether to run at all*, so None keeps the sibling meaning
+    # and "" is off. As documented and never implemented, the kill switch did
+    # neither: `VALIDATION_PROVIDER=` failed the Literal and the API would not
+    # boot, while leaving it unset resolved to LLM_PROVIDER and the agent kept
+    # running. `ValidationReason.DISABLED` was unreachable the whole time.
+    validation_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"
     validation_model: str = ""
     validation_max_turns: int = 8
     # Three, matching the SMART gate's long-standing retry ceiling — the rule is
@@ -171,6 +181,8 @@ class Settings(BaseSettings):
             self.synthesis_provider = self.llm_provider
         if self.extraction_provider is None:
             self.extraction_provider = self.llm_provider
+        # "" is left alone: it is the kill switch, and resolving it to
+        # llm_provider is precisely the bug that made the switch a no-op.
         if self.validation_provider is None:
             self.validation_provider = self.llm_provider
         # Each model falls back to its own provider's default, not to
@@ -185,7 +197,7 @@ class Settings(BaseSettings):
             self.synthesis_model = _PROVIDER_DEFAULT_MODEL[self.synthesis_provider]
         if not self.extraction_model:
             self.extraction_model = _PROVIDER_DEFAULT_MODEL[self.extraction_provider]
-        if not self.validation_model:
+        if not self.validation_model and self.validation_provider:
             self.validation_model = _PROVIDER_DEFAULT_MODEL[self.validation_provider]
         return self
 

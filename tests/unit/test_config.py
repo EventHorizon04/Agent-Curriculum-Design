@@ -166,6 +166,24 @@ def test_the_validation_budgets_are_bounded_by_default():
     assert s.validation_max_concurrent_plos == 3
 
 
+def test_an_empty_validation_provider_is_the_kill_switch():
+    """The documented switch, and for a while the only thing it did was stop the
+    API booting: `VALIDATION_PROVIDER=` in a .env file is the empty string, the
+    Literal did not admit it, and Settings raised at import time.
+
+    Empty and None mean different things here and nowhere else. Every other slot
+    only selects a provider, so both spellings mean "follow LLM_PROVIDER"; this
+    one also answers whether to run at all."""
+    off = Settings(_env_file=None, validation_provider="")
+    assert off.validation_provider == ""
+    # No model resolved for a slot that will not run — _PROVIDER_DEFAULT_MODEL
+    # has no "" key, and reaching for one is how this raised before.
+    assert off.validation_model == ""
+
+    following = Settings(_env_file=None, llm_provider="ollama", validation_provider=None)
+    assert following.validation_provider == "ollama", "None still follows LLM_PROVIDER"
+
+
 def test_explicit_models_survive_the_provider_default():
     s = Settings(
         _env_file=None,

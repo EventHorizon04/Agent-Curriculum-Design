@@ -73,8 +73,15 @@ def _extraction_provider() -> str:
 
 
 def _validation_provider() -> str:
-    """Provider for the SMART validation agent. Settings resolves None to llm_provider."""
-    return settings.validation_provider or settings.llm_provider
+    """Provider for the SMART validation agent, or "" when it is switched off.
+
+    Settings has already turned None into llm_provider by the time anything
+    reads this, so there is nothing to fall back to here — and falling back was
+    the bug: `settings.validation_provider or settings.llm_provider` turned the
+    empty string, which is the documented kill switch, back into a live
+    provider. The switch could not be thrown.
+    """
+    return settings.validation_provider or ""
 
 
 def _slots() -> tuple[tuple[str, str, str], ...]:
@@ -105,6 +112,11 @@ def _key_state(provider: str) -> str:
 
 
 def _describe_slot(label: str, provider: str, model: str) -> str:
+    # A slot with no provider is switched off. Say so on its own line rather
+    # than dropping it: a missing line reads as a slot that stopped existing,
+    # and the startup log is where an operator confirms the switch took.
+    if not provider:
+        return f"{label}: disabled"
     return (
         f"{label}: provider={provider} base_url={_base_url(provider)} "
         f"api_key={_key_state(provider)} model={model}"
@@ -266,9 +278,15 @@ async def complete_validation(
     through complete_synthesis, so a repair is still never answered by a
     different model than wrote the draft.
     """
-    return await _complete(
-        _validation_provider(), settings.validation_model, response_model, messages, **kwargs
-    )
+    provider = _validation_provider()
+    if not provider:
+        # The loop checks this before it starts and returns a code-only verdict,
+        # so reaching here means a caller skipped that guard. Fail with the
+        # reason rather than handing "" to _get_client.
+        raise RuntimeError(
+            "the SMART validation agent is switched off (VALIDATION_PROVIDER is empty)"
+        )
+    return await _complete(provider, settings.validation_model, response_model, messages, **kwargs)
 
 
 async def warmup_models() -> None:
@@ -279,7 +297,11 @@ async def warmup_models() -> None:
     on a prompt whose answer is thrown away. Every slot is considered, since
     only some of them may be the local one.
     """
-    local = {model for _, provider, model in _slots() if provider not in _HOSTED_PROVIDERS}
+    # `provider` guards the disabled slot: "" is not in _HOSTED_PROVIDERS, so
+    # without it a switched-off validation slot would still warm a model.
+    local = {
+        model for _, provider, model in _slots() if provider and provider not in _HOSTED_PROVIDERS
+    }
     if not local:
         return
     client = _get_raw_client("ollama")
