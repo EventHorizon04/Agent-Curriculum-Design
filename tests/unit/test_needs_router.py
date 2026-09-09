@@ -402,8 +402,11 @@ async def test_from_needs_passes_the_note_to_synthesis(
     captured: dict[str, object] = {}
     second = _need().model_copy(update={"need_id": "N2"})
 
-    async def fake_synth(metadata, needs, program_id, known, plo_id, *, note_th=None):
+    async def fake_synth(
+        metadata, needs, program_id, known, plo_id, *, note_th=None, siblings=(), **kw
+    ):
         captured["note_th"] = note_th
+        captured["sibling_ids"] = [s.plo_id for s in siblings]
         return None  # the 502 path — this test only cares what synthesis was told
 
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))

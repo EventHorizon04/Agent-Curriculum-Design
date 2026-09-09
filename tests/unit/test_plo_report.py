@@ -85,6 +85,8 @@ async def test_report_counts_split_core_and_optional(monkeypatch: pytest.MonkeyP
         "core": 1,
         "optional": 1,
         "escalated": 0,
+        "stale": 0,
+        "code_only": 0,
         "needs_not_synthesized": 0,
     }
 
@@ -112,6 +114,8 @@ async def test_report_counts_surface_escalated_plos(monkeypatch: pytest.MonkeyPa
         "core": 2,
         "optional": 0,
         "escalated": 1,
+        "stale": 0,
+        "code_only": 0,
         "needs_not_synthesized": 0,
     }
     # Escalated PLOs must stay visible, never dropped from the assembled set.

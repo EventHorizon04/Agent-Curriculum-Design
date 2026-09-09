@@ -15,7 +15,13 @@ from curriculum_agent.data.repositories import (
 )
 from curriculum_agent.exporters.excel_matrix import export_matrix_xlsx
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import PLO, DesignerNoteRequest, Need, StakeholderEvidence
+from curriculum_agent.models import (
+    PLO,
+    BloomLevel,
+    DesignerNoteRequest,
+    Need,
+    StakeholderEvidence,
+)
 
 router = APIRouter()
 _repo = PLORepository()
@@ -215,6 +221,7 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         is_in_scope,
     )
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
+        SiblingSummary,
         cited_need_ids,
         next_plo_id,
         plos_citing,
@@ -310,6 +317,10 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         # about to empty instead of counting past ids that are being deleted.
         next_plo_id([p.plo_id for p in surviving], is_optional=is_optional),
         note_th=body.note_th,
+        # The superseded outcomes are about to be deleted, so they are not
+        # siblings: warning "this duplicates PLO3" when PLO3 is being replaced
+        # by this very call is a false finding.
+        siblings=[SiblingSummary.from_plo(p) for p in surviving],
     )
     if plo is None:
         # Nothing has been deleted yet: the supersede and the insert happen
@@ -322,14 +333,118 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     return plo
 
 
+class PLOStatementUpdate(BaseModel):
+    """The fields a designer edits by hand.
+
+    The verdict fields are deliberately absent. This route used to accept a
+    whole PLO body, so a caller with the API key could set
+    `smart_escalated=False` with an all-true `smart_check` on a statement no
+    validator had ever passed — immutable rule 5 with the gate removed. They
+    are the validator's output, never a client's input.
+
+    `extra="ignore"` (the default) is what keeps the frontend working unchanged:
+    it PUTs the whole object, and the verdict fields in it are now dropped
+    rather than trusted.
+    """
+
+    statement_th: str
+    statement_en: str | None = None
+    bloom_level: BloomLevel
+    action_verb_th: str
+    rationale_th: str
+    distinctive_feature_th: str | None = None
+
+
 @router.put("/{plo_id}", response_model=PLO, dependencies=[Depends(require_api_key)])
-async def update_plo(program_id: str, plo_id: str, plo: PLO) -> PLO:
+async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> PLO:
+    """Edit one PLO's text. Does **not** re-run the SMART gate.
+
+    A designer can rewrite a statement without waiting on a multi-turn
+    validation they did not ask for — that is what
+    `POST /{plo_id}/revalidate` is for, and the cost of running it stays their
+    decision. What this route will not do is inherit the old verdict silently:
+    when the statement actually moves, `smart_validated_by` becomes "stale" so
+    the UI can say the outcome has not been judged as written.
+    """
     existing = await _repo.list_by_program(program_id)
     match = next((p for p in existing if p.plo_id == plo_id), None)
     if match is None:
         raise HTTPException(status_code=404, detail="PLO not found")
 
-    update_fields: dict[str, object] = {"version": match.version + 1, "program_id": program_id}
-    updated = plo.model_copy(update=update_fields)
+    edited = body.statement_th.strip() != match.statement_th.strip()
+    updated = match.model_copy(
+        update={
+            **body.model_dump(),
+            "version": match.version + 1,
+            "program_id": program_id,
+            "smart_validated_by": "stale" if edited else match.smart_validated_by,
+        }
+    )
     await _repo.bulk_insert([updated])
+    return updated
+
+
+@router.post("/{plo_id}/revalidate", response_model=PLO, dependencies=[Depends(require_api_key)])
+async def revalidate_plo(program_id: str, plo_id: str) -> PLO:
+    """Re-run the SMART validation agent over a stored PLO's own statement.
+
+    The only way a hand-edited statement gets a verdict, and what the "ต้องแก้
+    ด้วยมือ" badge should link to. It re-judges what is stored rather than
+    drafting anything new: the designer's sentence is the input.
+
+    One PLO, so the wall-clock is one loop's worth and a timeout here is
+    honest — unlike the whole-stage run, where a timeout mid-gather would lose
+    every outcome in the batch.
+    """
+    from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
+        SiblingSummary,
+        _PLODraft,
+        validate_and_build,
+    )
+
+    program = await ProgramRepository().get(program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+
+    stored = await _repo.list_by_program(program_id)
+    match = next((p for p in stored if p.plo_id == plo_id), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="PLO not found")
+
+    all_needs = await NeedRepository().list_by_program(program_id)
+    cited = [n for n in all_needs if n.need_id in set(match.source_need_ids)]
+    if not cited:
+        # Its Needs are gone, so there is nothing to judge it against. The
+        # trace endpoint reports the same condition as missing_need_ids.
+        raise HTTPException(
+            status_code=422,
+            detail=f"PLO {plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน",
+        )
+
+    draft = _PLODraft(
+        statement_th=match.statement_th,
+        statement_en=match.statement_en,
+        bloom_level=match.bloom_level,
+        action_verb_th=match.action_verb_th,
+        source_need_ids=list(match.source_need_ids),
+        rationale_th=match.rationale_th,
+        distinctive_feature_th=match.distinctive_feature_th,
+    )
+    revalidated = await validate_and_build(
+        draft,
+        metadata=program,
+        needs=cited,
+        program_id=program_id,
+        plo_id=plo_id,
+        known_need_ids={n.need_id for n in all_needs},
+        siblings=[SiblingSummary.from_plo(p) for p in stored if p.plo_id != plo_id],
+    )
+    if revalidated is None:
+        raise HTTPException(status_code=502, detail="ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่")
+
+    updated = revalidated.model_copy(update={"version": match.version + 1})
+    await _repo.bulk_insert([updated])
+    logger.info(
+        f"Revalidated {plo_id}: escalated={updated.smart_escalated} by={updated.smart_validated_by}"
+    )
     return updated

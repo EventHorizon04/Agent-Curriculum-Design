@@ -57,9 +57,17 @@ async def run(state: AgentState) -> AgentState:
 
     core = sum(1 for p in plos if not p.is_optional)
     escalated = sum(1 for p in plos if p.smart_escalated)
+    # "the validator judged this and it failed" and "no validator has judged
+    # this as written" are different facts, and a designer at the checkpoint has
+    # to be able to tell them apart. `stale` is a hand-edited statement awaiting
+    # revalidation; `code_only` is a verdict the pure checks reached alone
+    # because the agent could not run.
+    stale = sum(1 for p in plos if p.smart_validated_by == "stale")
+    code_only = sum(1 for p in plos if p.smart_validated_by == "code_only")
     logger.info(
         f"PLO report: {len(plos)} PLOs ({core} core, {len(plos) - core} optional, "
-        f"{escalated} escalated for repair), {len(not_synthesized)} Need(s) without a PLO"
+        f"{escalated} escalated for repair, {stale} awaiting revalidation, "
+        f"{code_only} judged by code alone), {len(not_synthesized)} Need(s) without a PLO"
     )
 
     report: dict[str, Any] = {
@@ -76,6 +84,8 @@ async def run(state: AgentState) -> AgentState:
             "core": core,
             "optional": len(plos) - core,
             "escalated": escalated,
+            "stale": stale,
+            "code_only": code_only,
             "needs_not_synthesized": len(not_synthesized),
         },
     }

@@ -91,6 +91,8 @@ def test_report_run_returns_the_full_report_payload():
         "core": 1,
         "optional": 0,
         "escalated": 0,
+        "stale": 0,
+        "code_only": 0,
         "needs_not_synthesized": 0,
     }
 

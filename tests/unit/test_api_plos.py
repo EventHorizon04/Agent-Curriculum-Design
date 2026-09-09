@@ -229,3 +229,162 @@ def test_out_of_scope_needs_do_not_change_which_bound_applies(
 
     assert response.status_code == 422
     assert "ต่ำกว่านโยบายขั้นต่ำ" in response.json()["detail"]
+
+
+# --------------------------- PUT and revalidate ---------------------------
+#
+# PUT had no test coverage at all, which is how it kept accepting a
+# client-supplied verdict: the hole in the gate was also a hole in the suite.
+
+
+def _stored(monkeypatch: pytest.MonkeyPatch, plos: list[PLO]) -> AsyncMock:
+    monkeypatch.setattr(plos_route.PLORepository, "list_by_program", AsyncMock(return_value=plos))
+    insert = AsyncMock()
+    monkeypatch.setattr(plos_route.PLORepository, "bulk_insert", insert)
+    return insert
+
+
+def test_put_ignores_a_client_supplied_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The hole this closes: a caller with the API key could set
+    smart_escalated=False with an all-true smart_check on a statement no
+    validator ever passed — immutable rule 5 with the gate removed."""
+    escalated = _plo("PLO1", ["N1"]).model_copy(
+        update={
+            "smart_escalated": True,
+            "smart_validated_by": "agent",
+            "smart_check": SMARTCheck(
+                specific=False, measurable=True, achievable=True, relevant=True, timely=True
+            ),
+        }
+    )
+    insert = _stored(monkeypatch, [escalated])
+
+    resp = client.put(
+        "/programs/cs-test/plos/PLO1",
+        json={
+            "statement_th": escalated.statement_th,
+            "bloom_level": "create",
+            "action_verb_th": "ออกแบบ",
+            "rationale_th": "เหตุผล",
+            # A client trying to clear its own escalation.
+            "smart_escalated": False,
+            "smart_check": {
+                "specific": True,
+                "measurable": True,
+                "achievable": True,
+                "relevant": True,
+                "timely": True,
+            },
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["smart_escalated"] is True
+    assert resp.json()["smart_check"]["specific"] is False
+    written = insert.await_args.args[0][0]
+    assert written.smart_escalated is True
+
+
+def test_put_marks_an_edited_statement_stale(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Editing the text must not silently inherit the old verdict — but it must
+    not block on a multi-turn validation the designer did not ask for either."""
+    stored = _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "agent"})
+    _stored(monkeypatch, [stored])
+
+    resp = client.put(
+        "/programs/cs-test/plos/PLO1",
+        json={
+            "statement_th": "ประเมินคุณภาพซอฟต์แวร์ตามมาตรฐานได้",
+            "bloom_level": "evaluate",
+            "action_verb_th": "ประเมิน",
+            "rationale_th": "เหตุผล",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["smart_validated_by"] == "stale"
+    assert body["statement_th"] == "ประเมินคุณภาพซอฟต์แวร์ตามมาตรฐานได้"
+    assert body["version"] == stored.version + 1
+
+
+def test_put_leaves_the_provenance_alone_when_the_text_did_not_change(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "agent"})
+    _stored(monkeypatch, [stored])
+
+    resp = client.put(
+        "/programs/cs-test/plos/PLO1",
+        json={
+            "statement_th": stored.statement_th,
+            "bloom_level": "create",
+            "action_verb_th": "ออกแบบ",
+            "rationale_th": "เหตุผลใหม่",
+        },
+    )
+
+    assert resp.json()["smart_validated_by"] == "agent"
+
+
+def test_revalidate_rejudges_the_stored_statement(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The only way a hand-edited statement gets a verdict. It re-judges what is
+    stored rather than drafting anything new — the designer's sentence is the
+    input, and no synthesis call happens unless the validator asks for one."""
+    stale = _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "stale"})
+    other = _plo("PLO2", ["N2"])
+    insert = _stored(monkeypatch, [stale, other])
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.NeedRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_need("N1"), _need("N2")]),
+    )
+
+    seen: dict[str, object] = {}
+
+    async def fake_validate(draft, **kwargs):  # noqa: ANN001, ANN003
+        seen["statement_th"] = draft.statement_th
+        seen["sibling_ids"] = [s.plo_id for s in kwargs["siblings"]]
+        return stale.model_copy(
+            update={"smart_validated_by": "agent", "smart_diagnosis_th": "ตรวจแล้วผ่าน"}
+        )
+
+    with patch(
+        "curriculum_agent.stages.plo_synthesis.validate_and_build", side_effect=fake_validate
+    ):
+        resp = client.post("/programs/cs-test/plos/PLO1/revalidate")
+
+    assert resp.status_code == 200, resp.text
+    assert seen["statement_th"] == stale.statement_th
+    # Its siblings are the other stored outcomes, never itself.
+    assert seen["sibling_ids"] == ["PLO2"]
+    body = resp.json()
+    assert body["smart_validated_by"] == "agent"
+    assert body["version"] == stale.version + 1
+    assert insert.await_count == 1
+
+
+def test_revalidate_refuses_a_plo_whose_needs_are_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Nothing to judge it against. The trace endpoint reports the same
+    condition as missing_need_ids."""
+    orphan = _plo("PLO1", ["N-GONE"])
+    _stored(monkeypatch, [orphan])
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[]))
+
+    resp = client.post("/programs/cs-test/plos/PLO1/revalidate")
+
+    assert resp.status_code == 422
+    assert "Need" in resp.json()["detail"]
+
+
+def test_revalidate_404s_for_an_unknown_plo(monkeypatch: pytest.MonkeyPatch) -> None:
+    _stored(monkeypatch, [])
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+
+    resp = client.post("/programs/cs-test/plos/PLO9/revalidate")
+
+    assert resp.status_code == 404
