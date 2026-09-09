@@ -3,19 +3,8 @@ import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import { ksecLabel, stakeholderLabel, classStyle, isRequirementStakeholder } from '../constants/stakeholder'
-
-interface PLO {
-  plo_id: string
-  statement_th: string
-  statement_en: string | null
-  bloom_level: string
-  source_need_ids: string[]
-  rationale_th: string
-  smart_retry_count: number
-  smart_escalated: boolean
-  soft_flags: string[]
-  is_optional: boolean
-}
+import { VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
+import type { PLO } from '../types/plo'
 
 /** `/needs/` returns whole Needs; the report only reads these fields, and the
  *  unused-Need list needs the statement to be worth showing at all. */
@@ -60,6 +49,10 @@ interface ReportCounts {
   core: number
   optional: number
   escalated: number
+  /** Hand-edited since it was last judged. */
+  stale: number
+  /** The pure checks decided alone because the validator could not run. */
+  code_only: number
 }
 
 interface PLOReportResponse {
@@ -115,12 +108,6 @@ const BLOOM_LABEL: Record<string, string> = {
   create: 'Create',
 }
 
-const SOFT_FLAG_TH: Record<string, string> = {
-  S_object: 'กรรมของกริยากว้างเกินไป',
-  A_level: 'ระดับ Bloom อาจสูง/ต่ำเกินไป',
-  R_alignment: 'อาจไม่สอดคล้องวิสัยทัศน์',
-}
-
 /** Mirrors MIN_NEEDS and MAX_CORE_PLOS in the pipeline. The band is the policy
  *  a curriculum is judged against, so the page states it rather than implying it. */
 const MIN_CORE = 6
@@ -135,6 +122,8 @@ function countsFrom(plos: PLO[]): ReportCounts {
     core,
     optional: plos.length - core,
     escalated: plos.filter((p) => p.smart_escalated).length,
+    stale: plos.filter((p) => p.smart_validated_by === 'stale').length,
+    code_only: plos.filter((p) => p.smart_validated_by === 'code_only').length,
   }
 }
 
@@ -230,7 +219,14 @@ export default function PloReport() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
   const [needsById, setNeedsById] = useState<Record<string, NeedSummary>>({})
-  const [counts, setCounts] = useState<ReportCounts>({ total: 0, core: 0, optional: 0, escalated: 0 })
+  const [counts, setCounts] = useState<ReportCounts>({
+    total: 0,
+    core: 0,
+    optional: 0,
+    escalated: 0,
+    stale: 0,
+    code_only: 0,
+  })
   // Derived, not read off the response: `fetchData` and `runReport` populate the
   // page by different routes, and a count that only one of them set would read as
   // "nothing was cut" on the other. Same rule the report stage applies server-side.
@@ -366,6 +362,11 @@ export default function PloReport() {
             {counts.escalated > 0 && (
               <span className="text-seal">
                 <span className="data">{counts.escalated}</span> ข้อไม่ผ่าน SMART
+              </span>
+            )}
+            {counts.stale + counts.code_only > 0 && (
+              <span className="text-mute">
+                <span className="data">{counts.stale + counts.code_only}</span> ข้อยังไม่ได้ตรวจตามข้อความปัจจุบัน
               </span>
             )}
             {unusedNeeds.length > 0 && (
@@ -590,6 +591,10 @@ function PloRow({
     ),
   ]
 
+  const findings = p.smart_check?.findings ?? []
+  const hardFindings = findings.filter((f) => f.severity === 'hard')
+  const softFindings = findings.filter((f) => f.severity === 'soft')
+
   return (
     <li className="border-b border-rule py-5">
       <div className="flex items-baseline gap-3">
@@ -602,18 +607,44 @@ function PloRow({
 
           {p.smart_escalated && (
             <p className="mt-2 border-l-2 border-seal bg-seal-soft px-3 py-1.5 text-sm text-seal">
-              ไม่ผ่าน SMART หลังแก้อัตโนมัติ {p.smart_retry_count} ครั้ง — ต้องแก้ข้อความเอง
+              ไม่ผ่าน SMART หลังแก้อัตโนมัติ {p.smart_retry_count} รอบ — ต้องแก้ข้อความเอง
+              {hardFindings.length > 0 && (
+                <span className="block mt-0.5 text-[0.8125rem]">
+                  {hardFindings.map((f) => findingLabel(f.criterion)).join(' · ')}
+                </span>
+              )}
             </p>
           )}
 
-          {p.soft_flags.length > 0 && (
+          {needsAttention(p.smart_validated_by) && (
+            <p className="mt-2 text-sm text-mute">{VALIDATED_BY_TH[p.smart_validated_by]}</p>
+          )}
+
+          {/* The reason per criterion, with the flat flag list as the fallback
+              for rows written before findings existed. */}
+          {softFindings.length > 0 ? (
             <ul className="mt-2 space-y-0.5">
-              {p.soft_flags.map((f) => (
-                <li key={f} className="text-sm text-mute">
-                  ข้อสังเกต — {SOFT_FLAG_TH[f] ?? f}
+              {softFindings.map((f) => (
+                <li key={f.criterion} className="text-sm text-mute">
+                  ข้อสังเกต — {findingLabel(f.criterion)}
+                  {f.note_th && <span className="text-faint"> · {f.note_th}</span>}
                 </li>
               ))}
             </ul>
+          ) : p.soft_flags.length > 0 ? (
+            <ul className="mt-2 space-y-0.5">
+              {p.soft_flags.map((f) => (
+                <li key={f} className="text-sm text-mute">
+                  ข้อสังเกต — {findingLabel(f)}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
+          {p.smart_diagnosis_th && (
+            <p className="mt-2 border-l-2 border-mute px-3 py-1.5 text-sm text-mute">
+              <span className="text-body">ข้อวินิจฉัย</span> — {p.smart_diagnosis_th}
+            </p>
           )}
 
           {p.rationale_th && <p className="mt-2 text-sm text-mute">{p.rationale_th}</p>}

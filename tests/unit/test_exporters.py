@@ -142,3 +142,78 @@ def test_empty_plo_list_is_rejected() -> None:
     of a program that has no outcomes."""
     with pytest.raises(ValueError, match="ไม่มี PLO"):
         export_matrix_xlsx([])
+
+
+def _column(payload: bytes, header: str) -> list[object]:
+    """One column by name. MATRIX_HEADERS exists so a reordering cannot silently
+    shift what a caller reads, and that applies to these tests too."""
+    rows = _rows(payload)
+    index = list(rows[0]).index(header)
+    return [row[index] for row in rows[1:]]
+
+
+def test_status_says_not_fully_checked_rather_than_passed() -> None:
+    """ "ผ่าน" / "ต้องแก้ไข" was a false dichotomy. A hand-edited statement
+    nothing has re-judged, and a verdict the pure checks reached alone because
+    the validator could not run, are neither — and this file is what leaves the
+    tool, so it must not overstate what was checked."""
+    stale = _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "stale"})
+    code_only = _plo("PLO2", ["N1"]).model_copy(update={"smart_validated_by": "code_only"})
+    judged = _plo("PLO3", ["N1"]).model_copy(update={"smart_validated_by": "agent"})
+
+    statuses = _column(export_matrix_xlsx([stale, code_only, judged]), "สถานะ")
+
+    assert statuses == ["ยังไม่ได้ตรวจครบ", "ยังไม่ได้ตรวจครบ", "ผ่าน"]
+
+
+def test_findings_are_rendered_in_thai_not_as_raw_codes() -> None:
+    """The codes used to land in a Thai workbook a designer sends to MHESI."""
+    from curriculum_agent.models import SmartFinding
+    from curriculum_agent.smart_vocabulary import SmartFindingCode
+
+    plo = _plo("PLO1", ["N1"])
+    flagged = plo.model_copy(
+        update={
+            "soft_flags": ["A_level"],
+            "smart_check": plo.smart_check.model_copy(
+                update={
+                    "achievable": False,
+                    "findings": [
+                        SmartFinding(
+                            criterion=SmartFindingCode.A_LEVEL,
+                            severity="soft",
+                            note_th="ระดับสูงเกินปริญญาตรี",
+                        )
+                    ],
+                }
+            ),
+        }
+    )
+
+    cell = _column(export_matrix_xlsx([flagged]), "ข้อสังเกต")[0]
+
+    assert isinstance(cell, str)
+    assert "A_level" not in cell
+    assert "ระดับ Bloom" in cell
+    assert "ระดับสูงเกินปริญญาตรี" in cell
+
+
+def test_a_legacy_row_still_renders_its_flat_flags() -> None:
+    """Rows written before findings existed carry only the code list."""
+    plo = _plo("PLO1", ["N1"], soft_flags=["A_level", "R_alignment"])
+
+    cell = _column(export_matrix_xlsx([plo]), "ข้อสังเกต")[0]
+
+    assert isinstance(cell, str)
+    assert "ระดับ Bloom" in cell
+    # A code this build no longer knows falls through rather than vanishing.
+    assert "R_alignment" in cell
+
+
+def test_the_diagnosis_reaches_the_workbook() -> None:
+    """The whole point of the validator is that its diagnosis is actionable, and
+    the workbook is what a designer works from."""
+    diagnosis = "กรรมของกริยากว้างเกินไป ควรระบุมาตรฐานที่อ้างอิง"
+    plo = _plo("PLO1", ["N1"]).model_copy(update={"smart_diagnosis_th": diagnosis})
+
+    assert _column(export_matrix_xlsx([plo]), "ข้อวินิจฉัย")[0] == diagnosis

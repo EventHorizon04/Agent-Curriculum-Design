@@ -56,7 +56,7 @@ export const STAGES: StageDef[] = [
     route: '/plo-report',
     ordinal: 5,
     label: 'รายงาน PLO',
-    summary: 'ตรวจ SMART ย้อนรอยหลักฐาน และส่งออก',
+    summary: 'ทบทวนผลตรวจ ย้อนรอยหลักฐาน และส่งออก',
   },
 ]
 

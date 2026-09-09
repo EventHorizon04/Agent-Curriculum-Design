@@ -5,6 +5,7 @@ import io
 import pandas as pd
 
 from curriculum_agent.models import PLO, Need
+from curriculum_agent.smart_vocabulary import FINDING_LABEL_TH, SmartFindingCode
 
 # Column order of the exported sheet. Exposed so tests and any future consumer
 # index by name rather than by position — a reordering here must not silently
@@ -17,7 +18,45 @@ MATRIX_HEADERS = (
     "ประเภท",
     "สถานะ",
     "ข้อสังเกต",
+    "ข้อวินิจฉัย",
 )
+
+
+def _status_th(plo: PLO) -> str:
+    """Three answers, not two.
+
+    "ผ่าน" / "ต้องแก้ไข" was a false dichotomy: a hand-edited statement nothing
+    has re-judged, and a verdict the pure checks reached alone because the
+    validator could not run, are neither passed nor known to need repair. This
+    file is what leaves the tool, so it must not overstate what was checked.
+    """
+    if plo.smart_escalated:
+        return "ต้องแก้ไข"
+    if plo.smart_validated_by in ("stale", "code_only"):
+        return "ยังไม่ได้ตรวจครบ"
+    return "ผ่าน"
+
+
+def _findings_th(plo: PLO) -> str:
+    """The soft findings in Thai.
+
+    `"; ".join(plo.soft_flags)` used to drop raw English codes into a Thai
+    workbook a designer sends to MHESI. The labels come from the same map the
+    rubric and the frontend read.
+    """
+    soft = [f for f in plo.smart_check.findings if f.severity == "soft"]
+    if soft:
+        return "; ".join(
+            f"{FINDING_LABEL_TH[f.criterion]}" + (f" ({f.note_th})" if f.note_th else "")
+            for f in soft
+        )
+    # Rows written before findings existed still carry the flat code list.
+    return "; ".join(
+        FINDING_LABEL_TH.get(SmartFindingCode(flag), flag)
+        if flag in {c.value for c in SmartFindingCode}
+        else flag
+        for flag in plo.soft_flags
+    )
 
 
 def _ksec_tags(plo: PLO, needs_by_id: dict[str, Need]) -> str:
@@ -63,8 +102,11 @@ def export_matrix_xlsx(plos: list[PLO], needs_by_id: dict[str, Need] | None = No
             "ระดับ Bloom": plo.bloom_level.value,
             "หมวดสมรรถนะ": _ksec_tags(plo, resolved),
             "ประเภท": "เสริม" if plo.is_optional else "หลัก",
-            "สถานะ": "ต้องแก้ไข" if plo.smart_escalated else "ผ่าน",
-            "ข้อสังเกต": "; ".join(plo.soft_flags),
+            "สถานะ": _status_th(plo),
+            "ข้อสังเกต": _findings_th(plo),
+            # The whole point of the validator is that its diagnosis is
+            # actionable, and this file is what a designer works from.
+            "ข้อวินิจฉัย": plo.smart_diagnosis_th or "",
         }
         for plo in plos
     ]

@@ -4,34 +4,8 @@ import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import DesignerNote from './components/DesignerNote'
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
-
-interface SMARTCheck {
-  specific: boolean
-  measurable: boolean
-  achievable: boolean
-  relevant: boolean
-  timely: boolean
-  notes_th: string | null
-}
-
-interface PLO {
-  plo_id: string
-  program_id: string
-  statement_th: string
-  statement_en: string | null
-  bloom_level: string
-  action_verb_th: string
-  smart_check: SMARTCheck
-  source_need_ids: string[]
-  source_evidence_ids: string[]
-  rationale_th: string
-  distinctive_feature_th: string | null
-  version: number
-  smart_retry_count: number
-  smart_escalated: boolean
-  soft_flags: string[]
-  is_optional: boolean
-}
+import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
+import type { PLO } from '../types/plo'
 
 interface NeedSummary {
   need_id: string
@@ -67,14 +41,6 @@ const BLOOM_LABEL: Record<string, string> = {
   analyze: 'Analyze',
   evaluate: 'Evaluate',
   create: 'Create',
-}
-
-const SMART_KEYS: (keyof SMARTCheck)[] = ['specific', 'measurable', 'achievable', 'relevant', 'timely']
-
-const SOFT_FLAG_TH: Record<string, string> = {
-  S_object: 'กรรมของกริยากว้างเกินไป',
-  A_level: 'ระดับ Bloom อาจสูง/ต่ำเกินไป',
-  R_alignment: 'อาจไม่สอดคล้องวิสัยทัศน์',
 }
 
 interface NeedListItem {
@@ -172,6 +138,9 @@ export default function PloSynthesis() {
   const smartPassCount = plos.filter(p =>
     SMART_KEYS.every(k => p.smart_check[k] === true)
   ).length
+  // "SMART ผ่าน 8/10" is misleading when two of the ten were never judged as
+  // written, so say how many still need looking at.
+  const unjudgedCount = plos.filter(p => needsAttention(p.smart_validated_by)).length
 
   return (
     <div className="max-w-4xl mx-auto py-8 px-4">
@@ -191,7 +160,7 @@ export default function PloSynthesis() {
         <div className="text-center py-20">
           <div className="text-4xl mb-4 animate-spin">⚙️</div>
           <p className="text-gray-600 font-medium mb-1">กำลังสังเคราะห์ PLO...</p>
-          <p className="text-gray-400 text-sm">LLM กำลัง generate และ SMART-validate PLO อาจใช้เวลา 2-5 นาที</p>
+          <p className="text-gray-400 text-sm">ร่าง PLO ทุกข้อ แล้วให้ผู้ตรวจ SMART ตรวจทั้งชุด อาจใช้เวลา 3-10 นาที</p>
         </div>
       ) : plos.length === 0 ? (
         <div className="text-center py-20">
@@ -217,6 +186,11 @@ export default function PloSynthesis() {
               <span className={`font-medium ${smartPassCount === plos.length ? 'text-green-600' : 'text-amber-600'}`}>
                 SMART ผ่าน {smartPassCount}/{plos.length}
               </span>
+              {unjudgedCount > 0 && (
+                <span className="font-medium text-orange-600">
+                  รอตรวจซ้ำ {unjudgedCount}
+                </span>
+              )}
               <button
                 onClick={runSynthesis}
                 disabled={running}
@@ -382,6 +356,7 @@ function PLOCard({
   const [draft, setDraft] = useState<PLO>(p)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
+  const [revalidating, setRevalidating] = useState(false)
   const [traceOpen, setTraceOpen] = useState(false)
 
   const smartPassed = SMART_KEYS.every(k => p.smart_check[k] === true)
@@ -393,10 +368,31 @@ function PLOCard({
       const res = await api.put<PLO>(`/programs/${programId}/plos/${p.plo_id}`, draft)
       onUpdate(res.data)
       setEditing(false)
-    } catch {
-      setSaveError('บันทึกไม่สำเร็จ — กรุณาตรวจสอบ statement (ห้ามใช้คำต้องห้าม: รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก)')
+    } catch (err) {
+      // The server says why. Guessing "forbidden word" was wrong more often
+      // than not, and the M check no longer fires on รักษา or จำแนก at all.
+      const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+      setSaveError(detail ?? 'บันทึกไม่สำเร็จ กรุณาตรวจสอบข้อความ')
     } finally {
       setSaving(false)
+    }
+  }
+
+  const findings = p.smart_check.findings ?? []
+  const hardFindings = findings.filter(f => f.severity === 'hard')
+  const softFindings = findings.filter(f => f.severity === 'soft')
+
+  async function handleRevalidate() {
+    setRevalidating(true)
+    setSaveError('')
+    try {
+      const res = await api.post<PLO>(`/programs/${programId}/plos/${p.plo_id}/revalidate`)
+      onUpdate(res.data)
+    } catch (err) {
+      const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+      setSaveError(detail ?? 'ตรวจ SMART ซ้ำไม่สำเร็จ')
+    } finally {
+      setRevalidating(false)
     }
   }
 
@@ -433,19 +429,39 @@ function PLOCard({
             </span>
             {p.smart_escalated && (
               <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                ไม่ผ่าน SMART หลัง retry {p.smart_retry_count} ครั้ง — ต้องแก้ด้วยมือ
+                ไม่ผ่าน SMART หลังแก้ {p.smart_retry_count} รอบ — ต้องแก้ด้วยมือ
+              </span>
+            )}
+            {/* Provenance, not decoration: "the validator judged this and it
+                failed" and "no validator has judged this as written" are
+                different facts, and without this the page would attribute a
+                diagnosis to something that never ran. */}
+            {needsAttention(p.smart_validated_by) && (
+              <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-800">
+                {VALIDATED_BY_TH[p.smart_validated_by]}
               </span>
             )}
           </div>
-          {p.soft_flags?.length > 0 && (
+          {/* The soft findings carry a reason each; the flat flag list is the
+              fallback for rows written before findings existed. */}
+          {softFindings.length > 0 ? (
+            <div className="mt-1 mb-2 space-y-1">
+              {softFindings.map(f => (
+                <p key={f.criterion} className="rounded-lg bg-yellow-50 px-3 py-1.5 text-xs text-yellow-900 border border-yellow-100">
+                  <span className="font-medium">{findingLabel(f.criterion)}</span>
+                  {f.note_th && <span className="text-yellow-700"> — {f.note_th}</span>}
+                </p>
+              ))}
+            </div>
+          ) : p.soft_flags?.length > 0 ? (
             <div className="mt-1 mb-2 flex flex-wrap gap-1">
               {p.soft_flags.map(f => (
                 <span key={f} className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
-                  {SOFT_FLAG_TH[f] ?? f}
+                  {findingLabel(f)}
                 </span>
               ))}
             </div>
-          )}
+          ) : null}
 
           {editing ? (
             <EditForm
@@ -477,12 +493,24 @@ function PLOCard({
         </div>
 
         {!editing && (
-          <button
-            onClick={() => setEditing(true)}
-            className="shrink-0 text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
-          >
-            แก้ไข
-          </button>
+          <div className="shrink-0 flex flex-col gap-1.5">
+            <button
+              onClick={() => setEditing(true)}
+              className="text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
+            >
+              แก้ไข
+            </button>
+            {/* Without this the `stale` state is a dead end: PUT deliberately
+                does not re-run the gate, so this is how an edited statement
+                gets a verdict. */}
+            <button
+              onClick={handleRevalidate}
+              disabled={revalidating}
+              className="text-xs border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors disabled:opacity-50"
+            >
+              {revalidating ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
+            </button>
+          </div>
         )}
       </div>
 
@@ -499,11 +527,31 @@ function PLOCard({
                     : 'bg-red-50 text-red-700 border border-red-200'
                 }`}
               >
-                {p.smart_check[k] ? '✓' : '✗'} {k.charAt(0).toUpperCase() + k.slice(1)}
+                {p.smart_check[k] ? '✓' : '✗'} {SMART_LABEL_TH[k] ?? k}
               </span>
             ))}
           </div>
-          {p.smart_check.notes_th && (
+          {/* The criterion that actually escalated this outcome. The old gate
+              logged its surviving failures and dropped them, so a designer
+              could see that a PLO failed and never which check did it. */}
+          {hardFindings.length > 0 && (
+            <div className="mt-2 space-y-1">
+              {hardFindings.map(f => (
+                <p key={f.criterion} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-900 border border-red-100">
+                  <span className="font-medium">{findingLabel(f.criterion)}</span>
+                  {f.note_th && <span className="text-red-700"> — {f.note_th}</span>}
+                </p>
+              ))}
+            </div>
+          )}
+          {/* The instruction a designer acts on, so it gets its own block. */}
+          {p.smart_diagnosis_th && (
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <p className="text-xs font-medium text-amber-900 mb-0.5">ข้อวินิจฉัยจากผู้ตรวจ SMART</p>
+              <p className="text-xs text-amber-800 leading-relaxed">{p.smart_diagnosis_th}</p>
+            </div>
+          )}
+          {!p.smart_diagnosis_th && p.smart_check.notes_th && (
             <p className="mt-2 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
               {p.smart_check.notes_th}
             </p>
