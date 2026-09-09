@@ -94,7 +94,9 @@ The transcript is **not** persisted. It is the largest object in the row, `PLO` 
 
 ## Rollout
 
-Replace outright; no feature flag. This project has no behaviour toggle in `config.py`, the agent and the old gate write different shapes, and the staged commits already give a revertible path. The kill switch already exists and is better: leaving `VALIDATION_PROVIDER` empty skips the agent and uses the code-only fallback, which had to be written anyway for an endpoint outage.
+Replace outright; no feature flag. This project has no behaviour toggle in `config.py`, the agent and the old gate write different shapes, and the staged commits already give a revertible path. The kill switch already exists and is better: `VALIDATION_PROVIDER=` skips the agent and uses the code-only fallback, which had to be written anyway for an endpoint outage.
+
+It took a live run to find that the switch, as first shipped, did not exist. `""` was not a member of the field's `Literal`, so `VALIDATION_PROVIDER=` in a `.env` file stopped the API booting; leaving it unset resolved to `LLM_PROVIDER` and ran the agent regardless; and the loop's guard read `not validation_provider and not llm_provider`, whose second half can never be true because `llm_provider` is a `Literal` with no empty member — `ValidationReason.DISABLED` was unreachable and untested. The lesson is not about this switch: a configuration state that nothing exercises is a claim, not a feature, and the three places it had to hold (the field, the resolution, the guard) each looked right on its own.
 
 ## Where I would push back
 
