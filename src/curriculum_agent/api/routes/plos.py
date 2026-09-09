@@ -20,6 +20,7 @@ from curriculum_agent.models import (
     BloomLevel,
     DesignerNoteRequest,
     Need,
+    SMARTCheck,
     StakeholderEvidence,
 )
 
@@ -357,7 +358,7 @@ class PLOStatementUpdate(BaseModel):
 
 @router.put("/{plo_id}", response_model=PLO, dependencies=[Depends(require_api_key)])
 async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> PLO:
-    """Edit one PLO's text. Does **not** re-run the SMART gate.
+    """Edit one PLO's text. Does **not** run the validation agent.
 
     A designer can rewrite a statement without waiting on a multi-turn
     validation they did not ask for — that is what
@@ -365,19 +366,72 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
     decision. What this route will not do is inherit the old verdict silently:
     when the statement actually moves, `smart_validated_by` becomes "stale" so
     the UI can say the outcome has not been judged as written.
+
+    The pure-code gate does run, and it has to. `model_copy` skips validators,
+    so an edited statement reached the database unchecked — and every later read
+    goes through `PLO.model_validate`, where `check_no_forbidden_words` fires on
+    any row that is not already escalated. One PUT of "เข้าใจ" therefore made
+    `GET /plos/` raise for the whole program, `revalidate` included: the way back
+    was behind the same read that was failing. `hard_failures` is pure code and
+    costs nothing, so the row this route stores satisfies the invariant the model
+    enforces on read. It is the same floor `validate_and_build` applies, for the
+    same reason.
     """
+    from curriculum_agent.stages.smart_agent import hard_findings_for  # noqa: PLC0415
+    from curriculum_agent.stages.smart_rules import (  # noqa: PLC0415
+        CRITERION_FIX_HINTS_TH,
+        HardCriterion,
+        hard_failures,
+    )
+
     existing = await _repo.list_by_program(program_id)
     match = next((p for p in existing if p.plo_id == plo_id), None)
     if match is None:
         raise HTTPException(status_code=404, detail="PLO not found")
 
     edited = body.statement_th.strip() != match.statement_th.strip()
+    if not edited:
+        updated = match.model_copy(
+            update={**body.model_dump(), "version": match.version + 1, "program_id": program_id}
+        )
+        await _repo.bulk_insert([updated])
+        return updated
+
+    known_need_ids = {n.need_id for n in await NeedRepository().list_by_program(program_id)}
+    fails = hard_failures(
+        body.statement_th,
+        body.action_verb_th,
+        list(match.source_need_ids),
+        known_need_ids,
+    )
+    logger.info(
+        f"PUT {plo_id}: statement edited — code gate {[f.value for f in fails]}, marked stale"
+    )
+    # Soft verdicts default true because no validator ran, the same discipline a
+    # code-only verdict follows: a judge that did not see the sentence must not
+    # flag it. The old sentence's soft findings are dropped rather than carried,
+    # since they describe a statement that no longer exists.
+    smart_check = SMARTCheck(
+        specific=HardCriterion.S_VERB not in fails,
+        measurable=HardCriterion.M_FORBIDDEN not in fails,
+        achievable=True,
+        relevant=HardCriterion.R_EVIDENCE not in fails,
+        timely=True,
+        notes_th=None,
+        findings=hard_findings_for(fails, [CRITERION_FIX_HINTS_TH[f] for f in fails]),
+    )
     updated = match.model_copy(
         update={
             **body.model_dump(),
             "version": match.version + 1,
             "program_id": program_id,
-            "smart_validated_by": "stale" if edited else match.smart_validated_by,
+            "smart_check": smart_check,
+            "soft_flags": [],
+            "smart_escalated": bool(fails),
+            "smart_validated_by": "stale",
+            "smart_diagnosis_th": (
+                'แก้ข้อความแล้ว ตรวจด้วยกฎพื้นฐานเท่านั้น — กด "ตรวจ SMART ซ้ำ" เพื่อให้ผู้ตรวจอ่านประโยคใหม่'
+            ),
         }
     )
     await _repo.bulk_insert([updated])

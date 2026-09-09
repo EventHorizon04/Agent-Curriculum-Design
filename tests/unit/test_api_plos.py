@@ -239,9 +239,85 @@ def test_out_of_scope_needs_do_not_change_which_bound_applies(
 
 def _stored(monkeypatch: pytest.MonkeyPatch, plos: list[PLO]) -> AsyncMock:
     monkeypatch.setattr(plos_route.PLORepository, "list_by_program", AsyncMock(return_value=plos))
+    # PUT resolves the Needs its stored PLO cites, so R has something to check
+    # against. Stubbed rather than reached: without this the route opened a real
+    # connection and these tests passed only on a machine with the dev database
+    # up, which is how a wrong R verdict could look like a green suite.
+    cited = [nid for plo in plos for nid in plo.source_need_ids]
+    monkeypatch.setattr(
+        plos_route.NeedRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_need(nid) for nid in cited]),
+    )
     insert = AsyncMock()
     monkeypatch.setattr(plos_route.PLORepository, "bulk_insert", insert)
     return insert
+
+
+def test_put_runs_the_code_gate_so_an_edited_row_can_be_read_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug this pins: `model_copy` skips validators, so a forbidden word
+    edited in through PUT was stored with `smart_escalated=False` — and every
+    later read goes through `PLO.model_validate`, whose forbidden-word check
+    only stands down for an escalated row. One PUT therefore made
+    `GET /plos/` raise for the whole program, `revalidate` included: the way
+    back was behind the same read that was failing.
+
+    Asserting the escalation is not enough on its own — the assertion that
+    encodes the defect is that the written row survives being read."""
+    stored = _plo("PLO1", ["N1"]).model_copy(
+        update={"smart_escalated": False, "smart_validated_by": "agent"}
+    )
+    insert = _stored(monkeypatch, [stored])
+
+    resp = client.put(
+        "/programs/cs-test/plos/PLO1",
+        json={
+            "statement_th": "อธิบายและเข้าใจหลักการออกแบบซอฟต์แวร์ได้",
+            "bloom_level": "understand",
+            "action_verb_th": "อธิบาย",
+            "rationale_th": "เหตุผล",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["smart_escalated"] is True
+    assert body["smart_validated_by"] == "stale"
+    assert body["smart_check"]["measurable"] is False
+    assert "M_forbidden" in {f["criterion"] for f in body["smart_check"]["findings"]}
+
+    written = insert.await_args.args[0][0]
+    # The row a repository would read back. Raises before the fix.
+    assert PLO.model_validate(written.model_dump(mode="json")).smart_escalated is True
+
+
+def test_put_does_not_escalate_a_statement_using_an_allowed_compound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """รักษา holds รัก and จำแนก holds จำ. The pure gate PUT now runs is the
+    same one as everywhere else, so the compound fix has to hold here too —
+    otherwise every hand edit using a legitimate Thai verb escalates."""
+    stored = _plo("PLO1", ["N1"])
+    _stored(monkeypatch, [stored])
+
+    resp = client.put(
+        "/programs/cs-test/plos/PLO1",
+        json={
+            "statement_th": "จำแนกและรักษามาตรฐานคุณภาพซอฟต์แวร์ตามข้อกำหนดได้",
+            "bloom_level": "understand",
+            "action_verb_th": "จำแนก",
+            "rationale_th": "เหตุผล",
+        },
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["smart_escalated"] is False
+    assert body["smart_check"]["measurable"] is True
+    assert body["smart_check"]["findings"] == []
+    assert body["smart_validated_by"] == "stale"
 
 
 def test_put_ignores_a_client_supplied_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
