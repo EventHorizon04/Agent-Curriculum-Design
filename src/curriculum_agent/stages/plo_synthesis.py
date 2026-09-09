@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 
 from loguru import logger
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, ValidationError, model_validator
 
+from curriculum_agent.concurrency import gather_bounded
+from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import NeedRepository, PLORepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_light, complete_synthesis
@@ -148,6 +150,62 @@ class _SmartOutcome(BaseModel):
     soft_flags: list[str]
 
 
+class SiblingSummary(BaseModel):
+    """What one outcome looks like to the validator judging another.
+
+    Deliberately not a whole PLO. The sibling is context for one question — is
+    this outcome just another one restated? — and handing the validator full
+    rationale and evidence trails for nine other PLOs is nine times the context
+    for information it cannot act on.
+
+    Overlap between siblings can only ever be a *soft* finding. It is a property
+    of the set, and PLOs are validated concurrently: ten validators asked
+    pairwise can each answer "not a duplicate" while the set holds two near
+    twins, or PLO3 and PLO7 can flag each other, both escalate, both get
+    repaired independently, and converge again. Program-level dedup belongs in
+    plo_report, not in ten independent judgements trying to agree.
+    """
+
+    plo_id: str
+    statement_th: str
+    bloom_level: BloomLevel
+    is_optional: bool
+    source_need_ids: list[str]
+
+    @classmethod
+    def from_plo(cls, plo: PLO) -> SiblingSummary:
+        return cls(
+            plo_id=plo.plo_id,
+            statement_th=plo.statement_th,
+            bloom_level=plo.bloom_level,
+            is_optional=plo.is_optional,
+            source_need_ids=list(plo.source_need_ids),
+        )
+
+    @classmethod
+    def from_draft(cls, plo_id: str, draft: _PLODraft, *, is_optional: bool) -> SiblingSummary:
+        return cls(
+            plo_id=plo_id,
+            statement_th=draft.statement_th,
+            bloom_level=draft.bloom_level,
+            is_optional=is_optional,
+            source_need_ids=list(draft.source_need_ids),
+        )
+
+
+class _Slot(BaseModel):
+    """A numbered position and the Needs that will fill it.
+
+    Decided before any LLM call, so the MAX_CORE_PLOS ceiling and the id scheme
+    stay pure code — and so the numbering comes from demand_score rather than
+    from whichever draft happens to finish first.
+    """
+
+    plo_id: str
+    needs: list[Need]
+    is_optional: bool
+
+
 def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[dict[str, str]]:
     hints = "\n".join(f"- {CRITERION_FIX_HINTS_TH[c]}" for c in violated)
     return [
@@ -170,6 +228,25 @@ def _build_fix_prompt(draft: _PLODraft, violated: list[HardCriterion]) -> list[d
     ]
 
 
+def _adopt(draft: _PLODraft, authoritative_need_ids: list[str]) -> _PLODraft:
+    """Pin the evidence trail onto a draft. Every draft enters through here.
+
+    One pin site, three callers — the initial draft, each hard-loop fix, and
+    each validator-requested repair. Pinning the ids in three places is exactly
+    the "two copies drifting apart under future edits" this module already warns
+    about, and it is the invariant
+    `test_gate_judges_authoritative_need_ids_not_the_models_echo` exists to
+    protect: the gate must judge the ids that will actually ship, not whatever
+    the model echoed back.
+
+    A copy, not an alias. Pinning the caller's own list onto several drafts was
+    harmless while synthesis was sequential; it is a shared-mutable footgun now
+    that PLOs are validated concurrently.
+    """
+    draft.source_need_ids = list(authoritative_need_ids)
+    return draft
+
+
 async def _ensure_smart(
     draft: _PLODraft,
     known_need_ids: set[str],
@@ -189,7 +266,7 @@ async def _ensure_smart(
     that never mentions need ids (so it cannot repair the field), and escalate a
     PLO whose real, shipped evidence trail was correct all along.
     """
-    draft.source_need_ids = authoritative_need_ids
+    draft = _adopt(draft, authoritative_need_ids)
     fails = hard_failures(
         draft.statement_th, draft.action_verb_th, draft.source_need_ids, known_need_ids
     )
@@ -201,8 +278,7 @@ async def _ensure_smart(
             fix = await complete_synthesis(
                 _SingleDraftResponse, _build_fix_prompt(draft, fails), max_retries=2
             )
-            draft = fix.plo
-            draft.source_need_ids = authoritative_need_ids
+            draft = _adopt(fix.plo, authoritative_need_ids)
         except Exception as exc:
             logger.warning(f"  SMART fix attempt {retries} failed: {exc}")
         fails = hard_failures(
@@ -260,28 +336,34 @@ async def _ensure_smart(
     )
 
 
-async def synthesize_from_needs(
+async def draft_from_needs(
     metadata: ProgramMetadata,
     needs: list[Need],
-    program_id: str,
-    known_need_ids: set[str],
     plo_id: str,
     *,
     note_th: str | None = None,
-) -> PLO | None:
-    """Draft one PLO from one or more Needs, then run it through the SMART gate.
+) -> _PLODraft | None:
+    """One synthesis call: Need(s) in, an unvalidated draft out.
 
-    Shared by the 1:1 stage loop and the designer-driven N:1 endpoint, so both
-    paths get the same SMART enforcement and the same code-derived evidence
-    trail. Returns None when the model call fails outright — the caller decides
-    whether that is fatal.
+    Split from validation so the stage can draft every PLO before judging any
+    of them — the validator has to be able to see the whole set (is this one
+    just another PLO restated?), and that is impossible while drafting and
+    judging are fused in one sequential loop.
 
-    `note_th` is optional designer guidance on wording. It reaches the draft
-    prompt only — never `_build_fix_prompt`, whose job is to repair one named
-    SMART criterion while preserving the substance it was handed.
+    The evidence trail is pinned here, before the draft leaves. It used to be
+    pinned inside the gate, which was the only thing between the model's echo
+    and the database; after the split it is not, so the pin moves to where the
+    draft is created.
+
+    Returns None when the model call fails outright — the caller decides whether
+    that is fatal.
+
+    `note_th` is optional designer guidance on wording. It reaches this prompt
+    only, never a repair prompt, whose job is to fix one named criterion while
+    preserving the substance it was handed.
     """
     if not needs:
-        raise ValueError("synthesize_from_needs requires at least one Need")
+        raise ValueError("draft_from_needs requires at least one Need")
 
     try:
         response = await complete_synthesis(
@@ -291,47 +373,105 @@ async def synthesize_from_needs(
         )
     except Exception as exc:
         ids = ", ".join(n.need_id for n in needs)
-        logger.warning(f"PLO synthesis failed for Need(s) {ids}: {exc}")
+        logger.warning(f"PLO synthesis failed for Need(s) {ids} ({plo_id}): {exc}")
         return None
 
+    return _adopt(response.plo, [n.need_id for n in needs])
+
+
+async def validate_and_build(
+    draft: _PLODraft,
+    *,
+    metadata: ProgramMetadata,
+    needs: list[Need],
+    program_id: str,
+    plo_id: str,
+    known_need_ids: set[str],
+    siblings: Sequence[SiblingSummary] = (),
+) -> PLO | None:
+    """Run one draft through the SMART gate and build the outcome that ships.
+
+    Never returns None for a *failed verdict*: an escalated PLO is kept for
+    human repair, never dropped (immutable rule 5). None means the outcome could
+    not be constructed at all — see the ValidationError guard below.
+    """
     authoritative_need_ids = [n.need_id for n in needs]
     outcome = await _ensure_smart(
-        response.plo,
+        draft,
         known_need_ids,
         metadata,
         authoritative_need_ids,
         [n.statement_th for n in needs],
         plo_id,
     )
-    draft = outcome.draft
+    validated = outcome.draft
 
     # Evidence ids are never asked of the model (see build_plo_from_need_prompt) —
     # they are derived entirely from the Needs' own verified evidence trail, so
     # there is nothing here for a model to invent.
     evidence_ids = sorted({eid for n in needs for eid in n.source_evidence_ids})
 
-    return PLO(
-        plo_id=plo_id,
+    try:
+        return PLO(
+            plo_id=plo_id,
+            program_id=program_id,
+            statement_th=validated.statement_th,
+            statement_en=validated.statement_en,
+            bloom_level=validated.bloom_level,
+            action_verb_th=validated.action_verb_th,
+            smart_check=outcome.smart_check,
+            # Pinned by _adopt before the gate ran; reuse rather than recomputing.
+            source_need_ids=validated.source_need_ids,
+            source_evidence_ids=evidence_ids,
+            rationale_th=validated.rationale_th,
+            distinctive_feature_th=validated.distinctive_feature_th,
+            version=1,
+            smart_retry_count=outcome.retry_count,
+            smart_escalated=outcome.escalated,
+            soft_flags=outcome.soft_flags,
+            # Optional only when every contributing Need is optional.
+            is_optional=all(n.is_optional for n in needs),
+        )
+    except ValidationError as exc:
+        # PLO's own validators can still refuse what the gate accepted —
+        # check_evidence is not gated on escalation, so a Need with an empty
+        # evidence trail lands here. Now that PLOs are built concurrently, an
+        # exception escaping this frame would take out every other outcome in
+        # the same gather; a gap is the same failure mode as a failed draft and
+        # is already handled. Not gather(return_exceptions=True): that loses
+        # which slot failed.
+        logger.warning(f"  {plo_id} could not be built from its verdict: {exc}")
+        return None
+
+
+async def synthesize_from_needs(
+    metadata: ProgramMetadata,
+    needs: list[Need],
+    program_id: str,
+    known_need_ids: set[str],
+    plo_id: str,
+    *,
+    note_th: str | None = None,
+    siblings: Sequence[SiblingSummary] = (),
+) -> PLO | None:
+    """Draft one PLO from one or more Needs, then run it through the SMART gate.
+
+    The two halves in sequence, kept as one entry point for the designer-driven
+    N:1 merge endpoint, which creates a single outcome and has no set to draft
+    first. The stage calls the halves directly so it can draft all of them
+    before judging any.
+    """
+    drafted = await draft_from_needs(metadata, needs, plo_id, note_th=note_th)
+    if drafted is None:
+        return None
+    return await validate_and_build(
+        drafted,
+        metadata=metadata,
+        needs=needs,
         program_id=program_id,
-        statement_th=draft.statement_th,
-        statement_en=draft.statement_en,
-        bloom_level=draft.bloom_level,
-        action_verb_th=draft.action_verb_th,
-        smart_check=outcome.smart_check,
-        # draft.source_need_ids was pinned to authoritative_need_ids inside
-        # _ensure_smart before the gate ran; reuse it rather than recomputing —
-        # recomputing here would just be the same list, and computing it twice
-        # invites the two copies drifting apart under future edits.
-        source_need_ids=draft.source_need_ids,
-        source_evidence_ids=evidence_ids,
-        rationale_th=draft.rationale_th,
-        distinctive_feature_th=draft.distinctive_feature_th,
-        version=1,
-        smart_retry_count=outcome.retry_count,
-        smart_escalated=outcome.escalated,
-        soft_flags=outcome.soft_flags,
-        # Optional only when every contributing Need is optional.
-        is_optional=all(n.is_optional for n in needs),
+        plo_id=plo_id,
+        known_need_ids=known_need_ids,
+        siblings=siblings,
     )
 
 
@@ -395,10 +535,11 @@ async def run(state: AgentState) -> AgentState:
 
     logger.info(f"Stage 4: synthesizing one PLO per Need ({len(needs)} Needs)")
 
-    # Number each series independently, most-demanded first, so PLO1 is the
-    # capability the market asked for most and the numbering is reproducible
-    # across re-runs on the same Needs.
-    plos: list[PLO] = []
+    # Slot selection, most-demanded first, so PLO1 is the capability the market
+    # asked for most and the numbering is reproducible across re-runs on the
+    # same Needs. No awaits in this block: the ceiling and the id scheme are
+    # pure code, and the numbers are fixed before a single call goes out.
+    slots: list[_Slot] = []
     for is_optional in (False, True):
         series = synthesis_order([n for n in needs if n.is_optional is is_optional])
         if not is_optional and len(series) > MAX_CORE_PLOS:
@@ -412,18 +553,78 @@ async def run(state: AgentState) -> AgentState:
                 f"{len(dropped)} unused: {', '.join(n.need_id for n in dropped)}"
             )
             series = series[:MAX_CORE_PLOS]
-        for index, need in enumerate(series, start=1):
-            plo_id = format_plo_id(index, is_optional=is_optional)
-            plo = await synthesize_from_needs(
-                metadata, [need], program_id, known_need_ids, plo_id, note_th=note_th
+        slots += [
+            _Slot(
+                plo_id=format_plo_id(index, is_optional=is_optional),
+                needs=[need],
+                is_optional=is_optional,
             )
-            if plo is not None:
-                plos.append(plo)
-            else:
-                # Leave the number unused rather than renumbering the rest. A gap
-                # says "this Need failed"; renumbering would silently change what
-                # PLO4 refers to between runs, and designers cite these ids.
-                logger.warning(f"  {plo_id} not produced — its number stays unused")
+            for index, need in enumerate(series, start=1)
+        ]
+
+    # Phase A: draft every slot. One provider call each, so the per-call ceiling
+    # is the right bound here.
+    drafts = await gather_bounded(
+        settings.llm_max_concurrency,
+        [
+            (
+                lambda slot=slot: draft_from_needs(  # type: ignore[misc]
+                    metadata, slot.needs, slot.plo_id, note_th=note_th
+                )
+            )
+            for slot in slots
+        ],
+    )
+    for slot, drafted in zip(slots, drafts, strict=True):
+        if drafted is None:
+            # Leave the number unused rather than renumbering the rest. A gap
+            # says "this Need failed"; renumbering would silently change what
+            # PLO4 refers to between runs, and designers cite these ids.
+            logger.warning(f"  {slot.plo_id} not produced — its number stays unused")
+    produced = [(slot, d) for slot, d in zip(slots, drafts, strict=True) if d is not None]
+
+    # Phase B: validate each draft against the whole drafted set.
+    #
+    # The siblings are the *drafts*, not the repaired statements. A repaired PLO1
+    # may no longer overlap PLO2 the way its draft did — but validating against
+    # post-repair siblings is a second full pass at N times the cost with no
+    # fixed point, and sibling context is advisory input to a diagnosis rather
+    # than a verdict of its own. Say so, because "the validator said PLO3
+    # duplicates PLO7" reads oddly once the shipped PLO7 has moved.
+    #
+    # A slot whose draft failed contributes no sibling: the validator sees nine,
+    # not a hole, which matches the gap-preserving id policy.
+    all_siblings = [
+        SiblingSummary.from_draft(slot.plo_id, d, is_optional=slot.is_optional)
+        for slot, d in produced
+    ]
+
+    # A different ceiling from phase A, on purpose. Validation is a loop of
+    # several serial calls per PLO, so the number that bounds it is how many
+    # loops run at once, not how many calls are in flight.
+    results = await gather_bounded(
+        settings.validation_max_concurrent_plos,
+        [
+            (
+                lambda slot=slot, d=d: validate_and_build(  # type: ignore[misc]
+                    d,
+                    metadata=metadata,
+                    needs=slot.needs,
+                    program_id=program_id,
+                    plo_id=slot.plo_id,
+                    known_need_ids=known_need_ids,
+                    # Never itself: an outcome in its own sibling list is a
+                    # duplicate the validator will faithfully discover.
+                    siblings=[s for s in all_siblings if s.plo_id != slot.plo_id],
+                )
+            )
+            for slot, d in produced
+        ],
+    )
+    # gather preserves *input* order, so this stays PLO1..PLOn then OPT1..OPTn
+    # exactly as the sequential loop produced. Do not switch to as_completed for
+    # a progress bar: PLO4 would start meaning a different outcome between runs.
+    plos: list[PLO] = [p for p in results if p is not None]
 
     core = sum(1 for p in plos if not p.is_optional)
     if core < MIN_NEEDS:
