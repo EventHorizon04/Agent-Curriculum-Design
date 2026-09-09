@@ -106,12 +106,15 @@ async def test_stage_4_no_forbidden_words(state: dict, needs: list[Need]) -> Non
     with p1, p2, p3, p4:
         result = await run(state)
 
-    from curriculum_agent.models import FORBIDDEN_WORDS_TH
+    # The same scan the gate and the model validator use — asserting against a
+    # bare substring loop here would hold the stage to a stricter rule than the
+    # code it is testing, and "รักษา" would fail this test while passing the gate.
+    from curriculum_agent.smart_vocabulary import forbidden_words_in
 
     for plo_dict in result["plos"]:
         stmt = plo_dict["statement_th"]
-        for word in FORBIDDEN_WORDS_TH:
-            assert word not in stmt, f"Forbidden word '{word}' found in: {stmt}"
+        found = forbidden_words_in(stmt)
+        assert not found, f"Forbidden word '{found[0] if found else ''}' found in: {stmt}"
 
 
 @pytest.mark.anyio

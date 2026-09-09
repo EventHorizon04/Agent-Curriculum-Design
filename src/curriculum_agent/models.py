@@ -8,6 +8,16 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from curriculum_agent.data.isced import get_detailed_field
 
+# Re-exported: the forbidden-word rule lives in `smart_vocabulary` so that this
+# module and `stages/smart_rules.py` can share one scan without an import cycle.
+# Callers that expect it here keep working.
+from curriculum_agent.smart_vocabulary import (
+    FORBIDDEN_WORDS_TH as FORBIDDEN_WORDS_TH,
+)
+from curriculum_agent.smart_vocabulary import (
+    forbidden_words_in,
+)
+
 # ----------------------------- Enums -----------------------------
 
 
@@ -119,9 +129,6 @@ class KSECCategory(StrEnum):
 # `prompts/summarize_need.py`), so the two cannot silently drift apart.
 SKILL_KSEC = frozenset({KSECCategory.K, KSECCategory.S, KSECCategory.E, KSECCategory.C})
 
-
-# Words forbidden in PLO statements (Thai). Cause SMART measurable to fail.
-FORBIDDEN_WORDS_TH = {"รู้", "จำ", "เข้าใจ", "ซาบซึ้ง", "ตระหนัก", "ศรัทธา", "รัก"}
 
 # Bloom levels in order, used for monotonicity check
 BLOOM_ORDER = [
@@ -389,14 +396,22 @@ class PLO(BaseModel):
 
     @model_validator(mode="after")
     def check_no_forbidden_words(self) -> PLO:
+        """Reject unmeasurable words at the model boundary.
+
+        Shares one scan with `smart_rules.hard_failures` (see
+        `smart_vocabulary.forbidden_words_in`) rather than carrying its own copy:
+        two independent substring loops could disagree about what a forbidden
+        word even is, and the moment they do, a PLO the gate passed raises here
+        instead — out of `PLO(...)` in the synthesis stage.
+        """
         if self.smart_escalated:
             return self  # kept for human review; SMART gate already failed it loudly
-        for word in FORBIDDEN_WORDS_TH:
-            if word in self.statement_th:
-                raise ValueError(
-                    f"PLO {self.plo_id} contains forbidden word '{word}' — "
-                    f"unmeasurable. Rewrite with an observable Bloom verb."
-                )
+        found = forbidden_words_in(self.statement_th)
+        if found:
+            raise ValueError(
+                f"PLO {self.plo_id} contains forbidden word '{found[0]}' — "
+                f"unmeasurable. Rewrite with an observable Bloom verb."
+            )
         return self
 
     @model_validator(mode="after")
