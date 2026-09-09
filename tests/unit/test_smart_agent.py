@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from curriculum_agent.models import BloomLevel, Need, ProgramMetadata, StakeholderEvidence
 from curriculum_agent.smart_vocabulary import SmartFindingCode
@@ -126,9 +127,11 @@ class FakeToolModel:
         self.turns = 0
         self.tools_called: list[str] = []
         self.messages_seen: list[list[dict[str, Any]]] = []
+        self.kwargs_seen: list[dict[str, Any]] = []
 
     async def __call__(self, response_model, messages, **kwargs):  # noqa: ANN001, ANN003
         self.messages_seen.append([dict(m) for m in messages])
+        self.kwargs_seen.append(dict(kwargs))
         self.turns += 1
         step = self._script[min(self.turns - 1, len(self._script) - 1)]
         if isinstance(step, Exception):
@@ -569,8 +572,6 @@ async def test_check_hard_reads_the_pure_function(monkeypatch: pytest.MonkeyPatc
 async def test_a_malformed_step_twice_ends_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
     """Instructor has already re-asked by then. A third is a model that cannot
     answer the schema."""
-    from pydantic import ValidationError
-
     error = ValidationError.from_exception_data("ValidationStep", [])
     _drive(monkeypatch, [error, error])
 
@@ -578,6 +579,102 @@ async def test_a_malformed_step_twice_ends_the_loop(monkeypatch: pytest.MonkeyPa
 
     assert result.reason is sa.ValidationReason.MALFORMED
     assert result.ran is False
+
+
+def _retry_exception(inner: Exception) -> Exception:
+    """The exception a spent `max_retries` actually raises.
+
+    Built rather than mocked because the classification under test is the class
+    itself: instructor wraps the last ValidationError in this instead of
+    re-raising it, and the wrapper is not a ValidationError.
+    """
+    from instructor.core.exceptions import FailedAttempt, InstructorRetryException
+
+    return InstructorRetryException(
+        inner,
+        n_attempts=3,
+        total_usage=0,
+        failed_attempts=[FailedAttempt(attempt_number=1, exception=inner, completion=None)],
+    )
+
+
+def _truncated_json_error() -> ValidationError:
+    """A cut-off completion, as Pydantic reports it. This is the live failure:
+    the model's Thai ran past the completion limit and the JSON string never
+    closed."""
+    return ValidationError.from_exception_data(
+        "ValidationStep",
+        [
+            {
+                "type": "json_invalid",
+                "loc": ("reasoning_th",),
+                "input": '{"reasoning_th": "ผลลัพธ์',
+                "ctx": {"error": "EOF while parsing a string at line 1 column 247"},
+            }
+        ],
+    )
+
+
+async def test_a_spent_retry_is_a_malformed_step_not_a_dead_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug this pins: instructor raises InstructorRetryException, which
+    subclasses InstructorError rather than ValidationError, so the loop caught
+    it as a provider error and abandoned the verdict on the first bad step --
+    `_MAX_MALFORMED` was unreachable. One live PLO in eight lost its agent
+    verdict to a single truncated completion."""
+    fake = _drive(
+        monkeypatch,
+        [_retry_exception(_truncated_json_error()), ("check_hard", {}), _finish()],
+    )
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.ran is True, "a re-askable schema failure must not end the verdict"
+    assert result.reason is sa.ValidationReason.FINISHED
+    assert fake.turns == 3
+
+
+async def test_two_spent_retries_end_as_malformed_not_as_a_provider_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """It still gives up -- on the budget, and under the reason that names what
+    happened. `code_only` either way, but the diagnosis a designer reads
+    differs."""
+    error = _retry_exception(_truncated_json_error())
+    _drive(monkeypatch, [error, error])
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.reason is sa.ValidationReason.MALFORMED
+    assert result.ran is False
+    assert result.soft_findings == []
+
+
+async def test_every_step_bounds_its_own_completion_length(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Thai costs several tokens per character and the JSON escapes each one,
+    so an unbounded step is the truncation that produced the failure above."""
+    fake = _drive(monkeypatch, [("check_hard", {}), _finish()])
+
+    await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert fake.kwargs_seen, "no validation call was made"
+    for kwargs in fake.kwargs_seen:
+        assert kwargs.get("max_tokens") == sa._MAX_STEP_TOKENS
+
+
+def test_the_malformed_log_line_names_the_reason() -> None:
+    """`str(InstructorRetryException)` is the whole <failed_attempts> block, and
+    reading the raw log body was the only way to tell a truncated completion
+    from a schema the model could not satisfy."""
+    reason = sa._schema_failure_reason(_retry_exception(_truncated_json_error()))
+
+    assert "EOF while parsing a string" in reason
+    assert "reasoning_th" in reason
+    assert "failed_attempts" not in reason
+    assert reason.count(chr(10)) == 0, "the reason has to fit on the log line"
 
 
 def test_a_tool_call_missing_its_argument_is_a_schema_error() -> None:

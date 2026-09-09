@@ -35,6 +35,7 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
+from instructor.core.exceptions import InstructorRetryException
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
@@ -60,6 +61,48 @@ from curriculum_agent.stages.smart_rules import hard_failures
 # Consecutive malformed steps before the loop gives up. Instructor has already
 # re-asked twice by then, so a third is a model that cannot answer the schema.
 _MAX_MALFORMED = 2
+
+# Ceiling on one step's completion. Sized for the largest step the schema
+# allows — a Finish carrying `diagnosis_th` plus a note per finding — and
+# generous because Thai is expensive to generate: a llama tokenizer spends
+# several tokens per Thai character, and the JSON these models emit escapes
+# each one as a \uXXXX sequence, so the 800-character `reasoning_th` bound is
+# worth thousands of tokens on its own. A live run truncated mid-string 38 Thai
+# characters in ("EOF while parsing a string at line 1 column 247"), which
+# costs the whole verdict for that PLO. The ceiling is cheap because it caps
+# what may be generated, not what is billed.
+_MAX_STEP_TOKENS = 4096
+
+
+def _schema_failure_reason(exc: Exception, *, limit: int = 240) -> str:
+    """The one line worth logging out of a step that failed validation.
+
+    `str(InstructorRetryException)` is the entire `<failed_attempts>` block --
+    every attempt, every message, the whole offending input value -- which
+    loguru prints as a wall of text that does not say why the step failed. It
+    took reading the raw log body to find that a live failure was a truncated
+    completion rather than a schema the model could not satisfy, so the reason
+    belongs in the line itself.
+
+    The underlying error is the first constructor argument (instructor chains
+    `from` the tenacity RetryError, so `__cause__` is not it) and its first
+    Pydantic error message is the answer: a cut-off completion reads "Invalid
+    JSON: EOF while parsing a string", a real schema miss names the field.
+    """
+    inner: Any = exc
+    if isinstance(exc, InstructorRetryException):
+        attempts = getattr(exc, "failed_attempts", None)
+        if attempts:
+            inner = attempts[-1].exception
+        elif exc.args:
+            inner = exc.args[0]
+    if isinstance(inner, ValidationError) and inner.errors():
+        first = inner.errors()[0]
+        where = ".".join(str(part) for part in first.get("loc", ())) or "response"
+        return f"{where}: {first.get('msg', '')}"[:limit]
+    text = str(inner).strip()
+    return text.splitlines()[0][:limit] if text else type(inner).__name__
+
 
 # Soft verdict field -> the code recorded when it is false. These five strings
 # are the ones the exporter and both frontend pages already render.
@@ -363,10 +406,28 @@ async def _loop(
     turn = 0
     for turn in range(1, settings.validation_max_turns + 1):
         try:
-            step = await complete_validation(ValidationStep, messages, max_retries=2, temperature=0)
-        except ValidationError as exc:
+            step = await complete_validation(
+                ValidationStep,
+                messages,
+                max_retries=2,
+                temperature=0,
+                max_tokens=_MAX_STEP_TOKENS,
+            )
+        # InstructorRetryException is what a schema failure actually reaches
+        # here as: instructor re-asks internally and, once the retries are
+        # spent, wraps the last ValidationError rather than re-raising it. It
+        # subclasses InstructorError, not ValidationError, so catching only the
+        # latter sent every malformed answer down the provider-error path -- one
+        # bad step abandoned the whole verdict and `_MAX_MALFORMED` could never
+        # be reached. The bare ValidationError stays caught beside it: a step
+        # that fails validation outside instructor's retry wrapper is the same
+        # condition and deserves the same budget.
+        except (InstructorRetryException, ValidationError) as exc:
             malformed += 1
-            logger.warning(f"  SMART agent {ctx.plo_id} turn {turn}: malformed step: {exc}")
+            logger.warning(
+                f"  SMART agent {ctx.plo_id} turn {turn}: malformed step "
+                f"({malformed}/{_MAX_MALFORMED}): {_schema_failure_reason(exc)}"
+            )
             if malformed >= _MAX_MALFORMED:
                 return code_only_result(
                     draft,
