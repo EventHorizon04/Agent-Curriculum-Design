@@ -15,6 +15,8 @@ from curriculum_agent.smart_vocabulary import (
     FORBIDDEN_WORDS_TH as FORBIDDEN_WORDS_TH,
 )
 from curriculum_agent.smart_vocabulary import (
+    HARD_CODES,
+    SmartFindingCode,
     forbidden_words_in,
 )
 
@@ -361,6 +363,32 @@ class Need(BaseModel):
 # --------------------------- Stage 3 -----------------------------
 
 
+class SmartFinding(BaseModel):
+    """One thing the validator found wrong with a PLO, and why.
+
+    This is the information the old gate threw away. The surviving hard
+    failures were a local list inside `_ensure_smart` that got logged and
+    dropped, so a designer could see that a PLO escalated and never which
+    criterion did it — the badge said "failed SMART after 3 retries" and that
+    was the whole story.
+    """
+
+    criterion: SmartFindingCode
+    severity: Literal["hard", "soft"]
+    note_th: str
+
+    @model_validator(mode="after")
+    def check_severity_matches_the_criterion(self) -> SmartFinding:
+        """A hard code carried as soft would read as non-blocking in the UI
+        while pure code was escalating the PLO for exactly that reason."""
+        expected = "hard" if self.criterion in HARD_CODES else "soft"
+        if self.severity != expected:
+            raise ValueError(
+                f"SMART finding {self.criterion} is a {expected} criterion, not {self.severity}"
+            )
+        return self
+
+
 class SMARTCheck(BaseModel):
     specific: bool
     measurable: bool
@@ -368,10 +396,20 @@ class SMARTCheck(BaseModel):
     relevant: bool
     timely: bool
     notes_th: str | None = None
+    # Rides inside the existing smart_check JSONB column, so the richest new
+    # field needs no migration and every stored row deserialises on the default.
+    # Do not make this required, and do not give SMARTCheck extra="forbid":
+    # either would make a pre-migration row unreadable, which loses a whole
+    # program's PLO list on GET rather than one field.
+    findings: list[SmartFinding] = Field(default_factory=list)
 
     @property
     def passed(self) -> bool:
         return all([self.specific, self.measurable, self.achievable, self.relevant, self.timely])
+
+    @property
+    def hard_findings(self) -> list[SmartFinding]:
+        return [f for f in self.findings if f.severity == "hard"]
 
 
 class PLO(BaseModel):
@@ -389,9 +427,37 @@ class PLO(BaseModel):
     rationale_th: str
     distinctive_feature_th: str | None = None
     version: int = 1
+    # Repair drafts spent on this outcome. Not renamed when the validator became
+    # an agent: it already means "repair attempts", and it is rendered inside a
+    # Thai sentence on two pages and documented in data-schemas.md.
     smart_retry_count: int = 0
     smart_escalated: bool = False
+    # Derived from smart_check.findings, and kept as a stored field rather than
+    # a computed property: the exporter, both frontend pages and plo_report read
+    # it directly, and a computed field disappears from model_dump(mode="json"),
+    # which is what PLORepository.bulk_insert passes straight to PLOTable(**data).
+    #
+    # Still list[str], not list[SmartFindingCode]. Narrowing the type would make
+    # any row carrying a code this build no longer knows unreadable — and
+    # "R_alignment" was emitted for months — so one stale string would take out
+    # a whole program's PLO list instead of one field. The typed detail lives in
+    # smart_check.findings; a validator below keeps the two in step.
     soft_flags: list[str] = Field(default_factory=list)
+    # Which validator produced this verdict. "legacy" is the honest answer for a
+    # row written before the agent existed, and it is what stops the UI claiming
+    # an agent diagnosed something no agent saw. "code_only" means the agent
+    # could not run (endpoint down, budget exhausted) and pure code decided
+    # alone; "stale" means a designer edited the statement and nothing has
+    # re-judged it since.
+    smart_validated_by: Literal["agent", "code_only", "stale", "legacy"] = "legacy"
+    # The validator's overall diagnosis in Thai — the one genuinely new thing a
+    # designer reads. The tool-call trail is not persisted: it is the largest
+    # object in the row by an order of magnitude, PLO is the response model of
+    # five endpoints, and plo_report re-upserts every PLO on every checkpoint
+    # run. It goes to loguru at DEBUG. If it ever has to be stored, it belongs
+    # in its own audit table keyed (program_id, plo_id, run_at) — not a column
+    # on the outcome.
+    smart_diagnosis_th: str | None = None
     is_optional: bool = False
 
     @model_validator(mode="after")
@@ -411,6 +477,28 @@ class PLO(BaseModel):
             raise ValueError(
                 f"PLO {self.plo_id} contains forbidden word '{found[0]}' — "
                 f"unmeasurable. Rewrite with an observable Bloom verb."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_soft_flags_match_the_findings(self) -> PLO:
+        """`soft_flags` is the same information as the soft findings, stored
+        twice because five readers want the flat list. Two copies drift, so say
+        so here rather than letting the UI and the export disagree.
+
+        A row with findings but no flags, or flags naming a criterion no finding
+        mentions, is a bug in whatever wrote it. A row with flags and *no*
+        findings is a pre-agent row and is fine — that is what `legacy` means.
+        """
+        if not self.smart_check.findings:
+            return self
+        from_findings = {
+            f.criterion.value for f in self.smart_check.findings if f.severity == "soft"
+        }
+        if set(self.soft_flags) != from_findings:
+            raise ValueError(
+                f"PLO {self.plo_id} soft_flags {sorted(self.soft_flags)} disagree with "
+                f"its soft findings {sorted(from_findings)}"
             )
         return self
 

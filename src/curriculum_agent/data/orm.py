@@ -103,7 +103,10 @@ class PLOTable(Base):
     statement_en: Mapped[str | None] = mapped_column(Text, nullable=True)
     bloom_level: Mapped[str] = mapped_column(String(20))
     action_verb_th: Mapped[str] = mapped_column(Text)
-    # Serialized SMARTCheck model — bool criteria plus optional notes string
+    # Serialized SMARTCheck model — bool criteria, optional notes string, and
+    # the findings list. The findings ride inside this existing column on
+    # purpose: it is already JSONB, so the richest part of a verdict needed no
+    # migration and rows written before it deserialise on the model's default.
     smart_check: Mapped[dict[str, Any]] = mapped_column(JSONB)
     source_need_ids: Mapped[list[str]] = mapped_column(JSONB)
     source_evidence_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
@@ -113,6 +116,10 @@ class PLOTable(Base):
     smart_retry_count: Mapped[int] = mapped_column(Integer, default=0)
     smart_escalated: Mapped[bool] = mapped_column(Boolean, default=False)
     soft_flags: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    # String(20) rather than a PG enum: this project has never created one, and
+    # a fifth value later would otherwise need a type migration.
+    smart_validated_by: Mapped[str] = mapped_column(String(20), default="legacy")
+    smart_diagnosis_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
