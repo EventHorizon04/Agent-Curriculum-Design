@@ -417,11 +417,20 @@ function PLOCard({
             }`}>
               SMART {smartPassed ? '✓' : '✗'}
             </span>
-            {p.is_optional && (
-              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
-                เสริม
-              </span>
-            )}
+            {/* Every outcome says which kind it is, not only the supplementary
+                ones. A core PLO used to carry no badge at all, so "หลัก" read as
+                a missing label rather than as the answer — and the two kinds are
+                counted against different rules (only core PLOs sit inside the
+                6-10 band), which is the first thing a designer checks. */}
+            <span
+              className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                p.is_optional
+                  ? 'bg-amber-100 text-amber-700'
+                  : 'bg-indigo-100 text-indigo-700'
+              }`}
+            >
+              {p.is_optional ? 'เสริม' : 'หลัก'}
+            </span>
             {p.smart_escalated && (
               <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
                 ไม่ผ่าน SMART หลัง retry {p.smart_retry_count} ครั้ง — ต้องแก้ด้วยมือ

@@ -623,7 +623,10 @@ function PloRow({
             {ksecTags.map((cat) => (
               <Tag key={cat}>{ksecLabel(cat)}</Tag>
             ))}
-            {p.is_optional && <Tag>เสริม</Tag>}
+            {/* Shown for both kinds: the band above counts core PLOs only, so
+                which kind an outcome is belongs on the outcome, not just in the
+                count. */}
+            <Tag>{p.is_optional ? 'เสริม' : 'หลัก'}</Tag>
             <button
               onClick={() => setTraceOpen((v) => !v)}
               aria-expanded={traceOpen}
