@@ -31,7 +31,7 @@ def _prompt(**overrides: object) -> list[dict[str, str]]:
         "action_verb_th": "ออกแบบ",
         "degree_level": "bachelor",
         "duration_years": 4,
-        "need_statements_th": ["ต้องการบัณฑิตที่ออกแบบระบบสารสนเทศได้"],
+        "cited_needs": [("N1", "ต้องการบัณฑิตที่ออกแบบระบบสารสนเทศได้")],
         "cited_evidence_ids": ["E1"],
         "sibling_count": 2,
     }
@@ -149,13 +149,16 @@ def test_the_needs_and_the_declared_bloom_level_reach_the_prompt() -> None:
     user = _user()
 
     assert "ต้องการบัณฑิตที่ออกแบบระบบสารสนเทศได้" in user
+    # The id beside it is what get_need accepts. Without it the agent passed the
+    # sentence as a need_id, was refused, and read that as a broken trail.
+    assert "N1" in user
     assert "create" in user
     assert "bachelor" in user
     assert "4 ปี" in user
 
 
 def test_an_empty_need_list_leaves_no_dangling_header() -> None:
-    user = _user(need_statements_th=[])
+    user = _user(cited_needs=[])
 
     assert "Need ที่อ้างถึง" not in user
 

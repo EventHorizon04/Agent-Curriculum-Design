@@ -259,12 +259,7 @@ async def validate_and_build(
         evidence_index=evidence_index,
         budget=ToolBudget(),
     )
-    result = await run_smart_agent(
-        draft,
-        ctx,
-        metadata,
-        need_statements_th=[n.statement_th for n in needs],
-    )
+    result = await run_smart_agent(draft, ctx, metadata)
 
     # The authoritative gate. Not the agent's reading of it — the same pure
     # function, on the statement that will actually ship.

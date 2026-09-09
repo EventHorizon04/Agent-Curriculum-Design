@@ -19,6 +19,7 @@ them — keep them:
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # pragma: no cover
@@ -51,8 +52,9 @@ action มีสามแบบ
 - measurable_ok: สังเกตได้ และประเมินได้จริงด้วยเครื่องมือทางการศึกษา
   (ข้อสอบ ชิ้นงาน การปฏิบัติ แฟ้มผลงาน) — การไม่มีคำห้ามยังไม่นับว่าวัดได้
 - achievable_ok: ระดับ Bloom สมเหตุสมผลกับระดับคุณวุฒิ และบรรลุได้ภายในระยะเวลาหลักสูตร
-- relevant_needs_ok: ตอบสนอง Need ที่ให้มาจริง ตัดสินจาก Need และหลักฐานที่อ้างถึงเท่านั้น
+- relevant_needs_ok: ประโยคนี้ "ตอบ" Need ที่แสดงไว้หรือไม่ ตัดสินจาก Need และหลักฐานที่อ้างถึงเท่านั้น
   ห้ามอ้างกรอบอื่นที่ไม่ได้แสดงไว้
+  **ไม่ใช่คำถามว่าประโยคอ้าง need_id ใด** ประโยคไม่ต้องมี need_id อยู่ในนั้น
 - time_bound_ok: ค่าเริ่มต้นเป็น true — PLO ถือว่าบรรลุ 'เมื่อสิ้นสุดหลักสูตร' โดยปริยาย
   ให้ตอบ false เฉพาะเมื่อข้อความระบุกรอบเวลาอื่นที่ขัดกัน เช่น 'ภายในปีที่ 2'
 
@@ -63,6 +65,10 @@ diagnosis_th: สรุปให้นักออกแบบหลักสู
 หมายเหตุ
 - เกณฑ์ที่ตัดสินด้วยโค้ด (S กริยา, M คำห้าม, R หลักฐาน) คุณประกาศว่าผ่านเองไม่ได้
   โค้ดจะตรวจประโยคสุดท้ายอีกครั้งเสมอ ทางเดียวที่จะแก้ได้คือสั่ง request_repair
+- ร่องรอยหลักฐานของ PLO (source_need_ids) ถูกตรึงด้วยโค้ดจาก Need ที่เลือกไว้ก่อนเรียกคุณ
+  request_repair เปลี่ยนมันไม่ได้ ถ้าเห็นว่าประโยคไม่ตรงกับ Need ให้สั่งแก้ *ประโยค* ให้ตอบ Need ที่มีอยู่
+  ไม่ใช่สั่งให้เปลี่ยน Need ที่อ้างถึง
+- get_need รับเฉพาะ need_id ที่แสดงไว้เท่านั้น ส่งข้อความของ Need เป็น need_id ไม่ได้
 - อย่าเรียกเครื่องมือเดิมด้วยอาร์กิวเมนต์เดิมซ้ำ
 - ถ้าข้อมูลพอแล้วให้สรุปด้วย finish ทันที ไม่ต้องเรียกเครื่องมือให้ครบทุกตัว"""
 
@@ -74,11 +80,19 @@ def build_smart_agent_prompt(
     action_verb_th: str,
     degree_level: str,
     duration_years: int,
-    need_statements_th: list[str],
+    cited_needs: Sequence[tuple[str, str]],
     cited_evidence_ids: list[str],
     sibling_count: int,
 ) -> list[dict[str, str]]:
     """The opening two turns: the rubric, then this PLO.
+
+    `cited_needs` carries each Need as `(need_id, statement_th)` because the ids
+    are the arguments `get_need` accepts. Listing the statements alone left the
+    tool uncallable: on a live run the agent passed a Need's *sentence* as
+    `need_id`, was refused, read the refusal as a broken evidence trail, and
+    spent two of its three repairs instructing the writer to make the Thai
+    sentence cite a UUID. Four of eight PLOs came back carrying a spurious
+    `R_needs` finding from the same misreading.
 
     No `note_th` parameter, and none is wanted. The designer's note reaches the
     draft prompt and nothing else; a validator that could read it could relay
@@ -92,9 +106,9 @@ def build_smart_agent_prompt(
         f"ระดับคุณวุฒิ: {degree_level}",
         f"ระยะเวลาหลักสูตร: {duration_years} ปี",
     ]
-    if need_statements_th:
-        joined = "\n".join(f"- {n}" for n in need_statements_th)
-        lines.append(f"Need ที่อ้างถึง:\n{joined}")
+    if cited_needs:
+        joined = "\n".join(f"- {need_id}: {statement}" for need_id, statement in cited_needs)
+        lines.append(f"Need ที่อ้างถึง (need_id ตรึงด้วยโค้ด แก้ไม่ได้):\n{joined}")
     if cited_evidence_ids:
         lines.append(f"หลักฐานที่อ้างถึง (อ่านได้ด้วย get_evidence): {', '.join(cited_evidence_ids)}")
     if sibling_count:

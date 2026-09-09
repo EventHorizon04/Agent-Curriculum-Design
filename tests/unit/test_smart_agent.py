@@ -550,10 +550,29 @@ async def test_the_need_statement_reaches_the_validator(
     rather than being pasted into a prompt string."""
     fake = _drive(monkeypatch, [("get_need", {"need_id": "N1"}), _finish()])
 
-    await sa.run_smart_agent(_draft(), _ctx(), META, need_statements_th=[_need().statement_th])
+    await sa.run_smart_agent(_draft(), _ctx(), META)
 
     observation = fake.messages_seen[-1][-1]["content"]
     assert "ออกแบบระบบสารสนเทศ" in observation
+
+
+async def test_the_opening_prompt_names_the_need_ids_get_need_accepts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prompt used to list the Need sentences without their ids, which left
+    `get_need` uncallable: a live agent passed a sentence as `need_id`, was
+    refused, read the refusal as a broken evidence trail, and spent two repairs
+    telling the writer to make the Thai cite a UUID.
+
+    The ids come from the context rather than a parameter of their own, so the
+    prompt cannot advertise a Need the tool would refuse."""
+    fake = _drive(monkeypatch, [("check_hard", {}), _finish()])
+
+    await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    opening = fake.messages_seen[0][-1]["content"]
+    assert "N1" in opening
+    assert "ออกแบบระบบสารสนเทศ" in opening
 
 
 async def test_check_hard_reads_the_pure_function(monkeypatch: pytest.MonkeyPatch) -> None:

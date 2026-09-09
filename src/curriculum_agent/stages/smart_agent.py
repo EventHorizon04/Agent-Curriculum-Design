@@ -351,13 +351,17 @@ async def run_smart_agent(
     draft: Any,
     ctx: ValidationContext,
     metadata: ProgramMetadata,
-    *,
-    need_statements_th: Sequence[str] = (),
 ) -> SmartAgentResult:
     """Validate one draft, repairing through the synthesis slot when asked.
 
     Never raises for a bad verdict: every exit produces a result, and
     `validate_and_build` re-runs the pure-code checks on whatever comes back.
+
+    The Needs the prompt lists come from `ctx` rather than from a parameter of
+    their own, and that is the point: `ctx.needs_by_id` is exactly the set
+    `get_need` will serve, so the prompt cannot advertise a Need the tool would
+    refuse. A parallel argument could disagree with it, and the version that
+    passed statements without their ids left `get_need` uncallable.
     """
     if not settings.validation_provider and not settings.llm_provider:
         return code_only_result(
@@ -366,7 +370,7 @@ async def run_smart_agent(
 
     try:
         async with asyncio.timeout(settings.validation_timeout_seconds):
-            return await _loop(draft, ctx, metadata, need_statements_th)
+            return await _loop(draft, ctx, metadata)
     except TimeoutError:
         logger.warning(
             f"  SMART agent {ctx.plo_id}: gave up after "
@@ -383,7 +387,6 @@ async def _loop(
     draft: Any,
     ctx: ValidationContext,
     metadata: ProgramMetadata,
-    need_statements_th: Sequence[str],
 ) -> SmartAgentResult:
     messages: list[dict[str, Any]] = build_smart_agent_prompt(
         statement_th=draft.statement_th,
@@ -391,7 +394,11 @@ async def _loop(
         action_verb_th=draft.action_verb_th,
         degree_level=metadata.degree_level,
         duration_years=metadata.duration_years,
-        need_statements_th=list(need_statements_th),
+        cited_needs=[
+            (need_id, ctx.needs_by_id[need_id].statement_th)
+            for need_id in ctx.authoritative_need_ids
+            if need_id in ctx.needs_by_id
+        ],
         cited_evidence_ids=sorted(ctx.cited_evidence_ids),
         sibling_count=len([s for s in ctx.siblings if s.plo_id != ctx.plo_id]),
     )
