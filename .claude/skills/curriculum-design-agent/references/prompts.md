@@ -50,9 +50,9 @@ Evidence classification (`requirement` vs `general`) is decided entirely in code
 
 **Purpose:** extract structured, evidence-grounded skill mentions from one piece of evidence. Runs per evidence item, cache-first (keyed on a text slice + classification + model + program field/name).
 
-**Model:** light (Typhoon 8B / Qwen 7B) — `complete_light`
+**Model:** extraction (`complete_extraction`, its own `EXTRACTION_PROVIDER`/`EXTRACTION_MODEL`) — not `light`. This is the fan-out stage: one call per *window* of every evidence item, so it exhausts a token quota before any other stage has run, and it ran the Thai endpoint's out. It gives up little by moving, since extraction names skills rather than writing prose anyone reads.
 
-**File:** `prompts/extract_skills.py` — `build_extract_skills_prompt(evidence_text, classification, field_th="", program_name_th="")`
+**File:** `prompts/extract_skills.py` — `build_extract_skills_prompt(evidence_text, classification, field_th="", program_name_th="", scope_th="")`
 
 ```
 คุณเป็นผู้เชี่ยวชาญวิเคราะห์ทักษะจากข้อความ
@@ -116,38 +116,59 @@ Because clustering and merging both run *inside* one KSEC bucket (bucketing happ
 
 **Model:** light (`complete_light`)
 
-**File:** `prompts/summarize_need.py` — `build_summarize_need_prompt(skill_names, ksec, bloom_level, note_th=None)`
+**File:** `prompts/summarize_need.py` — `build_summarize_need_prompt(skill_names, ksec, bloom_level, *, note_th=None, program_context=None)`
 
 **Sees the skills and nothing else.** Evidence text used to be pasted in as samples; it is not any more. The skills already carry what extraction found in that evidence, the raw quotes only gave the light model longer Thai to drift on, and traceability is untouched — a Need's `source_evidence_ids` come from its member skills.
 
 **The sentence must be PLO-ready.** `plo_synthesis` drafts exactly one PLO per Need and is handed nothing but this sentence, so a placeholder or a skill list does not merely weaken the PLO — it makes the synthesis model invent the capability with no evidence behind it. Hence the three-part rule and the hard rejections below.
 
+**The opening is free, and that is a decision.** "ตลาดแรงงานต้องการ..." was mandatory until `a5823b9`/`e09b2d6`: it carried nothing the rest of the sentence did not and spent characters against the 40-character floor. Several framings are offered instead, and `test_summarize_need.py` pins both halves — that the openings are offered, and that the old mandated frame is *not* present. What that opening used to carry is now stated on its own: a Need may be a requirement but not a finished PLO.
+
+**Three rules guard the opposite failure.** Every other rule pushes against a sentence too vague to draft a PLO from; these push against one that is a real demand generalised until it belongs to nobody. "ทักษะการสื่อสาร" clears every pure-code guard below and still describes no program in particular. The last of the three — could a reader still name the profession with the field removed? — cannot be code: the sentence is wrong only relative to the skill group it came from.
+
 ```
-คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ความต้องการของตลาดแรงงาน
-จากกลุ่มทักษะที่ให้มา จงสรุปเป็น 'ความต้องการของตลาด' หนึ่งประโยค
+คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ความต้องการที่มีต่อบัณฑิตและหลักสูตร
+จากกลุ่มทักษะที่ให้มา จงสรุปเป็น 'ความต้องการ' หนึ่งประโยค
 ประโยคนี้จะถูกนำไปเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) หนึ่งข้อโดยตรง
 จึงต้องเจาะจงพอที่จะเขียน PLO ได้ทันทีโดยไม่ต้องเดาเนื้อหาเพิ่ม
 
 กติกา:
-- เขียนเป็นประโยคเดียว มุมมองของ 'ตลาดแรงงานต้องการอะไร'
-  ไม่ใช่มุมมองผู้เรียนหรือผลลัพธ์การเรียนรู้
+- เขียนเป็นประโยคเดียวที่ระบุ 'ข้อกำหนด' ขึ้นต้นได้หลายแบบ เช่น 'ต้องการ...'
+  'ต้องการบัณฑิตที่...' 'ต้องการหลักสูตรที่...' หรือ 'บัณฑิตต้องมี...'
+- ห้ามเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) ที่เสร็จรูปแล้ว เช่น 'บัณฑิตวิเคราะห์...ได้'
 - ต้องมีครบ 3 ส่วน: (1) ความสามารถที่ลงมือทำได้จริง
   (2) วัตถุหรือผลงานที่เจาะจง (3) บริบทของงานที่ใช้ความสามารถนั้น
+  ตัวอย่าง: 'ต้องการบัณฑิตที่ประเมินและปรับปรุงผลลัพธ์การแปลเอกสารธุรกิจระหว่างประเทศ
+  ในบริบทการสื่อสารไทย-จีน'
 - หนึ่งประโยคคือหนึ่งสมรรถนะ
 - ระดับความยากต้องตรงกับระดับ Bloom ที่ระบุให้
+- [เฉพาะเมื่อมี program_context] เขียนโดยตีความทักษะตามบริบทหลักสูตรที่ระบุ
+  แต่บริบทนั้นใช้เลือกถ้อยคำเท่านั้น ห้ามเพิ่มเนื้อหาที่ไม่มีในกลุ่มทักษะ
 - ห้ามใช้คำกว้าง เช่น 'ทักษะที่จำเป็น' 'ความรู้ที่เกี่ยวข้อง' 'สมรรถนะด้านต่างๆ'
+  'ความสามารถทางวิชาชีพ' 'ทักษะการทำงาน'
+- ห้ามลดทอนทักษะเฉพาะทางในกลุ่มให้เหลือเป็นสมรรถนะทั่วไป
+- เมื่อกลุ่มทักษะชี้ถึงหน้าที่ทางวิชาชีพ ให้เขียนด้วยหน้าที่นั้น
+  ไม่ใช่ทักษะทั่วไปที่ครอบมันอยู่
 - ห้ามวนกลับมาพูดว่า 'ตามที่ตลาดต้องการ'
-- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกัน (จุลภาคไม่เกิน 2 ตัว)
+- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกัน ทั้งแบบใช้จุลภาค (ไม่เกิน 2 ตัว)
+  และแบบไทยที่เว้นวรรคแล้วปิดท้ายด้วย 'และ'
 - ความยาว 1-2 บรรทัด ไม่สั้นกว่า MIN_STATEMENT_CHARS (40) ตัวอักษร
 - ห้ามมีชื่อฟังก์ชัน ชื่อตัวแปร หรือโค้ดปนอยู่
+
+ก่อนตอบ ให้ทดสอบว่า ถ้าลบชื่อสาขาออก ผู้อ่านยังบอกได้ไหมว่านี่คือความต้องการ
+ของสายวิชาชีพใด ถ้าใช้ได้กับหลายสาขาพร้อมกัน แปลว่ายังกว้างเกินไป ให้เขียนใหม่
 
 ตอบเป็น JSON object ที่มี field:
   statement_th: string (ประโยคภาษาไทย)
   statement_en: string (ประโยคภาษาอังกฤษ)
 
+[NOTE_POLICY_TH]
+
+บริบทหลักสูตร: {program_context}          ← user message, omitted when None
 หมวดสมรรถนะ: {ksec_label} ({ksec})
 ระดับที่ตลาดเรียกร้อง: {bloom_label} ({bloom_level})
 ทักษะในกลุ่มนี้: {skill_names, joined}
+[+ append_note(user, note_th)]
 ```
 
 **Output validation (pure code, drives Instructor retries).** `need_combination._NeedStatement` rejects the following, and each raised message names what it found so the retry prompt can quote it:
@@ -167,7 +188,7 @@ If every attempt fails, `stages/need_combination.py` writes a comma-joined skill
 
 **Purpose:** restate one or more market Needs (post-`need_combination`) as a single graduate-side PLO. Called once per Need by the stage loop (list of length 1), and reused by the designer-driven `POST /programs/{id}/plos/from-needs` endpoint with a longer list when the designer chooses to merge several Needs into one PLO — same function, same rules, whether it's 1 Need or several.
 
-**Model:** heavy (`complete_heavy`) — config-switchable to a proprietary model per project policy, never hardcoded
+**Model:** synthesis (`complete_synthesis`, its own `SYNTHESIS_PROVIDER`/`SYNTHESIS_MODEL`) — not heavy. The two were one slot until they had to go different ways: clustering wants the larger model, while a PLO statement is Thai a designer submits to MHESI under their own name. Both the draft call and the SMART repair call go through this slot, so a repair is never answered by a different model than wrote the draft. Config-switchable per project policy, never hardcoded
 
 **File:** `prompts/stage_3_plo.py` — `build_plo_from_need_prompt(metadata, needs, note_th=None)`
 
