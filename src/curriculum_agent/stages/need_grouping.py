@@ -137,6 +137,22 @@ _VAGUE_HEAD_RE = re.compile(
     r"(ที่จำเป็น|ที่เกี่ยวข้อง|ที่หลากหลาย|ต่าง\s*ๆ)"
 )
 
+# The same emptiness written without a "ที่": a generic head fused straight to a
+# generic domain word — "ความสามารถทางวิชาชีพ", "ทักษะการทำงาน". Both open with a
+# head _VAGUE_HEAD_RE already knows and end in a modifier it does not, so both
+# passed it untouched.
+#
+# These need a right boundary that the pairs above do not. "ที่จำเป็น" says
+# nothing wherever it is followed, but "ทักษะการทำงาน" is only empty when the
+# sentence stops there: "ทักษะการทำงานเป็นทีม" and "ความสามารถทางวิชาชีพด้านการ
+# พยาบาล" name real capabilities, and rejecting one costs a retry and, on the
+# third, a [ต้องทบทวน] Need written by hand. The lookahead is that boundary — the
+# phrase counts as vague only when no Thai letter continues it.
+_VAGUE_COMPOUND_RE = re.compile(
+    r"(ความสามารถทางวิชาชีพ|ทักษะทางวิชาชีพ|ความรู้ทางวิชาชีพ|สมรรถนะทางวิชาชีพ"
+    r"|ทักษะการทำงาน|ความรู้การทำงาน|ทักษะในการทำงาน)(?![ก-๙])"
+)
+
 # Restating the question instead of answering it: "ต้องการบัณฑิตที่มีทักษะตามที่
 # ตลาดต้องการ". Circular by construction, so plain substrings are enough — and
 # independent of how the sentence opens, which is why this list survived the
@@ -154,6 +170,26 @@ _CIRCULAR_PHRASES_TH: tuple[str, ...] = (
 # ("ออกแบบ, พัฒนา และดูแลระบบ"), which is why the floor is not lower.
 _MAX_COMMAS = 2
 
+# Thai punctuates a list with spaces and marks the last item with และ, not with
+# commas — so counting commas saw nothing at all in "ต้องการการใช้ AI การแปล
+# และการตรวจแก้คำแปล", which is a joined skill list by any reading. What the comma
+# count was really detecting was a model writing the list the English way.
+#
+# An item in such a list is a nominalised phrase, so what is counted is a list
+# boundary (space or comma, optionally carrying และ/หรือ) immediately followed by
+# การ/ความ. Requiring the nominaliser is what separates the list from ordinary
+# prose that merely contains spaces: "ด้วย Power BI เพื่อ..." has three boundaries
+# and none of them opens an item, and "ในการเจรจา" opens with ใน rather than การ.
+# It also leaves "ออกแบบ, พัฒนา และดูแลระบบ" alone, which the comma rule always
+# allowed.
+_ENUMERATED_ITEM_RE = re.compile(r"[,，\s]\s*(?:และ|หรือ)?\s*(?:การ|ความ)[ก-๙]")
+
+# Two, not three: the first item of a Thai list is usually fused to the verb that
+# introduces it ("ต้องการ|การใช้ AI") and so sits behind no boundary at all, which
+# means a three-item list shows only two. One boundary-headed phrase is how an
+# ordinary sentence names its object and must stay legal.
+_MAX_ENUMERATED_ITEMS = 1
+
 
 def find_vague_phrase(statement: str) -> str | None:
     """The first content-free phrase in `statement`, or None.
@@ -165,6 +201,9 @@ def find_vague_phrase(statement: str) -> str | None:
     match = _VAGUE_HEAD_RE.search(statement)
     if match:
         return match.group(0)
+    match = _VAGUE_COMPOUND_RE.search(statement)
+    if match:
+        return match.group(0)
     for phrase in _CIRCULAR_PHRASES_TH:
         if phrase in statement:
             return phrase
@@ -172,8 +211,18 @@ def find_vague_phrase(statement: str) -> str | None:
 
 
 def looks_like_a_skill_list(statement: str) -> bool:
-    """True when the sentence is skill names joined by commas rather than a demand."""
-    return statement.count(",") + statement.count("，") > _MAX_COMMAS
+    """True when the sentence is skill names joined together rather than a demand.
+
+    Two independent counts, because the two ways of writing the same list share
+    no punctuation. Commas catch the model writing the list the English way;
+    boundary-headed นาม phrases catch it written the Thai way, with spaces and a
+    closing และ. Either one on its own is a Need plo_synthesis cannot draft a PLO
+    from without inventing the capability, so either one is enough to refuse.
+    """
+    commas = statement.count(",") + statement.count("，")
+    if commas > _MAX_COMMAS:
+        return True
+    return len(_ENUMERATED_ITEM_RE.findall(statement)) > _MAX_ENUMERATED_ITEMS
 
 
 def normalize_need_name(name: str) -> str:

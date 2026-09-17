@@ -111,11 +111,11 @@ class _NeedStatement(BaseModel):
         """Reject the two shapes a Need cannot become a PLO from.
 
         plo_synthesis drafts exactly one PLO per Need and is handed nothing but
-        this sentence. A placeholder ("ทักษะที่จำเป็นต่อการทำงาน") or a
-        comma-joined skill list therefore does not merely weaken the PLO — it
-        makes the synthesis model invent the capability, with no evidence behind
-        what it invents. Raising here sends the group back through Instructor
-        with the reason quoted, the same shape as the code-token guard above.
+        this sentence. A placeholder ("ทักษะที่จำเป็นต่อการทำงาน") or a joined
+        skill list therefore does not merely weaken the PLO — it makes the
+        synthesis model invent the capability, with no evidence behind what it
+        invents. Raising here sends the group back through Instructor with the
+        reason quoted, the same shape as the code-token guard above.
         """
         trimmed = statement.strip()
         if len(trimmed) < MIN_STATEMENT_CHARS:
@@ -126,7 +126,8 @@ class _NeedStatement(BaseModel):
             )
         if looks_like_a_skill_list(trimmed):
             raise ValueError(
-                "statement_th เป็นการนำชื่อทักษะมาต่อกันด้วยจุลภาค ให้เขียนเป็นประโยคความต้องการหนึ่งประโยค"
+                "statement_th เป็นการนำชื่อทักษะมาต่อกัน (ด้วยจุลภาค หรือด้วยการเว้นวรรคแล้วปิดท้ายด้วย 'และ') "
+                "ให้เขียนเป็นประโยคความต้องการหนึ่งประโยคที่ระบุความสามารถเดียว"
             )
         vague = find_vague_phrase(trimmed)
         if vague:

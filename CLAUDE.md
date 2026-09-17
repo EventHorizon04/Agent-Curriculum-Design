@@ -278,12 +278,22 @@ tests/integration/     ← LLM mocked, full stages
   defend, and the score now decides which Needs become PLOs.
 - **A Need has to be usable as a PLO on its own.** `plo_synthesis` drafts exactly
   one PLO per Need and is handed nothing but `statement_th`, so a placeholder
-  ("ทักษะที่จำเป็น") or a comma-joined skill list makes the synthesis model invent the
+  ("ทักษะที่จำเป็น") or a joined skill list makes the synthesis model invent the
   capability with no evidence behind it. `need_combination._NeedStatement` enforces
   a length floor, the no-list rule, and `find_vague_phrase` on top of the
   code-token guard; Instructor retries with the offending phrase quoted. A group
   that still fails ships a `[ต้องทบทวน]`-marked fallback for the designer to rewrite —
-  never a quietly-degraded Need. **A Need states a requirement; it must not be a
+  never a quietly-degraded Need. **Both guards are counted in two shapes, because
+  Thai writes each one differently from English.** `looks_like_a_skill_list` counts
+  commas *and* list boundaries that open a นาม phrase (`การ`/`ความ` after a space or
+  a spaced `และ`) — a comma count alone saw nothing in "ต้องการการใช้ AI การแปล
+  และการตรวจแก้คำแปล", which is a joined list by any reading; it was only ever
+  catching the model writing the list the English way. `find_vague_phrase` likewise
+  matches a generic head fused to a generic domain word ("ความสามารถทางวิชาชีพ",
+  "ทักษะการทำงาน") as well as the head-plus-`ที่`-modifier pairs. That second pattern
+  carries a right-boundary lookahead the first does not need: "ที่จำเป็น" says nothing
+  wherever it sits, but "ทักษะการทำงานเป็นทีม" names a real capability, and
+  over-rejecting costs a retry and then a hand-written Need. **A Need states a requirement; it must not be a
   finished PLO.** The opening is free — "ต้องการ...", "ต้องการบัณฑิตที่...",
   "ต้องการหลักสูตรที่..." and "บัณฑิตต้องมี..." are all fine, and the mandatory
   "ตลาดแรงงานต้องการ..." prefix is gone: it carried nothing the rest of the sentence

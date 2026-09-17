@@ -69,7 +69,10 @@ def build_summarize_need_prompt(
     The sentence becomes exactly one PLO downstream, so the rules below ask for
     the three parts a PLO needs (capability, specific object, work context) at
     the group's Bloom level, and name the two degenerate shapes — a vague
-    placeholder and a comma-joined skill list — that _NeedStatement rejects.
+    placeholder and a joined skill list — that _NeedStatement rejects. The list
+    rule names both punctuations on purpose: the Thai one (spaces closed by "และ")
+    is the shape a Thai-first model actually produces, and the guard that only
+    counted commas was really only catching the list written the English way.
 
     What the rules no longer ask for is a fixed opening. "ตลาดแรงงานต้องการ..."
     used to be mandatory; it carried nothing the rest of the sentence did not and
@@ -107,10 +110,11 @@ def build_summarize_need_prompt(
         "- ระดับความยากต้องตรงกับระดับ Bloom ที่ระบุให้ ไม่สูงหรือต่ำกว่านั้น\n"
         + context_rule
         + "- ห้ามใช้คำกว้างที่ไม่บอกว่าคืออะไร เช่น 'ทักษะที่จำเป็น' "
-        "'ความรู้ที่เกี่ยวข้อง' 'สมรรถนะด้านต่างๆ'\n"
+        "'ความรู้ที่เกี่ยวข้อง' 'สมรรถนะด้านต่างๆ' 'ความสามารถทางวิชาชีพ' 'ทักษะการทำงาน'\n"
         "- ห้ามวนกลับมาพูดว่า 'ตามที่ตลาดต้องการ' ต้องบอกให้ชัดว่าต้องการอะไร\n"
-        "- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกันด้วยเครื่องหมายจุลภาค "
-        "(ใช้จุลภาคได้ไม่เกิน 2 ตัว)\n"
+        "- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกัน ทั้งแบบใช้เครื่องหมายจุลภาค "
+        "(ใช้จุลภาคได้ไม่เกิน 2 ตัว) และแบบไทยที่เว้นวรรคแล้วปิดท้ายด้วย 'และ' "
+        "เช่น 'ต้องการการใช้ AI การแปล และการตรวจแก้คำแปล'\n"
         f"- ความยาว 1-2 บรรทัด และต้องไม่สั้นกว่า {MIN_STATEMENT_CHARS} ตัวอักษร\n"
         "- statement_th ต้องเป็นภาษาไทย ห้ามมีชื่อฟังก์ชัน ชื่อตัวแปร "
         "หรือโค้ดปนอยู่ (เช่น getDefault, get_default, obj.method) "

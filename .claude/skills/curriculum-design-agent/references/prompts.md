@@ -156,8 +156,8 @@ Because clustering and merging both run *inside* one KSEC bucket (bucketing happ
 |---|---|---|
 | No code identifiers | `need_grouping.find_code_identifier` | `หน.getDefault`, `get_default`, `calculate()`, `กลยุทธ์chant` |
 | Long enough to carry three parts | `MIN_STATEMENT_CHARS` (40) | `ตลาดต้องการคนเก่ง` |
-| Not a joined list | `need_grouping.looks_like_a_skill_list` | more than 2 commas |
-| Names a capability | `need_grouping.find_vague_phrase` | `ทักษะที่จำเป็น`, `ด้านต่างๆ`, `ตามที่ตลาดต้องการ` |
+| Not a joined list | `need_grouping.looks_like_a_skill_list` | more than 2 commas, or more than one list boundary opening a `การ`/`ความ` phrase — Thai enumerates with spaces and `และ`, not commas |
+| Names a capability | `need_grouping.find_vague_phrase` | `ทักษะที่จำเป็น`, `ด้านต่างๆ`, `ตามที่ตลาดต้องการ`, `ความสามารถทางวิชาชีพ`, `ทักษะการทำงาน` (the last two only when nothing continues them: `ทักษะการทำงานเป็นทีม` passes) |
 
 If every attempt fails, `stages/need_combination.py` writes a comma-joined skill-name list prefixed `[ต้องทบทวน]` — deliberately the shape the validator rejects, so it cannot pass for a usable Need, and marked so the designer fixes it at the checkpoint instead of `plo_synthesis` guessing from a list of words.
 

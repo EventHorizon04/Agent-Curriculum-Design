@@ -302,3 +302,78 @@ def test_a_comma_joined_skill_list_is_detected(statement: str) -> None:
 )
 def test_prose_with_a_comma_or_two_is_not_a_list(statement: str) -> None:
     assert looks_like_a_skill_list(statement) is False
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # Thai does not punctuate a list with commas. It sets the items off with
+        # spaces and marks the last one with และ, so a comma count sees nothing at
+        # all here — this exact sentence scored zero commas and passed.
+        "ต้องการการใช้ AI การแปล และการตรวจแก้คำแปลให้ถูกต้องตามบริบท",
+        "ต้องการหลักสูตรที่พัฒนา การคิดเชิงวิพากษ์ การสื่อสาร และการทำงานเป็นทีม",
+        # A spaced conjunction, which is the other way the same list gets written.
+        "ต้องการบัณฑิตที่มีความรู้ทางบัญชี ความสามารถด้านภาษี และ การใช้โปรแกรมสำเร็จรูป",
+    ],
+)
+def test_a_thai_enumeration_without_commas_is_detected(statement: str) -> None:
+    """The guard is about the shape, not about the punctuation mark.
+
+    A sentence built by joining skill names is unusable as a Need whether the
+    joins are commas or the spaces and และ that Thai actually uses, because
+    plo_synthesis is handed this sentence and nothing else.
+    """
+    assert looks_like_a_skill_list(statement) is True
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # และ joining two verbs inside one clause is prose, not enumeration, and
+        # this is the shape the prompt itself offers as acceptable.
+        "ตลาดแรงงานต้องการผู้ที่ออกแบบและพัฒนาระบบสารสนเทศของโรงพยาบาลได้",
+        # Spaces around an English term are correct Thai typography, not items.
+        "ตลาดแรงงานต้องการผู้ที่วิเคราะห์ข้อมูลยอดขายด้วย Power BI เพื่อวางแผนการตลาด",
+        # A spaced clause opening with การ, but only one of them: a single
+        # nominalised phrase is how an ordinary sentence names its object.
+        "ต้องการบัณฑิตที่ใช้ภาษาอังกฤษ ในการเจรจาต่อรองกับคู่ค้าต่างประเทศได้",
+        "ต้องการบัณฑิตที่ประยุกต์ใช้หลักสถิติ และการวิเคราะห์ข้อมูลเชิงปริมาณในงานวิจัยได้",
+    ],
+)
+def test_thai_prose_with_spaces_and_an_และ_is_not_a_list(statement: str) -> None:
+    """The cost of over-rejecting is the reason the threshold sits where it does.
+
+    A false positive costs a retry and, on the third one, a [ต้องทบทวน] Need the
+    designer writes by hand — worse than the joined list it was meant to catch,
+    which is the same trade-off the code-token guard is tuned against.
+    """
+    assert looks_like_a_skill_list(statement) is False
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # A generic head fused to a generic domain word. Both open with a head the
+        # regex already knew and end in a modifier it did not, so both passed.
+        "ตลาดแรงงานต้องการบัณฑิตที่มีความสามารถทางวิชาชีพ",
+        "ตลาดแรงงานต้องการบัณฑิตที่มีทักษะการทำงาน",
+        "ตลาดแรงงานต้องการบัณฑิตที่มีทักษะการทำงาน ในสถานประกอบการจริง",
+    ],
+)
+def test_a_generic_head_fused_to_a_generic_domain_word_is_detected(statement: str) -> None:
+    assert find_vague_phrase(statement) is not None
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # The same two heads carried on into a real capability. Flagging these
+        # would retry a sound sentence, which is why the compound guard needs a
+        # right boundary and the head/modifier pairs above do not.
+        "ตลาดแรงงานต้องการบัณฑิตที่มีทักษะการทำงานเป็นทีมในโครงการข้ามสายงาน",
+        "ตลาดแรงงานต้องการบัณฑิตที่มีทักษะการทำงานร่วมกับสหวิชาชีพในหอผู้ป่วย",
+        "ตลาดแรงงานต้องการบัณฑิตที่มีความสามารถทางวิชาชีพด้านการพยาบาลผู้สูงอายุ",
+    ],
+)
+def test_a_generic_head_carried_into_a_real_capability_passes(statement: str) -> None:
+    assert find_vague_phrase(statement) is None
