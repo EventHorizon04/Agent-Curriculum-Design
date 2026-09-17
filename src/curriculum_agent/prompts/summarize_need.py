@@ -84,6 +84,22 @@ def build_summarize_need_prompt(
     "บัณฑิตวิเคราะห์...ได้" leaves that stage nothing to do but copy, and the
     report can no longer show the step from what was asked for to what a graduate
     must therefore be able to do.
+
+    Three rules guard the opposite failure, where the sentence is a legitimate
+    demand that has been generalised until it is nobody's in particular: don't
+    dilute a specialised group into a generic competency, name the professional
+    function rather than the generic skill covering it, and — the check that
+    catches what the other two miss — ask whether a reader could still tell which
+    profession this demand belongs to with the field name removed. The last one
+    cannot be pure code: "ทักษะการสื่อสาร" passes every guard in need_grouping
+    (long enough, no list, no vague head/modifier pair) and is still a Need that
+    could belong to any program in the country, which is exactly what the ceiling
+    of ten core PLOs makes expensive. They come from
+    prompts/guidances/market_need_synthesis.md rules 1, 7 and 8; that document's
+    own examples write the subject as "ผู้ปฏิบัติงาน", which is deliberately not
+    adopted here — the openings above are a decision this repo already made, and
+    changing the subject is a separate call, not a side effect of taking three
+    rules about specificity.
     """
     # Only added alongside a context line: without one there is nothing to
     # over-read, and the rule would be an instruction about a field the prompt
@@ -105,12 +121,21 @@ def build_summarize_need_prompt(
         "- ห้ามเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) ที่เสร็จรูปแล้ว เช่น 'บัณฑิตวิเคราะห์...ได้' "
         "ประโยคนี้คือสิ่งที่ถูกเรียกร้อง ส่วนการแปลงเป็น PLO เป็นขั้นถัดไป\n"
         "- ต้องมีครบ 3 ส่วน: (1) ความสามารถที่ลงมือทำได้จริง "
-        "(2) วัตถุหรือผลงานที่เจาะจง (3) บริบทของงานที่ใช้ความสามารถนั้น\n"
+        "(2) วัตถุหรือผลงานที่เจาะจง (3) บริบทของงานที่ใช้ความสามารถนั้น "
+        "ตัวอย่างที่ครบทั้งสามส่วน: "
+        "'ต้องการบัณฑิตที่ประเมินและปรับปรุงผลลัพธ์การแปลเอกสารธุรกิจระหว่างประเทศ "
+        "ในบริบทการสื่อสารไทย-จีน'\n"
         "- หนึ่งประโยคคือหนึ่งสมรรถนะ ห้ามยัดหลายเรื่องที่ไม่เกี่ยวกันไว้ในประโยคเดียว\n"
         "- ระดับความยากต้องตรงกับระดับ Bloom ที่ระบุให้ ไม่สูงหรือต่ำกว่านั้น\n"
         + context_rule
         + "- ห้ามใช้คำกว้างที่ไม่บอกว่าคืออะไร เช่น 'ทักษะที่จำเป็น' "
         "'ความรู้ที่เกี่ยวข้อง' 'สมรรถนะด้านต่างๆ' 'ความสามารถทางวิชาชีพ' 'ทักษะการทำงาน'\n"
+        "- ห้ามลดทอนทักษะเฉพาะทางในกลุ่มให้เหลือเป็นสมรรถนะทั่วไป "
+        "กลุ่ม 'การแปลสัญญา การจัดการคำศัพท์เฉพาะ' สรุปเป็น 'ทักษะการสื่อสาร' ไม่ได้ "
+        "ต้องคงหน้าที่ทางวิชาชีพที่กลุ่มทักษะบอกไว้ เช่น 'แปลและตรวจสอบเอกสารสัญญาทางธุรกิจ'\n"
+        "- เมื่อกลุ่มทักษะชี้ถึงหน้าที่ทางวิชาชีพ ให้เขียนด้วยหน้าที่นั้น ไม่ใช่ทักษะทั่วไปที่ครอบมันอยู่ "
+        "เขียน 'ล่ามการเจรจาธุรกิจ' ไม่ใช่ 'การสื่อสาร' เขียน 'ตรวจแก้ผลลัพธ์จาก AI' ไม่ใช่ 'การใช้เทคโนโลยี' "
+        "ยกเว้นกลุ่มทักษะนั้นพูดถึงสมรรถนะทั่วไปโดยตรงอยู่แล้ว\n"
         "- ห้ามวนกลับมาพูดว่า 'ตามที่ตลาดต้องการ' ต้องบอกให้ชัดว่าต้องการอะไร\n"
         "- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกัน ทั้งแบบใช้เครื่องหมายจุลภาค "
         "(ใช้จุลภาคได้ไม่เกิน 2 ตัว) และแบบไทยที่เว้นวรรคแล้วปิดท้ายด้วย 'และ' "
@@ -119,6 +144,10 @@ def build_summarize_need_prompt(
         "- statement_th ต้องเป็นภาษาไทย ห้ามมีชื่อฟังก์ชัน ชื่อตัวแปร "
         "หรือโค้ดปนอยู่ (เช่น getDefault, get_default, obj.method) "
         "ชื่อเทคโนโลยีที่ใช้ในวงการจริง เช่น AI, ESG, Data Science ใช้ได้\n\n"
+        "ก่อนตอบ ให้ทดสอบประโยคที่เขียนไว้ด้วยคำถามนี้: "
+        "ถ้าลบชื่อสาขาออก ผู้อ่านยังบอกได้ไหมว่านี่คือความต้องการของสายวิชาชีพใด "
+        "ถ้าประโยคใช้ได้กับหลายสาขาพร้อมกัน เช่น บริหารธุรกิจ นิเทศศาสตร์ การตลาด และรัฐศาสตร์ "
+        "แปลว่ายังกว้างเกินไป ให้เขียนใหม่ก่อนตอบ\n\n"
         "ตอบเป็น JSON object ที่มี field:\n"
         "  statement_th: string (ประโยคภาษาไทย)\n"
         "  statement_en: string (ประโยคภาษาอังกฤษ)\n\n" + NOTE_POLICY_TH

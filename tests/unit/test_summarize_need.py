@@ -147,3 +147,69 @@ def test_summarize_prompt_no_longer_mandates_the_labour_market_frame() -> None:
     system = build_summarize_need_prompt(["การดูแลผู้ป่วย"], "S", "apply")[0]["content"]
 
     assert "มุมมองของ 'ตลาดแรงงานต้องการอะไร'" not in system
+
+
+def test_summarize_prompt_refuses_to_dilute_a_specialised_group() -> None:
+    """A Need generalised into a competency anyone could claim is unusable.
+
+    It passes every guard in need_grouping — long enough, not a list, no vague
+    head/modifier pair — and still describes no program in particular, which is
+    expensive against a ceiling of ten core PLOs. The prompt is the only place
+    this can be stated.
+    """
+    system = build_summarize_need_prompt(["การแปลสัญญา", "การจัดการคำศัพท์เฉพาะ"], "S", "apply")[0][
+        "content"
+    ]
+
+    assert "ห้ามลดทอนทักษะเฉพาะทาง" in system
+
+
+def test_summarize_prompt_puts_the_professional_function_before_the_generic_skill() -> None:
+    """ "ล่ามการเจรจาธุรกิจ", not "การสื่อสาร" — the group's own evidence names a
+    function, and the covering skill is a summary of it that a PLO cannot be
+    assessed against."""
+    system = build_summarize_need_prompt(["การล่ามธุรกิจ"], "S", "apply")[0]["content"]
+
+    assert "ให้เขียนด้วยหน้าที่นั้น" in system
+
+
+def test_summarize_prompt_asks_for_the_job_identity_check_before_answering() -> None:
+    """The self-check that catches what the two rules above miss.
+
+    A sentence can avoid every named generic word and still fit บริหารธุรกิจ,
+    นิเทศศาสตร์ and รัฐศาสตร์ at once. No validator can measure that, so it is asked
+    for as a last step before the model answers.
+    """
+    system = build_summarize_need_prompt(["การล่ามธุรกิจ"], "S", "apply")[0]["content"]
+
+    assert "ถ้าลบชื่อสาขาออก" in system
+
+
+def test_summarize_prompt_keeps_the_subject_this_repo_already_chose() -> None:
+    """guidances/market_need_synthesis.md writes every example subject as
+    'ผู้ปฏิบัติงาน'. Adopting its rules about specificity must not quietly adopt
+    that too: the allowed openings are a decision a5823b9/e09b2d6 landed, and
+    reversing it is its own call with its own reasons.
+    """
+    system = build_summarize_need_prompt(["การล่ามธุรกิจ"], "S", "apply")[0]["content"]
+
+    assert "ผู้ปฏิบัติงาน" not in system
+    for opening in _ALLOWED_OPENINGS_TH:
+        assert opening in system
+
+
+def test_the_worked_example_would_survive_the_stage_that_validates_a_need() -> None:
+    """The example the prompt shows has to be a sentence _NeedStatement accepts.
+
+    An example that its own validators would bounce teaches the model the shape
+    that gets retried — and the three guards it has to clear (length, not a list,
+    no vague phrase, no code token) are exactly the ones the rules around it are
+    about.
+    """
+    from curriculum_agent.stages.need_combination import _NeedStatement
+
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    example = "ต้องการบัณฑิตที่ประเมินและปรับปรุงผลลัพธ์การแปลเอกสารธุรกิจระหว่างประเทศ ในบริบทการสื่อสารไทย-จีน"
+
+    assert example in system
+    assert _NeedStatement(statement_th=example).statement_th == example
