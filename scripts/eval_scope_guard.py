@@ -512,7 +512,7 @@ async def main() -> int:
     parser.add_argument(
         "--postings",
         type=Path,
-        default=Path("Data/linkedin_offers2026-04-30.csv"),
+        default=Path("references/linkedin_offers2026-04-30.csv"),
         help="source of the out-of-field postings for the synthetic case",
     )
     parser.add_argument("--inject", type=int, default=6, help="how many postings to inject")

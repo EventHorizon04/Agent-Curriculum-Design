@@ -13,7 +13,7 @@ import re
 import zipfile
 from pathlib import Path
 
-DOCX = Path("E:/SideProject/Agent-Curriculum-Design/Data/ความต้องการของผู้มีส่วนได้ส่วนเสีย การแป.docx")
+DOCX = Path("E:/SideProject/Agent-Curriculum-Design/references/ความต้องการของผู้มีส่วนได้ส่วนเสีย การแป.docx")
 OUT = Path(__file__).with_name("evidence.json")
 
 # Heading -> stakeholder_type. The headings are verbatim from the document.

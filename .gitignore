@@ -32,5 +32,11 @@ skills-lock.json
 # .scratch corpora above are excluded: verbatim stakeholder text from one real
 # institution's internal documents, plus that program's human-authored answer
 # key. Referenced by .scratch/plo-scope-guard/ but never committed with it.
-Data/ความต้องการของผู้มีส่วนได้ส่วนเสีย การแป.docx
-Data/Needs_to_PLO_TCISM.xlsx
+#
+# Matched by basename, with no directory part on purpose. These were written as
+# `Data/<name>` and the directory was later renamed to `references/`, which
+# silently un-ignored both files — a rename is not supposed to be able to stage a
+# corpus. A pattern without a slash matches at any depth, so the next move cannot
+# do that either.
+ความต้องการของผู้มีส่วนได้ส่วนเสีย การแป.docx
+Needs_to_PLO_TCISM.xlsx

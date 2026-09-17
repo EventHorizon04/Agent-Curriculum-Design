@@ -75,13 +75,15 @@ API_RELOAD=true uv run python -m curriculum_agent.api
 
 ## Seed data
 
-The `Data/` directory holds real-world inputs used during the stakeholder needs and skill extraction stages:
+The `references/` directory (called `Data/` until 2026-09-17) holds real-world inputs used during the stakeholder needs and skill extraction stages:
 
-- `Data/Occupation Data.xlsx` — Thai job-market occupation taxonomy
-- `Data/Skills.xlsx` — structured skill taxonomy aligned with the occupation data
-- `Data/linkedin_offers2026-04-30.csv` — scraped LinkedIn job postings (April 2026 snapshot) for skill-frequency analysis
+- `references/Occupation Data.xlsx` — Thai job-market occupation taxonomy
+- `references/Skills.xlsx` — structured skill taxonomy aligned with the occupation data
+- `references/linkedin_offers2026-04-30.csv` — scraped LinkedIn job postings (April 2026 snapshot) for skill-frequency analysis
 
 These files feed the extraction pipeline; do not reformat them without checking scraper/parser compatibility.
+
+Two more files sit beside them and are **gitignored**: the TCISM stakeholder document and its human-authored answer key, the test set the scope-guard work was measured against. They are ignored **by basename, with no directory part** — writing the rule as `Data/<name>` is what let this very rename un-ignore a corpus of one institution's internal documents. Don't reintroduce a directory prefix there. Note this directory is unrelated to `.claude/skills/curriculum-design-agent/references/`, which holds the domain manual.
 
 ## Code conventions
 
