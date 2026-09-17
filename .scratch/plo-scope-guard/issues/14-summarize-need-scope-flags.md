@@ -4,6 +4,13 @@ Map: [PLO synthesis ที่ไม่หลุด scope ของหลัก�
 Type: grilling
 Status: open
 Blocked by: (none)
+Related: [prompt-guidances/01](../../prompt-guidances/issues/01-need-sentence-subject.md) · [02](../../prompt-guidances/issues/02-curriculum-level-line.md)
+
+> **สามใบนี้แก้ `build_summarize_need_prompt` ตัวเดียวกัน** ใบ 01 ตัดสินว่าประโยคเขียนด้วย
+> ประธานอะไร ใบ 02 ตัดสินว่ากว้าง/แคบแค่ไหนถึงเรียกว่าระดับหลักสูตร ส่วนใบนี้ตัดสินว่า
+> prompt เห็นธง scope รายสมาชิกไหม **ลำดับที่ควรเป็น: 01 ก่อน** — ถ้าประธานเปลี่ยน
+> ตัวเลือก (ค) ของใบนี้ ("แปลงข้อเรียกร้องฝั่งสถาบันเป็นฝั่งบัณฑิต") เปลี่ยนความหมายทันที
+> เพราะ "ฝั่งบัณฑิต" คือสิ่งที่ใบ 01 กำลังตัดสินอยู่
 
 ## Question
 

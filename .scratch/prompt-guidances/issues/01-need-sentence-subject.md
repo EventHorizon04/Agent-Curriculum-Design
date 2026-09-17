@@ -4,6 +4,10 @@ Map: [Review — market_need_synthesis](../market-need-synthesis-review.md)
 Type: decision
 Status: open
 Blocked by: (none)
+Blocks: [plo-scope-guard/14](../../plo-scope-guard/issues/14-summarize-need-scope-flags.md)
+
+> ใบนี้ควรตัดสิน **ก่อน** ticket 14: ตัวเลือก (ค) ของใบนั้นคือการแปลงข้อเรียกร้องฝั่งสถาบัน
+> ให้เป็น "ฝั่งบัณฑิต" ซึ่งเป็นคำที่ใบนี้กำลังตัดสินว่าจะยังมีอยู่ไหม
 
 ## Question
 

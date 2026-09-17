@@ -4,6 +4,11 @@ Map: [Review — market_need_synthesis](../market-need-synthesis-review.md)
 Type: grilling
 Status: open
 Blocked by: (none)
+Related: [plo-scope-guard/14](../../plo-scope-guard/issues/14-summarize-need-scope-flags.md)
+
+> แก้ prompt ตัวเดียวกับ ticket 14 และทั้งสองใบพูดถึง "Need ที่ไม่ควรเป็น PLO" คนละเหตุ —
+> ใบนี้เพราะ **ระดับผิด** (แคบระดับ CLO) ใบ 14 เพราะ **ฝั่งผิด** (เป็นสิ่งที่สถาบันทำ
+> ไม่ใช่สิ่งที่บัณฑิตทำ) อย่ายุบสองเหตุนี้เข้าด้วยกันตอนเขียนกฎ
 
 ## Question
 
