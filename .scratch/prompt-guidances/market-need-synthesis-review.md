@@ -204,6 +204,29 @@ guidance เพิ่ม ❌ **`ความสามารถทางวิช
 
 ---
 
+## §สถานะหลังรีวิว (2026-09-17)
+
+ข้อเสนอ 1–3 ทำแล้ว · ข้อ 4–5 แตกเป็นใบใน [`issues/`](issues/)
+
+| ข้อเสนอ | สถานะ | ที่ไหน |
+|---|---|---|
+| 1 · รับกฎ 1/7/8 + ตัวอย่างของกฎ 4 | ✅ ลงแล้ว | `a8a497b` — เขียนโดย **ไม่** รับประธาน `ผู้ปฏิบัติงาน` และมี test ตรึงการไม่รับไว้ |
+| 2 · `looks_like_a_skill_list` จับการแจกแจงแบบไทย | ✅ ลงแล้ว | `4c2f7cd` — นับ list boundary ที่เปิดด้วย `การ`/`ความ` เพิ่มจากจุลภาค |
+| 3 · ขยาย `_VAGUE_HEAD_RE` | ✅ ลงแล้ว | `4c2f7cd` — `_VAGUE_COMPOUND_RE` พร้อม lookahead กัน `ทักษะการทำงานเป็นทีม` |
+| 4 · ตัดสิน ชน-1 (ประธาน) | ⏸ รอคน | [issues/01](issues/01-need-sentence-subject.md) |
+| 5 · ชน-2 + `rationale_th` แยกใบ | ⏸ รอคน | [issues/02](issues/02-curriculum-level-line.md) · [issues/03](issues/03-need-rationale-th.md) |
+
+**งานตามเก็บที่ปิดไปด้วย**: `prompts.md` ของ skill resync แล้ว (`32af1a6`) — drift ที่
+รีวิวนี้จับได้ 2 จุด กลายเป็น 4 จุดตอนลงมือ (เพิ่ม: `skill_extraction` เขียนว่าใช้
+`complete_light` ทั้งที่ใช้ `complete_extraction`, และ signature ของ builder 2 ตัวขาด
+argument ที่เพิ่มไปแล้ว)
+
+**กฎ 10 (Distinctive Capability Preservation) ไม่มีใบ** — รีวิวเสนอทางที่ถูกกว่าไว้แล้ว
+(ใช้ `demand_score`/`stakeholder_coverage` เลือกว่าชื่อทักษะตัวไหนเข้า prompt ก่อน แทนการ
+ตัดดิบที่ `skill_names[:30]`) ถ้าจะทำ ให้เปิดใบตอนนั้น
+
+---
+
 ## §ข้อสังเกตข้ามทั้ง 4 ไฟล์
 
 - ทั้ง 4 ไฟล์รูปเดียวกัน (role → กฎเป็นข้อ → few-shot ❌/✅ → checklist → JSON) และ 3 ใน 4
