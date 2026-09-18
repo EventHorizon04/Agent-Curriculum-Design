@@ -293,7 +293,17 @@ tests/integration/     ← LLM mocked, full stages
   "ทักษะการทำงาน") as well as the head-plus-`ที่`-modifier pairs. That second pattern
   carries a right-boundary lookahead the first does not need: "ที่จำเป็น" says nothing
   wherever it sits, but "ทักษะการทำงานเป็นทีม" names a real capability, and
-  over-rejecting costs a retry and then a hand-written Need. **A Need states a requirement; it must not be a
+  over-rejecting costs a retry and then a hand-written Need. **The prompt also carries the
+  only rule that pushes the other way.** Everything above bounds how *vague* a Need
+  may be and nothing bounded how *narrow* it may be, so "แปลสัญญาซื้อขายสินค้า" — one
+  task inside a profession's work — satisfied every one of them. A Need becomes
+  exactly one PLO against ten core slots, so one worth less than a tenth of the
+  program spends a slot anyway. The bound is written as a property of the
+  sentence's **object** (a class of work the graduate repeats, not one instance)
+  rather than of its wording, and says outright that it does not license writing
+  vaguely — a model told "too narrow" otherwise reaches for "ทักษะการสื่อสาร",
+  which is what the dilution rule exists to stop. The two are tested together;
+  removing either leaves the other unopposed. **A Need states a requirement; it must not be a
   finished PLO.** The opening is free — "ต้องการ...", "ต้องการบัณฑิตที่...",
   "ต้องการหลักสูตรที่..." and "บัณฑิตต้องมี..." are all fine, and the mandatory
   "ตลาดแรงงานต้องการ..." prefix is gone: it carried nothing the rest of the sentence

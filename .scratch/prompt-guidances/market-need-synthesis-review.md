@@ -213,8 +213,9 @@ guidance เพิ่ม ❌ **`ความสามารถทางวิช
 | 1 · รับกฎ 1/7/8 + ตัวอย่างของกฎ 4 | ✅ ลงแล้ว | `a8a497b` — เขียนโดย **ไม่** รับประธาน `ผู้ปฏิบัติงาน` และมี test ตรึงการไม่รับไว้ |
 | 2 · `looks_like_a_skill_list` จับการแจกแจงแบบไทย | ✅ ลงแล้ว | `4c2f7cd` — นับ list boundary ที่เปิดด้วย `การ`/`ความ` เพิ่มจากจุลภาค |
 | 3 · ขยาย `_VAGUE_HEAD_RE` | ✅ ลงแล้ว | `4c2f7cd` — `_VAGUE_COMPOUND_RE` พร้อม lookahead กัน `ทักษะการทำงานเป็นทีม` |
-| 4 · ตัดสิน ชน-1 (ประธาน) | ⏸ รอคน | [issues/01](issues/01-need-sentence-subject.md) |
-| 5 · ชน-2 + `rationale_th` แยกใบ | ⏸ รอคน | [issues/02](issues/02-curriculum-level-line.md) · [issues/03](issues/03-need-rationale-th.md) |
+| 4 · ตัดสิน ชน-1 (ประธาน) | ✅ **ตัดสินแล้ว 2026-09-18** | [issues/01](issues/01-need-sentence-subject.md) — คง `บัณฑิต/หลักสูตร` ไม่รับ `ผู้ปฏิบัติงาน` · กฎข้อ 2 ของ guidance กลายเป็น "ซ้ำของเดิม" |
+| 5 · ชน-2 | ✅ **ตัดสินแล้ว 2026-09-18** | [issues/02](issues/02-curriculum-level-line.md) — รับทิศระดับหลักสูตร เส้นแบ่งลง prompt แล้ว · ครึ่งที่วัดกับข้อมูลจริงยังค้าง (DB ไม่ได้รัน) |
+| 5b · `rationale_th` | ⏸ รอคน | [issues/03](issues/03-need-rationale-th.md) |
 
 **งานตามเก็บที่ปิดไปด้วย**: `prompts.md` ของ skill resync แล้ว (`32af1a6`) — drift ที่
 รีวิวนี้จับได้ 2 จุด กลายเป็น 4 จุดตอนลงมือ (เพิ่ม: `skill_extraction` เขียนว่าใช้

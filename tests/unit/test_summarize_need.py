@@ -213,3 +213,33 @@ def test_the_worked_example_would_survive_the_stage_that_validates_a_need() -> N
 
     assert example in system
     assert _NeedStatement(statement_th=example).statement_th == example
+
+
+def test_summarize_prompt_bounds_how_narrow_a_need_may_be() -> None:
+    """The only rule here that pushes away from specificity.
+
+    Every other rule drives toward a sentence specific enough to draft a PLO
+    from, and none has a lower bound — so a Need could name one task inside a
+    profession's work and satisfy all of them. A Need becomes exactly one PLO
+    against ten core slots, so one worth less than a tenth of the program still
+    spends one.
+    """
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+
+    assert "ประเภทของงาน" in system
+    assert "ภารกิจย่อยชิ้นเดียว" in system
+
+
+def test_the_narrowness_rule_does_not_license_writing_vaguely() -> None:
+    """A model told "too narrow" reaches for "ทักษะการสื่อสาร" unless told not to.
+
+    The boundary is a property of the sentence's object — a class of work rather
+    than one instance — never of how precisely it is worded, because the rules
+    around it exist to stop exactly the sentence a vaguer rewrite would produce.
+    """
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+
+    assert "ไม่ได้อนุญาตให้เขียนกว้างลอย ๆ" in system
+    # The two rules have to survive together: this one bounds the object, the
+    # dilution rule bounds the wording. Losing either leaves the other unopposed.
+    assert "ห้ามลดทอนทักษะเฉพาะทาง" in system

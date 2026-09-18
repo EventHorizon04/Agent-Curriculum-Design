@@ -97,9 +97,24 @@ def build_summarize_need_prompt(
     of ten core PLOs makes expensive. They come from
     prompts/guidances/market_need_synthesis.md rules 1, 7 and 8; that document's
     own examples write the subject as "ผู้ปฏิบัติงาน", which is deliberately not
-    adopted here — the openings above are a decision this repo already made, and
+    adopted — the openings above are a decision this repo already made, and
     changing the subject is a separate call, not a side effect of taking three
-    rules about specificity.
+    rules about specificity. That call was made on 2026-09-18 and the answer was
+    to keep บัณฑิต/หลักสูตร; `.scratch/prompt-guidances/issues/01` records why,
+    and a test asserts "ผู้ปฏิบัติงาน" stays out of this prompt.
+
+    One rule pushes the other way, and it is the only one that does. Every rule
+    above drives toward a sentence specific enough to draft a PLO from, and none
+    of them has a lower bound — so nothing stopped a Need from naming one task
+    inside a profession's work ("แปลสัญญาซื้อขายสินค้า") while satisfying all of
+    them. That matters because a Need becomes exactly one PLO and a program has
+    ten core slots: a Need worth less than a tenth of the program spends one
+    anyway. The boundary is written as a property of the sentence's **object** —
+    a class of work the graduate repeats across situations, not one instance of
+    it — precisely so it cannot be satisfied by writing more vaguely, which is
+    the failure the three rules above exist to prevent. The prompt says that
+    outright, because a model told "too narrow" will otherwise reach for
+    "ทักษะการสื่อสาร".
     """
     # Only added alongside a context line: without one there is nothing to
     # over-read, and the rule would be an instruction about a field the prompt
@@ -126,6 +141,13 @@ def build_summarize_need_prompt(
         "'ต้องการบัณฑิตที่ประเมินและปรับปรุงผลลัพธ์การแปลเอกสารธุรกิจระหว่างประเทศ "
         "ในบริบทการสื่อสารไทย-จีน'\n"
         "- หนึ่งประโยคคือหนึ่งสมรรถนะ ห้ามยัดหลายเรื่องที่ไม่เกี่ยวกันไว้ในประโยคเดียว\n"
+        "- ประโยคนี้จะใช้สล็อต PLO ของทั้งหลักสูตรไป 1 ข้อจาก 10 ข้อ "
+        "จึงต้องครอบ 'ประเภทของงาน' ที่บัณฑิตทำซ้ำได้หลายสถานการณ์ในสายวิชาชีพนั้น "
+        "ไม่ใช่ภารกิจย่อยชิ้นเดียวภายในประเภทนั้น "
+        "เช่น 'แปลและตรวจสอบเอกสารสัญญาทางธุรกิจ' อยู่ในระดับหลักสูตร "
+        "แต่ 'แปลสัญญาซื้อขายสินค้า' แคบเกินไป เป็นงานหนึ่งชิ้นในประเภทเดียวกัน\n"
+        "  ข้อนี้คุมเฉพาะ 'ขอบเขตของวัตถุ' ไม่ได้อนุญาตให้เขียนกว้างลอย ๆ "
+        "การแก้ประโยคที่แคบเกินคือขยายให้ครอบประเภทของงาน ไม่ใช่ตัดรายละเอียดทิ้ง\n"
         "- ระดับความยากต้องตรงกับระดับ Bloom ที่ระบุให้ ไม่สูงหรือต่ำกว่านั้น\n"
         + context_rule
         + "- ห้ามใช้คำกว้างที่ไม่บอกว่าคืออะไร เช่น 'ทักษะที่จำเป็น' "

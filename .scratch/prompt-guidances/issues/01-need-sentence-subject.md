@@ -2,7 +2,7 @@
 
 Map: [Review — market_need_synthesis](../market-need-synthesis-review.md)
 Type: decision
-Status: open
+Status: resolved
 Blocked by: (none)
 Blocks: [plo-scope-guard/14](../../plo-scope-guard/issues/14-summarize-need-scope-flags.md)
 
@@ -53,3 +53,32 @@ opening อิสระเป็นผลของ 3 commit ที่มีเ�
 
 รับ / ไม่รับ / รับบางส่วน พร้อมเหตุผลที่เขียนทับ docstring เดิมได้
 ถ้า "ไม่รับ" ให้ปิดใบนี้และบันทึกว่ากฎ 2 ของ guidance = ซ้ำของเดิม
+
+
+---
+
+## คำตัดสิน — 2026-09-18: **คง `บัณฑิต/หลักสูตร` ไม่รับ `ผู้ปฏิบัติงาน`**
+
+opening ทั้ง 4 แบบอยู่เหมือนเดิม role line ของ `summarize_need` อยู่เหมือนเดิม
+ไม่มีการแก้โค้ดจากใบนี้ — สิ่งที่เปลี่ยนคือมันกลายเป็นคำตัดสินที่มีเหตุผลบันทึกไว้
+แทนที่จะเป็นสภาพเดิมที่ยังไม่มีใครตั้งคำถาม
+
+**สิ่งที่ตามมาโดยอัตโนมัติ:**
+
+1. **กฎข้อ 2 ของ guidance = ซ้ำของเดิม** เจตนาจริงของมัน (ห้ามรูปผลลัพธ์การเรียนรู้)
+   `summarize_need.py` ทำอยู่แล้วที่บรรทัด `ห้ามเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) ที่เสร็จรูปแล้ว`
+   ส่วนที่ห้ามคำว่า `สามารถ` แบบเหมารวมไม่รับ เพราะ ✅ example ของ guidance เองก็ใช้คำนั้น
+2. **ชน-A ใน [three-file-review](../three-file-review.md) ปิดตามไปด้วย** — role line ของ
+   `extract_skills` ที่เขียนว่า "ทักษะที่ตลาดแรงงานต้องการ" **ไม่รับ** ด้วยเหตุผลเดียวกัน
+   และแรงกว่าด้วย เพราะที่ชั้นสกัดมันทำให้ธง `is_graduate_capability` ไร้ความหมาย
+   (framing ที่กรองกิจกรรมสถาบันทิ้งตั้งแต่ต้น ทำให้ไม่มีอะไรเหลือให้ติดธง)
+3. **ticket 14 ไม่ถูกบล็อกแล้ว** — ตัวเลือก (ค) ของใบนั้น ("แปลงข้อเรียกร้องฝั่งสถาบัน
+   เป็นฝั่งบัณฑิต") อ่านได้ตรงตัวแล้ว เพราะ "ฝั่งบัณฑิต" ยังเป็นคำที่ prompt ใช้จริง
+
+**test ที่ตรึงคำตัดสินนี้**: `test_summarize_prompt_keeps_the_subject_this_repo_already_chose`
+(ยืนยันว่า `ผู้ปฏิบัติงาน` ไม่อยู่ใน prompt และ opening ครบทั้ง 4) ·
+`test_the_task_line_does_not_narrow_the_corpus_to_the_labour_market` ·
+`test_the_task_line_says_the_evidence_may_come_from_any_stakeholder`
+
+**ถ้าจะกลับคำในอนาคต** ต้องแก้ test สามตัวนั้นโดยเจตนา และเขียนเหตุผลทับ docstring ของ
+`build_summarize_need_prompt` กับบล็อกใน CLAUDE.md — ไม่ใช่แก้ถ้อยคำ prompt เฉย ๆ
