@@ -83,11 +83,61 @@ lowercase + ยุบช่องว่าง) จาก evidence คนละ�
 
 แต่ผลลัพธ์รวมคือ: Need หลักมีใบเดียว และใบนั้นถูกกรอง → **PLO หลัก 0**
 
+## รันใหม่ครบสายแล้ว — 2026-09-18 23:00-23:05 (ผลจริง ไม่ใช่การคาด)
+
+ลำดับ: `GET /evidence/classify-stream` → `POST /needs/skills/run` → `POST /needs/combine/run`
+→ `POST /plos/run` (คือปุ่มเดียวกับที่หน้าเว็บกด)
+
+| ตัวชี้วัด | ก่อน | หลัง |
+|---|---|---|
+| evidence `requirement` | 0 | **3** |
+| skills ทั้งหมด | 99 | 63 |
+| skill `requirement` | 0 | **11** |
+| skill `need` | 0 | **2** |
+| skill `want` / `unclassified` | 70 / 29 | 32 / 18 |
+| Needs | 10 | 11 |
+| **core Needs** | 1 | **3** |
+| Need ถูก `is_in_scope` กรองตอน synthesis | — | **4 ใบ** |
+| **PLO หลัก** | **0** | **1** |
+| PLO เสริม | 8 | 6 |
+| escalated | 1 | 0 |
+
+### สาย 2 — ยืนยันว่าเป็นสาเหตุจริง และแก้ได้ฟรี
+
+รัน stage 1 อย่างเดียว (0 LLM call) ทำให้ `institutional_direction` 3 ชิ้นเป็น
+`requirement` แล้วกฎข้อ 1 ของ `classify_skills` ยิงทันที **11 ตัว** จาก 0
+
+### สาย 1 — ยังอยู่ครบ และตอนนี้มีหลักฐานรอบสอง
+
+ชื่อทักษะ **62 ชื่อ ซ้ำข้าม evidence แค่ 1 ชื่อ** (รอบก่อน 99 ชื่อ ซ้ำ 0) →
+`need` ได้มา 2 ตัวจากชื่อเดียวนั้น · กฎ `>1 evidence → need` **ยังแทบไม่ยิง**
+คนละโมเดล คนละรอบ ผลเหมือนเดิม → **เป็นเรื่องนิยามของกฎ ไม่ใช่เรื่องข้อมูลไม่ครบ**
+
+### ยังไม่ถึง `MIN_NEEDS` และ log พูดเองทั้งสองที่
+
+```
+need_combination: produced only 3 core Needs (policy is at least 6)
+plo_synthesis:    produced 1 core PLOs, below the 6 minimum policy —
+                  กรอง Need นอกขอบเขตออก 4 ใบก่อนร่าง (หลักฐานในขอบเขตไม่พอ)
+```
+
+Need ฝั่งสถาบันที่เพิ่งเลื่อนขึ้นเป็น `requirement` กลายเป็น core Need แล้วถูก
+`is_in_scope` กรองออกที่ synthesis — **สองกลไกนี้ดันสวนกัน**: "requirement wins" ดึงเสียง
+ของสถาบันเข้ามา ส่วน scope guard บอกว่ามันไม่ใช่สมรรถนะของบัณฑิต ทั้งคู่ทำถูกตามสเปก
+(`is_in_scope` docstring เขียนไว้เองว่า requirement ไม่ได้รับการยกเว้น และเป็นการตัดสินใจ)
+ผลรวมคือ Need ฝั่งสถาบันกิน core slot แล้วโดนกรองทิ้ง ซึ่งอธิบาย core 3 → PLO หลัก 1
+
+### ข้อสังเกตแถม — SMART agent ใช้ budget หมดกับ soft flag
+
+PLO1 เดินครบ 8 turn ทำ repair 2 ครั้งกับ `A_level` (soft flag ที่ **block ไม่ได้**)
+แล้ว budget หมด → `code_only` · code gate ผ่าน ไม่ escalate
+soft flag กินงบทั้งก้อนของ PLO ได้ ทั้งที่ตามนิยามมันไม่มีสิทธิ์ขวางอะไร — ควรดูว่า
+ควรจำกัด repair ที่มาจาก soft flag อย่างเดียวหรือไม่
+
 ## สิ่งที่ต้องกดให้แตก
 
-1. **แก้สาย 2 ก่อนแล้ววัดใหม่** — รัน stage 1 ให้ครบ (จะได้ requirement 17 ตัว) แล้วดูว่า
-   core count ขยับไปเท่าไร · ราคาถูกมาก ไม่ต้องเรียก LLM เลยที่ stage 1 แต่ต้อง
-   re-extract ถ้าจะให้ `classification` ของ skill เปลี่ยนตาม
+1. ~~แก้สาย 2 ก่อนแล้ววัดใหม่~~ **ทำแล้ว** — core PLO 0 → 1 ยังไม่ถึง 6
+   สาย 2 เป็นสาเหตุจริงแต่ไม่ใช่สาเหตุเดียว
 2. **ราคา re-extract ตอนนี้ต่ำผิดปกติ** — `llm_cache` มี 20 แถว live 3 stale-model 17
    (17 แถวมาจาก `anthropic/claude-fable-5.1` ที่เคยทดลองแล้ว revert config ไปแล้ว)
    → ข้อโต้แย้งเรื่อง "ต้องรวมแก้ prompt ครั้งเดียวเพื่อจ่ายค่า re-extract รอบเดียว"
