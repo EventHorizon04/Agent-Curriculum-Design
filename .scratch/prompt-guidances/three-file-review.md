@@ -29,10 +29,28 @@ column ต่างหาก เพื่อให้ sweep บอกได้�
 2. `skill_extraction` แพงที่สุด — เป็น stage ที่ fan out **1 call ต่อ window ต่อ evidence**
    (ดู `chunk_evidence_text`) คือ stage ที่เผา quota ก่อนใครเพื่อน
 
-**ก่อนตัดสินใจ ให้รันดูตัวเลขจริง**:
-`uv run python -m curriculum_agent.data.prune_cache` รายงาน `stale-model` /
-`stale-contract` / `orphaned-kind` ต่อ kind โดยไม่ลบอะไร — จำนวนแถว `extraction` ที่ยัง
-hit ได้อยู่ คือราคาที่จะจ่าย ผมไม่ได้รันเพราะ Postgres ไม่ได้เปิดอยู่ตอนรีวิว
+### ⚠️ ตัวเลขจริง (วัดแล้ว 2026-09-18) — **ราคาที่กลัวกันแทบไม่มีอยู่จริง**
+
+```
+20 cache row(s): 3 live, 17 stale-model, 0 stale-contract, 0 orphaned-kind
+  stale-model:  3 row(s) from clustering  on anthropic/claude-fable-5.1
+  stale-model: 14 row(s) from extraction  on anthropic/claude-fable-5.1
+```
+
+`llm_cache` มี **20 แถว** และ **17 แถวตายไปแล้ว** — ตายเพราะ `stale-model` ไม่ใช่
+`stale-contract`: ทั้งหมดเขียนตอนทดลอง `anthropic/claude-fable-5.1` ที่ค้างเป็นคอมเมนต์
+ใน `config.py` แล้ว revert ทิ้งไปเมื่อ 2026-09-18
+
+**เหลือของจริงที่จะเสีย 3 แถว** → ข้อโต้แย้ง "ต้องรวมแก้ทุกไฟล์ครั้งเดียวเพื่อจ่ายค่า
+re-extract รอบเดียว" **แทบไม่มีน้ำหนักแล้ว** คลังทดสอบมี evidence 14 ชิ้น ซึ่งคือ
+extraction 14 call — ถูกกว่าการรอให้ตัดสินครบทุกข้อมาก
+
+ข้อสรุปเดิมของเอกสารนี้ ("ราคาต่ำสุดคือรวมทุกอย่างไว้ในการขยับ fingerprint ครั้งเดียว")
+จึงต้องอ่านใหม่: **มันถูกในเชิงหลักการ แต่ตัวเลขบอกว่าจะแยกลงทีละไฟล์ก็ได้**
+สิ่งที่ยังควรรวม คือความ *สอดคล้อง* ของกติกาข้ามไฟล์ ไม่ใช่ราคา
+
+รันซ้ำได้ด้วย `uv run python -m curriculum_agent.data.prune_cache` (ไม่ลบอะไรถ้าไม่ใส่
+`--delete`)
 
 ---
 
