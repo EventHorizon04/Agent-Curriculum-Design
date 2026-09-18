@@ -93,7 +93,13 @@ export default function Programs() {
       <div className="flex items-center justify-between mb-4">
         <h1 className="text-xl font-bold">หลักสูตรทั้งหมด</h1>
         <button
-          onClick={() => navigate('/intake')}
+          // Intake is a form for *one* program and enters edit mode whenever a
+          // program is selected — and one always is, since useProgram keeps it
+          // in localStorage. Navigating bare therefore opened this button on a
+          // form prefilled with the current curriculum, whose submit was a PUT
+          // over it. The route state is what says "this is a create", which the
+          // URL alone cannot: /intake is both screens.
+          onClick={() => navigate('/intake', { state: { creating: true } })}
           className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700"
         >
           + สร้างหลักสูตรใหม่

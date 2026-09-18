@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { useProgram } from '../hooks/useProgram'
 
@@ -32,8 +32,14 @@ const SCOPE_HINTS = [
   'เขียนกว้าง ๆ หรือลอย ๆ แย่กว่าไม่เขียน — ถ้ายังแจกแจงไม่ได้ ให้เว้นว่างไว้ก่อน',
 ]
 
+/** What Programs' "+ สร้างหลักสูตรใหม่" passes through the router. */
+interface IntakeRouteState {
+  creating?: boolean
+}
+
 export default function Intake() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { programId, setProgramId } = useProgram()
   const [form, setForm] = useState<FormState>(INITIAL)
   const [loading, setLoading] = useState(false)
@@ -42,7 +48,17 @@ export default function Intake() {
   // The page is a form for one program, not a create-only form: with a program
   // selected it shows that program and saves back to it. `creating` is how a
   // designer starts a second one without first deselecting the first.
-  const [creating, setCreating] = useState(false)
+  //
+  // It starts true when the caller said so, which is the only way to arrive here
+  // on an empty form: a program id lives in localStorage and outlives every
+  // mount, so the default is edit mode and "+ สร้างหลักสูตรใหม่" used to land on
+  // the current curriculum's own data with a submit that saved back over it.
+  // Read once as the initial value rather than in an effect — an effect would
+  // let the loader populate the fields first and then blank them, and would fire
+  // again on a later navigation the designer did not ask to reset.
+  const [creating, setCreating] = useState(
+    () => (location.state as IntakeRouteState | null)?.creating === true
+  )
   const [loaded, setLoaded] = useState<FormState | null>(null)
   const editing = Boolean(programId) && !creating
 
