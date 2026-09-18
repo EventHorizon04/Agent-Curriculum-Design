@@ -22,6 +22,7 @@ from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
 from curriculum_agent.prompts.summarize_need import build_summarize_need_prompt
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import plo_synthesis as ps
+from tests.support.needs import RATIONALE_TH
 from tests.support.smart_agent import set_soft_judge
 
 NOTE = "เน้นทักษะด้าน AI และการวิเคราะห์ข้อมูลขนาดใหญ่"
@@ -148,7 +149,11 @@ async def test_need_combination_forwards_the_note_to_the_summarize_prompt(
 
     async def fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
         seen.append(messages)
-        return nc._NeedStatement(statement_th="ตลาดต้องการความสามารถนี้", statement_en="Demand")
+        return nc._NeedStatement(
+            statement_th="ตลาดต้องการความสามารถนี้",
+            statement_en="Demand",
+            rationale_th=RATIONALE_TH,
+        )
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_light", fake_summarize)

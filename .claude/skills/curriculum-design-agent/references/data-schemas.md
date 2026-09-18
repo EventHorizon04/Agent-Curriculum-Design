@@ -170,6 +170,7 @@ class Need(BaseModel):
     program_id: str
     statement_th: str = Field(min_length=1)
     statement_en: str | None = None
+    rationale_th: str = ""  # why this group is one demand — an explanation, NOT a trail
     ksec_category: KSECCategory  # single-valued by construction — see below; one of K/S/EC/E/C
     bloom_level: BloomLevel  # highest Bloom level among member skills
     member_skill_ids: list[str] = Field(min_length=1)  # ExtractedSkill IDs
@@ -181,6 +182,8 @@ class Need(BaseModel):
     is_optional: bool = False  # majority-want group → supplementary, not core
     classification_coverage: dict[str, int] = {}  # member-skill count per classification
 ```
+
+`rationale_th` is the model's account of why these skills form one demand, written by the same call that writes the sentence. Keep it apart from traceability: `source_evidence_ids` is what immutable rule 2 is about and is assembled in code, while this is free text nothing validates against the evidence — so the prompt forbids citing anything outside the skill names it was given, and both UI cards label it "คำอธิบายของโมเดล" and keep it out of the trail panel. `_NeedStatement` bounds it (20-240 characters) and rejects an empty answer with the same `find_vague_phrase` the statement uses. It defaults to `""` rather than being required, because a Need also arrives as a plain dict from a LangGraph checkpoint suspended across the deploy that added the column (migration `c7e2f81a4b93`, which backfills a self-identifying `[สร้างย้อนหลัง]` sentence into pre-existing rows rather than composing a reason nobody gave).
 
 A Need holds no evidence text. `sample_quotes_th` was dropped (migration `e1a7c93b5d02`) when `need_combination` stopped reading evidence: the stage writes each sentence from the member skills alone, so there was nothing left to sample. The trail survives in `source_evidence_ids`, inherited from those skills, and the full text stays in the evidence table for drill-down. `demand_score`'s denominator moved with it — it is now the weight of the evidence that yielded at least one skill, since an evidence item nobody extracted a skill from expresses no demand for a Need to be a share of.
 

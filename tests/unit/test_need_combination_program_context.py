@@ -15,6 +15,7 @@ import pytest
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages import need_combination as nc
+from tests.support.needs import RATIONALE_TH
 
 _METADATA = {
     "program_id": "nursing",
@@ -59,6 +60,7 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         return nc._NeedStatement(
             statement_th="ตลาดแรงงานต้องการผู้ที่ดูแลผู้ป่วยในหอผู้ป่วยตามมาตรฐานวิชาชีพได้อย่างปลอดภัย",
             statement_en="The market needs nurses who care for inpatients safely",
+            rationale_th=RATIONALE_TH,
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)

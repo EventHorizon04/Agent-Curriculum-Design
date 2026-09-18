@@ -14,6 +14,7 @@ import pytest
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import skill_extraction as se
+from tests.support.needs import RATIONALE_TH
 
 _SPAN = "สามารถวิเคราะห์ข้อมูลขนาดใหญ่"
 _TEXT_A = "บริษัทต้องการผู้ที่สามารถวิเคราะห์ข้อมูลขนาดใหญ่และออกแบบระบบฐานข้อมูลได้"
@@ -164,7 +165,11 @@ async def test_need_combination_clears_previous_needs_before_inserting(
         return [[i] for i in range(len(names))]
 
     async def fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
-        return nc._NeedStatement(statement_th="ตลาดต้องการความสามารถนี้", statement_en="Demand")
+        return nc._NeedStatement(
+            statement_th="ตลาดต้องการความสามารถนี้",
+            statement_en="Demand",
+            rationale_th=RATIONALE_TH,
+        )
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_light", fake_summarize)

@@ -65,6 +65,10 @@ interface TraceNeed {
   need_id: string
   statement_th: string
   statement_en: string | null
+  /** The model's account of why these skills are one demand. Shown under the
+   *  statement and labelled as such — the evidence count beside it is the trail;
+   *  this is not. Optional: rows predating the field carry "". */
+  rationale_th?: string
   ksec_category: string
   bloom_level: string
   demand_score: number
@@ -710,6 +714,12 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
                 {(c.demand_score * 100).toFixed(0)}%
               </span>
             </div>
+            {c.rationale_th && (
+              <p className="mt-1 text-xs leading-relaxed text-mute">
+                <span className="text-faint">เหตุผลการจัดกลุ่ม (คำอธิบายของโมเดล): </span>
+                {c.rationale_th}
+              </p>
+            )}
             <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-faint">
               <span className="data">{c.need_id}</span>
               <span>{ksecLabel(c.ksec_category)}</span>

@@ -19,6 +19,7 @@ import pytest
 
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import skill_extraction as se
+from tests.support.needs import RATIONALE_TH
 
 _SPANS = {
     "E1": "สถานประกอบการต้องการผู้ที่ออกแบบฐานข้อมูลเชิงสัมพันธ์ได้",
@@ -141,4 +142,5 @@ async def _fake_summarize_stub(model, messages, **kw):  # noqa: ANN001, ANN003
     return nc._NeedStatement(
         statement_th="ตลาดแรงงานต้องการผู้ที่ออกแบบและดูแลระบบสารสนเทศขององค์กรให้ใช้งานได้จริง",
         statement_en="The market needs people who maintain corporate information systems",
+        rationale_th=RATIONALE_TH,
     )

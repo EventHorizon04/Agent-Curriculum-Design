@@ -7,6 +7,15 @@ from curriculum_agent.prompts.designer_note import NOTE_POLICY_TH, append_note
 # instruction the model reads and the rule that rejects its answer cannot drift.
 MIN_STATEMENT_CHARS = 40
 
+# Bounds on rationale_th, here for the same reason. It is an explanation of why
+# one skill group is one demand, so it needs room for a clause of substance and
+# no more: it rides on every Need row, renders inside a card beside the sentence
+# it explains, and is asked for on every call of the stage that writes a Need.
+# The floor is what a real reason costs; a model that has nothing to say answers
+# under it rather than padding.
+MIN_RATIONALE_CHARS = 20
+MAX_RATIONALE_CHARS = 240
+
 _KSEC_LABEL_TH: dict[str, str] = {
     "K": "ความรู้",
     "S": "ทักษะ",
@@ -115,6 +124,17 @@ def build_summarize_need_prompt(
     the failure the three rules above exist to prevent. The prompt says that
     outright, because a model told "too narrow" will otherwise reach for
     "ทักษะการสื่อสาร".
+
+    `rationale_th` is asked for alongside the sentence rather than in a second
+    call, because the reason a group is one demand is what the model is already
+    deciding while it writes the sentence — asked afterwards it would be
+    reconstructed from the sentence rather than from the group. It is an
+    explanation, **not** part of the evidence trail: `Need.source_evidence_ids`
+    is code-owned and carries that, while this is free text nothing can check
+    against the evidence. The prompt therefore forbids citing anything outside
+    the skill names it was given, and the rules that reject an empty answer reuse
+    `find_vague_phrase` rather than inventing a second vocabulary — "เป็นทักษะที่
+    เกี่ยวข้องกัน" is caught by the same pattern that catches it in a statement.
     """
     # Only added alongside a context line: without one there is nothing to
     # over-read, and the rule would be an instruction about a field the prompt
@@ -172,7 +192,12 @@ def build_summarize_need_prompt(
         "แปลว่ายังกว้างเกินไป ให้เขียนใหม่ก่อนตอบ\n\n"
         "ตอบเป็น JSON object ที่มี field:\n"
         "  statement_th: string (ประโยคภาษาไทย)\n"
-        "  statement_en: string (ประโยคภาษาอังกฤษ)\n\n" + NOTE_POLICY_TH
+        "  statement_en: string (ประโยคภาษาอังกฤษ)\n"
+        f"  rationale_th: string ({MIN_RATIONALE_CHARS}-{MAX_RATIONALE_CHARS} ตัวอักษร) "
+        "บอกว่าทักษะในกลุ่มนี้รวมกันเป็นความต้องการเดียวได้เพราะอะไร "
+        "ต้องอ้างถึงหน้าที่หรืองานร่วมที่ทักษะเหล่านั้นใช้ทำ "
+        "ห้ามตอบกว้าง ๆ ว่า 'เป็นทักษะที่เกี่ยวข้องกัน' หรือ 'อยู่ในสายงานเดียวกัน' "
+        "และห้ามอ้างหลักฐานหรือแหล่งที่มาที่ไม่ได้อยู่ในรายชื่อทักษะที่ให้มา\n\n" + NOTE_POLICY_TH
     )
     label = _KSEC_LABEL_TH.get(ksec, ksec)
     bloom_label = _BLOOM_LABEL_TH.get(bloom_level, bloom_level)

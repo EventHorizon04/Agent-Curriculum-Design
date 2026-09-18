@@ -12,6 +12,13 @@ export interface NeedRow {
   need_id: string
   statement_th: string
   statement_en: string | null
+  /** Why the model grouped these skills into one demand. An explanation, not a
+   *  trail: `source_evidence_ids` is what traceability rests on and is built in
+   *  code, while this is free text nothing validates against the evidence — so
+   *  it is labelled as the model's account wherever it is shown, and never sits
+   *  inside the "ดูที่มา" panel, which is the trail. Empty on rows written
+   *  before the field existed and on ones the migration backfilled a marker into. */
+  rationale_th: string
   ksec_category: string
   bloom_level: string
   member_skill_ids: string[]
@@ -58,6 +65,12 @@ export default function NeedCard({ programId, need }: { programId: string; need:
           </span>
         )}
       </div>
+      {need.rationale_th && (
+        <p className="mt-2 text-xs leading-relaxed text-gray-500">
+          <span className="font-semibold text-gray-400">เหตุผลการจัดกลุ่ม (คำอธิบายของโมเดล): </span>
+          {need.rationale_th}
+        </p>
+      )}
       <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
         {need.source_stakeholder_types.map(t => (
           <span key={t} className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">

@@ -19,6 +19,8 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.summarize_need import (
+    MAX_RATIONALE_CHARS,
+    MIN_RATIONALE_CHARS,
     MIN_STATEMENT_CHARS,
     build_summarize_need_prompt,
 )
@@ -85,6 +87,42 @@ def _model_answered_but_was_rejected(exc: BaseException) -> bool:
 class _NeedStatement(BaseModel):
     statement_th: str = Field(min_length=1)
     statement_en: str | None = None
+    rationale_th: str = Field(min_length=1)
+
+    @field_validator("rationale_th")
+    @classmethod
+    def _reject_an_empty_reason(cls, rationale: str) -> str:
+        """A reason that says nothing is worse than no reason at all.
+
+        It renders beside the sentence it explains and will be read as the
+        justification for that Need, so "เป็นทักษะที่เกี่ยวข้องกัน" is not a weak
+        answer — it is a claim with nothing behind it in the place a reader looks
+        for one. The vagueness scan is the one `statement_th` already uses, since
+        the failure is the same failure and two vocabularies for it is how they
+        come to disagree.
+
+        The upper bound is not cosmetic either: this field rides on every Need
+        row and inside a card, and it is the one place in the response where a
+        model can spend arbitrary tokens without any rule pushing back.
+        """
+        trimmed = rationale.strip()
+        if len(trimmed) < MIN_RATIONALE_CHARS:
+            raise ValueError(
+                f"rationale_th สั้นเกินไป ({len(trimmed)} ตัวอักษร) ต้องยาวอย่างน้อย "
+                f"{MIN_RATIONALE_CHARS} ตัวอักษร และบอกว่าทักษะกลุ่มนี้ใช้ทำหน้าที่หรืองานร่วมอะไร"
+            )
+        if len(trimmed) > MAX_RATIONALE_CHARS:
+            raise ValueError(
+                f"rationale_th ยาวเกินไป ({len(trimmed)} ตัวอักษร) ต้องไม่เกิน "
+                f"{MAX_RATIONALE_CHARS} ตัวอักษร ให้สรุปเหตุผลให้สั้นลง"
+            )
+        vague = find_vague_phrase(trimmed)
+        if vague:
+            raise ValueError(
+                f"rationale_th กว้างเกินไปจนไม่ได้บอกเหตุผล: '{vague}' "
+                "ให้ระบุหน้าที่หรืองานร่วมที่ทักษะในกลุ่มนี้ใช้ทำแทน"
+            )
+        return rationale
 
     @field_validator("statement_th")
     @classmethod
@@ -318,8 +356,16 @@ async def run(state: AgentState) -> AgentState:
             # it in front of the designer at the checkpoint instead of letting
             # plo_synthesis invent a PLO from a list of words.
             marker = _REVIEW_MARKER_TH if rejected else _PROVIDER_MARKER_TH
+            # model_construct skips the validators, which is what lets the
+            # fallback carry a rationale that says there is no rationale. Writing
+            # a plausible one here would put an unearned justification under a
+            # Need nobody wrote — the exact thing the field must not become.
             written = _NeedStatement.model_construct(
-                statement_th=f"{marker} {', '.join(names) or group.ksec.value}"
+                statement_th=f"{marker} {', '.join(names) or group.ksec.value}",
+                rationale_th=(
+                    f"{marker} ไม่มีเหตุผลประกอบ เพราะขั้นเขียนประโยคไม่สำเร็จ "
+                    "ผู้ออกแบบหลักสูตรต้องเขียนทั้งประโยคและเหตุผลเอง"
+                ),
             )
 
         needs.append(
@@ -328,6 +374,7 @@ async def run(state: AgentState) -> AgentState:
                 program_id=program_id,
                 statement_th=written.statement_th,
                 statement_en=written.statement_en,
+                rationale_th=written.rationale_th,
                 ksec_category=group.ksec,
                 bloom_level=group.bloom_level,
                 member_skill_ids=group.skill_ids,

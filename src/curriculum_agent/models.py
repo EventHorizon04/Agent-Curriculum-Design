@@ -289,6 +289,17 @@ class Need(BaseModel):
     program_id: str
     statement_th: str = Field(min_length=1)
     statement_en: str | None = None
+    # Why this skill group is one demand, written by the same call that wrote the
+    # sentence. An explanation, not a trail: source_evidence_ids below is what
+    # immutable rule 2 is about and is assembled in code, while this is free text
+    # nothing validates against the evidence. Read it as the model's account of
+    # its own grouping and label it that way wherever it is shown.
+    #
+    # Defaults to empty rather than being required, for the same reason the
+    # counters below default: a Need also arrives as a plain dict from a
+    # LangGraph checkpoint suspended across the deploy that added the column, and
+    # those never pass through the migration.
+    rationale_th: str = ""
     # Single-valued by construction: grouping runs inside one KSEC bucket.
     ksec_category: KSECCategory
     # Highest Bloom level among member skills.

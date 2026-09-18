@@ -7,6 +7,7 @@ from pydantic import ValidationError
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages import need_combination as nc
+from tests.support.needs import RATIONALE_TH
 
 
 def _skill(
@@ -47,6 +48,7 @@ async def _fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
     return nc._NeedStatement(
         statement_th="ตลาดแรงงานต้องการผู้ที่ออกแบบและดูแลระบบสารสนเทศขององค์กรให้ใช้งานได้จริง",
         statement_en="The market needs people who maintain corporate information systems",
+        rationale_th=RATIONALE_TH,
     )
 
 
@@ -205,6 +207,7 @@ async def test_freq_counts_mentions_not_unique_names(monkeypatch: pytest.MonkeyP
         return nc._NeedStatement(
             statement_th="ตลาดแรงงานต้องการผู้ที่วิเคราะห์ข้อมูลยอดขายเพื่อสนับสนุนการตัดสินใจของผู้บริหาร",
             statement_en="The market needs people who analyse sales data for management decisions",
+            rationale_th=RATIONALE_TH,
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
@@ -270,7 +273,8 @@ def test_need_statement_model_rejects_a_leaked_code_token() -> None:
     the model re-answer instead of the token reaching a stored Need."""
     with pytest.raises(ValidationError) as exc:
         nc._NeedStatement(
-            statement_th="ตลาดแรงงานต้องการบุคคลที่สามารถเป็นผู้ประกอบการ หน.getDefault รับฟังผู้บริหาร"
+            statement_th="ตลาดแรงงานต้องการบุคคลที่สามารถเป็นผู้ประกอบการ หน.getDefault รับฟังผู้บริหาร",
+            rationale_th=RATIONALE_TH,
         )
     assert "getDefault" in str(exc.value)
 
@@ -278,6 +282,7 @@ def test_need_statement_model_rejects_a_leaked_code_token() -> None:
 def test_need_statement_model_accepts_ordinary_thai_with_industry_terms() -> None:
     written = nc._NeedStatement(
         statement_th="ตลาดแรงงานต้องการผู้ที่ประยุกต์ AI และ Data Science กับงานธุรกิจได้",
+        rationale_th=RATIONALE_TH,
     )
     assert written.statement_en is None
 
@@ -453,7 +458,7 @@ def test_a_statement_that_cannot_become_a_plo_is_rejected(statement: str, reason
     """Instructor re-asks on a validator error, so rejecting here is what makes the
     model write a usable sentence instead of the placeholder reaching plo_synthesis."""
     with pytest.raises(ValidationError):
-        nc._NeedStatement(statement_th=statement)
+        nc._NeedStatement(statement_th=statement, rationale_th=RATIONALE_TH)
 
 
 @pytest.mark.parametrize(
@@ -468,7 +473,10 @@ def test_a_statement_that_cannot_become_a_plo_is_rejected(statement: str, reason
     ],
 )
 def test_a_specific_market_sentence_passes(statement: str) -> None:
-    assert nc._NeedStatement(statement_th=statement).statement_th == statement
+    assert (
+        nc._NeedStatement(statement_th=statement, rationale_th=RATIONALE_TH).statement_th
+        == statement
+    )
 
 
 def _flagged(

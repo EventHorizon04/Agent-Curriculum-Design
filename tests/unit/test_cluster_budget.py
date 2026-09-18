@@ -20,6 +20,7 @@ from curriculum_agent.prompts.cluster_skills import (
 )
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS, allocate_cluster_targets
+from tests.support.needs import RATIONALE_TH
 
 K, S, EC = KSECCategory.K, KSECCategory.S, KSECCategory.EC
 
@@ -151,6 +152,7 @@ async def test_each_bucket_is_clustered_against_its_own_share(monkeypatch):
         return nc._NeedStatement(
             statement_th="ตลาดแรงงานต้องการผู้ที่ออกแบบและดูแลระบบสารสนเทศขององค์กรให้ใช้งานได้จริง",
             statement_en="The market needs people who maintain corporate information systems",
+            rationale_th=RATIONALE_TH,
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", recording_cluster)

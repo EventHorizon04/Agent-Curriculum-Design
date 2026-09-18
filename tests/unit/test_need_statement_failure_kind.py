@@ -17,6 +17,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages import need_combination as nc
+from tests.support.needs import RATIONALE_TH
 
 
 def _skill(name: str, sid: str, eid: str) -> ExtractedSkill:
@@ -39,7 +40,7 @@ def _skill(name: str, sid: str, eid: str) -> ExtractedSkill:
 def _a_real_validation_error() -> PydanticValidationError:
     """The error _NeedStatement actually raises, not a hand-built stand-in."""
     with pytest.raises(PydanticValidationError) as caught:
-        nc._NeedStatement(statement_th="สั้นไป")
+        nc._NeedStatement(statement_th="สั้นไป", rationale_th=RATIONALE_TH)
     return caught.value
 
 

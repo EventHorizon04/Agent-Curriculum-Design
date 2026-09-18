@@ -243,6 +243,24 @@ tests/integration/     ← LLM mocked, full stages
   the Pipeline page says what a stage page's 422 would have said —
   `tests/unit/test_stage_preconditions.py` pins all of it.
 
+- **`Need.rationale_th` is an explanation, not a trail.** The summarize call writes
+  it alongside the sentence — why *these* skills are one demand — because that is
+  what the model is deciding while it writes, and asked in a second call it would
+  be reconstructed from the sentence instead. Traceability is unaffected and must
+  stay that way: `source_evidence_ids` is assembled in code and is what immutable
+  rule 2 is about, while this is free text nothing can check against the evidence.
+  So the prompt forbids citing anything outside the skill names it was handed,
+  both Need cards label it "คำอธิบายของโมเดล" and keep it out of the trail panel,
+  and the `[ต้องทบทวน]` fallback writes a rationale saying there is none rather
+  than a plausible one. `_NeedStatement` bounds it at 20-240 characters and
+  rejects an empty answer ("เป็นทักษะที่เกี่ยวข้องกัน") with the same
+  `find_vague_phrase` the statement uses — one rule, one scan. The field defaults
+  to `""` on the model because a Need also arrives as a plain dict from a
+  checkpoint suspended across the deploy; migration `c7e2f81a4b93` backfills a
+  self-identifying `[สร้างย้อนหลัง]` sentence built from the row's own member
+  count and KSEC tag, and joins nothing — a reason composed out of the member
+  skill names would be an explanation no model ever gave, sitting in the field a
+  reader takes as the justification.
 - **`need_combination` reads the extracted skills plus the program's own context — never evidence text.** The sentence for each Need is written from its member
   skill names, and `demand_score` is computed from the evidence ids and
   stakeholder types carried on those skills. `POST /needs/combine/run` therefore does not load the

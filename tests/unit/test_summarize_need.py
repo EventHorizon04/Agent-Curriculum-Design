@@ -4,6 +4,7 @@ import pytest
 
 from curriculum_agent.models import KSECCategory
 from curriculum_agent.prompts.summarize_need import _KSEC_LABEL_TH, build_summarize_need_prompt
+from tests.support.needs import RATIONALE_TH
 
 # Expected labels, written independently of _KSEC_LABEL_TH: if a test asserted
 # against the module's own dict value, a mistyped entry would still make the
@@ -212,7 +213,7 @@ def test_the_worked_example_would_survive_the_stage_that_validates_a_need() -> N
     example = "ต้องการบัณฑิตที่ประเมินและปรับปรุงผลลัพธ์การแปลเอกสารธุรกิจระหว่างประเทศ ในบริบทการสื่อสารไทย-จีน"
 
     assert example in system
-    assert _NeedStatement(statement_th=example).statement_th == example
+    assert _NeedStatement(statement_th=example, rationale_th=RATIONALE_TH).statement_th == example
 
 
 def test_summarize_prompt_bounds_how_narrow_a_need_may_be() -> None:

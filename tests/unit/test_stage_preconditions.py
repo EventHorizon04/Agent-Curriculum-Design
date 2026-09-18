@@ -35,6 +35,7 @@ from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages import skill_extraction as se
 from curriculum_agent.stages import stakeholder_needs as sn
+from tests.support.needs import RATIONALE_TH
 from tests.support.smart_agent import set_soft_judge
 
 PROGRAM = "cs-test"
@@ -161,6 +162,7 @@ async def test_need_combination_loads_skills_when_state_carries_none(
         return nc._NeedStatement(
             statement_th="ต้องการบัณฑิตที่ออกแบบและดูแลระบบฐานข้อมูลขององค์กรให้ใช้งานได้จริง",
             statement_en="The market needs graduates who design and maintain databases",
+            rationale_th=RATIONALE_TH,
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)

@@ -80,6 +80,12 @@ class NeedTable(Base):
     program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
     statement_th: Mapped[str] = mapped_column(Text)
     statement_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # NOT NULL with an empty server_default, not nullable: the column was
+    # backfilled rather than left open, so "no reason recorded" is a string a
+    # reader can see rather than a NULL every consumer has to branch on. The
+    # default catches a row written by a path that predates the field — a
+    # suspended checkpoint resuming — without failing the insert.
+    rationale_th: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     ksec_category: Mapped[str] = mapped_column(String(2))
     bloom_level: Mapped[str] = mapped_column(String(20))
     member_skill_ids: Mapped[list[str]] = mapped_column(JSONB)
