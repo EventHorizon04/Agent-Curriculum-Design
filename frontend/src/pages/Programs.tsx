@@ -43,7 +43,7 @@ export default function Programs() {
   // pending state when the list re-renders.
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
-  const { setProgramId } = useProgram()
+  const { programId, setProgramId } = useProgram()
   const navigate = useNavigate()
 
   const load = useCallback(async () => {
@@ -79,6 +79,10 @@ export default function Programs() {
     setError(null)
     try {
       await api.delete(`/programs/${p.program_id}`)
+      // The selection outlives the program otherwise: the id sits in
+      // localStorage, every page reads it, and the next one opened would load a
+      // curriculum the API no longer has.
+      if (p.program_id === programId) setProgramId('')
       setPendingId(null)
       await load()
     } catch (err: unknown) {
@@ -140,14 +144,30 @@ export default function Programs() {
                 row is not reachable by keyboard either. The name is a real
                 button; delete is its sibling, not its descendant. */}
             {programs.map((p) => (
-              <tr key={p.program_id} className="border-b hover:bg-gray-50">
+              <tr
+                key={p.program_id}
+                className={[
+                  'border-b hover:bg-gray-50',
+                  // The shell's program bar is hidden on this page, so this row
+                  // is the only thing saying which curriculum the stage pages
+                  // will open on.
+                  p.program_id === programId ? 'bg-blue-50/60' : '',
+                ].join(' ')}
+              >
                 <td className="py-2 pr-4">
                   <button
                     type="button"
                     onClick={() => openProgram(p)}
                     className="w-full text-left"
                   >
-                    <span className="block font-medium hover:underline">{programLabel(p)}</span>
+                    <span className="block font-medium hover:underline">
+                      {programLabel(p)}
+                      {p.program_id === programId && (
+                        <span className="ml-2 rounded-full bg-blue-100 px-2 py-0.5 text-xs font-normal text-blue-700">
+                          เลือกอยู่
+                        </span>
+                      )}
+                    </span>
                     <span className="block text-xs text-gray-400">
                       {[p.faculty, p.name_en].filter(Boolean).join(' · ')}
                       {(p.faculty || p.name_en) && ' · '}

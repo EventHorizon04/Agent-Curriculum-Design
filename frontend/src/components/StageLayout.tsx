@@ -243,6 +243,11 @@ export default function StageLayout() {
   // Guarded by the path as well as the flag: location state rides along with a
   // history entry, and only intake means anything by this one.
   const creating = pathname === '/intake' && isCreatingIntake(state)
+  // The program list is where a curriculum is chosen, not worked on. A bar
+  // reading "หลักสูตรที่กำลังทำงาน" above a table of every program says the
+  // designer is inside one while they are standing outside all of them — and it
+  // is the one page that shows which is selected on its own row.
+  const picking = pathname === '/'
 
   // Re-read on navigation: approving a checkpoint on one page moves the program
   // forward, and the rail has to show that without a reload. The shell degrades
@@ -293,7 +298,7 @@ export default function StageLayout() {
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <ProgramBar program={program} programId={programId} creating={creating} />
+        {!picking && <ProgramBar program={program} programId={programId} creating={creating} />}
         <main className="flex-1 px-6 py-8 lg:px-10">
           <div className="mx-auto max-w-5xl">
             <Outlet />
