@@ -144,3 +144,78 @@ async def test_a_failed_graph_run_stores_the_reason():
     args, kwargs = repo.set_status.await_args
     assert args[:2] == ("sess-1", "failed")
     assert "evidence" in (kwargs.get("message") or args[2])
+
+
+def test_delete_removes_the_session_row():
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=_SESS)
+    repo.delete = AsyncMock(return_value=True)
+    app.state.graph.checkpointer.adelete_thread = AsyncMock()
+
+    with _mock_repos(repo):
+        client = TestClient(app)
+        resp = client.delete("/programs/p1/sessions/s1")
+
+    assert resp.status_code == 204
+    repo.delete.assert_awaited_once_with("p1", "s1")
+
+
+def test_delete_drops_the_checkpoint_thread_with_it():
+    """The row is the only place the thread id is written down.
+
+    LangGraph's checkpoints live in their own schema with no foreign key back to
+    the session table, so deleting the row cannot reach them — it only makes them
+    unnameable, while they go on holding a full copy of that run's evidence,
+    skills, Needs and PLOs. Dropping the thread has to happen here or nowhere.
+    """
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=_SESS)
+    repo.delete = AsyncMock(return_value=True)
+    app.state.graph.checkpointer.adelete_thread = AsyncMock()
+
+    with _mock_repos(repo):
+        client = TestClient(app)
+        resp = client.delete("/programs/p1/sessions/s1")
+
+    assert resp.status_code == 204
+    app.state.graph.checkpointer.adelete_thread.assert_awaited_once_with("p1:s1")
+
+
+def test_delete_refuses_a_running_session_and_touches_nothing():
+    """Deleting a run in flight does not stop it.
+
+    The graph task keeps executing in the background and keeps writing — stage
+    output to the repositories, status back to this row. All the delete removes
+    is the record that would have shown the run happening, and the message it
+    would have failed with.
+    """
+    running = _SESS.model_copy(update={"status": "running"})
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=running)
+    repo.delete = AsyncMock()
+    app.state.graph.checkpointer.adelete_thread = AsyncMock()
+
+    with _mock_repos(repo):
+        client = TestClient(app)
+        resp = client.delete("/programs/p1/sessions/s1")
+
+    assert resp.status_code == 409
+    repo.delete.assert_not_awaited()
+    app.state.graph.checkpointer.adelete_thread.assert_not_awaited()
+
+
+def test_delete_of_another_programs_session_is_a_404():
+    """Scoped by program like every other session route: a caller must not learn
+    that an id exists under a program they did not ask about."""
+    repo = AsyncMock()
+    repo.get = AsyncMock(return_value=_SESS)
+    repo.delete = AsyncMock()
+    app.state.graph.checkpointer.adelete_thread = AsyncMock()
+
+    with _mock_repos(repo):
+        client = TestClient(app)
+        resp = client.delete("/programs/other/sessions/s1")
+
+    assert resp.status_code == 404
+    repo.delete.assert_not_awaited()
+    app.state.graph.checkpointer.adelete_thread.assert_not_awaited()

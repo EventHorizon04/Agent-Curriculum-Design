@@ -4,12 +4,13 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 from loguru import logger
 
+from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.data.repositories import ProgramRepository, SessionRepository
 from curriculum_agent.graph import REVIEW_NODE_STAGE, AgentState, discard_thread
 from curriculum_agent.models import SessionInfo
@@ -156,3 +157,38 @@ async def reject_session(program_id: str, session_id: str, request: Request) -> 
         # Session vanished between the status update and the re-read.
         raise HTTPException(status_code=404, detail="Session not found")
     return updated
+
+
+@router.delete("/{session_id}", status_code=204, dependencies=[Depends(require_api_key)])
+async def delete_session(program_id: str, session_id: str, request: Request) -> None:
+    """Remove one run from the program's history.
+
+    The checkpoint thread goes with it. Nothing else can drop it afterwards: the
+    thread id is recorded on this row and on nothing else, and LangGraph's
+    checkpoints sit in their own schema with no foreign key back here, so a row
+    deleted on its own leaves a thread holding a full copy of that run's
+    evidence, skills, Needs and PLOs that no one can name any more. Dropped
+    before the row for the same reason `DELETE /programs` reads its thread ids
+    before the cascade.
+
+    A `running` session is refused. Its graph task is still executing in the
+    background and still writing — stage output to the repositories, status back
+    to this row — so deleting it does not stop the run, it only removes the
+    record that would have shown it happening and the message it would have
+    failed with.
+    """
+    repo = SessionRepository()
+    session = await repo.get(session_id)
+    if session is None or session.program_id != program_id:
+        raise HTTPException(status_code=404, detail="ไม่พบ session นี้")
+    if session.status == "running":
+        raise HTTPException(
+            status_code=409,
+            detail="session นี้กำลังทำงานอยู่ — รอให้จบหรือกด reject ที่ checkpoint ก่อนลบ",
+        )
+
+    await discard_thread(request.app.state.graph, session.thread_id)
+    if not await repo.delete(program_id, session_id):
+        # Gone between the read and the delete. The thread is dropped either way,
+        # which is the part nothing else would have cleaned up.
+        raise HTTPException(status_code=404, detail="ไม่พบ session นี้")

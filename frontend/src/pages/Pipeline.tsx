@@ -67,6 +67,8 @@ function SessionCard({
   onAction: () => void
 }) {
   const [loading, setLoading] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [error, setError] = useState('')
 
   async function doAction(action: 'approve' | 'reject') {
     setLoading(true)
@@ -78,6 +80,27 @@ function SessionCard({
     }
     setLoading(false)
     onAction()
+  }
+
+  /** Remove this run from the history, checkpoint and all.
+   *
+   *  Unlike approve/reject the failure is shown rather than swallowed: the API
+   *  refuses a running session, and a delete that silently did nothing would
+   *  read as one that worked until the row reappeared on the next poll.
+   */
+  async function doDelete() {
+    setLoading(true)
+    setError('')
+    try {
+      await api.delete(`/programs/${programId}/sessions/${session.session_id}`)
+      setConfirmingDelete(false)
+      onAction()
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      setError(axiosErr.response?.data?.detail ?? 'ลบ session ไม่สำเร็จ')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -193,6 +216,83 @@ function SessionCard({
           >
             Reject
           </button>
+        </div>
+      )}
+
+      {/* Confirmed in the card, not through `window.confirm` — a browser that
+          suppresses dialogs returns the same `false` for "cancelled" as for
+          "never shown", which turns a permanent delete into a button that does
+          nothing with no error to show. Same reason the program list does it
+          this way. A running session has no button at all: the API refuses it,
+          because deleting the row does not stop the background task that is
+          still writing stage output and status back. */}
+      {session.status !== 'running' && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            marginTop: 12,
+            paddingTop: 10,
+            borderTop: '1px solid #f3f4f6',
+          }}
+        >
+          {error && <span style={{ fontSize: 12, color: '#b91c1c' }}>{error}</span>}
+          {confirmingDelete ? (
+            <>
+              <span style={{ fontSize: 12, color: '#6b7280' }}>
+                ลบประวัติการรันนี้ถาวร รวมถึง checkpoint ที่ค้างอยู่ — กู้คืนไม่ได้
+              </span>
+              <button
+                onClick={doDelete}
+                disabled={loading}
+                style={{
+                  marginLeft: 'auto',
+                  padding: '4px 12px',
+                  background: '#dc2626',
+                  color: '#fff',
+                  border: 'none',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  fontSize: 12,
+                }}
+              >
+                {loading ? 'กำลังลบ...' : 'ยืนยันลบ'}
+              </button>
+              <button
+                onClick={() => setConfirmingDelete(false)}
+                disabled={loading}
+                style={{
+                  padding: '4px 12px',
+                  background: 'transparent',
+                  color: '#6b7280',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                  fontSize: 12,
+                }}
+              >
+                ยกเลิก
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => setConfirmingDelete(true)}
+              style={{
+                marginLeft: 'auto',
+                padding: '4px 10px',
+                background: 'transparent',
+                color: '#9ca3af',
+                border: 'none',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 12,
+              }}
+            >
+              ลบประวัติ
+            </button>
+          )}
         </div>
       )}
     </div>

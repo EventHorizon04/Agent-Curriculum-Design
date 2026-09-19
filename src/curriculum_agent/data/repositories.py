@@ -500,6 +500,27 @@ class SessionRepository:
             row.updated_at = datetime.utcnow()
             await db.commit()
 
+    async def delete(self, program_id: str, session_id: str) -> bool:
+        """Delete one session row, scoped to its program.
+
+        Returns False if it does not exist OR belongs to another program — the
+        same 404 either way, so the caller cannot learn that an id exists under
+        a program they did not ask about.
+
+        Only the row. The checkpoint thread it names lives in LangGraph's own
+        schema with no foreign key back here, so deleting this row is what makes
+        that thread unreachable rather than what removes it; the route drops the
+        thread first and `prune_threads` is the sweep for whatever still slips
+        through.
+        """
+        async with AsyncSessionLocal() as db:
+            row = await db.get(SessionTable, session_id)
+            if row is None or row.program_id != program_id:
+                return False
+            await db.delete(row)
+            await db.commit()
+            return True
+
     async def set_suspended(self, session_id: str, stage: str, message: str) -> None:
         async with AsyncSessionLocal() as db:
             row = await db.get(SessionTable, session_id)
