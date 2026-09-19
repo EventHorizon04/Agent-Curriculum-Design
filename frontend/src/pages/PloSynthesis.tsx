@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
+import NextStageLink from '../components/NextStageLink'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import DesignerNote from './components/DesignerNote'
@@ -199,12 +200,6 @@ export default function PloSynthesis() {
                 Re-run
               </button>
             </div>
-            <Link
-              to="/plo-report"
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors"
-            >
-              ดำเนินการต่อ → PLO Report
-            </Link>
           </div>
           <div className="space-y-4">
             {plos.map(p => (
@@ -252,6 +247,15 @@ export default function PloSynthesis() {
           )}
         </>
       )}
+
+      {/* The report reads the stored PLOs, so anything drafted is enough to go
+          on — including a set carrying escalations, which is exactly what the
+          report page is there to show. */}
+      <NextStageLink
+        from="plo_synthesis"
+        ready={Boolean(programId) && plos.length > 0}
+        blockedReason="ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน"
+      />
     </div>
   )
 }

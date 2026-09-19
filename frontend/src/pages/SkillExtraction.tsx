@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
+import NextStageLink from '../components/NextStageLink'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import SkillsByStakeholder, {
@@ -186,12 +187,6 @@ export default function SkillExtraction() {
                 Re-run Need
               </button>
             </div>
-            <Link
-              to="/plo-synthesis"
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm font-medium transition-colors"
-            >
-              ดำเนินการต่อ → PLO Synthesis
-            </Link>
           </div>
 
           <div className="mb-4 flex gap-1 border-b border-gray-200">
@@ -245,6 +240,15 @@ export default function SkillExtraction() {
           )}
         </>
       )}
+
+      {/* Needs, not skills: plo_synthesis drafts one PLO per Need and never
+          reads the skill rows. A run that extracted skills and combined nothing
+          has not produced what the next stage needs. */}
+      <NextStageLink
+        from="skill_extraction"
+        ready={Boolean(programId) && needs.length > 0}
+        blockedReason="ยังไม่มี Need — รันสกัดทักษะและรวม Need ให้เสร็จก่อน"
+      />
     </div>
   )
 }

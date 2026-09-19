@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/client'
+import NextStageLink from '../components/NextStageLink'
 import { CREATING_INTAKE, isCreatingIntake } from '../constants/intakeMode'
 import { useProgram } from '../hooks/useProgram'
 
@@ -288,6 +289,15 @@ export default function Intake() {
               : 'บันทึกและเริ่มกระบวนการ'}
         </button>
       </form>
+
+      {/* Ready means the program exists, which is the only thing stage 2 needs
+          from this one — while a new one is still being typed there is no id for
+          its evidence to hang on. */}
+      <NextStageLink
+        from="intake"
+        ready={Boolean(programId) && !creating}
+        blockedReason="บันทึกข้อมูลหลักสูตรก่อน แล้วจึงเพิ่มหลักฐานผู้มีส่วนได้ส่วนเสียได้"
+      />
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
+import NextStageLink from '../components/NextStageLink'
 import { useProgram } from '../hooks/useProgram'
 import { STAKEHOLDER_GROUPS, classStyle, stakeholderLabel } from '../constants/stakeholder'
 
@@ -441,6 +442,15 @@ export default function StakeholderNeeds() {
           )}
         </div>
       )}
+
+      {/* Skill extraction reads the evidence table, so one item is the floor.
+          Classification is not required here: stage 3 re-reads every item and
+          the classify pass is pure code. */}
+      <NextStageLink
+        from="stakeholder_needs"
+        ready={Boolean(programId) && items.length > 0}
+        blockedReason="เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นสกัดทักษะอ่านจากหลักฐานเหล่านี้"
+      />
     </div>
   )
 }
