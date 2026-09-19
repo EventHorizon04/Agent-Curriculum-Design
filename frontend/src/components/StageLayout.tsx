@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import api from '../api/client'
+import { isCreatingIntake } from '../constants/intakeMode'
 import { useProgram } from '../hooks/useProgram'
 import { SESSION_STATUS_LABELS, STAGES, stageIndex, type StageDef } from '../constants/stages'
 
@@ -159,7 +160,36 @@ function RailLink({ to, label, note }: { to: string; label: string; note: string
  *
  * The id lives in localStorage and each page picks it up silently, so without
  * this bar the answer to "which program am I editing?" is not on the screen. */
-function ProgramBar({ program, programId }: { program: ProgramRow | null; programId: string }) {
+function ProgramBar({
+  program,
+  programId,
+  creating,
+}: {
+  program: ProgramRow | null
+  programId: string
+  creating: boolean
+}) {
+  // Intake is typing a program that does not exist yet, so there is nothing here
+  // to name — and naming the id still in storage said the designer was working
+  // on the curriculum they had just navigated away from creating. The selected
+  // one is still mentioned, in small type, because intake's "กลับไปแก้ไข" is the
+  // way back to it and a bar that dropped it entirely would hide that.
+  if (creating) {
+    return (
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule bg-card px-6 py-3 lg:px-10">
+        <div className="min-w-0">
+          <p className="eyebrow">กำลังสร้างหลักสูตรใหม่</p>
+          <p className="font-record text-lg leading-tight text-mute">ยังไม่บันทึก</p>
+        </div>
+        {programId && (
+          <span className="ml-auto text-xs text-faint">
+            หลักสูตรที่เลือกไว้: <span className="data">{programId}</span>
+          </span>
+        )}
+      </div>
+    )
+  }
+
   if (!programId) {
     return (
       <div className="border-b border-rule bg-card px-6 py-3 lg:px-10">
@@ -209,7 +239,10 @@ function ProgramBar({ program, programId }: { program: ProgramRow | null; progra
 export default function StageLayout() {
   const { programId } = useProgram()
   const [program, setProgram] = useState<ProgramRow | null>(null)
-  const { pathname } = useLocation()
+  const { pathname, state } = useLocation()
+  // Guarded by the path as well as the flag: location state rides along with a
+  // history entry, and only intake means anything by this one.
+  const creating = pathname === '/intake' && isCreatingIntake(state)
 
   // Re-read on navigation: approving a checkpoint on one page moves the program
   // forward, and the rail has to show that without a reload. The shell degrades
@@ -236,7 +269,10 @@ export default function StageLayout() {
     }
   }, [programId, pathname])
 
-  const reached = stageIndex(program?.current_stage ?? null)
+  // The rail answers "how far has the program being worked on got", and while
+  // one is being typed the answer is nowhere — not however far the curriculum
+  // still sitting in storage happens to have reached.
+  const reached = creating ? -1 : stageIndex(program?.current_stage ?? null)
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
@@ -257,7 +293,7 @@ export default function StageLayout() {
       </nav>
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <ProgramBar program={program} programId={programId} />
+        <ProgramBar program={program} programId={programId} creating={creating} />
         <main className="flex-1 px-6 py-8 lg:px-10">
           <div className="mx-auto max-w-5xl">
             <Outlet />

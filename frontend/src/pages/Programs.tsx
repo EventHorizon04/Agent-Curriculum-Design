@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
+import { CREATING_INTAKE } from '../constants/intakeMode'
 import { useProgram } from '../hooks/useProgram'
 import { SESSION_STATUS_LABELS, STAGE_LABELS, STAGE_ROUTES } from '../constants/stages'
 
@@ -99,7 +100,7 @@ export default function Programs() {
           // form prefilled with the current curriculum, whose submit was a PUT
           // over it. The route state is what says "this is a create", which the
           // URL alone cannot: /intake is both screens.
-          onClick={() => navigate('/intake', { state: { creating: true } })}
+          onClick={() => navigate('/intake', { state: CREATING_INTAKE })}
           className="bg-blue-600 text-white px-4 py-2 rounded text-sm hover:bg-blue-700"
         >
           + สร้างหลักสูตรใหม่

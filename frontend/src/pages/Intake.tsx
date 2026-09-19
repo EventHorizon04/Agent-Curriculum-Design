@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/client'
+import { CREATING_INTAKE, isCreatingIntake } from '../constants/intakeMode'
 import { useProgram } from '../hooks/useProgram'
 
 const DEGREE_OPTIONS = [
@@ -32,11 +33,6 @@ const SCOPE_HINTS = [
   'เขียนกว้าง ๆ หรือลอย ๆ แย่กว่าไม่เขียน — ถ้ายังแจกแจงไม่ได้ ให้เว้นว่างไว้ก่อน',
 ]
 
-/** What Programs' "+ สร้างหลักสูตรใหม่" passes through the router. */
-interface IntakeRouteState {
-  creating?: boolean
-}
-
 export default function Intake() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -45,22 +41,22 @@ export default function Intake() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
+  const [loaded, setLoaded] = useState<FormState | null>(null)
   // The page is a form for one program, not a create-only form: with a program
-  // selected it shows that program and saves back to it. `creating` is how a
+  // selected it shows that program and saves back to it. Creating is how a
   // designer starts a second one without first deselecting the first.
   //
-  // It starts true when the caller said so, which is the only way to arrive here
-  // on an empty form: a program id lives in localStorage and outlives every
-  // mount, so the default is edit mode and "+ สร้างหลักสูตรใหม่" used to land on
-  // the current curriculum's own data with a submit that saved back over it.
-  // Read once as the initial value rather than in an effect — an effect would
-  // let the loader populate the fields first and then blank them, and would fire
-  // again on a later navigation the designer did not ask to reset.
-  const [creating, setCreating] = useState(
-    () => (location.state as IntakeRouteState | null)?.creating === true
-  )
-  const [loaded, setLoaded] = useState<FormState | null>(null)
+  // Held in the router's location state and nowhere else. It was page-local
+  // `useState`, which the shell above the `Outlet` cannot see — so the program
+  // bar went on naming the previous curriculum while a new one was being typed,
+  // and there was no way to tell it otherwise. One source, read by both.
+  const creating = isCreatingIntake(location.state)
   const editing = Boolean(programId) && !creating
+
+  /** Switch mode without leaving the page or growing the history stack. */
+  function setCreating(next: boolean) {
+    navigate('/intake', { replace: true, state: next ? CREATING_INTAKE : null })
+  }
 
   useEffect(() => {
     if (!programId || creating) return
@@ -89,11 +85,11 @@ export default function Intake() {
   }, [programId, creating])
 
   function startNewProgram() {
-    setCreating(true)
     setForm(INITIAL)
     setLoaded(null)
     setError('')
     setSuccess('')
+    setCreating(true)
   }
 
   function handleChange(
