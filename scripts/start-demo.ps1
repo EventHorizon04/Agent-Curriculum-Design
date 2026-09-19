@@ -48,36 +48,15 @@ Write-Step "Checking port 8000..."
 $null = Clear-PortForApi -Port 8000
 Write-Ok "Port 8000 free"
 
-# --- 3. Start Docker DB services ---
-Write-Step "Starting DB services (postgres, minio)..."
-docker compose up -d --remove-orphans
-if ($LASTEXITCODE -ne 0) { Write-Fail "docker compose up failed" }
-Write-Ok "Containers started"
+# --- 3. Data services and schema ---
+# Delegated rather than repeated: this used to carry its own copy of the compose
+# call, the pg_isready loop and the alembic step, which is three places for one
+# procedure to drift in.
+Write-Step "Starting data services..."
+& "$PSScriptRoot\start-services.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Fail "Data services did not come up" }
 
-# --- 4. Wait for postgres ready ---
-Write-Step "Waiting for postgres..."
-$timeout = 30
-$elapsed = 0
-while ($elapsed -lt $timeout) {
-    # 2>$null, not 2>&1: under $ErrorActionPreference = "Stop", merging a native
-    # command's stderr into the success stream can raise a terminating
-    # NativeCommandError even on a clean "not ready yet" exit, aborting the
-    # script with a message that looks nothing like "Postgres is not up yet".
-    $null = docker exec ca-postgres pg_isready -U curriculum -d curriculum_agent 2>$null
-    if ($LASTEXITCODE -eq 0) { break }
-    Start-Sleep -Seconds 1
-    $elapsed++
-}
-if ($elapsed -ge $timeout) { Write-Fail "Postgres not ready after ${timeout}s" }
-Write-Ok "Postgres ready"
-
-# --- 5. Run migrations ---
-Write-Step "Running Alembic migrations..."
-uv run alembic upgrade head
-if ($LASTEXITCODE -ne 0) { Write-Fail "Migration failed" }
-Write-Ok "Migrations applied"
-
-# --- 6. Build the frontend ---
+# --- 4. Build the frontend ---
 # Built here rather than assumed: the API serves whatever is in frontend/dist,
 # and a stale bundle is invisible until someone reports missing UI.
 Write-Step "Building the React bundle..."
@@ -88,7 +67,7 @@ Pop-Location
 if ($buildFailed) { Write-Fail "npm run build failed" }
 Write-Ok "Bundle built to frontend/dist"
 
-# --- 7. Start the API on loopback ---
+# --- 5. Start the API on loopback ---
 # 127.0.0.1, not 0.0.0.0: the Cloudflare Tunnel is the only intended way in, and
 # an interface-wide bind lets anyone on the LAN skip Cloudflare Access entirely.
 # Launched through the package entrypoint, not the uvicorn CLI  - see
@@ -104,7 +83,7 @@ $proc = Start-Process -FilePath "uv" `
     -PassThru -NoNewWindow
 Write-Ok "API launched (uv wrapper PID $($proc.Id))"
 
-# --- 8. Confirm the API answers, then record the pid that is actually listening ---
+# --- 6. Confirm the API answers, then record the pid that is actually listening ---
 # The pidfile is written here and nowhere else. Start-Process hands back the uv
 # wrapper's pid, two layers above the process that owns the socket, and a run that
 # dies on startup would otherwise leave that dead pid behind for stop-dev.ps1 to

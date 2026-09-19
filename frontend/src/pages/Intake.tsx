@@ -146,7 +146,7 @@ export default function Intake() {
       if (axiosErr.response) {
         setError(`API error ${axiosErr.response.status}: ${JSON.stringify(axiosErr.response.data)}`)
       } else {
-        setError('เชื่อมต่อ API ไม่ได้ — ตรวจสอบว่า backend รันอยู่ (./scripts/start-dev.ps1)')
+        setError('เชื่อมต่อ API ไม่ได้ — ตรวจสอบว่า backend รันอยู่ (./scripts/start-backend.ps1)')
       }
     } finally {
       setLoading(false)

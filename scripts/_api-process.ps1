@@ -25,9 +25,40 @@ $script:ApiPidFile = Join-Path (Split-Path -Parent $PSScriptRoot) ".uvicorn.pid"
 
 
 function Get-ApiProcess {
-    <#.SYNOPSIS Every process in this project's API tree, or nothing.#>
-    Get-CimInstance Win32_Process -Filter "Name like '%python%' or Name like '%uv.exe%'" |
-        Where-Object { $_.CommandLine -like $script:ApiCommandMatch }
+    <#
+    .SYNOPSIS Every process in this project's API tree, or nothing.
+    .DESCRIPTION
+      Command-line discovery finds the uv wrapper and both python layers, but not
+      a reload worker: uvicorn spawns it through multiprocessing, so its command
+      line reads `-c "from multiprocessing.spawn import spawn_main; ..."` with no
+      mention of this project at all. Stopping the tree by name alone therefore
+      killed the reloader and left the worker holding port 8000 while /health went
+      on answering 200 — and API_RELOAD is on in every dev start, so that was the
+      normal case, not an edge one.
+
+      So the named processes are the seeds, and their descendants come with them.
+      Parentage is read from the same CIM snapshot the seeds came from, which is
+      what makes a worker whose parent is about to be killed still reachable.
+    #>
+    $all = @(Get-CimInstance Win32_Process -Filter "Name like '%python%' or Name like '%uv.exe%'")
+    $tree = @($all | Where-Object { $_.CommandLine -like $script:ApiCommandMatch })
+    if ($tree.Count -eq 0) { return @() }
+
+    # Walk down until no new children appear. Bounded by the snapshot, so it
+    # cannot loop forever on a pid that gets reused mid-sweep.
+    $growing = $true
+    while ($growing) {
+        $growing = $false
+        $known = @($tree | ForEach-Object { $_.ProcessId })
+        foreach ($proc in $all) {
+            if ($known -contains $proc.ProcessId) { continue }
+            if ($known -contains $proc.ParentProcessId) {
+                $tree += $proc
+                $growing = $true
+            }
+        }
+    }
+    return $tree
 }
 
 
@@ -92,6 +123,28 @@ function Stop-ApiProcess {
         Remove-Item $script:ApiPidFile -Force -ErrorAction SilentlyContinue
     }
 
+    if (Wait-PortFree -Port $Port -TimeoutSeconds $TimeoutSeconds) { return $true }
+
+    # Still held. Ask the port whether what holds it is this project's API: an
+    # orphaned worker whose parent died in an earlier stop is no longer reachable
+    # by parentage, and nothing else would ever free it. /health answering with
+    # this API's payload is the identification — the same evidence Clear-PortForApi
+    # trusts — and without it nothing is killed, because "something is on my port"
+    # is not a reason to terminate a stranger's process.
+    $owner = Get-PortOwnerPid -Port $Port
+    if ($null -eq $owner) { return $true }
+    try {
+        $health = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/health" `
+            -TimeoutSec 3 -UseBasicParsing -ErrorAction Stop
+        $isOurApi = ($health.Content -like '*"status"*"ok"*')
+    }
+    catch { $isOurApi = $false }
+
+    if (-not $isOurApi) { return $false }
+
+    Write-Host ("   Stopping PID $owner - orphaned API worker still serving on " +
+        "$Port") -ForegroundColor Yellow
+    Stop-Process -Id $owner -Force -ErrorAction SilentlyContinue
     return (Wait-PortFree -Port $Port -TimeoutSeconds $TimeoutSeconds)
 }
 

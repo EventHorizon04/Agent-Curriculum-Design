@@ -42,14 +42,24 @@ ollama signin
 # Install dev dependencies
 uv sync --all-extras
 
-# Start everything: Docker DB services + Alembic migrations + uvicorn
-.\scripts\start-dev.ps1
+# Three layers, three scripts. Data services, backend and UI start separately
+# because they stop and restart on different schedules: a code change restarts
+# the backend, and waiting on Docker for that is what the split is for.
+.\scripts\start-services.ps1    # postgres + minio + alembic upgrade head
+.\scripts\start-backend.ps1     # FastAPI. Refuses to run if the DB is down or
+                                # the schema is behind — it starts no container.
+.\scripts\start-frontend.ps1    # Vite on :5173. Foreground; Ctrl+C stops it,
+                                # which is why there is no stop-frontend.
 
-# React UI (separate terminal) — http://localhost:5173
-cd frontend; npm run dev
+# Stopping, innermost first — the API has to let go of the database before the
+# database goes away.
+.\scripts\stop-backend.ps1
+.\scripts\stop-services.ps1     # containers only; named volumes and their data stay
 
-# Stop services
-.\scripts\stop-dev.ps1
+# Convenience wrappers, nothing of their own:
+.\scripts\start-dev.ps1                  # = start-services, then start-backend
+.\scripts\stop-dev.ps1                   # = stop-backend, then stop-services
+.\scripts\stop-dev.ps1 -KeepServices     # stop the API, leave the DB up
 ```
 
 ```bash
@@ -66,7 +76,7 @@ uv run mypy src/
 # Frontend lint & build
 cd frontend && npm run lint && npm run build
 
-# Run API manually (against Docker services) if not using start-dev.ps1.
+# Run API manually (against Docker services) if not using start-backend.ps1.
 # Go through the package entrypoint, not the uvicorn CLI — on Windows the CLI
 # creates its event loop before importing the app, and psycopg rejects the
 # ProactorEventLoop that results. API_HOST / API_PORT / API_RELOAD configure it.
@@ -132,7 +142,9 @@ src/curriculum_agent/
   exporters/           ← CHECO, มคอ.2, Excel matrix
   api/                 ← FastAPI routes
 frontend/              ← React UI (one page per stage + Pipeline)
-scripts/               ← start-dev.ps1 / start-demo.ps1 / stop-dev.ps1
+scripts/               ← one layer per script: start-services / start-backend /
+                         start-frontend and their stops; start-dev + stop-dev
+                         are wrappers, start-demo.ps1 is the tunnelled build.
                          (_api-process.ps1 holds the shared port/pid logic)
 tests/unit/            ← validators, schema, pure functions
 tests/integration/     ← LLM mocked, full stages

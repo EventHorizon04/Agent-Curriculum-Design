@@ -119,11 +119,18 @@ Watch for these two, which the setup cannot prevent:
    .\scripts\stop-dev.ps1
    ```
 
-   `stop-dev.ps1` finds the API by command line, so it stops all three
-   processes of the `uv run python -m curriculum_agent.api` tree and waits for
-   port 8000 to come free before returning. It prints a warning if anything
-   still holds the port — that would be a process outside this project, which
-   the script will not kill.
+   `stop-dev.ps1` runs `stop-backend.ps1` then `stop-services.ps1`, in that
+   order — the API has to let go of the database first. Add `-KeepServices` to
+   stop only the API.
+
+   The backend stop finds the process tree by command line *and by parentage*:
+   `uv run python -m curriculum_agent.api` is three processes, and under reload
+   a fourth — a `multiprocessing` worker whose command line names neither this
+   project nor uvicorn. Stopping by name alone left that worker holding port
+   8000 while /health went on answering 200. If the port is still held
+   afterwards, the script asks /health once more: an answer means an orphaned
+   worker of ours and it is stopped, anything else is a process outside this
+   project and is reported, never killed.
 
    Add `-KeepServices` to stop only the API and leave postgres/minio up, which
    is what you want when restarting after a code change.

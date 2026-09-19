@@ -27,21 +27,32 @@ ollama pull scb10x/typhoon2-8b-instruct
 ollama pull qwen2.5:7b
 ```
 
-> **Note:** Make sure Ollama is running (system tray icon) before step 3. The start script will fail if Ollama is not running.
+> **Note:** ต้องเปิด Ollama (icon ใน system tray) **เฉพาะเมื่อ** มี provider slot ไหนตั้งเป็น `ollama` — `start-backend.ps1` อ่าน config เองแล้วเช็คให้เท่าที่จำเป็น ถ้าทุก slot ชี้ไป endpoint บนคลาวด์ (ค่า default ตอนนี้) จะข้ามการเช็คนี้ไป
 
-### 3. Start backend (DB + migrations + API)
-
-```powershell
-.\scripts\start-dev.ps1
-```
-
-### 4. Start UI (terminal แยก)
+### 3. Start data services (postgres + minio + migrations)
 
 ```powershell
-cd frontend
-npm install       # ครั้งแรกเท่านั้น
-npm run dev
+.\scripts\start-services.ps1
 ```
+
+### 4. Start backend (terminal เดิมได้)
+
+```powershell
+.\scripts\start-backend.ps1
+```
+
+ไม่ start container เอง — ถ้า DB ยังไม่ขึ้นหรือ schema ตามหลัง migration จะหยุดพร้อมบอกว่าต้องรันอะไร
+แก้โค้ด backend แล้ว restart แค่ตัวนี้ ไม่ต้องรอ Docker
+
+### 5. Start UI (terminal แยก)
+
+```powershell
+.\scripts\start-frontend.ps1      # npm install ให้เองถ้ายังไม่มี node_modules
+```
+
+รันค้างในเทอร์มินัล — Ctrl+C คือวิธีปิด
+
+> ทางลัด: `.\scripts\start-dev.ps1` = services + backend ในคำสั่งเดียว (UI ยังต้องแยก)
 
 ## URLs
 
@@ -55,7 +66,11 @@ npm run dev
 ## Stop
 
 ```powershell
-.\scripts\stop-dev.ps1
+.\scripts\stop-backend.ps1                # API อย่างเดียว
+.\scripts\stop-services.ps1               # containers (ข้อมูลใน named volume อยู่ครบ)
+
+.\scripts\stop-dev.ps1                    # ทั้งคู่ ตามลำดับที่ถูกต้อง
+.\scripts\stop-dev.ps1 -KeepServices      # ปิด API ทิ้ง DB ไว้ — กรณีที่ใช้บ่อยสุดตอนพัฒนา
 ```
 
 ## Development
