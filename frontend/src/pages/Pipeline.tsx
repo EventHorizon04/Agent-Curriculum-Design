@@ -303,6 +303,12 @@ export default function Pipeline() {
   const { programId } = useProgram()
   const [sessions, setSessions] = useState<Session[]>([])
   const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState('')
+  // What stage 1 will read. A run with nothing to classify raises there and
+  // lands as a failed session, which is a correct refusal arriving one round
+  // trip too late: the page could have said so before the button was pressed.
+  // Null until the count is known, so the button is not disabled while loading.
+  const [evidenceCount, setEvidenceCount] = useState<number | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   async function fetchSessions() {
@@ -338,16 +344,43 @@ export default function Pipeline() {
     }
   }, [programId])
 
+  // Read once per program rather than inside fetchSessions, which the poll
+  // calls every two seconds while a run is in flight.
+  useEffect(() => {
+    if (!programId) {
+      setEvidenceCount(null)
+      return
+    }
+    let cancelled = false
+    api
+      .get<unknown[]>(`/programs/${programId}/evidence/`)
+      .then((res) => {
+        if (!cancelled) setEvidenceCount(res.data.length)
+      })
+      .catch(() => {
+        // Unknown, not zero. A failed read must not block a run the API would
+        // have accepted.
+        if (!cancelled) setEvidenceCount(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [programId])
+
   async function handleNewRun() {
-    if (!programId) return alert('กรุณา intake โปรแกรมก่อน')
+    if (!programId) return
     setStarting(true)
+    setStartError('')
     try {
       await api.post(`/programs/${programId}/sessions/`)
       await fetchSessions()
       startPolling()
-    } catch {
-      // Swallow: matches the prior fetch()-based behaviour, which skipped
-      // the refresh/poll on a non-ok response and fell straight to `finally`.
+    } catch (err: unknown) {
+      // Shown, not swallowed. A start that fails outright leaves no session row
+      // to carry the reason, so the page was the only place it could appear and
+      // the button simply did nothing.
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      setStartError(axiosErr.response?.data?.detail ?? 'เริ่ม session ไม่สำเร็จ')
     } finally {
       setStarting(false)
     }
@@ -364,14 +397,19 @@ export default function Pipeline() {
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>Pipeline Runs</h2>
         <button
           onClick={handleNewRun}
-          disabled={starting || !programId}
+          disabled={starting || !programId || evidenceCount === 0}
+          title={
+            evidenceCount === 0
+              ? 'ยังไม่มีหลักฐาน — ขั้นแรกของ pipeline อ่านจากตาราง evidence'
+              : undefined
+          }
           style={{
             padding: '8px 18px',
-            background: '#2563eb',
-            color: '#fff',
+            background: starting || !programId || evidenceCount === 0 ? '#e5e7eb' : '#2563eb',
+            color: starting || !programId || evidenceCount === 0 ? '#9ca3af' : '#fff',
             border: 'none',
             borderRadius: 8,
-            cursor: 'pointer',
+            cursor: starting || !programId || evidenceCount === 0 ? 'not-allowed' : 'pointer',
             fontWeight: 600,
             fontSize: 13,
           }}
@@ -382,6 +420,22 @@ export default function Pipeline() {
 
       {!programId && (
         <p style={{ color: '#dc2626', fontSize: 13 }}>ยังไม่มี program — ไปที่ Intake ก่อน</p>
+      )}
+
+      {/* The refusal stage 1 would raise, said before the run instead of after
+          it. Same rule, same wording as the stage itself — a program with no
+          evidence has nothing for the pipeline to classify. */}
+      {programId && evidenceCount === 0 && (
+        <p style={{ color: '#b45309', fontSize: 13, marginBottom: 12 }}>
+          ยังไม่มีหลักฐานในหลักสูตรนี้ — pipeline ขั้นแรกอ่านจากตาราง evidence จึงยังเริ่มไม่ได้{' '}
+          <a href="/stakeholder-needs" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+            ไปเพิ่มหลักฐาน
+          </a>
+        </p>
+      )}
+
+      {startError && (
+        <p style={{ color: '#b91c1c', fontSize: 13, marginBottom: 12 }}>{startError}</p>
       )}
 
       {sessions.length === 0 && programId && (
