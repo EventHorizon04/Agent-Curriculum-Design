@@ -307,3 +307,38 @@ async def test_skill_extraction_separates_a_failed_provider_from_an_empty_readin
     monkeypatch.setattr(se, "complete_extraction", every_call_reads_nothing)
     state = await se.run(dict(state_in))
     assert state["extracted_skills"] == []
+
+
+async def test_intake_leaves_the_key_unset_when_the_program_has_no_evidence_yet(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Intake preloads evidence, and an empty preload must not look like an answer.
+
+    It wrote `raw_evidence` unconditionally, so a program with nothing recorded
+    yet reached `stakeholder_needs` carrying `[]` — which by the rule above means
+    "the previous stage ran and produced nothing" and is refused outright. But
+    intake does not produce evidence; the designer does, on a later page, and an
+    empty snapshot only says the table was empty at the moment the run started.
+    Leaving the key unset lets stage 1 read the table when it actually runs.
+    """
+    from curriculum_agent.stages import intake
+
+    monkeypatch.setattr(intake.ProgramRepository, "upsert", AsyncMock())
+    monkeypatch.setattr(intake.EvidenceRepository, "list_by_program", AsyncMock(return_value=[]))
+
+    state = await intake.run({"program_id": PROGRAM, "metadata": _metadata()})
+
+    assert "raw_evidence" not in state
+
+
+async def test_intake_still_passes_the_evidence_it_does_find(monkeypatch: pytest.MonkeyPatch):
+    from curriculum_agent.stages import intake
+
+    monkeypatch.setattr(intake.ProgramRepository, "upsert", AsyncMock())
+    monkeypatch.setattr(
+        intake.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_evidence()])
+    )
+
+    state = await intake.run({"program_id": PROGRAM, "metadata": _metadata()})
+
+    assert [e["evidence_id"] for e in state["raw_evidence"]] == ["E1"]

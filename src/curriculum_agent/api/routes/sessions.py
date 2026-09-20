@@ -11,7 +11,11 @@ from langgraph.types import Command
 from loguru import logger
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.data.repositories import ProgramRepository, SessionRepository
+from curriculum_agent.data.repositories import (
+    EvidenceRepository,
+    ProgramRepository,
+    SessionRepository,
+)
 from curriculum_agent.graph import REVIEW_NODE_STAGE, AgentState, discard_thread
 from curriculum_agent.models import SessionInfo
 
@@ -71,6 +75,19 @@ async def create_session(
     program = await ProgramRepository().get(program_id)
     if program is None:
         raise HTTPException(status_code=404, detail="Program not found")
+
+    # Checked before the session exists, not after. `stakeholder_needs` raises on
+    # an empty corpus — deliberately, so the run dies at the stage that is
+    # actually missing something rather than three stages later — but starting
+    # the graph to find that out costs a session row recording a failure the
+    # caller could have been told about, and a checkpoint thread that then has to
+    # be cleaned up. The per-stage REST routes answer 422 on the same condition;
+    # this is the graph path agreeing with them.
+    if not await EvidenceRepository().list_by_program(program_id):
+        raise HTTPException(
+            status_code=422,
+            detail="ยังไม่มี evidence สำหรับหลักสูตรนี้ — เพิ่มหลักฐานที่ขั้น Stakeholder Needs ก่อนเริ่มรัน",
+        )
 
     session_id = str(uuid.uuid4())
     thread_id = f"{program_id}:{session_id}"

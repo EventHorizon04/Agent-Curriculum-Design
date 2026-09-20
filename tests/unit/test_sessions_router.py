@@ -33,6 +33,39 @@ def _mock_repos(sess_repo_mock):
     )
 
 
+def _mock_start_repos(*, evidence: list[object], program: object = object()):
+    """The two reads POST /sessions makes before it starts anything."""
+    prog_repo = AsyncMock()
+    prog_repo.get = AsyncMock(return_value=program)
+    ev_repo = AsyncMock()
+    ev_repo.list_by_program = AsyncMock(return_value=evidence)
+    return (
+        patch("curriculum_agent.api.routes.sessions.ProgramRepository", return_value=prog_repo),
+        patch("curriculum_agent.api.routes.sessions.EvidenceRepository", return_value=ev_repo),
+    )
+
+
+def test_starting_a_run_with_no_evidence_is_refused_before_a_session_exists():
+    """stakeholder_needs raises on an empty corpus, so this run cannot succeed.
+
+    Finding that out by starting the graph costs a session row recording a
+    failure the caller could have been told about outright, plus a checkpoint
+    thread that then has to be cleaned up. The per-stage REST routes answer 422
+    on the same condition; this is the graph path agreeing with them.
+    """
+    sess_repo = AsyncMock()
+    sess_repo.create = AsyncMock()
+    prog_patch, ev_patch = _mock_start_repos(evidence=[])
+
+    with prog_patch, ev_patch, _mock_repos(sess_repo):
+        client = TestClient(app)
+        resp = client.post("/programs/p1/sessions/")
+
+    assert resp.status_code == 422
+    assert "evidence" in resp.json()["detail"]
+    sess_repo.create.assert_not_awaited()
+
+
 def test_get_session_returns_session_info():
     repo = AsyncMock()
     repo.get = AsyncMock(return_value=_SESS)
