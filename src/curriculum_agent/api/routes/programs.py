@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from langgraph.constants import START
 from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
@@ -57,10 +58,18 @@ async def create_program(req: ProgramCreateRequest, request: Request) -> Program
         break
     if metadata is None:
         raise HTTPException(status_code=409, detail="สร้างรหัสหลักสูตรไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
+    # Seed the program's own thread with its metadata. `aupdate_state`, not
+    # `ainvoke`: invoking runs the graph from its entry point, so creating a
+    # program walked into `stakeholder_needs`, which refuses a program with no
+    # evidence — and a program being created never has any. The row was already
+    # inserted by then, so every attempt left a program behind and answered 500,
+    # which is how one field ends up as program, program-2, program-3. Writing
+    # the state is what was wanted; running the pipeline is POST /sessions.
     graph = request.app.state.graph
-    await graph.ainvoke(
+    await graph.aupdate_state(
+        {"configurable": {"thread_id": metadata.program_id}},
         {"program_id": metadata.program_id, "metadata": metadata.model_dump(mode="json")},
-        config={"configurable": {"thread_id": metadata.program_id}},
+        as_node=START,
     )
     return metadata
 
@@ -122,10 +131,16 @@ async def update_program(
     # Keep the checkpoint's copy of the metadata in step with the row. A thread
     # suspended mid-pipeline carries its own snapshot of AgentState, and a stage
     # resuming from it would otherwise read the old field.
+    #
+    # `aupdate_state` writes that snapshot. `ainvoke` ran the graph instead, so
+    # editing a field re-ran stage 1 against the stored evidence on the way to
+    # the next interrupt — or, for a program with no evidence, answered 500. The
+    # docstring above already said this route re-runs nothing; now it does not.
     graph = request.app.state.graph
-    await graph.ainvoke(
+    await graph.aupdate_state(
+        {"configurable": {"thread_id": program_id}},
         {"program_id": program_id, "metadata": updated.model_dump(mode="json")},
-        config={"configurable": {"thread_id": program_id}},
+        as_node=START,
     )
     return updated
 

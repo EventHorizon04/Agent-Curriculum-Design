@@ -54,7 +54,7 @@ def test_create_program_generates_slug_id(monkeypatch) -> None:
     monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
-    mock_graph.ainvoke = AsyncMock(return_value={})
+    mock_graph.aupdate_state = AsyncMock(return_value={})
 
     with (
         patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
@@ -85,7 +85,7 @@ def test_create_program_id_falls_back_when_the_field_is_thai(monkeypatch) -> Non
     monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
-    mock_graph.ainvoke = AsyncMock(return_value={})
+    mock_graph.aupdate_state = AsyncMock(return_value={})
 
     with (
         patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
@@ -112,7 +112,7 @@ def test_create_program_collision_appends_suffix(monkeypatch) -> None:
     monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
-    mock_graph.ainvoke = AsyncMock(return_value={})
+    mock_graph.aupdate_state = AsyncMock(return_value={})
 
     with (
         patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
@@ -142,7 +142,7 @@ def test_create_program_insert_conflict_retries_with_suffix(monkeypatch) -> None
     monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
-    mock_graph.ainvoke = AsyncMock(return_value={})
+    mock_graph.aupdate_state = AsyncMock(return_value={})
 
     with (
         patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
@@ -175,7 +175,7 @@ def test_create_program_returns_409_when_attempts_exhausted(monkeypatch) -> None
     monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
 
     mock_graph = MagicMock()
-    mock_graph.ainvoke = AsyncMock(return_value={})
+    mock_graph.aupdate_state = AsyncMock(return_value={})
 
     with (
         patch("curriculum_agent.api.routes.programs.ProgramRepository") as mock_repo_cls,
@@ -195,7 +195,7 @@ def test_create_program_returns_409_when_attempts_exhausted(monkeypatch) -> None
         )
     assert resp.status_code == 409, f"got {resp.status_code}: {resp.json()}"
     assert mock_repo.insert.await_count == 5
-    mock_graph.ainvoke.assert_not_awaited()
+    mock_graph.aupdate_state.assert_not_awaited()
 
 
 def test_list_programs_empty() -> None:
@@ -415,6 +415,9 @@ def _update_env(existing: dict | None = None):
     mock_repo.upsert = AsyncMock()
 
     mock_graph = MagicMock()
+    mock_graph.aupdate_state = AsyncMock(return_value={})
+    # Declared so "the route must not invoke the graph" is a real assertion
+    # rather than an AttributeError on a bare MagicMock attribute.
     mock_graph.ainvoke = AsyncMock(return_value={})
 
     @contextmanager
@@ -449,17 +452,60 @@ def test_update_program_keeps_the_id_and_the_creation_time() -> None:
     assert saved.created_at == _NOW
 
 
+def test_creating_a_program_does_not_run_the_pipeline() -> None:
+    """Creating a program is not starting a run, and it must not behave like one.
+
+    The route seeds the program's own thread with its metadata. It used to do
+    that with `ainvoke`, which runs the graph from its entry point — straight
+    through `intake` into `stakeholder_needs`, which refuses a program with no
+    evidence, and a program being created never has any. The row was inserted
+    before that call, so every attempt left a program behind and answered 500:
+    one field became program, program-2, program-3 as the designer retried.
+    """
+    from curriculum_agent.api.main import app as _app
+    from curriculum_agent.models import ProgramMetadata
+
+    mock_repo = AsyncMock()
+    mock_repo.exists = AsyncMock(return_value=False)
+    mock_repo.insert = AsyncMock()
+    mock_graph = MagicMock()
+    mock_graph.aupdate_state = AsyncMock(return_value={})
+    mock_graph.ainvoke = AsyncMock(return_value={})
+
+    with (
+        patch("curriculum_agent.api.routes.programs.ProgramRepository", return_value=mock_repo),
+        patch.object(_app.state, "graph", mock_graph, create=True),
+    ):
+        resp = client.post("/programs/", json=VALID_PROGRAM)
+
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.json()}"
+    mock_graph.ainvoke.assert_not_awaited()
+    mock_graph.aupdate_state.assert_awaited_once()
+    config, values = mock_graph.aupdate_state.await_args.args
+    assert config["configurable"]["thread_id"] == ProgramMetadata(
+        program_id="computer-science", **VALID_PROGRAM
+    ).program_id
+    assert values["metadata"]["field"] == VALID_PROGRAM["field"]
+
+
 def test_update_program_refreshes_the_checkpoint_copy_of_the_metadata() -> None:
     """A thread suspended mid-pipeline carries its own snapshot of AgentState;
-    a stage resuming from it would otherwise read the pre-edit field."""
+    a stage resuming from it would otherwise read the pre-edit field.
+
+    Written with `aupdate_state`, not `ainvoke`. Invoking runs the graph from its
+    entry point, so editing a field re-ran stage 1 against the stored evidence on
+    the way to the next interrupt - and answered 500 for a program that has none.
+    The route's own docstring says it re-runs nothing; this is what makes that
+    true.
+    """
     with _update_env() as (_, graph):
         client.put("/programs/computer-science", json={**VALID_PROGRAM, "field": "Data Science"})
 
-    graph.ainvoke.assert_awaited_once()
-    payload = graph.ainvoke.await_args.args[0]
-    assert payload["metadata"]["field"] == "Data Science"
-    config = graph.ainvoke.await_args.kwargs["config"]
+    graph.ainvoke.assert_not_awaited()
+    graph.aupdate_state.assert_awaited_once()
+    config, values = graph.aupdate_state.await_args.args
     assert config["configurable"]["thread_id"] == "computer-science"
+    assert values["metadata"]["field"] == "Data Science"
 
 
 def test_update_program_404_when_the_program_does_not_exist() -> None:
@@ -469,7 +515,7 @@ def test_update_program_404_when_the_program_does_not_exist() -> None:
     mock_repo.get = AsyncMock(return_value=None)
     mock_repo.upsert = AsyncMock()
     mock_graph = MagicMock()
-    mock_graph.ainvoke = AsyncMock(return_value={})
+    mock_graph.aupdate_state = AsyncMock(return_value={})
 
     with (
         patch("curriculum_agent.api.routes.programs.ProgramRepository", return_value=mock_repo),
@@ -479,7 +525,7 @@ def test_update_program_404_when_the_program_does_not_exist() -> None:
 
     assert resp.status_code == 404, f"got {resp.status_code}"
     mock_repo.upsert.assert_not_awaited()
-    mock_graph.ainvoke.assert_not_awaited()
+    mock_graph.aupdate_state.assert_not_awaited()
 
 
 def test_update_program_requires_api_key_when_configured(monkeypatch) -> None:
