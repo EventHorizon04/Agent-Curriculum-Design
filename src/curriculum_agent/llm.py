@@ -206,7 +206,7 @@ async def _complete(
     )
 
 
-async def complete_light(
+async def complete_need_combination(
     response_model: type[T],
     messages: list[dict[str, Any]],
     **kwargs: Any,
@@ -215,7 +215,7 @@ async def complete_light(
     return await _complete(*_resolve("need_combination"), response_model, messages, **kwargs)
 
 
-async def complete_heavy(
+async def complete_clustering(
     response_model: type[T],
     messages: list[dict[str, Any]],
     **kwargs: Any,
@@ -224,14 +224,14 @@ async def complete_heavy(
     return await _complete(*_resolve("clustering"), response_model, messages, **kwargs)
 
 
-async def complete_synthesis(
+async def complete_plo_synthesis(
     response_model: type[T],
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
     """plo_synthesis's own endpoint — see Settings.plo_synthesis_provider.
 
-    Split out of complete_heavy rather than left sharing it: clustering and
+    Split out of complete_clustering rather than left sharing it: clustering and
     synthesis want opposite things from a model, and one wrapper meant neither
     could be moved without dragging the other along. Both the draft call and the
     SMART repair call go through here, so a repair is never answered by a
@@ -247,7 +247,7 @@ async def complete_extraction(
 ) -> T:
     """skill_extraction's own endpoint — see Settings.extraction_provider.
 
-    Separate from complete_light/heavy rather than a flag on them: extraction is
+    Separate from complete_need_combination/heavy rather than a flag on them: extraction is
     a per-evidence fan-out whose cost and quota profile is nothing like the
     handful of calls the other stages make, and the cache key it writes is keyed
     on this model name. A stage picking the endpoint per call would put that
@@ -268,13 +268,13 @@ async def complete_validation(
     list of messages is the whole conversation, and `_complete` already accepts
     an assistant turn in it, so no multi-turn machinery belongs in this module.
 
-    Not complete_heavy, though it defaults to the same provider and model
+    Not complete_clustering, though it defaults to the same provider and model
     family: heavy is LLM clustering and nothing else, and a slot sharing that
     knob could not be moved without moving clustering.
 
-    Not complete_synthesis either, and that is the load-bearing part. This model
+    Not complete_plo_synthesis either, and that is the load-bearing part. This model
     decides *whether* a statement needs repair; the repair itself goes back
-    through complete_synthesis, so a repair is still never answered by a
+    through complete_plo_synthesis, so a repair is still never answered by a
     different model than wrote the draft.
     """
     provider, model = _resolve("validation")

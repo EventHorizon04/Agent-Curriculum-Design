@@ -20,7 +20,7 @@ conventions the agent could talk its way past:
    whose result is never retained as the verdict.
 2. `validate_and_build` runs `hard_failures` on the final statement after this
    loop returns, whatever way it returned, and that call decides `escalated`.
-   The agent's only causal route to the outcome is getting `complete_synthesis`
+   The agent's only causal route to the outcome is getting `complete_plo_synthesis`
    to write a better sentence, which code then re-judges — so its power is
    monotone: it can shrink the failure list, never declare it empty.
 3. A repair is *requested*, never written here. `RequestRepair` has no
@@ -40,7 +40,7 @@ from loguru import logger
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from curriculum_agent.config import settings
-from curriculum_agent.llm import complete_synthesis, complete_validation
+from curriculum_agent.llm import complete_plo_synthesis, complete_validation
 from curriculum_agent.models import ProgramMetadata, SmartFinding
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
@@ -168,7 +168,7 @@ class RequestRepair(BaseModel):
     There is deliberately no `statement_th` field. If there were, a helpful
     model would fill it in and "a repair is never answered by a different model
     than wrote the draft" would be one field away from broken. The Thai sentence
-    is written by `complete_synthesis`, always.
+    is written by `complete_plo_synthesis`, always.
     """
 
     kind: Literal["request_repair"]
@@ -310,7 +310,7 @@ async def _repair(
         set(ctx.known_need_ids),
     )
     try:
-        fixed = await complete_synthesis(
+        fixed = await complete_plo_synthesis(
             _SingleDraftResponse,
             build_agent_repair_prompt(
                 statement_th=draft.statement_th,

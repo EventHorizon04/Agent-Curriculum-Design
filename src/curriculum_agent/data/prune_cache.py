@@ -39,7 +39,7 @@ from curriculum_agent.data.repositories import (
     LLMCacheRepository,
 )
 
-# Bound locally so the classes below read as one vocabulary. complete_light is
+# Bound locally so the classes below read as one vocabulary. complete_need_combination is
 # absent on purpose: nothing caches it, so light_model never appears in a row
 # and must never be counted as a live target.
 EXTRACTION = CACHE_KIND_EXTRACTION

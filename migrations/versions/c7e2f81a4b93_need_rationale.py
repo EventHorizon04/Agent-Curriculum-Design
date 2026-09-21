@@ -5,8 +5,8 @@ Revises: b41d7e2c8a90
 Create Date: 2026-09-18 00:00:00.000000
 
 No cache cost. The field is asked for by build_summarize_need_prompt, which goes
-through complete_light and is the one LLM call in this pipeline that never
-touches llm_cache — only skill_extraction and llm_clustering do. Adding a field
+through complete_need_combination (named complete_light when this landed) and is
+the one LLM call in this pipeline that never touches llm_cache — only skill_extraction and llm_clustering do. Adding a field
 to _NeedStatement therefore invalidates nothing, which is why this could land on
 its own rather than waiting for the bundled prompt change.
 

@@ -9,7 +9,7 @@ from pydantic import ValidationError as PydanticValidationError
 
 from curriculum_agent.data.repositories import NeedRepository, SkillRepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.llm import complete_light
+from curriculum_agent.llm import complete_need_combination
 from curriculum_agent.models import (
     BloomLevel,
     ExtractedSkill,
@@ -320,7 +320,7 @@ async def run(state: AgentState) -> AgentState:
     needs: list[Need] = []
     for group in groups:
         try:
-            written = await complete_light(
+            written = await complete_need_combination(
                 _NeedStatement,
                 build_summarize_need_prompt(
                     group.skill_names,

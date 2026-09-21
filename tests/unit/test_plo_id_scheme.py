@@ -103,7 +103,7 @@ def _patch_model(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         )
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
 
 
@@ -192,7 +192,7 @@ async def test_a_failed_need_leaves_a_gap_rather_than_renumbering(
             )
         )
 
-    monkeypatch.setattr(ps, "complete_synthesis", flaky_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", flaky_synthesis)
     set_soft_judge(monkeypatch)
 
     needs = [_need("Nhigh", 0.9), _need("Nmid", 0.6), _need("Nlow", 0.3)]

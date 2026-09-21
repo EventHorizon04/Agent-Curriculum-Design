@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import CACHE_KIND_CLUSTERING, LLMCacheRepository
-from curriculum_agent.llm import complete_heavy
+from curriculum_agent.llm import complete_clustering
 from curriculum_agent.prompts.cluster_skills import (
     build_cluster_skills_prompt,
     build_merge_clusters_prompt,
@@ -164,7 +164,7 @@ async def _cluster_pass(
     names: list[str], target_clusters: int | None = None, program_context: str | None = None
 ) -> list[tuple[str, list[int]]]:
     """One heavy-model clustering call over `names`, validated."""
-    result = await complete_heavy(
+    result = await complete_clustering(
         ClusterAssignmentsResponse,
         build_cluster_skills_prompt(names, target_clusters, program_context),
         temperature=0,
@@ -189,7 +189,7 @@ async def _cluster_map_reduce(
         offset += len(batch)
 
     labels = [label for label, _ in labelled]
-    merge = await complete_heavy(
+    merge = await complete_clustering(
         MergeGroupsResponse,
         build_merge_clusters_prompt(labels, target_clusters),
         temperature=0,

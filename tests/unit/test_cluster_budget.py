@@ -156,7 +156,7 @@ async def test_each_bucket_is_clustered_against_its_own_share(monkeypatch):
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", recording_cluster)
-    monkeypatch.setattr(nc, "complete_light", fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 

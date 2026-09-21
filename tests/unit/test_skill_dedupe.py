@@ -172,7 +172,7 @@ async def test_need_combination_clears_previous_needs_before_inserting(
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
 
     # An AsyncMock set on the class is not a descriptor, so `self` is not passed —
     # these take only the real argument.

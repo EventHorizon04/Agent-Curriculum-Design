@@ -59,7 +59,7 @@ def _patch_llm(needs: list[Need], delete_mock: AsyncMock, insert_mock: AsyncMock
         return ps._SingleDraftResponse(plo=drafts[nid])
 
     return (
-        patch.object(ps, "complete_synthesis", fake_synthesis),
+        patch.object(ps, "complete_plo_synthesis", fake_synthesis),
         patch_soft_judge(),
         patch.object(ps.PLORepository, "delete_by_program", delete_mock),
         patch.object(ps.PLORepository, "bulk_insert", insert_mock),
@@ -121,7 +121,7 @@ async def test_nothing_is_deleted_when_synthesis_produces_nothing(
     delete_mock = AsyncMock(return_value=0)
     insert_mock = AsyncMock()
     with (
-        patch.object(ps, "complete_synthesis", failing_synthesis),
+        patch.object(ps, "complete_plo_synthesis", failing_synthesis),
         patch_soft_judge(),
         patch.object(ps.PLORepository, "delete_by_program", delete_mock),
         patch.object(ps.PLORepository, "bulk_insert", insert_mock),

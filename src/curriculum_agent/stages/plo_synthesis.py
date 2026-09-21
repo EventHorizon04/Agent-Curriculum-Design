@@ -9,7 +9,7 @@ from curriculum_agent.concurrency import gather_bounded
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import NeedRepository, PLORepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.llm import complete_synthesis
+from curriculum_agent.llm import complete_plo_synthesis
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
@@ -206,7 +206,7 @@ async def draft_from_needs(
         raise ValueError("draft_from_needs requires at least one Need")
 
     try:
-        response = await complete_synthesis(
+        response = await complete_plo_synthesis(
             _SingleDraftResponse,
             build_plo_from_need_prompt(metadata, needs, note_th=note_th),
             max_retries=_MAX_RETRIES,
@@ -236,7 +236,7 @@ async def validate_and_build(
     **The last word is the code gate, always.** `hard_failures` runs on the
     final statement whatever way the agent exited — finished, out of budget,
     endpoint down — and that call alone sets `smart_escalated`. The agent's only
-    route to the outcome is getting `complete_synthesis` to write a better
+    route to the outcome is getting `complete_plo_synthesis` to write a better
     sentence, which this function then re-judges, so its influence is monotone:
     it can shrink the failure list and never declare it empty. That is immutable
     rule 5 held by construction rather than by the agent's good manners.

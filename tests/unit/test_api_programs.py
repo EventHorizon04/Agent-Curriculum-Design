@@ -482,9 +482,10 @@ def test_creating_a_program_does_not_run_the_pipeline() -> None:
     mock_graph.ainvoke.assert_not_awaited()
     mock_graph.aupdate_state.assert_awaited_once()
     config, values = mock_graph.aupdate_state.await_args.args
-    assert config["configurable"]["thread_id"] == ProgramMetadata(
-        program_id="computer-science", **VALID_PROGRAM
-    ).program_id
+    assert (
+        config["configurable"]["thread_id"]
+        == ProgramMetadata(program_id="computer-science", **VALID_PROGRAM).program_id
+    )
     assert values["metadata"]["field"] == VALID_PROGRAM["field"]
 
 

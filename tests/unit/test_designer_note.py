@@ -156,7 +156,7 @@ async def test_need_combination_forwards_the_note_to_the_summarize_prompt(
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
     # Stub every persistence call the stage makes, not only bulk_insert.
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
@@ -204,7 +204,7 @@ async def test_plo_synthesis_forwards_the_note_to_the_draft_prompt(
             )
         )
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
     monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())

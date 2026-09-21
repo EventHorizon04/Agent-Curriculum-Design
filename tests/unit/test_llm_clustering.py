@@ -87,7 +87,9 @@ def _mock_cache(hit: str | None = None) -> AsyncMock:
 
 
 async def test_cluster_skill_names_empty_and_singleton_short_circuit():
-    with patch("curriculum_agent.stages.llm_clustering.complete_heavy", new=AsyncMock()) as llm:
+    with patch(
+        "curriculum_agent.stages.llm_clustering.complete_clustering", new=AsyncMock()
+    ) as llm:
         assert await cluster_skill_names([]) == []
         assert await cluster_skill_names(["Python"]) == [[0]]
     llm.assert_not_called()
@@ -103,7 +105,7 @@ async def test_single_pass_clusters_validates_and_caches():
     cache = _mock_cache()
     with (
         patch(
-            "curriculum_agent.stages.llm_clustering.complete_heavy",
+            "curriculum_agent.stages.llm_clustering.complete_clustering",
             new=AsyncMock(return_value=resp),
         ) as llm,
         patch(
@@ -121,7 +123,7 @@ async def test_single_pass_clusters_validates_and_caches():
 async def test_cache_hit_skips_llm():
     cache = _mock_cache(hit="[[0, 2], [1]]")
     with (
-        patch("curriculum_agent.stages.llm_clustering.complete_heavy", new=AsyncMock()) as llm,
+        patch("curriculum_agent.stages.llm_clustering.complete_clustering", new=AsyncMock()) as llm,
         patch(
             "curriculum_agent.stages.llm_clustering.LLMCacheRepository",
             return_value=cache,
@@ -150,7 +152,7 @@ async def test_map_reduce_path_batches_then_merges():
     cache = _mock_cache()
     with (
         patch(
-            "curriculum_agent.stages.llm_clustering.complete_heavy",
+            "curriculum_agent.stages.llm_clustering.complete_clustering",
             new=AsyncMock(side_effect=dispatch),
         ) as llm,
         patch(

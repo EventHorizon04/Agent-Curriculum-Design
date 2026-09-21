@@ -252,12 +252,12 @@ async def test_a_repair_is_written_by_the_plo_synthesis_model_not_the_validator(
         repair_calls.append(messages)
         return ps._SingleDraftResponse(plo=_draft("วิเคราะห์ความเสี่ยงของระบบได้", "วิเคราะห์"))
 
-    monkeypatch.setattr(sa, "complete_synthesis", fake_repair)
+    monkeypatch.setattr(sa, "complete_plo_synthesis", fake_repair)
 
     bad = _draft("ตระหนักถึงความเสี่ยงของระบบ", "ตระหนัก")
     result = await sa.run_smart_agent(bad, _ctx(bad), META)
 
-    assert len(repair_calls) == 1, "the repair went somewhere other than complete_synthesis"
+    assert len(repair_calls) == 1, "the repair went somewhere other than complete_plo_synthesis"
     assert result.statement_th == "วิเคราะห์ความเสี่ยงของระบบได้"
     assert result.repair_count == 1
 
@@ -284,7 +284,7 @@ async def test_a_repair_carries_the_new_verb_with_the_new_sentence(
     async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SingleDraftResponse(plo=_draft("ประเมินคุณภาพของระบบได้", "ประเมิน"))
 
-    monkeypatch.setattr(sa, "complete_synthesis", fake_repair)
+    monkeypatch.setattr(sa, "complete_plo_synthesis", fake_repair)
 
     result = await sa.run_smart_agent(_draft(), _ctx(), META)
 
@@ -306,7 +306,7 @@ async def test_a_repair_re_pins_the_evidence_trail(monkeypatch: pytest.MonkeyPat
             plo=_draft("วิเคราะห์ความเสี่ยงได้", "วิเคราะห์", need_ids=["WRONG-ID"])
         )
 
-    monkeypatch.setattr(sa, "complete_synthesis", echoes_a_wrong_id)
+    monkeypatch.setattr(sa, "complete_plo_synthesis", echoes_a_wrong_id)
 
     result = await sa.run_smart_agent(_draft(), _ctx(), META)
 
@@ -327,7 +327,7 @@ async def test_the_repair_observation_shows_the_code_verdict_both_ways(
     async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SingleDraftResponse(plo=_draft("วิเคราะห์ความเสี่ยงได้", "วิเคราะห์"))
 
-    monkeypatch.setattr(sa, "complete_synthesis", fake_repair)
+    monkeypatch.setattr(sa, "complete_plo_synthesis", fake_repair)
 
     bad = _draft("เข้าใจความเสี่ยงของระบบ", "เข้าใจ")
     await sa.run_smart_agent(bad, _ctx(bad), META)
@@ -348,7 +348,7 @@ async def test_a_fourth_repair_is_refused(monkeypatch: pytest.MonkeyPatch) -> No
     async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SingleDraftResponse(plo=_draft())
 
-    monkeypatch.setattr(sa, "complete_synthesis", fake_repair)
+    monkeypatch.setattr(sa, "complete_plo_synthesis", fake_repair)
 
     result = await sa.run_smart_agent(_draft(), _ctx(), META)
 
@@ -538,7 +538,7 @@ async def test_the_validator_never_sees_the_designer_note(
         repair_messages.append(messages)
         return ps._SingleDraftResponse(plo=_draft())
 
-    monkeypatch.setattr(sa, "complete_synthesis", fake_repair)
+    monkeypatch.setattr(sa, "complete_plo_synthesis", fake_repair)
     note = "ขอให้เน้นคำว่านวัตกรรม"
 
     await sa.run_smart_agent(_draft(), _ctx(), META)

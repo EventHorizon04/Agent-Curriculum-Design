@@ -101,7 +101,7 @@ async def test_the_silent_evidence_item_is_out_of_both_corpora(extracted, monkey
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", _fake_summarize_stub)
+    monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize_stub)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 
@@ -126,7 +126,7 @@ async def test_a_single_skill_need_scores_exactly_what_its_skill_did(extracted, 
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", _fake_summarize_stub)
+    monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize_stub)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 

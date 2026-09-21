@@ -24,10 +24,7 @@ def test_every_declared_field_exists_on_settings() -> None:
     declared = set(Settings.model_fields)
     for slot in SLOTS:
         assert slot.model_field in declared, f"{slot.name}: no field '{slot.model_field}'"
-        if slot.provider_field is not None:
-            assert slot.provider_field in declared, (
-                f"{slot.name}: no field '{slot.provider_field}'"
-            )
+        assert slot.provider_field in declared, f"{slot.name}: no field '{slot.provider_field}'"
 
 
 def test_the_field_check_would_actually_catch_one() -> None:
@@ -35,6 +32,18 @@ def test_the_field_check_would_actually_catch_one() -> None:
     fabricated = SlotSpec("invented", "invented_provider", "invented_model")
 
     assert fabricated.model_field not in set(Settings.model_fields)
+
+
+def test_no_slot_rides_the_default_provider_without_a_field_of_its_own() -> None:
+    """LLM_PROVIDER has one job: the fallback for a slot whose provider is unset.
+
+    It used to have two. `light` had no provider field and read LLM_PROVIDER
+    directly, so that one setting was both the fallback and one slot's actual
+    endpoint — and the slot could not be moved without moving every unset slot
+    with it. Every slot now names its own field, which is what makes the
+    fallback a fallback.
+    """
+    assert all(slot.provider_field for slot in SLOTS)
 
 
 def test_slot_names_are_unique() -> None:

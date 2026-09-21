@@ -166,7 +166,7 @@ async def test_need_combination_loads_skills_when_state_carries_none(
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
 
     state = await nc.run({"program_id": PROGRAM})
 
@@ -193,7 +193,7 @@ async def test_plo_synthesis_loads_needs_when_state_carries_none(
             )
         )
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
 
     state = await ps.run(

@@ -93,7 +93,7 @@ def _patched(needs: list[Need]) -> Iterator[_Stubs]:
 
     with ExitStack() as stack:
         for target, new in (
-            ("complete_synthesis", fake_synthesis),
+            ("complete_plo_synthesis", fake_synthesis),
             ("run_smart_agent", validator),
             ("PLORepository.bulk_insert", bulk_insert),
             ("PLORepository.delete_by_program", delete_by_program),

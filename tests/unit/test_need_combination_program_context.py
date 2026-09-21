@@ -64,7 +64,7 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
     return seen

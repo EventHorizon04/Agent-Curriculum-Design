@@ -106,7 +106,7 @@ async def test_every_draft_is_validated_against_the_others_and_not_itself(
     validator that cannot see the set cannot judge it. An outcome in its own
     sibling list would be a duplicate the validator faithfully discovers."""
     _patch_repos(monkeypatch)
-    monkeypatch.setattr(ps, "complete_synthesis", _fake_synthesis())
+    monkeypatch.setattr(ps, "complete_plo_synthesis", _fake_synthesis())
     set_soft_judge(monkeypatch)
     seen = _capture_siblings(monkeypatch)
 
@@ -125,7 +125,7 @@ async def test_a_failed_draft_leaves_its_number_unused_and_contributes_no_siblin
     """A gap says "this Need failed". The validator sees the drafts that exist,
     not a hole where one should have been."""
     _patch_repos(monkeypatch)
-    monkeypatch.setattr(ps, "complete_synthesis", _fake_synthesis(fails_for={"N2"}))
+    monkeypatch.setattr(ps, "complete_plo_synthesis", _fake_synthesis(fails_for={"N2"}))
     set_soft_judge(monkeypatch)
     seen = _capture_siblings(monkeypatch)
 
@@ -141,7 +141,7 @@ async def test_one_slot_failing_to_build_does_not_lose_the_others(
     """PLOs are built concurrently now, so an exception escaping one frame would
     take out every other outcome in the same gather."""
     _patch_repos(monkeypatch)
-    monkeypatch.setattr(ps, "complete_synthesis", _fake_synthesis())
+    monkeypatch.setattr(ps, "complete_plo_synthesis", _fake_synthesis())
     set_soft_judge(monkeypatch)
 
     real = ps.validate_and_build
@@ -184,7 +184,7 @@ async def test_numbering_comes_from_demand_not_from_which_draft_finishes_first(
         order.append(need_id)
         return ps._SingleDraftResponse(plo=_draft_for(need_id))
 
-    monkeypatch.setattr(ps, "complete_synthesis", out_of_order_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", out_of_order_synthesis)
 
     state = await ps.run(_state([_need("N1", 0.9), _need("N2", 0.6), _need("N3", 0.3)]))
 
@@ -201,7 +201,7 @@ async def test_the_two_phases_are_bounded_by_different_ceilings(
     run at once — sharing one knob would let a raise for extraction multiply the
     validation bill."""
     _patch_repos(monkeypatch)
-    monkeypatch.setattr(ps, "complete_synthesis", _fake_synthesis())
+    monkeypatch.setattr(ps, "complete_plo_synthesis", _fake_synthesis())
     set_soft_judge(monkeypatch)
 
     limits: list[int] = []
@@ -226,7 +226,7 @@ async def test_the_merge_entry_point_still_drafts_and_validates_in_one_call(
 ) -> None:
     """The designer-driven N:1 endpoint creates a single outcome and has no set
     to draft first, so the facade has to keep working with its old signature."""
-    monkeypatch.setattr(ps, "complete_synthesis", _fake_synthesis())
+    monkeypatch.setattr(ps, "complete_plo_synthesis", _fake_synthesis())
     set_soft_judge(monkeypatch)
 
     plo = await ps.synthesize_from_needs(META, [_need("N1", 0.9)], "cs-test", {"N1"}, "PLO7")
@@ -248,7 +248,7 @@ async def test_a_draft_carries_the_authoritative_ids_before_it_leaves(
         draft.source_need_ids = ["WRONG-ID"]
         return ps._SingleDraftResponse(plo=draft)
 
-    monkeypatch.setattr(ps, "complete_synthesis", echoes_a_wrong_id)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", echoes_a_wrong_id)
 
     drafted = await ps.draft_from_needs(META, [_need("N1", 0.9)], "PLO1")
 
@@ -260,7 +260,7 @@ async def test_a_draft_failure_returns_none_rather_than_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        ps, "complete_synthesis", AsyncMock(side_effect=RuntimeError("endpoint down"))
+        ps, "complete_plo_synthesis", AsyncMock(side_effect=RuntimeError("endpoint down"))
     )
 
     assert await ps.draft_from_needs(META, [_need("N1", 0.9)], "PLO1") is None
@@ -283,7 +283,7 @@ async def test_validation_never_returns_none_for_a_failed_verdict(
     """An escalated PLO is kept for human repair, never dropped. None means the
     outcome could not be constructed at all."""
     monkeypatch.setattr(
-        ps, "complete_synthesis", AsyncMock(side_effect=RuntimeError("no repair available"))
+        ps, "complete_plo_synthesis", AsyncMock(side_effect=RuntimeError("no repair available"))
     )
     set_soft_judge(monkeypatch)
 
@@ -383,7 +383,7 @@ async def test_an_unbuildable_outcome_is_a_gap_not_an_exception(
 ) -> None:
     """check_evidence is not gated on escalation, so a Need with an empty
     evidence trail refuses at PLO construction — after the gate has passed it."""
-    monkeypatch.setattr(ps, "complete_synthesis", _fake_synthesis())
+    monkeypatch.setattr(ps, "complete_plo_synthesis", _fake_synthesis())
     set_soft_judge(monkeypatch)
     trail_less = _need("N1", 0.9).model_copy(update={"source_evidence_ids": []})
 

@@ -61,7 +61,7 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch) -> None:
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", _fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
 
 
 def _patch_repo(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -108,7 +108,7 @@ async def test_ethics_and_character_skills_form_one_ec_need(monkeypatch: pytest.
         return [list(range(len(names)))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
-    monkeypatch.setattr(nc, "complete_light", _fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
     _patch_repo(monkeypatch)
 
     state = await nc.run(
@@ -133,7 +133,7 @@ async def test_an_all_ethics_group_keeps_the_standalone_e_tag(monkeypatch: pytes
         return [list(range(len(names)))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
-    monkeypatch.setattr(nc, "complete_light", _fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
     _patch_repo(monkeypatch)
 
     state = await nc.run(
@@ -160,7 +160,7 @@ async def test_needs_carry_their_source_stakeholder_types(monkeypatch: pytest.Mo
         return [list(range(len(names)))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
-    monkeypatch.setattr(nc, "complete_light", _fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
     _patch_repo(monkeypatch)
 
     state = await nc.run(
@@ -211,7 +211,7 @@ async def test_freq_counts_mentions_not_unique_names(monkeypatch: pytest.MonkeyP
         )
 
     monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
-    monkeypatch.setattr(nc, "complete_light", fake_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
     _patch_repo(monkeypatch)
 
     state = await nc.run(
@@ -342,7 +342,7 @@ async def test_evidence_text_in_the_state_never_reaches_the_prompt(
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", capture)
+    monkeypatch.setattr(nc, "complete_need_combination", capture)
     _patch_repo(monkeypatch)
 
     await nc.run(
@@ -415,7 +415,7 @@ async def test_a_group_whose_sentence_cannot_be_written_is_marked_for_review(
         return [list(range(len(names)))]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", always_fails)
+    monkeypatch.setattr(nc, "complete_need_combination", always_fails)
     _patch_repo(monkeypatch)
 
     state = await nc.run(

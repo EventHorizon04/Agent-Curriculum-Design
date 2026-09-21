@@ -50,7 +50,7 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch, needs: list[Need]) -> AsyncMock:
         calls.append(nid)
         return ps._SingleDraftResponse(plo=drafts[nid])
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
     mock = AsyncMock()
     mock.calls = calls  # type: ignore[attr-defined]
@@ -118,7 +118,7 @@ async def test_merging_needs_keeps_every_source_id_and_evidence(
         draft = _draft("N1").model_copy(update={"source_need_ids": ["N1", "N2"]})
         return ps._SingleDraftResponse(plo=draft)
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
 
     plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"}, "PLO1")
@@ -148,7 +148,7 @@ async def test_fabricated_model_evidence_ids_are_discarded(
         )
         return ps._SingleDraftResponse(plo=draft)
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
 
     plo = await ps.synthesize_from_needs(program_metadata, needs, "cs-test", {"N1", "N2"}, "PLO1")
@@ -166,7 +166,7 @@ async def test_merged_plo_is_optional_only_when_all_sources_are(
             plo=_draft("N1").model_copy(update={"source_need_ids": ["N1", "N2"]})
         )
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
 
     mixed = await ps.synthesize_from_needs(
@@ -194,7 +194,7 @@ async def test_synthesize_returns_none_when_the_model_fails(
     async def boom(model, messages, **kw):  # noqa: ANN001, ANN003
         raise RuntimeError("model unavailable")
 
-    monkeypatch.setattr(ps, "complete_synthesis", boom)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", boom)
     result = await ps.synthesize_from_needs(
         program_metadata, [_need("N1")], "cs-test", {"N1"}, "PLO1"
     )
@@ -225,7 +225,7 @@ async def test_run_skips_failed_need_and_emits_rest(
             raise RuntimeError("model timeout for N2")
         return ps._SingleDraftResponse(plo=drafts[nid])
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
 
     state = await ps.run(

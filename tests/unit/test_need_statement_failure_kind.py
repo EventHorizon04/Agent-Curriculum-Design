@@ -54,7 +54,7 @@ async def _run_with(monkeypatch: pytest.MonkeyPatch, error: Exception) -> list[d
         return [[i for i in range(len(names))]]
 
     monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_light", failing_summarize)
+    monkeypatch.setattr(nc, "complete_need_combination", failing_summarize)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 

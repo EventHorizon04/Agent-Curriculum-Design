@@ -57,7 +57,7 @@ def _patch_llm(needs: list[Need]):
         return ps._SingleDraftResponse(plo=drafts[nid])
 
     return (
-        patch.object(ps, "complete_synthesis", fake_synthesis),
+        patch.object(ps, "complete_plo_synthesis", fake_synthesis),
         patch_soft_judge(),
         patch.object(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0)),
         patch.object(ps.PLORepository, "bulk_insert", AsyncMock()),

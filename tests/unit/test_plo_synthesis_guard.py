@@ -124,7 +124,7 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch, needs: list[Need]) -> None:
         nid = next(n.need_id for n in needs if f"need_id: {n.need_id}\n" in body)
         return ps._SingleDraftResponse(plo=drafts[nid])
 
-    monkeypatch.setattr(ps, "complete_synthesis", fake_synthesis)
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
     set_soft_judge(monkeypatch)
     monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())
