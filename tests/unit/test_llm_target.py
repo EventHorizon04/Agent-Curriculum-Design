@@ -54,7 +54,7 @@ def test_opentyphoon_without_a_key_names_the_variable_to_set(
 def test_heavy_resolves_to_a_different_endpoint_than_the_rest(typhoon: Settings) -> None:
     """Heavy is clustering alone, and clustering talks to OpenRouter while the
     slots that write Thai prose stay on the Thai model."""
-    heavy = llm._heavy_provider()
+    heavy = llm._resolve("heavy")[0]
 
     assert heavy == "openrouter"
     assert llm._base_url(heavy) == typhoon.openrouter_base_url
@@ -75,19 +75,19 @@ def test_heavy_follows_the_default_provider_when_unset(
     )
     monkeypatch.setattr(llm, "settings", settings)
 
-    assert llm._heavy_provider() == "ollama"
+    assert llm._resolve("heavy")[0] == "ollama"
 
 
 def test_a_switched_off_validation_slot_resolves_to_no_provider(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`_validation_provider` used to read `settings.validation_provider or
+    """The per-slot resolver used to read `settings.validation_provider or
     settings.llm_provider`, which turned the kill switch straight back into a
     live provider — the switch was documented, and unthrowable."""
     settings = _settings(llm_provider="opentyphoon", validation_provider="")
     monkeypatch.setattr(llm, "settings", settings)
 
-    assert llm._validation_provider() == ""
+    assert llm._resolve("validation")[0] == ""
 
 
 def test_the_startup_line_says_a_disabled_slot_is_disabled(
@@ -108,12 +108,12 @@ def test_synthesis_stays_on_the_thai_endpoint_while_heavy_leaves(typhoon: Settin
     """The reason synthesis is its own slot. Both calls used to be `heavy`, so
     this arrangement — clustering on OpenRouter, the PLO statement on the Thai
     model — was not expressible at all."""
-    synthesis = llm._synthesis_provider()
+    synthesis = llm._resolve("synthesis")[0]
 
     assert synthesis == "opentyphoon"
     assert llm._base_url(synthesis) == typhoon.opentyphoon_base_url
     assert llm._api_key(synthesis) == _TYPHOON_KEY
-    assert llm._heavy_provider() == "openrouter"
+    assert llm._resolve("heavy")[0] == "openrouter"
 
 
 def test_synthesis_follows_the_default_provider_when_unset(
@@ -122,14 +122,14 @@ def test_synthesis_follows_the_default_provider_when_unset(
     settings = _settings(llm_provider="ollama", synthesis_provider=None, validation_provider=None)
     monkeypatch.setattr(llm, "settings", settings)
 
-    assert llm._synthesis_provider() == "ollama"
+    assert llm._resolve("synthesis")[0] == "ollama"
 
 
 def test_extraction_runs_on_its_own_hosted_endpoint(typhoon: Settings) -> None:
     """Extraction fans out a call per window of every evidence item, so it is
     what exhausts a quota first — and it exhausted Typhoon's. It resolves to its
     own provider with that provider's key, not light's."""
-    extraction = llm._extraction_provider()
+    extraction = llm._resolve("extraction")[0]
 
     assert extraction == "openrouter"
     assert llm._base_url(extraction) == typhoon.openrouter_base_url
@@ -150,15 +150,15 @@ def test_extraction_follows_the_default_provider_when_unset(
     )
     monkeypatch.setattr(llm, "settings", settings)
 
-    assert llm._extraction_provider() == "ollama"
-    assert llm._base_url(llm._extraction_provider()).endswith("/v1")
+    assert llm._resolve("extraction")[0] == "ollama"
+    assert llm._base_url(llm._resolve("extraction")[0]).endswith("/v1")
 
 
 def test_validation_runs_on_its_own_hosted_endpoint(typhoon: Settings) -> None:
     """The agent loop reasons over a Thai sentence plus tool results rather than
     writing Thai, so it moves off the Thai-first endpoint — but it is its own
     slot, not heavy's, because heavy is clustering and nothing else."""
-    validation = llm._validation_provider()
+    validation = llm._resolve("validation")[0]
 
     assert validation == "openrouter"
     assert llm._base_url(validation) == typhoon.openrouter_base_url
@@ -178,8 +178,8 @@ def test_validation_follows_the_default_provider_when_unset(
     )
     monkeypatch.setattr(llm, "settings", settings)
 
-    assert llm._validation_provider() == "ollama"
-    assert llm._base_url(llm._validation_provider()).endswith("/v1")
+    assert llm._resolve("validation")[0] == "ollama"
+    assert llm._base_url(llm._resolve("validation")[0]).endswith("/v1")
 
 
 def test_describe_target_names_every_slot_and_no_key(typhoon: Settings) -> None:

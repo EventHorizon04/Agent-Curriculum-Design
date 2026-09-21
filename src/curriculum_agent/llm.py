@@ -9,7 +9,7 @@ from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
-from curriculum_agent.config import settings
+from curriculum_agent.config import SLOTS, SlotSpec, settings
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -57,48 +57,55 @@ def _extra_body(provider: str) -> dict[str, Any]:
     return {"keep_alive": -1}
 
 
-def _heavy_provider() -> str:
-    """Provider for the heavy slot. Settings resolves None to llm_provider."""
-    return settings.heavy_provider or settings.llm_provider
+def _slot_provider(slot: SlotSpec) -> str:
+    """The endpoint one slot resolves to, or "" when the slot is switched off.
 
+    One function for every slot, read off `SLOTS`. There were four of these,
+    differing only in which field they named — and in one load-bearing detail
+    that a reader had to notice was missing from the fourth.
 
-def _synthesis_provider() -> str:
-    """Provider for plo_synthesis. Settings resolves None to llm_provider."""
-    return settings.synthesis_provider or settings.llm_provider
-
-
-def _extraction_provider() -> str:
-    """Provider for skill_extraction. Settings resolves None to llm_provider."""
-    return settings.extraction_provider or settings.llm_provider
-
-
-def _validation_provider() -> str:
-    """Provider for the SMART validation agent, or "" when it is switched off.
-
-    Settings has already turned None into llm_provider by the time anything
-    reads this, so there is nothing to fall back to here — and falling back was
-    the bug: `settings.validation_provider or settings.llm_provider` turned the
-    empty string, which is the documented kill switch, back into a live
-    provider. The switch could not be thrown.
+    That detail: Settings has already turned None into llm_provider before
+    anything reads a provider field, so there is nothing to fall back to here.
+    A `or settings.llm_provider` would not be a harmless belt-and-braces — for
+    the disableable slot it turns "" , the documented kill switch, back into a
+    live provider, and the switch cannot be thrown at all. That is the bug the
+    per-slot version of this function carried, and the reason it is written as
+    a plain read rather than an `or`.
     """
-    return settings.validation_provider or ""
+    provider = (
+        settings.llm_provider
+        if slot.provider_field is None
+        else getattr(settings, slot.provider_field)
+    )
+    # A disableable slot may legitimately hold "". Everything else has been
+    # resolved to a real provider by Settings, so this normalises only None.
+    return provider or ""
+
+
+def _slot(name: str) -> SlotSpec:
+    """The one slot with this name. Raises if the caller invents a slot."""
+    for slot in SLOTS:
+        if slot.name == name:
+            return slot
+    raise KeyError(f"no LLM slot named '{name}' — SLOTS declares {[s.name for s in SLOTS]}")
+
+
+def _resolve(name: str) -> tuple[str, str]:
+    """(provider, model) for one slot by name, resolved now."""
+    slot = _slot(name)
+    return _slot_provider(slot), getattr(settings, slot.model_field)
 
 
 def _slots() -> tuple[tuple[str, str, str], ...]:
     """Every slot as (label, provider, model), resolved now.
 
-    One list, three readers — describe_target, warmup_models, and the config
-    tests. Both of the first two used to enumerate the slots by hand, and five
-    is where such a list stops being obviously complete: a sixth slot added to
-    only one of them would be a model nobody warms or a model nobody can see in
-    the startup log.
+    Derived from `SLOTS` rather than written out: describe_target, warmup_models
+    and the config tests all read this, and the two former ones used to
+    enumerate the slots by hand — a slot present in only one of them is a model
+    nobody warms or a model nobody can see in the startup log.
     """
-    return (
-        ("light", settings.llm_provider, settings.light_model),
-        ("heavy", _heavy_provider(), settings.heavy_model),
-        ("synthesis", _synthesis_provider(), settings.synthesis_model),
-        ("extraction", _extraction_provider(), settings.extraction_model),
-        ("validation", _validation_provider(), settings.validation_model),
+    return tuple(
+        (slot.name, _slot_provider(slot), getattr(settings, slot.model_field)) for slot in SLOTS
     )
 
 
@@ -205,9 +212,7 @@ async def complete_light(
     **kwargs: Any,
 ) -> T:
     """Light model used for classification and Need sentences."""
-    return await _complete(
-        settings.llm_provider, settings.light_model, response_model, messages, **kwargs
-    )
+    return await _complete(*_resolve("light"), response_model, messages, **kwargs)
 
 
 async def complete_heavy(
@@ -216,9 +221,7 @@ async def complete_heavy(
     **kwargs: Any,
 ) -> T:
     """Heavy model, used by LLM clustering — see Settings.heavy_provider."""
-    return await _complete(
-        _heavy_provider(), settings.heavy_model, response_model, messages, **kwargs
-    )
+    return await _complete(*_resolve("heavy"), response_model, messages, **kwargs)
 
 
 async def complete_synthesis(
@@ -234,9 +237,7 @@ async def complete_synthesis(
     SMART repair call go through here, so a repair is never answered by a
     different model than wrote the draft it is repairing.
     """
-    return await _complete(
-        _synthesis_provider(), settings.synthesis_model, response_model, messages, **kwargs
-    )
+    return await _complete(*_resolve("synthesis"), response_model, messages, **kwargs)
 
 
 async def complete_extraction(
@@ -252,9 +253,7 @@ async def complete_extraction(
     on this model name. A stage picking the endpoint per call would put that
     decision somewhere the cache cannot see it.
     """
-    return await _complete(
-        _extraction_provider(), settings.extraction_model, response_model, messages, **kwargs
-    )
+    return await _complete(*_resolve("extraction"), response_model, messages, **kwargs)
 
 
 async def complete_validation(
@@ -278,7 +277,7 @@ async def complete_validation(
     through complete_synthesis, so a repair is still never answered by a
     different model than wrote the draft.
     """
-    provider = _validation_provider()
+    provider, model = _resolve("validation")
     if not provider:
         # The loop checks this before it starts and returns a code-only verdict,
         # so reaching here means a caller skipped that guard. Fail with the
@@ -286,7 +285,7 @@ async def complete_validation(
         raise RuntimeError(
             "the SMART validation agent is switched off (VALIDATION_PROVIDER is empty)"
         )
-    return await _complete(provider, settings.validation_model, response_model, messages, **kwargs)
+    return await _complete(provider, model, response_model, messages, **kwargs)
 
 
 async def warmup_models() -> None:

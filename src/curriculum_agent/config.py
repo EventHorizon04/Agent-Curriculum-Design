@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import urllib.parse
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -15,6 +16,47 @@ _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "openrouter": "meta-llama/llama-3.3-70b-instruct",
     "opentyphoon": "typhoon-v2.5-30b-a3b-instruct",
 }
+
+
+@dataclass(frozen=True)
+class SlotSpec:
+    """One LLM slot, declared once.
+
+    A slot used to be declared in six places: two Settings fields, an entry in
+    the defaults validator, a resolver function in llm.py, a row in `_slots()`,
+    and a `complete_*` wrapper. Five slots is where such a spread stops being
+    obviously consistent — `_slots()` says so in its own docstring — and adding
+    a sixth meant finding all six.
+
+    What each slot needs, and nothing else: the label an operator reads in the
+    startup log, where its provider and model are configured, and whether it can
+    be switched off. Everything else — defaults, the resolved provider, the
+    startup line, the warm-up list — is derived from this list.
+
+    Fields are named rather than passed as accessors so one entry stays one
+    line. mypy cannot check a getattr, so `test_llm_slots.py` walks this list
+    against `Settings.model_fields` instead: a typo fails pytest rather than
+    surfacing as a missing model at boot.
+    """
+
+    name: str
+    # None means the slot has no provider field of its own and follows
+    # llm_provider. Only `light` is like that, which is exactly the asymmetry
+    # this registry makes visible instead of leaving it in four docstrings.
+    provider_field: str | None
+    model_field: str
+    # Only validation: "" is its kill switch, and "" must never resolve to
+    # llm_provider. Every other slot's provider only selects an endpoint.
+    disableable: bool = False
+
+
+SLOTS: tuple[SlotSpec, ...] = (
+    SlotSpec("light", None, "light_model"),
+    SlotSpec("heavy", "heavy_provider", "heavy_model"),
+    SlotSpec("synthesis", "synthesis_provider", "synthesis_model"),
+    SlotSpec("extraction", "extraction_provider", "extraction_model"),
+    SlotSpec("validation", "validation_provider", "validation_model", disableable=True),
+)
 
 
 class Settings(BaseSettings):
@@ -172,33 +214,37 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _apply_provider_model_defaults(self) -> Settings:
-        # Resolved before the model defaults, and here rather than at each call
-        # site, so nothing downstream has to remember that None means "follow
-        # llm_provider" — and so a model default never reads an unresolved None.
-        if self.heavy_provider is None:
-            self.heavy_provider = self.llm_provider
-        if self.synthesis_provider is None:
-            self.synthesis_provider = self.llm_provider
-        if self.extraction_provider is None:
-            self.extraction_provider = self.llm_provider
-        # "" is left alone: it is the kill switch, and resolving it to
-        # llm_provider is precisely the bug that made the switch a no-op.
-        if self.validation_provider is None:
-            self.validation_provider = self.llm_provider
-        # Each model falls back to its own provider's default, not to
-        # llm_provider's: pointing heavy at OpenRouter and leaving HEAVY_MODEL
-        # unset would otherwise send a Typhoon model name to OpenRouter, which
-        # fails as an unknown-model error nowhere near its cause.
-        if not self.light_model:
-            self.light_model = _PROVIDER_DEFAULT_MODEL[self.llm_provider]
-        if not self.heavy_model:
-            self.heavy_model = _PROVIDER_DEFAULT_MODEL[self.heavy_provider]
-        if not self.synthesis_model:
-            self.synthesis_model = _PROVIDER_DEFAULT_MODEL[self.synthesis_provider]
-        if not self.extraction_model:
-            self.extraction_model = _PROVIDER_DEFAULT_MODEL[self.extraction_provider]
-        if not self.validation_model and self.validation_provider:
-            self.validation_model = _PROVIDER_DEFAULT_MODEL[self.validation_provider]
+        """Resolve every slot's provider, then its model, from `SLOTS`.
+
+        Providers first, and here rather than at each call site, so nothing
+        downstream has to remember that None means "follow llm_provider" — and
+        so a model default never reads an unresolved None.
+
+        Each model falls back to *its own* provider's default, never to
+        llm_provider's: pointing a slot at OpenRouter and leaving its model
+        unset would otherwise send a Typhoon model name to OpenRouter, which
+        fails as an unknown-model error nowhere near its cause.
+
+        One loop over one list, because this used to be ten `if` statements and
+        the tenth was the one that could be forgotten.
+        """
+        for slot in SLOTS:
+            if slot.provider_field is None:
+                # No provider field of its own: it follows llm_provider, and
+                # there is nothing to resolve.
+                provider = self.llm_provider
+            else:
+                provider = getattr(self, slot.provider_field)
+                if provider is None:
+                    provider = self.llm_provider
+                    setattr(self, slot.provider_field, provider)
+                # "" is left exactly as it is. It is the kill switch, and
+                # resolving it to llm_provider is precisely the bug that made
+                # the switch a no-op — `or self.llm_provider` here would undo
+                # it again, which is why this is an `is None` test.
+
+            if provider and not getattr(self, slot.model_field):
+                setattr(self, slot.model_field, _PROVIDER_DEFAULT_MODEL[provider])
         return self
 
     @computed_field  # type: ignore[prop-decorator]
