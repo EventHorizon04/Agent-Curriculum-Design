@@ -212,7 +212,7 @@ async def complete_light(
     **kwargs: Any,
 ) -> T:
     """Light model used for classification and Need sentences."""
-    return await _complete(*_resolve("light"), response_model, messages, **kwargs)
+    return await _complete(*_resolve("need_combination"), response_model, messages, **kwargs)
 
 
 async def complete_heavy(
@@ -220,8 +220,8 @@ async def complete_heavy(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """Heavy model, used by LLM clustering — see Settings.heavy_provider."""
-    return await _complete(*_resolve("heavy"), response_model, messages, **kwargs)
+    """Heavy model, used by LLM clustering — see Settings.clustering_provider."""
+    return await _complete(*_resolve("clustering"), response_model, messages, **kwargs)
 
 
 async def complete_synthesis(
@@ -229,7 +229,7 @@ async def complete_synthesis(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """plo_synthesis's own endpoint — see Settings.synthesis_provider.
+    """plo_synthesis's own endpoint — see Settings.plo_synthesis_provider.
 
     Split out of complete_heavy rather than left sharing it: clustering and
     synthesis want opposite things from a model, and one wrapper meant neither
@@ -237,7 +237,7 @@ async def complete_synthesis(
     SMART repair call go through here, so a repair is never answered by a
     different model than wrote the draft it is repairing.
     """
-    return await _complete(*_resolve("synthesis"), response_model, messages, **kwargs)
+    return await _complete(*_resolve("plo_synthesis"), response_model, messages, **kwargs)
 
 
 async def complete_extraction(

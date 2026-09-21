@@ -92,17 +92,17 @@ def test_postgres_dsn_langgraph_keeps_the_psycopg_form():
 
 
 def test_model_defaults_follow_the_ollama_provider():
-    # heavy_provider=None collapses the three endpoints onto llm_provider, which
+    # clustering_provider=None collapses the three endpoints onto llm_provider, which
     # is the arrangement someone running fully local wants.
     s = Settings(
         _env_file=None,
         llm_provider="ollama",
-        heavy_provider=None,
-        synthesis_provider=None,
+        clustering_provider=None,
+        plo_synthesis_provider=None,
         validation_provider=None,
     )
-    assert s.light_model == "gemma4:31b-cloud"
-    assert s.heavy_model == "gemma4:31b-cloud"
+    assert s.need_combination_model == "gemma4:31b-cloud"
+    assert s.clustering_model == "gemma4:31b-cloud"
 
 
 def test_model_defaults_follow_the_openrouter_provider():
@@ -111,12 +111,12 @@ def test_model_defaults_follow_the_openrouter_provider():
     s = Settings(
         _env_file=None,
         llm_provider="openrouter",
-        heavy_provider=None,
-        synthesis_provider=None,
+        clustering_provider=None,
+        plo_synthesis_provider=None,
         validation_provider=None,
     )
-    assert s.light_model == "meta-llama/llama-3.3-70b-instruct"
-    assert s.heavy_model == "meta-llama/llama-3.3-70b-instruct"
+    assert s.need_combination_model == "meta-llama/llama-3.3-70b-instruct"
+    assert s.clustering_model == "meta-llama/llama-3.3-70b-instruct"
 
 
 def test_the_default_provider_is_thai_first():
@@ -130,7 +130,7 @@ def test_the_default_provider_is_thai_first():
     """
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
-    assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
+    assert s.need_combination_model == "typhoon-v2.5-30b-a3b-instruct"
 
 
 def test_validation_runs_on_its_own_endpoint():
@@ -151,7 +151,7 @@ def test_the_validation_model_follows_its_own_provider_not_the_default():
     Typhoon model name to Ollama."""
     s = Settings(_env_file=None, llm_provider="opentyphoon", validation_provider="ollama")
     assert s.validation_model == "gemma4:31b-cloud"
-    assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
+    assert s.need_combination_model == "typhoon-v2.5-30b-a3b-instruct"
 
 
 def test_the_validation_budgets_are_bounded_by_default():
@@ -188,14 +188,14 @@ def test_explicit_models_survive_the_provider_default():
     s = Settings(
         _env_file=None,
         llm_provider="ollama",
-        heavy_provider=None,
-        synthesis_provider=None,
+        clustering_provider=None,
+        plo_synthesis_provider=None,
         validation_provider=None,
-        light_model="typhoon2:8b",
-        heavy_model="qwen2.5:14b",
+        need_combination_model="typhoon2:8b",
+        clustering_model="qwen2.5:14b",
     )
-    assert s.light_model == "typhoon2:8b"
-    assert s.heavy_model == "qwen2.5:14b"
+    assert s.need_combination_model == "typhoon2:8b"
+    assert s.clustering_model == "qwen2.5:14b"
 
 
 def test_frontend_serving_is_off_by_default():
@@ -220,14 +220,14 @@ def test_cors_origins_can_be_emptied_for_same_origin_serving():
     assert s.cors_origins == []
 
 
-def test_heavy_gets_its_own_provider_and_model():
+def test_clustering_gets_its_own_provider_and_model():
     """Heavy is LLM clustering alone. It reasons over a whole KSEC bucket in one
     context and returns a grouping, not prose, so it runs on the larger model."""
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
-    assert s.heavy_provider == "openrouter"
-    assert s.heavy_model == "meta-llama/llama-3.3-70b-instruct"
-    assert s.light_model == "typhoon-v2.5-30b-a3b-instruct"
+    assert s.clustering_provider == "openrouter"
+    assert s.clustering_model == "meta-llama/llama-3.3-70b-instruct"
+    assert s.need_combination_model == "typhoon-v2.5-30b-a3b-instruct"
 
 
 def test_plo_synthesis_gets_its_own_provider_and_model():
@@ -236,37 +236,37 @@ def test_plo_synthesis_gets_its_own_provider_and_model():
     clustering wants the larger model, while the PLO statement is Thai that goes
     to MHESI over a curriculum designer's name."""
     s = Settings(_env_file=None)
-    assert s.synthesis_provider == "opentyphoon"
-    assert s.synthesis_model == "typhoon-v2.5-30b-a3b-instruct"
-    assert s.heavy_provider == "openrouter"
+    assert s.plo_synthesis_provider == "opentyphoon"
+    assert s.plo_synthesis_model == "typhoon-v2.5-30b-a3b-instruct"
+    assert s.clustering_provider == "openrouter"
 
 
-def test_heavy_provider_unset_follows_the_default_provider():
+def test_clustering_provider_unset_follows_the_default_provider():
     """Same contract as extraction_provider: None means "one endpoint for
     everything", and the model default follows the provider that wins."""
-    s = Settings(_env_file=None, llm_provider="ollama", heavy_provider=None)
-    assert s.heavy_provider == "ollama"
-    assert s.heavy_model == "gemma4:31b-cloud"
+    s = Settings(_env_file=None, llm_provider="ollama", clustering_provider=None)
+    assert s.clustering_provider == "ollama"
+    assert s.clustering_model == "gemma4:31b-cloud"
 
 
-def test_an_explicit_heavy_model_survives_the_provider_default():
-    s = Settings(_env_file=None, heavy_model="qwen/qwen3-235b-a22b")
-    assert s.heavy_provider == "openrouter"
-    assert s.heavy_model == "qwen/qwen3-235b-a22b"
+def test_an_explicit_clustering_model_survives_the_provider_default():
+    s = Settings(_env_file=None, clustering_model="qwen/qwen3-235b-a22b")
+    assert s.clustering_provider == "openrouter"
+    assert s.clustering_model == "qwen/qwen3-235b-a22b"
 
 
-def test_synthesis_provider_unset_follows_the_default_provider():
+def test_plo_synthesis_provider_unset_follows_the_default_provider():
     s = Settings(
-        _env_file=None, llm_provider="ollama", synthesis_provider=None, validation_provider=None
+        _env_file=None, llm_provider="ollama", plo_synthesis_provider=None, validation_provider=None
     )
-    assert s.synthesis_provider == "ollama"
-    assert s.synthesis_model == "gemma4:31b-cloud"
+    assert s.plo_synthesis_provider == "ollama"
+    assert s.plo_synthesis_model == "gemma4:31b-cloud"
 
 
-def test_an_explicit_synthesis_model_survives_the_provider_default():
-    s = Settings(_env_file=None, synthesis_model="typhoon-v2.5-70b")
-    assert s.synthesis_provider == "opentyphoon"
-    assert s.synthesis_model == "typhoon-v2.5-70b"
+def test_an_explicit_plo_synthesis_model_survives_the_provider_default():
+    s = Settings(_env_file=None, plo_synthesis_model="typhoon-v2.5-70b")
+    assert s.plo_synthesis_provider == "opentyphoon"
+    assert s.plo_synthesis_model == "typhoon-v2.5-70b"
 
 
 def test_skill_extraction_runs_off_the_thai_first_endpoint():

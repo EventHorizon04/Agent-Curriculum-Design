@@ -232,7 +232,7 @@ async def cluster_skill_names(
         "\x00".join(
             [
                 *names,
-                settings.heavy_model,
+                settings.clustering_model,
                 _CLUSTERING_CONTRACT,
                 str(target_clusters),
                 str(program_context),
@@ -240,7 +240,7 @@ async def cluster_skill_names(
         ).encode()
     ).hexdigest()
     cached = await cache.get(cache_key)
-    if cached is not None and cached[0] == settings.heavy_model:
+    if cached is not None and cached[0] == settings.clustering_model:
         try:
             groups = [[int(i) for i in g] for g in json.loads(cached[1])]
         except (TypeError, ValueError) as exc:
@@ -262,7 +262,7 @@ async def cluster_skill_names(
 
     await cache.set(
         cache_key,
-        settings.heavy_model,
+        settings.clustering_model,
         json.dumps(groups),
         kind=CACHE_KIND_CLUSTERING,
         contract=_CLUSTERING_CONTRACT,

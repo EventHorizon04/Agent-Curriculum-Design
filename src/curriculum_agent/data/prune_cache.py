@@ -79,7 +79,7 @@ def live_targets() -> dict[str, tuple[str, str]]:
 
     return {
         EXTRACTION: (settings.extraction_model, _EXTRACTION_CONTRACT),
-        CLUSTERING: (settings.heavy_model, _CLUSTERING_CONTRACT),
+        CLUSTERING: (settings.clustering_model, _CLUSTERING_CONTRACT),
     }
 
 

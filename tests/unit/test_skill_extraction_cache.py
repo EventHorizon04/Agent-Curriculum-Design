@@ -92,8 +92,8 @@ async def test_what_extraction_stores_is_what_a_later_run_reads_back():
     """The model name in the key, in the hit comparison, and in what `set`
     stores must be one and the same.
 
-    It was three places and two names: keyed on light_model, stored as
-    heavy_model. That only worked while both resolved to the same string —
+    It was three places and two names: keyed on need_combination_model, stored as
+    clustering_model. That only worked while both resolved to the same string —
     once skill extraction moved to its own provider they diverged, every write
     became a permanent miss, and the whole corpus was re-extracted on every
     run at full provider cost. Replaying the stored tuple is the only way to

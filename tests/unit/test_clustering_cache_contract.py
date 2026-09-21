@@ -106,7 +106,7 @@ async def test_cached_partial_cover_is_discarded_and_recomputed(
     )
     setter = AsyncMock()
     monkeypatch.setattr(lc.LLMCacheRepository, "set", setter)
-    monkeypatch.setattr(lc.settings, "heavy_model", "stub-heavy")
+    monkeypatch.setattr(lc.settings, "clustering_model", "stub-heavy")
     recompute = AsyncMock(return_value=[("g", [0, 1, 2])])
     monkeypatch.setattr(lc, "_cluster_pass", recompute)
 
@@ -124,7 +124,7 @@ async def test_cached_out_of_range_index_is_discarded(monkeypatch: pytest.Monkey
         AsyncMock(return_value=("stub-heavy", json.dumps([[0, 1], [2, 99]]))),
     )
     monkeypatch.setattr(lc.LLMCacheRepository, "set", AsyncMock())
-    monkeypatch.setattr(lc.settings, "heavy_model", "stub-heavy")
+    monkeypatch.setattr(lc.settings, "clustering_model", "stub-heavy")
     recompute = AsyncMock(return_value=[("g", [0, 1, 2])])
     monkeypatch.setattr(lc, "_cluster_pass", recompute)
 
@@ -144,7 +144,7 @@ async def test_valid_cached_grouping_is_reused_without_recomputing(
         AsyncMock(return_value=("stub-heavy", json.dumps([[0, 2], [1]]))),
     )
     monkeypatch.setattr(lc.LLMCacheRepository, "set", AsyncMock())
-    monkeypatch.setattr(lc.settings, "heavy_model", "stub-heavy")
+    monkeypatch.setattr(lc.settings, "clustering_model", "stub-heavy")
     recompute = AsyncMock(return_value=[("g", [0, 1, 2])])
     monkeypatch.setattr(lc, "_cluster_pass", recompute)
 

@@ -40,21 +40,30 @@ class SlotSpec:
     """
 
     name: str
-    # None means the slot has no provider field of its own and follows
-    # llm_provider. Only `light` is like that, which is exactly the asymmetry
-    # this registry makes visible instead of leaving it in four docstrings.
-    provider_field: str | None
+    # Every slot has one. This was `str | None` for as long as one slot
+    # (`light`, now need_combination) had no provider of its own and rode
+    # LLM_PROVIDER directly — which left LLM_PROVIDER doing two jobs: the
+    # fallback for any unset slot, and that one slot's actual endpoint. Giving
+    # it a field of its own ended both the asymmetry and the double duty.
+    provider_field: str
     model_field: str
     # Only validation: "" is its kill switch, and "" must never resolve to
     # llm_provider. Every other slot's provider only selects an endpoint.
     disableable: bool = False
 
 
+# Pipeline order, not weight order: the startup line then reads as the path a
+# designer walks, and a slot's position is a fact about the run rather than a
+# guess about how big its model should be. "light" and "heavy" were that guess,
+# and both had drifted from what they do. light had one caller left — the Need
+# sentence — once evidence classification stopped calling an LLM at all, while
+# its docstring still said "classification and Need sentences"; heavy was only
+# ever clustering, as its own config comment said outright.
 SLOTS: tuple[SlotSpec, ...] = (
-    SlotSpec("light", None, "light_model"),
-    SlotSpec("heavy", "heavy_provider", "heavy_model"),
-    SlotSpec("synthesis", "synthesis_provider", "synthesis_model"),
     SlotSpec("extraction", "extraction_provider", "extraction_model"),
+    SlotSpec("clustering", "clustering_provider", "clustering_model"),
+    SlotSpec("need_combination", "need_combination_provider", "need_combination_model"),
+    SlotSpec("plo_synthesis", "plo_synthesis_provider", "plo_synthesis_model"),
     SlotSpec("validation", "validation_provider", "validation_model", disableable=True),
 )
 
@@ -96,15 +105,28 @@ class Settings(BaseSettings):
     # the provider that governs each slot. They cannot carry a literal default
     # here: a class-body branch on a provider field would be frozen at import
     # time and ignore .env.
-    light_model: str = ""
-    heavy_model: str = ""
-    # The heavy slot is LLM clustering, and nothing else. It holds a whole KSEC
+    need_combination_model: str = ""
+    # The Need sentence, and only that: `need_combination` calls this slot once
+    # per group to write the Thai statement a PLO is later drafted from. It was
+    # the `light` slot, named for a size rather than a job, and its docstring
+    # still claimed "classification and Need sentences" long after evidence
+    # classification became a pure code lookup that calls no model at all.
+    #
+    # None, not a literal provider: this slot had no provider field until the
+    # rename and read `llm_provider` directly, which means "follow the default
+    # endpoint, always". Pinning it to opentyphoon here would look like the same
+    # thing and quietly stop being it the moment LLM_PROVIDER moved — the
+    # Thai-first default is a property of `llm_provider`, and this slot's job is
+    # to inherit it.
+    need_combination_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = None
+    clustering_model: str = ""
+    # The clustering slot is LLM clustering, and nothing else. It holds a whole KSEC
     # bucket of skills in one context and reasons over it, which is the work a
     # 30B Thai-first model is weakest at, and it returns a grouping rather than
     # prose — so there is nothing Thai to lose by moving it off Typhoon.
     # None means "whatever llm_provider is", for running the whole pipeline on
     # one endpoint; the model resolves from whichever provider ends up selected.
-    heavy_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
+    clustering_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
     # PLO synthesis is its own slot rather than part of heavy. Both calls were
     # `heavy` until they had to go different ways: clustering wants the larger
     # model, while a PLO statement is Thai that a curriculum designer submits to
@@ -113,15 +135,15 @@ class Settings(BaseSettings):
     # It is affordable to leave here: synthesis is at most four calls per PLO
     # (one draft plus up to three SMART repairs) against extraction's one per
     # window of every evidence item, so it is not what exhausts a quota.
-    synthesis_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "opentyphoon"
-    synthesis_model: str = ""
+    plo_synthesis_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "opentyphoon"
+    plo_synthesis_model: str = ""
     # The SMART validation agent is its own slot, and specifically NOT `heavy`:
     # heavy is LLM clustering and nothing else, and a slot sharing that knob
     # could not be moved without moving clustering. It defaults to OpenRouter —
     # the same model family as heavy — because the loop reasons over a Thai
     # sentence plus a set of tool results rather than writing Thai. When it
     # decides a statement must be repaired it emits an instruction and
-    # synthesis_model rewrites the sentence, so a repair is still never
+    # plo_synthesis_model rewrites the sentence, so a repair is still never
     # answered by a different model than wrote the draft.
     #
     # It is the most expensive slot per PLO: one draft plus up to
@@ -229,19 +251,14 @@ class Settings(BaseSettings):
         the tenth was the one that could be forgotten.
         """
         for slot in SLOTS:
-            if slot.provider_field is None:
-                # No provider field of its own: it follows llm_provider, and
-                # there is nothing to resolve.
+            provider = getattr(self, slot.provider_field)
+            if provider is None:
                 provider = self.llm_provider
-            else:
-                provider = getattr(self, slot.provider_field)
-                if provider is None:
-                    provider = self.llm_provider
-                    setattr(self, slot.provider_field, provider)
-                # "" is left exactly as it is. It is the kill switch, and
-                # resolving it to llm_provider is precisely the bug that made
-                # the switch a no-op — `or self.llm_provider` here would undo
-                # it again, which is why this is an `is None` test.
+                setattr(self, slot.provider_field, provider)
+            # "" is left exactly as it is. It is the kill switch, and resolving
+            # it to llm_provider is precisely the bug that made the switch a
+            # no-op — `or self.llm_provider` here would undo it again, which is
+            # why this is an `is None` test.
 
             if provider and not getattr(self, slot.model_field):
                 setattr(self, slot.model_field, _PROVIDER_DEFAULT_MODEL[provider])

@@ -81,7 +81,7 @@ def test_validate_assignments_empty_group_dropped():
 
 def _mock_cache(hit: str | None = None) -> AsyncMock:
     repo = AsyncMock()
-    repo.get = AsyncMock(return_value=(settings.heavy_model, hit) if hit is not None else None)
+    repo.get = AsyncMock(return_value=(settings.clustering_model, hit) if hit is not None else None)
     repo.set = AsyncMock()
     return repo
 

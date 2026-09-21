@@ -230,7 +230,7 @@ async def test_the_five_verdicts_are_derived_from_the_findings(
 # ---------------------- repair handoff ----------------------
 
 
-async def test_a_repair_is_written_by_the_synthesis_model_not_the_validator(
+async def test_a_repair_is_written_by_the_plo_synthesis_model_not_the_validator(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The user's decision, and the sort of thing that regresses silently: the

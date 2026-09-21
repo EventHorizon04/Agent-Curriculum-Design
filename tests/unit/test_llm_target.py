@@ -51,10 +51,10 @@ def test_opentyphoon_without_a_key_names_the_variable_to_set(
         llm._api_key("opentyphoon")
 
 
-def test_heavy_resolves_to_a_different_endpoint_than_the_rest(typhoon: Settings) -> None:
+def test_clustering_resolves_to_a_different_endpoint_than_the_rest(typhoon: Settings) -> None:
     """Heavy is clustering alone, and clustering talks to OpenRouter while the
     slots that write Thai prose stay on the Thai model."""
-    heavy = llm._resolve("heavy")[0]
+    heavy = llm._resolve("clustering")[0]
 
     assert heavy == "openrouter"
     assert llm._base_url(heavy) == typhoon.openrouter_base_url
@@ -62,20 +62,20 @@ def test_heavy_resolves_to_a_different_endpoint_than_the_rest(typhoon: Settings)
     assert llm._base_url(typhoon.llm_provider) == typhoon.opentyphoon_base_url
 
 
-def test_heavy_follows_the_default_provider_when_unset(
+def test_clustering_follows_the_default_provider_when_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """One endpoint for the whole pipeline stays a supported arrangement."""
     settings = _settings(
         llm_provider="ollama",
-        heavy_provider=None,
-        synthesis_provider=None,
+        clustering_provider=None,
+        plo_synthesis_provider=None,
         extraction_provider=None,
         validation_provider=None,
     )
     monkeypatch.setattr(llm, "settings", settings)
 
-    assert llm._resolve("heavy")[0] == "ollama"
+    assert llm._resolve("clustering")[0] == "ollama"
 
 
 def test_a_switched_off_validation_slot_resolves_to_no_provider(
@@ -104,25 +104,29 @@ def test_the_startup_line_says_a_disabled_slot_is_disabled(
     assert "api_key" not in target.split("validation:")[1]
 
 
-def test_synthesis_stays_on_the_thai_endpoint_while_heavy_leaves(typhoon: Settings) -> None:
+def test_plo_synthesis_stays_on_the_thai_endpoint_while_clustering_leaves(
+    typhoon: Settings,
+) -> None:
     """The reason synthesis is its own slot. Both calls used to be `heavy`, so
     this arrangement — clustering on OpenRouter, the PLO statement on the Thai
     model — was not expressible at all."""
-    synthesis = llm._resolve("synthesis")[0]
+    synthesis = llm._resolve("plo_synthesis")[0]
 
     assert synthesis == "opentyphoon"
     assert llm._base_url(synthesis) == typhoon.opentyphoon_base_url
     assert llm._api_key(synthesis) == _TYPHOON_KEY
-    assert llm._resolve("heavy")[0] == "openrouter"
+    assert llm._resolve("clustering")[0] == "openrouter"
 
 
-def test_synthesis_follows_the_default_provider_when_unset(
+def test_plo_synthesis_follows_the_default_provider_when_unset(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    settings = _settings(llm_provider="ollama", synthesis_provider=None, validation_provider=None)
+    settings = _settings(
+        llm_provider="ollama", plo_synthesis_provider=None, validation_provider=None
+    )
     monkeypatch.setattr(llm, "settings", settings)
 
-    assert llm._resolve("synthesis")[0] == "ollama"
+    assert llm._resolve("plo_synthesis")[0] == "ollama"
 
 
 def test_extraction_runs_on_its_own_hosted_endpoint(typhoon: Settings) -> None:
@@ -143,8 +147,8 @@ def test_extraction_follows_the_default_provider_when_unset(
     running fully local should not have to also name a provider for extraction."""
     settings = _settings(
         llm_provider="ollama",
-        heavy_provider=None,
-        synthesis_provider=None,
+        clustering_provider=None,
+        plo_synthesis_provider=None,
         extraction_provider=None,
         validation_provider=None,
     )
@@ -171,8 +175,8 @@ def test_validation_follows_the_default_provider_when_unset(
     """One endpoint end to end stays a supported arrangement."""
     settings = _settings(
         llm_provider="ollama",
-        heavy_provider=None,
-        synthesis_provider=None,
+        clustering_provider=None,
+        plo_synthesis_provider=None,
         extraction_provider=None,
         validation_provider=None,
     )
@@ -190,15 +194,15 @@ def test_describe_target_names_every_slot_and_no_key(typhoon: Settings) -> None:
 
     assert _TYPHOON_KEY not in described
     assert _ROUTER_KEY not in described
-    assert "light: provider=opentyphoon" in described
-    assert "heavy: provider=openrouter" in described
-    assert "synthesis: provider=opentyphoon" in described
     assert "extraction: provider=openrouter" in described
+    assert "clustering: provider=openrouter" in described
+    assert "need_combination: provider=opentyphoon" in described
+    assert "plo_synthesis: provider=opentyphoon" in described
     assert "validation: provider=openrouter" in described
     assert typhoon.openrouter_base_url in described
     assert typhoon.opentyphoon_base_url in described
-    assert typhoon.heavy_model in described
-    assert typhoon.synthesis_model in described
+    assert typhoon.clustering_model in described
+    assert typhoon.plo_synthesis_model in described
     assert typhoon.extraction_model in described
     assert typhoon.validation_model in described
     assert "api_key=set" in described
@@ -208,10 +212,22 @@ def test_every_slot_is_reported_and_warmed_from_one_list(typhoon: Settings) -> N
     """describe_target and warmup_models both used to enumerate the slots by
     hand. Five is where such a list stops looking obviously complete, and a slot
     present in only one of them is a model nobody warms or a model nobody can
-    see in the startup log."""
+    see in the startup log. Both now read `SLOTS`.
+
+    The order is pinned, and it is the order the pipeline calls them in: the
+    startup line reads as the path a designer walks, so a slot's place in it is
+    a fact about the run. It used to be light/heavy/synthesis — a guess about
+    model size, by then wrong on both counts.
+    """
     labels = [label for label, _, _ in llm._slots()]
 
-    assert labels == ["light", "heavy", "synthesis", "extraction", "validation"]
+    assert labels == [
+        "extraction",
+        "clustering",
+        "need_combination",
+        "plo_synthesis",
+        "validation",
+    ]
     assert len(set(labels)) == len(labels)
 
 
