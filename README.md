@@ -16,7 +16,7 @@ AI agent ช่วย curriculum designers ออกแบบหลักสู�
 ### 1. First-time setup
 
 ```powershell
-Copy-Item .env.example .env   # แก้ LLM_PROVIDER/HEAVY_PROVIDER/models ถ้าต้องการ
+Copy-Item .env.example .env   # แก้ LLM_PROVIDER/CLUSTERING_PROVIDER/models ถ้าต้องการ
 uv sync --all-extras
 ```
 

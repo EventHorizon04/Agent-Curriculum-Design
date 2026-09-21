@@ -93,7 +93,7 @@ Three hard checks are pure code (`stages/smart_rules.py`), and they are the **fl
 2. **[M_FORBIDDEN, hard]** No forbidden unmeasurable word present (รู้ / จำ / เข้าใจ / ซาบซึ้ง / ตระหนัก / ศรัทธา / รัก).
 3. **[R_EVIDENCE, hard]** `source_need_ids` evidence trail is non-empty and resolves to a real `Need`/`StakeholderEvidence` record.
 
-The **validation agent** (`stages/smart_agent.py`, on its own `VALIDATION_*` slot) investigates and instructs: it reads the pure-code verdict through a `check_hard` tool, may read the cited Needs, an excerpt of their evidence, the sibling outcomes and the Thai Bloom table, and when a statement needs repair it emits an *instruction* that `complete_synthesis` executes — then re-checks what came back. It cannot declare a hard failure passed: `Finish` carries no field that clears one, and the code gate above runs afterwards regardless. Its five soft verdicts still never block:
+The **validation agent** (`stages/smart_agent.py`, on its own `VALIDATION_*` slot) investigates and instructs: it reads the pure-code verdict through a `check_hard` tool, may read the cited Needs, an excerpt of their evidence, the sibling outcomes and the Thai Bloom table, and when a statement needs repair it emits an *instruction* that `complete_plo_synthesis` executes — then re-checks what came back. It cannot declare a hard failure passed: `Finish` carries no field that clears one, and the code gate above runs afterwards regardless. Its five soft verdicts still never block:
 
 | Verdict | Asks |
 |---|---|

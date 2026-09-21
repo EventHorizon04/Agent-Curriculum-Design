@@ -440,8 +440,8 @@
         <code><span class="k">cp</span> <span class="a">.env.example</span> <span class="a">.env</span>
 
 <span class="cm"># ค่าสำคัญใน .env ที่ควรแก้</span>
-<span class="f">LIGHT_MODEL</span>=scb10x/typhoon2-8b-instruct   <span class="cm"># Typhoon2 8B — classification + SMART</span>
-<span class="f">HEAVY_MODEL</span>=qwen2.5:14b                   <span class="cm"># Qwen 14B — PLO/YLO synthesis (หรือ :32b)</span>
+<span class="f">OPENTYPHOON_API_KEY</span>=your-key-here        <span class="cm"># need_combination + plo_synthesis (ภาษาไทย)</span>
+<span class="f">OPENROUTER_API_KEY</span>=your-key-here         <span class="cm"># extraction + clustering + validation</span>
 <span class="cm"># API_KEY=change-me-in-production          # uncomment เมื่อ deploy จริง</span></code>
       </div>
     </div>
@@ -470,7 +470,7 @@
         <div class="svc">
           <span class="svc-name">ca-postgres</span>
           <span class="svc-port">:5432</span>
-          <span class="svc-desc">Structured data — Programs, PLO, YLO, Evidence</span>
+          <span class="svc-desc">Structured data — Programs, Evidence, Skills, Needs, PLO</span>
           <div class="dot"></div>
         </div>
         <div class="svc">

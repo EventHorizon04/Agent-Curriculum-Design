@@ -42,7 +42,7 @@ Always include rules. The model will drift toward generic English-academic style
 
 ## Stakeholder evidence classification: no prompt
 
-Evidence classification (`requirement` vs `general`) is decided entirely in code, from the `StakeholderType` alone — `classify_evidence_type` in `stages/stakeholder_needs.py`. `PROFESSIONAL_COUNCIL` and `INSTITUTIONAL_DIRECTION` are `requirement`; every other type is `general`. There is no LLM call and no prompt at this stage — the previous design asked a light model to judge each item `need`/`requirement`/`unclassified`, which was both a cost per item and the wrong question: a mandate is a property of who is speaking, not of how they phrased it. `need`/`want`/`unclassified` classification happens later, per skill — see `extract_skills.py` below and `classify_skills` in `stages/skill_extraction.py`.
+Evidence classification (`requirement` vs `general`) is decided entirely in code, from the `StakeholderType` alone — `classify_evidence_type` in `stages/stakeholder_needs.py`. `PROFESSIONAL_COUNCIL` and `INSTITUTIONAL_DIRECTION` are `requirement`; every other type is `general`. There is no LLM call and no prompt at this stage — the previous design asked a model to judge each item `need`/`requirement`/`unclassified`, which was both a cost per item and the wrong question: a mandate is a property of who is speaking, not of how they phrased it. `need`/`want`/`unclassified` classification happens later, per skill — see `extract_skills.py` below and `classify_skills` in `stages/skill_extraction.py`.
 
 ---
 
@@ -99,7 +99,7 @@ Evidence classification (`requirement` vs `general`) is decided entirely in code
 
 **Purpose:** group extracted-skill *names* (already deduped and bucketed by KSEC — see `data-schemas.md`) into candidate Needs. No downstream quota merge: every candidate group a bucket produces becomes its own Need. Index-based: the model assigns numeric indices into a name list, never rewrites the names themselves, so `stages/llm_clustering.py`'s `validate_assignments()` can enforce "every index exactly once" in pure code afterward.
 
-**Model:** heavy (`complete_heavy`) — this is a reasoning-over-labels task, not a light-model classification
+**Model:** `clustering` (`complete_clustering`, its own `CLUSTERING_PROVIDER`/`CLUSTERING_MODEL`) — this is a reasoning-over-labels task, and it holds a whole KSEC bucket in one context, which is what the larger model is for
 
 **File:** `prompts/cluster_skills.py` — two builders:
 
@@ -114,11 +114,11 @@ Because clustering and merging both run *inside* one KSEC bucket (bucketing happ
 
 **Purpose:** turn one finished skill group (all one KSEC tag, post-merge) into the one market-demand sentence that becomes `Need.statement_th`.
 
-**Model:** light (`complete_light`)
+**Model:** `need_combination` (`complete_need_combination`). Its provider ships unset, so it follows `LLM_PROVIDER` — the Thai-first default this sentence needs belongs to that setting, and this slot inherits it rather than pinning it
 
 **File:** `prompts/summarize_need.py` — `build_summarize_need_prompt(skill_names, ksec, bloom_level, *, note_th=None, program_context=None)`
 
-**Sees the skills and nothing else.** Evidence text used to be pasted in as samples; it is not any more. The skills already carry what extraction found in that evidence, the raw quotes only gave the light model longer Thai to drift on, and traceability is untouched — a Need's `source_evidence_ids` come from its member skills.
+**Sees the skills and nothing else.** Evidence text used to be pasted in as samples; it is not any more. The skills already carry what extraction found in that evidence, the raw quotes only gave the model longer Thai to drift on, and traceability is untouched — a Need's `source_evidence_ids` come from its member skills.
 
 **The sentence must be PLO-ready.** `plo_synthesis` drafts exactly one PLO per Need and is handed nothing but this sentence, so a placeholder or a skill list does not merely weaken the PLO — it makes the synthesis model invent the capability with no evidence behind it. Hence the three-part rule and the hard rejections below.
 
@@ -188,7 +188,7 @@ If every attempt fails, `stages/need_combination.py` writes a comma-joined skill
 
 **Purpose:** restate one or more market Needs (post-`need_combination`) as a single graduate-side PLO. Called once per Need by the stage loop (list of length 1), and reused by the designer-driven `POST /programs/{id}/plos/from-needs` endpoint with a longer list when the designer chooses to merge several Needs into one PLO — same function, same rules, whether it's 1 Need or several.
 
-**Model:** synthesis (`complete_synthesis`, its own `SYNTHESIS_PROVIDER`/`SYNTHESIS_MODEL`) — not heavy. The two were one slot until they had to go different ways: clustering wants the larger model, while a PLO statement is Thai a designer submits to MHESI under their own name. Both the draft call and the SMART repair call go through this slot, so a repair is never answered by a different model than wrote the draft. Config-switchable per project policy, never hardcoded
+**Model:** `plo_synthesis` (`complete_plo_synthesis`, its own `PLO_SYNTHESIS_PROVIDER`/`PLO_SYNTHESIS_MODEL`) — not clustering's. The two were one slot until they had to go different ways: clustering wants the larger model, while a PLO statement is Thai a designer submits to MHESI under their own name. Both the draft call and the SMART repair call go through this slot, so a repair is never answered by a different model than wrote the draft. Config-switchable per project policy, never hardcoded
 
 **File:** `prompts/stage_3_plo.py` — `build_plo_from_need_prompt(metadata, needs, note_th=None)`
 
