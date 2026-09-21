@@ -10,6 +10,7 @@ pointing at nothing.
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from curriculum_agent.config import SLOTS, Settings, SlotSpec
 
@@ -72,3 +73,42 @@ def test_asking_for_a_slot_that_does_not_exist_says_so() -> None:
 
     with pytest.raises(KeyError, match="no LLM slot named"):
         llm._slot("heavey")
+
+
+def test_a_slot_setting_under_its_old_name_is_refused() -> None:
+    """The rename would otherwise fail silently.
+
+    `Settings` ignores unknown keys, so a .env still carrying HEAVY_MODEL is not
+    an error to pydantic — it is a line nobody reads. The run then starts on the
+    provider default while the operator believes they selected a model, and the
+    slot they configured is the one they cannot find in the startup log.
+    """
+    with pytest.raises(ValidationError, match="CLUSTERING_MODEL"):
+        Settings(heavy_model="meta-llama/llama-3.3-70b-instruct")
+
+
+def test_every_stale_name_is_reported_at_once() -> None:
+    """One restart should tell the operator everything they have to change,
+    rather than one name per attempt."""
+    with pytest.raises(ValidationError) as exc:
+        Settings(
+            light_model="typhoon-v2.5-30b-a3b-instruct",
+            heavy_provider="openrouter",
+            synthesis_model="typhoon-v2.5-30b-a3b-instruct",
+        )
+
+    message = str(exc.value)
+    assert "NEED_COMBINATION_MODEL" in message
+    assert "CLUSTERING_PROVIDER" in message
+    assert "PLO_SYNTHESIS_MODEL" in message
+
+
+def test_the_current_names_are_accepted() -> None:
+    """The guard must reject the old spelling, not the settings themselves."""
+    settings = Settings(
+        clustering_model="meta-llama/llama-3.3-70b-instruct",
+        need_combination_model="typhoon-v2.5-30b-a3b-instruct",
+        plo_synthesis_model="typhoon-v2.5-30b-a3b-instruct",
+    )
+
+    assert settings.clustering_model == "meta-llama/llama-3.3-70b-instruct"

@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from pydantic import SecretStr, computed_field, field_validator, model_validator
+from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Model names to fall back on when a slot's *_MODEL is left unset. Keyed by
@@ -15,6 +15,24 @@ _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "ollama": "gemma4:31b-cloud",
     "openrouter": "meta-llama/llama-3.3-70b-instruct",
     "opentyphoon": "typhoon-v2.5-30b-a3b-instruct",
+}
+
+
+# Slot settings that were renamed, and what to say when one turns up.
+#
+# `extra="ignore"` is what makes this necessary: a .env carrying HEAVY_MODEL
+# after the rename is not an error to pydantic, it is a line nobody reads. The
+# run then starts on the provider default while the operator believes they
+# selected a model — the failure is silent, and the slot they configured is the
+# one they cannot see in the startup log. Declaring the old names as fields is
+# what lets a validator refuse them: pydantic populates them from .env and the
+# environment alike, so neither has to be parsed here.
+_RENAMED_SLOT_SETTINGS: dict[str, str] = {
+    "light_model": "need_combination_model",
+    "heavy_provider": "clustering_provider",
+    "heavy_model": "clustering_model",
+    "synthesis_provider": "plo_synthesis_provider",
+    "synthesis_model": "plo_synthesis_model",
 }
 
 
@@ -192,6 +210,14 @@ class Settings(BaseSettings):
     # None means "whatever llm_provider is", for one endpoint end to end.
     extraction_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
     extraction_model: str = ""
+    # Accepted only to be refused — see _RENAMED_SLOT_SETTINGS and
+    # _reject_renamed_slot_settings. They hold no value the program reads, and
+    # `exclude=True` keeps them out of any dump of this object.
+    light_model: str | None = Field(default=None, exclude=True)
+    heavy_provider: str | None = Field(default=None, exclude=True)
+    heavy_model: str | None = Field(default=None, exclude=True)
+    synthesis_provider: str | None = Field(default=None, exclude=True)
+    synthesis_model: str | None = Field(default=None, exclude=True)
     # REST API auth secret (require_api_key). None disables auth (dev default).
     api_key: SecretStr | None = None
     # Sent as the OpenAI-client api_key when talking to local Ollama. Ollama
@@ -233,6 +259,27 @@ class Settings(BaseSettings):
                 "psycopg3 gets its own DSN from postgres_dsn_sync."
             )
         return dsn
+
+    @model_validator(mode="after")
+    def _reject_renamed_slot_settings(self) -> Settings:
+        """Refuse a slot setting under its old name instead of ignoring it.
+
+        Raised rather than logged: a warning about a model that is not being
+        used scrolls past, and what follows is a whole run on an endpoint
+        nobody chose. Every name is reported at once, so one restart tells the
+        operator everything they have to change.
+        """
+        stale = [
+            (old, new) for old, new in _RENAMED_SLOT_SETTINGS.items() if getattr(self, old)
+        ]
+        if stale:
+            lines = "; ".join(f"{old.upper()} -> {new.upper()}" for old, new in stale)
+            raise ValueError(
+                "LLM slot settings were renamed after each slot was named for the stage "
+                f"that calls it. These are no longer read: {lines}. "
+                "Rename them in .env, or unset them."
+            )
+        return self
 
     @model_validator(mode="after")
     def _apply_provider_model_defaults(self) -> Settings:
