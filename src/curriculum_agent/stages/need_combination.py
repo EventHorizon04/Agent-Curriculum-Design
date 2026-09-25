@@ -129,7 +129,7 @@ class _NeedStatement(BaseModel):
     def _reject_code_tokens(cls, statement: str) -> str:
         """Bounce a sentence carrying a code identifier back to the model.
 
-        A light model tokenising Thai byte-by-byte occasionally emits a token
+        A small model tokenising Thai byte-by-byte occasionally emits a token
         from its code training instead of the Thai it was asked for — one stored
         Need read "...เป็นผู้ประกอบการ หน.getDefault รับฟังผู้บริหาร...", built
         from two clean skill names. Raising here is what makes Instructor retry

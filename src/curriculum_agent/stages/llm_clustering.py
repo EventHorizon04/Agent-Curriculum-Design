@@ -163,7 +163,7 @@ def is_valid_partition(groups: list[list[int]], n: int) -> bool:
 async def _cluster_pass(
     names: list[str], target_clusters: int | None = None, program_context: str | None = None
 ) -> list[tuple[str, list[int]]]:
-    """One heavy-model clustering call over `names`, validated."""
+    """One call on the clustering slot over `names`, validated."""
     result = await complete_clustering(
         ClusterAssignmentsResponse,
         build_cluster_skills_prompt(names, target_clusters, program_context),
@@ -201,7 +201,7 @@ async def _cluster_map_reduce(
 async def cluster_skill_names(
     names: list[str], target_clusters: int | None = None, program_context: str | None = None
 ) -> list[list[int]]:
-    """Group skill names by meaning using the heavy model.
+    """Group skill names by meaning on the clustering slot.
 
     Returns groups of indices into `names`. Single pass when the list fits in one
     prompt; batch + merge otherwise. Results are cached keyed on the full name

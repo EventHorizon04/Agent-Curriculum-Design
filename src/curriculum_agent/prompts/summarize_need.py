@@ -71,7 +71,7 @@ def build_summarize_need_prompt(
 
     Sees the extracted skills and nothing else. Evidence text used to be pasted in
     as samples; it is gone on purpose — the skills already carry what extraction
-    found in that evidence, and the raw quotes only gave the light model longer
+    found in that evidence, and the raw quotes only gave the model longer
     Thai to drift on. Traceability is unaffected: a Need's source_evidence_ids
     still come from its member skills.
 

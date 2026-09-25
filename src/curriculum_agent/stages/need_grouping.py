@@ -127,7 +127,7 @@ def find_code_identifier(statement: str) -> str | None:
 # A Need is drafted straight into one PLO, so a sentence that names no capability
 # is not a weaker Need — it is an unusable one. These two guards are the pure-code
 # half of "PLO-ready": the prompt asks for a concrete capability, and these reject
-# the two shapes a light model falls back to when it cannot produce one.
+# the two shapes a small model falls back to when it cannot produce one.
 
 # A generic head noun plus an empty modifier: "ทักษะที่จำเป็น", "ความรู้ที่เกี่ยวข้อง",
 # "ด้านต่างๆ". Matching the pair rather than the modifier alone is deliberate —
