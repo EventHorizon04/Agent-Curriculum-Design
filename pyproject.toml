@@ -52,6 +52,11 @@ src = ["src"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 
+[tool.ruff.lint.per-file-ignores]
+# The markdown template in this script is one long string, and a markdown
+# table row cannot be wrapped without breaking the table.
+"scripts/dump_prompts.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
