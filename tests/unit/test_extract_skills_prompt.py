@@ -223,25 +223,14 @@ def test_a_specialised_skill_is_not_reduced_to_a_generic_one():
     assert "ห้ามลดทอนทักษะเฉพาะทางให้เหลือสมรรถนะทั่วไป" in system
 
 
-def test_the_prompt_does_not_ask_the_model_to_rename_a_skill_more_specifically():
-    """Landed on 2026-09-26 as the job identity test, and measured out the same day.
+def test_the_job_identity_test_cannot_be_satisfied_by_inventing_specificity():
+    """The rule asks for a narrower name, and a model told "too broad" invents
+    one. `evidence_span_th` has to be a verbatim quote, so a name the evidence
+    never supports is a span the model cannot produce — the bound is stated
+    rather than left to the schema to catch."""
+    system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+    check = system.split("ก่อนตอบ ให้ทดสอบชื่อทักษะ")[1]
 
-    It asked for a narrower name whenever an expert could not guess the
-    profession from one, bounded by a sentence saying the rewrite must still be
-    supported by the evidence. The bound did not hold: ungrounded spans went 0->5
-    on the TCISM corpus and 1->19 with the injected postings, and a skill named
-    straight out of the scope statement reappeared in both cases — when a model
-    is told to be more specific, the most specific wording in its context is the
-    scope line, not the evidence.
-
-    Occupational identity stays, and the asymmetry is the point: forbidding a
-    name from being *widened* never asks for words the evidence does not have.
-    """
-    system = build_extract_skills_prompt("ข้อความ", "general", scope_th="ขอบเขตหลักสูตร")[0][
-        "content"
-    ]
-
-    assert "เขียนให้เฉพาะขึ้น" not in system
-    assert "เดาได้ไหมว่าเป็นสายวิชาชีพใด" not in system
-    # the direction that survived
-    assert "ห้ามลดทอนทักษะเฉพาะทางให้เหลือสมรรถนะทั่วไป" in system
+    assert "เดาได้ไหมว่าเป็นสายวิชาชีพใด" in check
+    assert "ต้องยังมีข้อความใน evidence รองรับ" in check
+    assert "ห้ามเติมความเฉพาะเจาะจงที่ evidence ไม่ได้บอก" in check

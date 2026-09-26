@@ -20,20 +20,9 @@ def build_extract_skills_prompt(
     rather than drop it — a framing that filters it out before the flag is
     reached defeats the flag.
 
-    Three rules come from `guidances/skill_extraction.md`: the definition of a
-    skill, the "these are not skills" list, and occupational identity.
-
-    A fourth, the job identity test, was landed and then measured out. It told
-    the model to rename a skill more specifically whenever an expert could not
-    guess the profession from it, with a sentence bounding the rewrite to what
-    the evidence supports. The bound did not hold: on the TCISM corpus spans that
-    `is_grounded` could not find in the source went from 0 to 5 (and 1 to 19 with
-    the injected postings), and scope contamination reappeared at 1 in both cases
-    — "การล่ามการเจรจาธุรกิจ" is a phrase out of the scope statement, which is the
-    nearest specific wording in the model's context when it is told to be more
-    specific. The rule that survives is occupational identity, which forbids
-    *widening* a name the evidence already made specific; that direction costs
-    nothing, because it never asks for words the evidence does not have.
+    Three rules come from `guidances/skill_extraction.md` (the definition of a
+    skill, the "these are not skills" list, occupational identity, and the job
+    identity test), and two of them carry a caveat the guidance does not:
 
     - The "not a skill" list is a statement about *what a skill is*, not a licence
       to filter. Its first draft also named the institution's own problems, goals,
@@ -44,6 +33,20 @@ def build_extract_skills_prompt(
       designer as an unused Need. Those five were cut, and the sentence saying the
       list is not a licence to drop anything is what keeps the rest from being
       read that way.
+    - The job identity test pushes toward a more specific name, and a model told
+      "too broad" will otherwise invent the specificity. `evidence_span_th` has to
+      be a verbatim quote, so the test carries its own bound: whatever the name
+      becomes must still be supported by the text.
+
+      That bound was briefly believed to have failed. The first eval run after
+      this rule landed showed ungrounded spans up and a skill named out of the
+      scope statement, the rule was removed on that reading, and a control run of
+      the *pre-rule* prompts under the corrected scorer then produced both
+      symptoms anyway — contamination 1, with "การแปลเอกสารธุรกิจและกฎหมาย" lifted
+      straight out of `SCOPE_TH`, and ungrounded spans in the same range. The
+      model was already copying from its own context, including the program field
+      in the user header. The rule is back; what the episode actually measured is
+      that single runs of this eval cannot resolve a difference this small.
 
     `field_th` and `program_name_th` are what make the "no off-field skills" rule
     answerable — before they existed the model was told to exclude skills outside
@@ -112,6 +115,13 @@ def build_extract_skills_prompt(
             "ห้ามสกัดทักษะจากบรรทัดนี้ ทักษะทุกรายการต้องมาจากข้อความ evidence เท่านั้น\n"
         )
     system += (
+        "\nก่อนตอบ ให้ทดสอบชื่อทักษะทุกรายการด้วยคำถามนี้: "
+        "ผู้เชี่ยวชาญอ่านชื่อนี้แล้วเดาได้ไหมว่าเป็นสายวิชาชีพใด "
+        "ถ้าชื่อนั้นใช้ได้กับหลายวิชาชีพที่ไม่เกี่ยวกันเลย แปลว่ากว้างเกินไป ให้เขียนให้เฉพาะขึ้นก่อนตอบ "
+        "เช่น 'การสื่อสาร' เขียนเป็น 'การล่ามข้ามวัฒนธรรม' "
+        "'การแก้ปัญหา' เขียนเป็น 'การประเมินคุณภาพงานแปล' "
+        "การเขียนให้เฉพาะขึ้นต้องยังมีข้อความใน evidence รองรับ "
+        "ห้ามเติมความเฉพาะเจาะจงที่ evidence ไม่ได้บอก\n"
         "\nตอบเป็น JSON object: { skills: [ {\n"
         "  skill_name_th: วลีทักษะภาษาไทย,\n"
         "  skill_name_en: ชื่อภาษาอังกฤษมาตรฐาน (เช่น 'Data Analysis') ห้ามเว้นว่าง,\n"
