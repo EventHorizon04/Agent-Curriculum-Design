@@ -77,9 +77,37 @@ def is_in_scope(need: Need) -> bool:
     trustworthy enough to filter on, the retreat is to stop calling this in one
     place and leave the flags on display at the checkpoint instead.
     """
+    return passes_scope_axes(
+        need.in_field_skill_count,
+        need.graduate_capability_skill_count,
+        len(need.member_skill_ids),
+    )
+
+
+def passes_scope_axes(in_field_count: int, graduate_count: int, member_count: int) -> bool:
+    """The same cut, over raw counters rather than a built `Need`.
+
+    `is_in_scope` is the caller the pipeline uses and the one to reach for. This
+    exists for the eval, which scores candidate groups *before* a Need is built
+    from them and so has counters and a member count but no model instance.
+
+    It is a function rather than a second comparison at the eval's own call site
+    because that is exactly what went wrong: the eval scored
+    `in_field_skill_count > 0` — "at least one member is in field" — while the
+    pipeline had moved to a half-share on both axes. An any rule filters almost
+    nothing, so every pass reported a guard far more permissive than the one that
+    actually ran, and the numbers were read as evidence about the shipped
+    behaviour. Two independent spellings of one rule is how they came to disagree.
+
+    `member_count` of zero answers True: no members means nothing was measured,
+    and a cut applied to an empty denominator would filter on the absence of
+    data. `Need._ratio` answers 1.0 in the same case for the same reason.
+    """
+    if member_count <= 0:
+        return True
     return (
-        need.in_field_ratio >= SCOPE_PASS_RATIO
-        and need.graduate_capability_ratio >= SCOPE_PASS_RATIO
+        in_field_count / member_count >= SCOPE_PASS_RATIO
+        and graduate_count / member_count >= SCOPE_PASS_RATIO
     )
 
 

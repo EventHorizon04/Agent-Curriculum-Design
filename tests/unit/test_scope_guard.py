@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from curriculum_agent.models import BloomLevel, KSECCategory, Need
-from curriculum_agent.stages.need_grouping import is_in_scope
+from curriculum_agent.stages.need_grouping import is_in_scope, passes_scope_axes
 
 
 def _need(**overrides: object) -> Need:
@@ -206,3 +206,38 @@ async def test_the_graduate_capability_flag_reaches_the_stored_skill_row_unaggre
     assert skill["is_field_relevant"] is False
     # Requirement still wins on classification — the flags do not leak into it.
     assert skill["classification"] == "requirement"
+
+
+@pytest.mark.parametrize(
+    ("in_field", "graduate", "members"),
+    [(2, 3, 3), (0, 3, 3), (2, 0, 3), (0, 0, 3), (1, 1, 2), (3, 3, 7), (4, 4, 7)],
+)
+def test_the_counter_form_of_the_cut_agrees_with_the_need_form(
+    in_field: int, graduate: int, members: int
+) -> None:
+    """One rule, two callers — and the reason the second caller exists.
+
+    `passes_scope_axes` is what `scripts/eval_scope_guard.py` calls, because it
+    scores candidate groups before any Need is built. It spelled the cut out for
+    itself instead, as `in_field_skill_count > 0` on both axes, and kept that
+    spelling after the pipeline moved to a half-share: an any rule filters almost
+    nothing, so every eval pass reported a guard far more permissive than the one
+    that shipped, and the numbers were read as evidence about real behaviour.
+
+    Asserting the two agree — rather than asserting each separately — is the
+    whole point, since separate assertions are exactly what let them drift.
+    """
+    need = _need(
+        member_skill_ids=[f"S{i}" for i in range(members)],
+        in_field_skill_count=in_field,
+        graduate_capability_skill_count=graduate,
+    )
+
+    assert passes_scope_axes(in_field, graduate, members) is is_in_scope(need)
+
+
+def test_the_counter_form_answers_true_when_nothing_was_measured() -> None:
+    """An empty denominator is the absence of data, not a failing score — and
+    `Need._ratio` answers 1.0 in the same case for the same reason. Filtering
+    here would drop a group for having no members rather than for its members."""
+    assert passes_scope_axes(0, 0, 0) is True

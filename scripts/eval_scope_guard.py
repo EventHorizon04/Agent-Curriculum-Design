@@ -43,7 +43,11 @@ from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.stages.demand import build_scoring_corpus
 from curriculum_agent.stages.need_combination import _build_groups
-from curriculum_agent.stages.need_grouping import normalize_need_name
+from curriculum_agent.stages.need_grouping import (
+    SCOPE_PASS_RATIO,
+    normalize_need_name,
+    passes_scope_axes,
+)
 from curriculum_agent.stages.skill_extraction import (
     _compute_skill_importance,
     _ExtractedSkillsResponse,
@@ -245,9 +249,18 @@ def score_needs(groups: list[Any], injected: set[str]) -> dict[str, Any]:
     mandated_and_filtered: list[str] = []
 
     for group in groups:
-        in_field = group.in_field_skill_count > 0
-        is_grad = group.graduate_capability_skill_count > 0
-        filtered = not (in_field and is_grad)
+        members = len(group.skill_ids)
+        # The cut itself is imported, never restated here: this line used to read
+        # `in_field_skill_count > 0` on both axes, which is the any rule the
+        # pipeline abandoned, so every number this script printed described a
+        # guard far more permissive than the one that ran.
+        filtered = not passes_scope_axes(
+            group.in_field_skill_count, group.graduate_capability_skill_count, members
+        )
+        in_field = group.in_field_skill_count / members >= SCOPE_PASS_RATIO if members else True
+        is_grad = (
+            group.graduate_capability_skill_count / members >= SCOPE_PASS_RATIO if members else True
+        )
         bucket = buckets[_verdict(set(group.evidence_ids), injected)]
         bucket.total += 1
         if filtered:
