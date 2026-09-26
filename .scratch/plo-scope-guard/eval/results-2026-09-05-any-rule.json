@@ -1,0 +1,232 @@
+{
+  "tcism": {
+    "B1": {
+      "note": "flag present, no scope statement — isolates what the flag alone buys",
+      "needs": {
+        "in_scope": {
+          "total": 9,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "out_of_scope": {
+          "total": 0,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "unlabelled": {
+          "total": 1,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "false_positives": 0,
+        "recall": null,
+        "mandated_but_filtered": []
+      },
+      "skills": {
+        "overlap": {
+          "both_off": 8,
+          "field_only": 0,
+          "grad_only": 2,
+          "neither": 58
+        },
+        "core": {
+          "total": 29,
+          "flagged": 1
+        },
+        "noise": {
+          "total": 8,
+          "flagged": 4
+        },
+        "total": 68
+      },
+      "contamination": {
+        "scope_named": 0,
+        "scope_named_examples": [],
+        "ungrounded_spans": 2,
+        "ungrounded_examples": [
+          "ev01  การคิดเชิงกลยุทธ์",
+          "ev01  ทักษะการเป็นผู้ประกอบการ"
+        ]
+      }
+    },
+    "scoped": {
+      "note": "flag + scope statement — what a designer actually gets",
+      "needs": {
+        "in_scope": {
+          "total": 7,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "out_of_scope": {
+          "total": 0,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "unlabelled": {
+          "total": 3,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "false_positives": 0,
+        "recall": null,
+        "mandated_but_filtered": []
+      },
+      "skills": {
+        "overlap": {
+          "both_off": 9,
+          "field_only": 5,
+          "grad_only": 2,
+          "neither": 46
+        },
+        "core": {
+          "total": 25,
+          "flagged": 1
+        },
+        "noise": {
+          "total": 8,
+          "flagged": 4
+        },
+        "total": 62
+      },
+      "contamination": {
+        "scope_named": 0,
+        "scope_named_examples": [],
+        "ungrounded_spans": 0,
+        "ungrounded_examples": []
+      }
+    }
+  },
+  "tcism+injected": {
+    "B1": {
+      "note": "flag present, no scope statement — isolates what the flag alone buys",
+      "needs": {
+        "in_scope": {
+          "total": 7,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "out_of_scope": {
+          "total": 2,
+          "filtered": 2,
+          "off_field": 2,
+          "off_grad": 0,
+          "examples": [
+            "การจัดการกระบวนการนำเข้าและจัดเก็บข้อมูลวิดีโอ, การจัดการฐานข้อมูล Vector และ Structured Stores, การจัดการระบบการนำเข้าข้อมูลเอกสาร",
+            "การพัฒนาผลิตภัณฑ์และบริการที่มีความซับซ้อนสูง"
+          ]
+        },
+        "unlabelled": {
+          "total": 2,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "false_positives": 0,
+        "recall": 1.0,
+        "mandated_but_filtered": [
+          "การจัดการกระบวนการนำเข้าและจัดเก็บข้อมูลวิดีโอ, การจัดการฐานข้อมูล Vector และ Structured Stores, การจัดการระบบการนำเข้าข้อมูลเอกสาร",
+          "การพัฒนาผลิตภัณฑ์และบริการที่มีความซับซ้อนสูง"
+        ]
+      },
+      "skills": {
+        "overlap": {
+          "both_off": 10,
+          "field_only": 42,
+          "grad_only": 0,
+          "neither": 72
+        },
+        "core": {
+          "total": 29,
+          "flagged": 1
+        },
+        "noise": {
+          "total": 62,
+          "flagged": 46
+        },
+        "total": 124
+      },
+      "contamination": {
+        "scope_named": 0,
+        "scope_named_examples": [],
+        "ungrounded_spans": 2,
+        "ungrounded_examples": [
+          "ev13  การตลาดดิจิทัล",
+          "ev13  การผลิตเนื้อหาเชิงสร้างสรรค์"
+        ]
+      }
+    },
+    "scoped": {
+      "note": "flag + scope statement — what a designer actually gets",
+      "needs": {
+        "in_scope": {
+          "total": 8,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "out_of_scope": {
+          "total": 1,
+          "filtered": 1,
+          "off_field": 1,
+          "off_grad": 0,
+          "examples": [
+            "การจัดการฐานข้อมูลแบบเวกเตอร์และแบบโครงสร้าง, การจัดการระบบรับและจัดเก็บเนื้อหาดิจิทัล, การปรับปรุงประสิทธิภาพการเข้ารหัสวิดีโอ"
+          ]
+        },
+        "unlabelled": {
+          "total": 1,
+          "filtered": 0,
+          "off_field": 0,
+          "off_grad": 0,
+          "examples": []
+        },
+        "false_positives": 0,
+        "recall": 1.0,
+        "mandated_but_filtered": [
+          "การจัดการฐานข้อมูลแบบเวกเตอร์และแบบโครงสร้าง, การจัดการระบบรับและจัดเก็บเนื้อหาดิจิทัล, การปรับปรุงประสิทธิภาพการเข้ารหัสวิดีโอ"
+        ]
+      },
+      "skills": {
+        "overlap": {
+          "both_off": 9,
+          "field_only": 46,
+          "grad_only": 1,
+          "neither": 60
+        },
+        "core": {
+          "total": 26,
+          "flagged": 1
+        },
+        "noise": {
+          "total": 60,
+          "flagged": 48
+        },
+        "total": 116
+      },
+      "contamination": {
+        "scope_named": 0,
+        "scope_named_examples": [],
+        "ungrounded_spans": 1,
+        "ungrounded_examples": [
+          "inj02  การจำลองสถานการณ์ข้อมูลทางธุรกิจ"
+        ]
+      }
+    }
+  }
+}
