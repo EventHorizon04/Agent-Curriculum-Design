@@ -65,8 +65,12 @@
 จากข้อความ evidence จงระบุทักษะหรือสมรรถนะที่ข้อความนั้นเรียกร้อง
 evidence มาจากผู้มีส่วนได้ส่วนเสียได้หลายกลุ่ม เช่น ผู้ใช้บัณฑิต สภาวิชาชีพ ศิษย์เก่า ชุมชน หรือทิศทางของสถาบันเอง ไม่ใช่ประกาศรับสมัครงานเท่านั้น ให้อ่านตามสิ่งที่ข้อความนั้นเรียกร้องจริง
 
+ทักษะในที่นี้คือความสามารถหรือสมรรถนะที่บุคคลเรียนรู้ พัฒนา ถ่ายทอด ประเมิน และนำไปใช้ซ้ำได้ในหลายสถานการณ์
+
 กติกา:
 - แต่ละทักษะต้องเป็น 'วลี' หรือกลุ่มคำที่สื่อความสามารถ ห้ามเป็นคำโดดคำเดียว
+- สิ่งต่อไปนี้ไม่ใช่ทักษะ ห้ามเสนอเป็นรายการ: ชื่อตำแหน่งงาน ชื่ออาชีพ กิจกรรมที่เกิดขึ้นครั้งเดียว และชื่อเครื่องมือ ซอฟต์แวร์ หรือเทคโนโลยีที่ยืนเดี่ยว ๆ เช่น 'Power BI' ไม่ใช่ทักษะ แต่ 'การวิเคราะห์ข้อมูลด้วยเครื่องมือ Business Intelligence' ใช่ ข้อนี้บอกว่าอะไรไม่ใช่ทักษะเท่านั้น ไม่ได้อนุญาตให้ตัดทักษะที่อยู่นอกขอบเขตทิ้ง ของนอกขอบเขตให้ติดธงตามกติกาด้านล่าง
+- ต้องคงอัตลักษณ์วิชาชีพที่ปรากฏใน evidence ห้ามลดทอนทักษะเฉพาะทางให้เหลือสมรรถนะทั่วไป 'การแปลเอกสารกฎหมายระหว่างประเทศ' ห้ามย่อเป็น 'การสื่อสาร' 'การล่ามเจรจาธุรกิจไทย-จีน' ห้ามย่อเป็น 'การสื่อสารระหว่างบุคคล'
 - ทักษะแต่ละรายการต้องไม่ซ้ำและไม่คาบเกี่ยวกัน (unique, independent) ห้ามเขียนสิ่งเดียวกันด้วยถ้อยคำต่างกัน
 - evidence_span_th ต้องคัดลอกข้อความ 'ตรงตัว' จาก evidence ที่ทำให้สรุปทักษะนี้ได้ ห้ามเรียบเรียงใหม่ ห้ามแต่งเพิ่ม ถ้าไม่มีข้อความรองรับ ห้ามเสนอทักษะนั้น
 - evidence_span_th ต้องเป็นวลีที่สมบูรณ์ ยาวอย่างน้อยประมาณ 12 ตัวอักษร คัดลอกตรงตัวจาก evidence ห้ามตัดมาเป็นเศษคำหรืออักขระเดี่ยว ๆ
@@ -74,6 +78,8 @@ evidence มาจากผู้มีส่วนได้ส่วนเส�
 - is_graduate_capability = true เมื่อทักษะนั้นเป็นสิ่งที่บัณฑิตคนหนึ่งทำได้เมื่อสำเร็จการศึกษา; false เมื่อเป็นกิจกรรมหรือภารกิจของสถาบัน/หลักสูตร (เช่น การบริหารหลักสูตร การจัดหางบประมาณ การสร้างความร่วมมือระดับองค์กร) ให้คงไว้แต่ตั้งเป็น false ห้ามตัดทิ้งเอง
 - ขอบเขตของหลักสูตรนี้: <ขอบเขตหลักสูตรที่ผู้ออกแบบเขียน>
   ใช้บรรทัดนี้เป็นเกณฑ์ตัดสิน is_field_relevant เท่านั้น ห้ามสกัดทักษะจากบรรทัดนี้ ทักษะทุกรายการต้องมาจากข้อความ evidence เท่านั้น
+
+ก่อนตอบ ให้ทดสอบชื่อทักษะทุกรายการด้วยคำถามนี้: ผู้เชี่ยวชาญอ่านชื่อนี้แล้วเดาได้ไหมว่าเป็นสายวิชาชีพใด ถ้าชื่อนั้นใช้ได้กับหลายวิชาชีพที่ไม่เกี่ยวกันเลย แปลว่ากว้างเกินไป ให้เขียนให้เฉพาะขึ้นก่อนตอบ เช่น 'การสื่อสาร' เขียนเป็น 'การล่ามข้ามวัฒนธรรม' 'การแก้ปัญหา' เขียนเป็น 'การประเมินคุณภาพงานแปล' การเขียนให้เฉพาะขึ้นต้องยังมีข้อความใน evidence รองรับ ห้ามเติมความเฉพาะเจาะจงที่ evidence ไม่ได้บอก
 
 ตอบเป็น JSON object: { skills: [ {
   skill_name_th: วลีทักษะภาษาไทย,
@@ -133,6 +139,9 @@ Rules:
 - Do not use indices that are not present in the list.
 - The context frames the reading only. Every skill listed comes from real market evidence: never drop, exclude, or set aside a skill for looking off-field — it still belongs to exactly one group.
 - Produce about 4 groups. Depart from that only where the data clearly will not support it.
+- Preserve the occupational identity the names carry: never fold a specialised group into a generic one. 'การแปลเอกสารธุรกิจ / การแปลสัญญา / การแปลเอกสารกฎหมาย' is 'การแปลเอกสารวิชาชีพ', never 'การสื่อสาร'.
+- Group at the level of a class of work a graduate repeats across situations, not at the level of one task inside it. Each group can become one of the program's ten outcomes, so splitting 'translating sales contracts' from 'translating legal contracts' spends two of them on one professional function.
+- Meaning comes before the count. That bound is about the *level* of a group, not its size: a group of one is correct when a skill is genuinely distinct from every other.
 - label_th MUST be written in Thai, not English — it is shown to Thai users.
 
 Respond as a JSON object:
@@ -167,10 +176,17 @@ List of skills (index: skill_name):
 You are an expert in labor skill analysis.
 The following list contains skill cluster names generated from batched clustering. Some clusters share the same meaning and should be merged into a single cluster.
 
+Merge two clusters only when they name the SAME competency — interchangeable in professional use, near-identical in meaning.
+Being related, being used together, or belonging to one profession is NOT a reason to merge.
+
 Rules:
 - Every index must appear in 'groups' exactly once.
 - Do not use indices that are not present in the list.
 - A cluster that overlaps with no other stays on its own, as a group of one.
+- Do not merge merely related competencies. 'การแปลเอกสาร' and 'การล่าม' stay apart though one profession does both; so do 'การวิเคราะห์ข้อมูล' and 'การสร้างภาพข้อมูล'.
+- Preserve the occupational identity the labels carry: merging must not produce a group so general it could belong to any field.
+- Before merging, ask: if these two became one Need and then one PLO, would the distinct capability still be visible? If the merge loses a distinction that matters, do not merge.
+- Meaning comes before the count: leaving two clusters apart is the right answer whenever merging them would lose a competency.
 - Aim for about 4 groups in total. Depart from that only where the labels clearly will not support it.
 
 Respond as a JSON object:

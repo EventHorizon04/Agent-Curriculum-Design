@@ -174,3 +174,63 @@ def test_the_task_line_says_the_evidence_may_come_from_any_stakeholder():
     system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
 
     assert "ผู้มีส่วนได้ส่วนเสีย" in system
+
+
+def test_the_prompt_says_what_a_skill_is():
+    """Every rule below it bounds which skills to name; none said what one is.
+
+    A model with no definition answers the question it can see — "what does this
+    text ask for?" — and that reaches job titles and tool names.
+    """
+    system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+
+    assert "นำไปใช้ซ้ำได้ในหลายสถานการณ์" in system
+
+
+def test_the_not_a_skill_list_is_not_a_licence_to_drop_an_off_scope_skill():
+    """The two rules pull opposite ways and both have to survive.
+
+    The list's first draft also named the institution's own problems, goals,
+    policy, budget and partnerships — every one of which the graduate-capability
+    rule asks the model to flag and keep. The scope guard runs on flags, not on
+    filtering: an unextracted skill cannot be counted into a ratio, and nobody
+    ever learns it was there. Those five were cut, and this sentence is what
+    keeps the remainder from being read the same way.
+    """
+    system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+
+    assert "ไม่ได้อนุญาตให้ตัดทักษะที่อยู่นอกขอบเขตทิ้ง" in system
+    assert "ของนอกขอบเขตให้ติดธงตามกติกาด้านล่าง" in system
+    # and the rule it must not override is still there
+    assert "ห้ามตัดทิ้งเอง" in system
+
+
+def test_the_not_a_skill_list_keeps_the_institution_out_of_it():
+    """A regression test for the version that was reviewed and rejected."""
+    not_a_skill = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+    not_a_skill = not_a_skill.split("สิ่งต่อไปนี้ไม่ใช่ทักษะ")[1].split("\n-")[0]
+
+    for institutional in ("งบประมาณ", "นโยบาย", "ความร่วมมือระดับองค์กร", "เป้าหมายขององค์กร"):
+        assert institutional not in not_a_skill, institutional
+
+
+def test_a_specialised_skill_is_not_reduced_to_a_generic_one():
+    """Extraction is where the specificity is still in the text to keep. Lose it
+    here and no later stage can recover it: clustering sees names, and the Need
+    sentence is written from names alone."""
+    system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+
+    assert "ห้ามลดทอนทักษะเฉพาะทางให้เหลือสมรรถนะทั่วไป" in system
+
+
+def test_the_job_identity_test_cannot_be_satisfied_by_inventing_specificity():
+    """The rule asks for a narrower name, and a model told "too broad" invents
+    one. `evidence_span_th` has to be a verbatim quote, so a name the evidence
+    never supports is a span the model cannot produce — the bound is stated
+    rather than left to the schema to catch."""
+    system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+    check = system.split("ก่อนตอบ ให้ทดสอบชื่อทักษะ")[1]
+
+    assert "เดาได้ไหมว่าเป็นสายวิชาชีพใด" in check
+    assert "ต้องยังมีข้อความใน evidence รองรับ" in check
+    assert "ห้ามเติมความเฉพาะเจาะจงที่ evidence ไม่ได้บอก" in check

@@ -20,6 +20,24 @@ def build_extract_skills_prompt(
     rather than drop it — a framing that filters it out before the flag is
     reached defeats the flag.
 
+    Three rules come from `guidances/skill_extraction.md` (the definition of a
+    skill, the "these are not skills" list, occupational identity, and the job
+    identity test), and two of them carry a caveat the guidance does not:
+
+    - The "not a skill" list is a statement about *what a skill is*, not a licence
+      to filter. Its first draft also named the institution's own problems, goals,
+      policy, budget and partnerships — which the graduate-capability rule below
+      asks the model to *flag and keep*. The whole scope guard runs on flags, not
+      on filtering: a skill has to be extracted before it can be flagged, counted
+      into `in_field_ratio` / `graduate_capability_ratio`, and shown to the
+      designer as an unused Need. Those five were cut, and the sentence saying the
+      list is not a licence to drop anything is what keeps the rest from being
+      read that way.
+    - The job identity test pushes toward a more specific name, and a model told
+      "too broad" will otherwise invent the specificity. `evidence_span_th` has to
+      be a verbatim quote, so the test carries its own bound: whatever the name
+      becomes must still be supported by the text.
+
     `field_th` and `program_name_th` are what make the "no off-field skills" rule
     answerable — before they existed the model was told to exclude skills outside
     the program's field without being told what the field was. They default to
@@ -49,8 +67,18 @@ def build_extract_skills_prompt(
         "evidence มาจากผู้มีส่วนได้ส่วนเสียได้หลายกลุ่ม เช่น ผู้ใช้บัณฑิต สภาวิชาชีพ ศิษย์เก่า "
         "ชุมชน หรือทิศทางของสถาบันเอง ไม่ใช่ประกาศรับสมัครงานเท่านั้น "
         "ให้อ่านตามสิ่งที่ข้อความนั้นเรียกร้องจริง\n\n"
+        "ทักษะในที่นี้คือความสามารถหรือสมรรถนะที่บุคคลเรียนรู้ พัฒนา ถ่ายทอด ประเมิน "
+        "และนำไปใช้ซ้ำได้ในหลายสถานการณ์\n\n"
         "กติกา:\n"
         "- แต่ละทักษะต้องเป็น 'วลี' หรือกลุ่มคำที่สื่อความสามารถ ห้ามเป็นคำโดดคำเดียว\n"
+        "- สิ่งต่อไปนี้ไม่ใช่ทักษะ ห้ามเสนอเป็นรายการ: ชื่อตำแหน่งงาน ชื่ออาชีพ "
+        "กิจกรรมที่เกิดขึ้นครั้งเดียว และชื่อเครื่องมือ ซอฟต์แวร์ หรือเทคโนโลยีที่ยืนเดี่ยว ๆ "
+        "เช่น 'Power BI' ไม่ใช่ทักษะ แต่ 'การวิเคราะห์ข้อมูลด้วยเครื่องมือ Business Intelligence' ใช่ "
+        "ข้อนี้บอกว่าอะไรไม่ใช่ทักษะเท่านั้น ไม่ได้อนุญาตให้ตัดทักษะที่อยู่นอกขอบเขตทิ้ง "
+        "ของนอกขอบเขตให้ติดธงตามกติกาด้านล่าง\n"
+        "- ต้องคงอัตลักษณ์วิชาชีพที่ปรากฏใน evidence ห้ามลดทอนทักษะเฉพาะทางให้เหลือสมรรถนะทั่วไป "
+        "'การแปลเอกสารกฎหมายระหว่างประเทศ' ห้ามย่อเป็น 'การสื่อสาร' "
+        "'การล่ามเจรจาธุรกิจไทย-จีน' ห้ามย่อเป็น 'การสื่อสารระหว่างบุคคล'\n"
         "- ทักษะแต่ละรายการต้องไม่ซ้ำและไม่คาบเกี่ยวกัน (unique, independent) "
         "ห้ามเขียนสิ่งเดียวกันด้วยถ้อยคำต่างกัน\n"
         "- evidence_span_th ต้องคัดลอกข้อความ 'ตรงตัว' จาก evidence ที่ทำให้สรุปทักษะนี้ได้ "
@@ -77,6 +105,13 @@ def build_extract_skills_prompt(
             "ห้ามสกัดทักษะจากบรรทัดนี้ ทักษะทุกรายการต้องมาจากข้อความ evidence เท่านั้น\n"
         )
     system += (
+        "\nก่อนตอบ ให้ทดสอบชื่อทักษะทุกรายการด้วยคำถามนี้: "
+        "ผู้เชี่ยวชาญอ่านชื่อนี้แล้วเดาได้ไหมว่าเป็นสายวิชาชีพใด "
+        "ถ้าชื่อนั้นใช้ได้กับหลายวิชาชีพที่ไม่เกี่ยวกันเลย แปลว่ากว้างเกินไป ให้เขียนให้เฉพาะขึ้นก่อนตอบ "
+        "เช่น 'การสื่อสาร' เขียนเป็น 'การล่ามข้ามวัฒนธรรม' "
+        "'การแก้ปัญหา' เขียนเป็น 'การประเมินคุณภาพงานแปล' "
+        "การเขียนให้เฉพาะขึ้นต้องยังมีข้อความใน evidence รองรับ "
+        "ห้ามเติมความเฉพาะเจาะจงที่ evidence ไม่ได้บอก\n"
         "\nตอบเป็น JSON object: { skills: [ {\n"
         "  skill_name_th: วลีทักษะภาษาไทย,\n"
         "  skill_name_en: ชื่อภาษาอังกฤษมาตรฐาน (เช่น 'Data Analysis') ห้ามเว้นว่าง,\n"

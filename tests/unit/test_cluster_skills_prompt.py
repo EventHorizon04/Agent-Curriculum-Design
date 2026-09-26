@@ -66,3 +66,61 @@ def test_no_program_context_leaves_the_prompt_unchanged() -> None:
     assert build_cluster_skills_prompt(names, 4) == build_cluster_skills_prompt(
         names, 4, program_context=None
     )
+
+
+def test_the_cluster_prompt_bounds_the_level_of_a_group_in_both_directions() -> None:
+    """Two rules that only work as a pair.
+
+    "Meaning before the count" licenses a group of one, and a model reading only
+    that splits a professional function into its tasks. The level rule alone
+    reads as "make fewer groups". Removing either leaves the other unopposed, so
+    they are asserted together.
+    """
+    system = build_cluster_skills_prompt(["การแปลสัญญา", "การแปลเอกสารกฎหมาย"])[0]["content"]
+
+    assert "class of work a graduate repeats" in system
+    assert "a group of one is correct" in system
+
+
+def test_the_cluster_prompt_keeps_a_specialised_group_out_of_a_generic_one() -> None:
+    """The failure this catches is a partition, not a label: three translation
+    skills folded under one generic heading is one group where the evidence
+    supports a professional function."""
+    system = build_cluster_skills_prompt(["การแปลสัญญา"])[0]["content"]
+
+    assert "occupational identity" in system.lower()
+    assert "การสื่อสาร" in system
+
+
+def test_the_merge_prompt_separates_related_from_the_same() -> None:
+    """The line the merge step ran without.
+
+    "Some clusters share the same meaning and should be merged" was the whole
+    instruction, and *related* is how a merge eats a competency — one profession
+    translates documents and interprets negotiations, so a model asked only for
+    shared meaning folds them together.
+    """
+    system = build_merge_clusters_prompt(["การแปลเอกสาร", "การล่าม"])[0]["content"]
+
+    assert "SAME competency" in system
+    assert "NOT a reason to merge" in system
+    assert "การล่าม" in system
+
+
+def test_the_merge_prompt_names_what_a_merge_costs() -> None:
+    """A cluster here becomes a Need and then exactly one PLO, and nothing else
+    in this prompt says so — without it "should these be one group?" is a
+    question about wording rather than about an outcome the program loses."""
+    system = build_merge_clusters_prompt(["ก", "ข"])[0]["content"]
+
+    assert "one Need and then one PLO" in system
+
+
+def test_the_merge_examples_are_answerable_from_labels_alone() -> None:
+    """This step is handed cluster labels and nothing else — not the member
+    skills, not the evidence. A rule whose example needs more than a label is a
+    rule the model cannot act on."""
+    system = build_merge_clusters_prompt(["ก", "ข"])[0]["content"]
+
+    assert "member_indices" not in system
+    assert "evidence" not in system.lower()
