@@ -68,18 +68,21 @@ def test_no_program_context_leaves_the_prompt_unchanged() -> None:
     )
 
 
-def test_the_cluster_prompt_bounds_the_level_of_a_group_in_both_directions() -> None:
-    """Two rules that only work as a pair.
+def test_the_cluster_prompt_bounds_how_narrow_a_group_may_be() -> None:
+    """One task is not a group; a class of work is.
 
-    "Meaning before the count" licenses a group of one, and a model reading only
-    that splits a professional function into its tasks. The level rule alone
-    reads as "make fewer groups". Removing either leaves the other unopposed, so
-    they are asserted together.
+    The counterweight is the bucket target, not a second prompt rule. A "meaning
+    comes before the count" rule sat here for a day as that counterweight and
+    was taken out: it licensed a group of one wherever a skill looked distinct,
+    and group counts went from 11 and 15 to 16 and 48 against a budget of ten.
+    The target is already soft in the only place that matters — code —
+    since `validate_assignments` accepts whatever partition comes back.
     """
-    system = build_cluster_skills_prompt(["การแปลสัญญา", "การแปลเอกสารกฎหมาย"])[0]["content"]
+    system = build_cluster_skills_prompt(["การแปลสัญญา", "การแปลเอกสารกฎหมาย"], 4)[0]["content"]
 
     assert "class of work a graduate repeats" in system
-    assert "a group of one is correct" in system
+    assert "Produce about 4 groups" in system
+    assert "meaning comes before the count" not in system.lower()
 
 
 def test_the_cluster_prompt_keeps_a_specialised_group_out_of_a_generic_one() -> None:
@@ -124,3 +127,43 @@ def test_the_merge_examples_are_answerable_from_labels_alone() -> None:
 
     assert "member_indices" not in system
     assert "evidence" not in system.lower()
+
+
+def test_the_merge_prompt_says_what_the_target_is_for() -> None:
+    """Every merge rule is a reason NOT to merge, and stacked in front of a bare
+    "aim for about N" they read as permission to return the list unchanged —
+    which is what happened: 15 groups became 35-48 against a budget of ten.
+
+    The number is not a style preference. These groups become Needs, synthesis
+    keeps the ten highest-scoring, and a capability split across four
+    near-duplicates divides its own demand_score four ways.
+    """
+    system = build_merge_clusters_prompt(["ก", "ข"], 3)[0]["content"]
+
+    assert "Produce about 3 groups" in system
+    assert "at most ten outcomes" in system
+    assert "compete with each other" in system
+
+
+def test_the_merge_target_is_stated_before_the_reasons_not_to_merge() -> None:
+    """Order is the point, not presence. The target used to sit last, after six
+    rules explaining when a merge would destroy something."""
+    system = build_merge_clusters_prompt(["ก", "ข"], 3)[0]["content"]
+
+    assert system.index("Produce about 3 groups") < system.index("Do not merge merely related")
+
+
+def test_the_target_never_licenses_merging_two_different_competencies() -> None:
+    """The count rule was strengthened, so it needs a bound of its own.
+
+    Stated as a precedence, not as a second soft rule: a soft rule ("meaning
+    comes before the count") sat here for a day and licensed a group of one
+    wherever a *skill* looked distinct, which is how a professional function gets
+    split into its tasks. This one licenses nothing at the skill level — it only
+    refuses a merge of two things already established as different competencies,
+    which is the same line `allocate_cluster_targets` draws in code.
+    """
+    system = build_merge_clusters_prompt(["การแปลเอกสาร", "การล่าม"], 1)[0]["content"]
+
+    assert "stay two groups even when that leaves more groups than the target" in system
+    assert "never makes two different competencies one" in system

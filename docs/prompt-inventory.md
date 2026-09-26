@@ -141,7 +141,6 @@ Rules:
 - Produce about 4 groups. Depart from that only where the data clearly will not support it.
 - Preserve the occupational identity the names carry: never fold a specialised group into a generic one. 'การแปลเอกสารธุรกิจ / การแปลสัญญา / การแปลเอกสารกฎหมาย' is 'การแปลเอกสารวิชาชีพ', never 'การสื่อสาร'.
 - Group at the level of a class of work a graduate repeats across situations, not at the level of one task inside it. Each group can become one of the program's ten outcomes, so splitting 'translating sales contracts' from 'translating legal contracts' spends two of them on one professional function.
-- Meaning comes before the count. That bound is about the *level* of a group, not its size: a group of one is correct when a skill is genuinely distinct from every other.
 - label_th MUST be written in Thai, not English — it is shown to Thai users.
 
 Respond as a JSON object:
@@ -182,12 +181,12 @@ Being related, being used together, or belonging to one profession is NOT a reas
 Rules:
 - Every index must appear in 'groups' exactly once.
 - Do not use indices that are not present in the list.
+- Produce about 4 groups in total. That number is this competency domain's share of the whole program's outcome budget, and the program keeps at most ten outcomes: a list far longer than 4 means several of its groups describe one capability and compete with each other for the same place.
 - A cluster that overlaps with no other stays on its own, as a group of one.
 - Do not merge merely related competencies. 'การแปลเอกสาร' and 'การล่าม' stay apart though one profession does both; so do 'การวิเคราะห์ข้อมูล' and 'การสร้างภาพข้อมูล'.
+- Two different competencies stay two groups even when that leaves more groups than the target. The target says how many groups this domain should be aiming for; it never makes two different competencies one.
 - Preserve the occupational identity the labels carry: merging must not produce a group so general it could belong to any field.
 - Before merging, ask: if these two became one Need and then one PLO, would the distinct capability still be visible? If the merge loses a distinction that matters, do not merge.
-- Meaning comes before the count: leaving two clusters apart is the right answer whenever merging them would lose a competency.
-- Aim for about 4 groups in total. Depart from that only where the labels clearly will not support it.
 
 Respond as a JSON object:
 { "groups": [ [indices of clusters to be merged] ] }
