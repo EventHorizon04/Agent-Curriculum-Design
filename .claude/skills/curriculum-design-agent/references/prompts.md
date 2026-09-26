@@ -1,8 +1,8 @@
 # Prompt Templates Reference
 
-LLM prompts for each agent stage. When building or modifying a prompt, start from the relevant template here. If a needed prompt doesn't exist, add it to this file rather than scattering prompts across the codebase.
+Why each agent stage's prompt says what it says. Read this before changing one; a rule here usually replaced something that failed in a measured way, and the note says which.
 
-Every prompt template below is mirrored 1:1 in `src/curriculum_agent/prompts/` — one file per prompt module, each exporting typed builder functions that return OpenAI-style `list[dict[str, str]]` messages for Instructor. Current files:
+**This file is the reasoning; it is not the prompts.** Each prompt is a Python literal returned by a builder in `src/curriculum_agent/prompts/`, and the verbatim text of every one of them is in [`docs/prompt-inventory.md`](../../../../docs/prompt-inventory.md), rendered from those builders by `scripts/dump_prompts.py`. Three copies used to sit in this file instead, and all three had drifted — the extraction one still asked for “ทักษะที่ตลาดแรงงานต้องการ” months after that framing was removed for reading a สภาวิชาชีพ standard as a job ad. A copy of a prompt starts lying the first time a rule is edited, so what stays here is what the generated file cannot carry: why each rule exists, what it replaced, and what breaks if it is removed. Current builders:
 
 | Prompt file | Used by | Purpose |
 |---|---|---|
@@ -17,7 +17,7 @@ There is no `extract_metadata.py` or `suggest_isced.py` either: intake collects 
 All prompts assume:
 - LLM is Thai-capable (Typhoon, Qwen) or proprietary (Claude, GPT-4o)
 - Output is structured via Instructor → Pydantic
-- Light tasks → small model, heavy reasoning → large model
+- One LLM slot per stage — `extraction`, `clustering`, `need_combination`, `plo_synthesis`, `validation` — each with its own provider and model, declared once in `SLOTS` (`config.py`)
 
 ## Pattern: prompts have three sections
 
@@ -54,40 +54,8 @@ Evidence classification (`requirement` vs `general`) is decided entirely in code
 
 **File:** `prompts/extract_skills.py` — `build_extract_skills_prompt(evidence_text, classification, field_th="", program_name_th="", scope_th="")`
 
-```
-คุณเป็นผู้เชี่ยวชาญวิเคราะห์ทักษะจากข้อความ
-จากข้อความ evidence จงระบุทักษะที่ตลาดแรงงานต้องการ
-
-กติกา:
-- แต่ละทักษะต้องเป็น 'วลี' หรือกลุ่มคำที่สื่อความสามารถ ห้ามเป็นคำโดดคำเดียว
-- ทักษะแต่ละรายการต้องไม่ซ้ำและไม่คาบเกี่ยวกัน (unique, independent)
-  ห้ามเขียนสิ่งเดียวกันด้วยถ้อยคำต่างกัน
-- evidence_span_th ต้องคัดลอกข้อความ 'ตรงตัว' จาก evidence ที่ทำให้สรุปทักษะนี้ได้
-  ห้ามเรียบเรียงใหม่ ห้ามแต่งเพิ่ม ถ้าไม่มีข้อความรองรับ ห้ามเสนอทักษะนั้น
-- evidence_span_th ต้องเป็นวลีที่สมบูรณ์ ยาวอย่างน้อยประมาณ 12 ตัวอักษร
-  คัดลอกตรงตัวจาก evidence ห้ามตัดมาเป็นเศษคำหรืออักขระเดี่ยว ๆ
-- ทักษะที่อ่านแล้วไม่เข้าข่ายสาขาวิชาของหลักสูตรเลย ให้คงไว้แต่ตั้ง
-  is_field_relevant = false ห้ามตัดทิ้งเอง ผู้ออกแบบหลักสูตรจะเป็นผู้ตัดสิน
-
-ตอบเป็น JSON object: { skills: [ {
-  skill_name_th: วลีทักษะภาษาไทย,
-  skill_name_en: ชื่อภาษาอังกฤษมาตรฐาน (เช่น 'Data Analysis') ห้ามเว้นว่าง,
-  ksec_category: K|S|E|C — K=ความรู้, S=ทักษะ,
-  E=คุณธรรมจริยธรรม, C=คุณลักษณะบุคคล
-  (เลือกได้เพียงค่าเดียว ห้ามตอบว่าผสมกัน),
-  bloom_level: remember|understand|apply|analyze|evaluate|create
-  — ระดับ Bloom ด้าน Cognitive เท่านั้น,
-  evidence_span_th: ข้อความที่คัดลอกตรงตัวจาก evidence,
-  is_field_relevant: true|false — ทักษะนี้อยู่ในขอบเขตของสาขาวิชาหรือไม่,
-  confidence: 0.0-1.0
-} ] }
-สกัดไม่เกิน 8 ทักษะต่อข้อความ เน้นทักษะที่วัดได้จริง
-
-[ประเภทหลักฐาน: {classification}]
-[หลักสูตร: {program_name_th}]   # only if present
-[สาขาวิชา: {field_th}]          # only if present
-{evidence_text}
-```
+> ข้อความเต็มของ prompt นี้อยู่ใน [`docs/prompt-inventory.md`](../../../../docs/prompt-inventory.md)
+> ซึ่ง `scripts/dump_prompts.py` render จาก builder จริง ไม่ได้คัดลอกด้วยมือ
 
 `field_th` and `program_name_th` (sourced from `state["metadata"]`) are what make the "no off-field skills" rule answerable — without them the model was told to exclude off-field skills without being told what the field was. A skill judged off-field is kept with `is_field_relevant=false`, never silently dropped — the designer sees it at the checkpoint and can promote it. `classification` (`requirement`/`need`/`want`/`unclassified`) is not part of this prompt's output at all: it is computed afterward, in pure code, by `classify_skills` once every evidence item in the program has been extracted (see `data-schemas.md` for the precedence rules).
 
@@ -126,50 +94,8 @@ Because clustering and merging both run *inside* one KSEC bucket (bucketing happ
 
 **Three rules guard the opposite failure.** Every other rule pushes against a sentence too vague to draft a PLO from; these push against one that is a real demand generalised until it belongs to nobody. "ทักษะการสื่อสาร" clears every pure-code guard below and still describes no program in particular. The last of the three — could a reader still name the profession with the field removed? — cannot be code: the sentence is wrong only relative to the skill group it came from.
 
-```
-คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ความต้องการที่มีต่อบัณฑิตและหลักสูตร
-จากกลุ่มทักษะที่ให้มา จงสรุปเป็น 'ความต้องการ' หนึ่งประโยค
-ประโยคนี้จะถูกนำไปเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) หนึ่งข้อโดยตรง
-จึงต้องเจาะจงพอที่จะเขียน PLO ได้ทันทีโดยไม่ต้องเดาเนื้อหาเพิ่ม
-
-กติกา:
-- เขียนเป็นประโยคเดียวที่ระบุ 'ข้อกำหนด' ขึ้นต้นได้หลายแบบ เช่น 'ต้องการ...'
-  'ต้องการบัณฑิตที่...' 'ต้องการหลักสูตรที่...' หรือ 'บัณฑิตต้องมี...'
-- ห้ามเขียนเป็นผลลัพธ์การเรียนรู้ (PLO) ที่เสร็จรูปแล้ว เช่น 'บัณฑิตวิเคราะห์...ได้'
-- ต้องมีครบ 3 ส่วน: (1) ความสามารถที่ลงมือทำได้จริง
-  (2) วัตถุหรือผลงานที่เจาะจง (3) บริบทของงานที่ใช้ความสามารถนั้น
-  ตัวอย่าง: 'ต้องการบัณฑิตที่ประเมินและปรับปรุงผลลัพธ์การแปลเอกสารธุรกิจระหว่างประเทศ
-  ในบริบทการสื่อสารไทย-จีน'
-- หนึ่งประโยคคือหนึ่งสมรรถนะ
-- ระดับความยากต้องตรงกับระดับ Bloom ที่ระบุให้
-- [เฉพาะเมื่อมี program_context] เขียนโดยตีความทักษะตามบริบทหลักสูตรที่ระบุ
-  แต่บริบทนั้นใช้เลือกถ้อยคำเท่านั้น ห้ามเพิ่มเนื้อหาที่ไม่มีในกลุ่มทักษะ
-- ห้ามใช้คำกว้าง เช่น 'ทักษะที่จำเป็น' 'ความรู้ที่เกี่ยวข้อง' 'สมรรถนะด้านต่างๆ'
-  'ความสามารถทางวิชาชีพ' 'ทักษะการทำงาน'
-- ห้ามลดทอนทักษะเฉพาะทางในกลุ่มให้เหลือเป็นสมรรถนะทั่วไป
-- เมื่อกลุ่มทักษะชี้ถึงหน้าที่ทางวิชาชีพ ให้เขียนด้วยหน้าที่นั้น
-  ไม่ใช่ทักษะทั่วไปที่ครอบมันอยู่
-- ห้ามวนกลับมาพูดว่า 'ตามที่ตลาดต้องการ'
-- ห้ามเป็นเพียงการนำชื่อทักษะมาต่อกัน ทั้งแบบใช้จุลภาค (ไม่เกิน 2 ตัว)
-  และแบบไทยที่เว้นวรรคแล้วปิดท้ายด้วย 'และ'
-- ความยาว 1-2 บรรทัด ไม่สั้นกว่า MIN_STATEMENT_CHARS (40) ตัวอักษร
-- ห้ามมีชื่อฟังก์ชัน ชื่อตัวแปร หรือโค้ดปนอยู่
-
-ก่อนตอบ ให้ทดสอบว่า ถ้าลบชื่อสาขาออก ผู้อ่านยังบอกได้ไหมว่านี่คือความต้องการ
-ของสายวิชาชีพใด ถ้าใช้ได้กับหลายสาขาพร้อมกัน แปลว่ายังกว้างเกินไป ให้เขียนใหม่
-
-ตอบเป็น JSON object ที่มี field:
-  statement_th: string (ประโยคภาษาไทย)
-  statement_en: string (ประโยคภาษาอังกฤษ)
-
-[NOTE_POLICY_TH]
-
-บริบทหลักสูตร: {program_context}          ← user message, omitted when None
-หมวดสมรรถนะ: {ksec_label} ({ksec})
-ระดับที่ตลาดเรียกร้อง: {bloom_label} ({bloom_level})
-ทักษะในกลุ่มนี้: {skill_names, joined}
-[+ append_note(user, note_th)]
-```
+> ข้อความเต็มของ prompt นี้อยู่ใน [`docs/prompt-inventory.md`](../../../../docs/prompt-inventory.md)
+> ซึ่ง `scripts/dump_prompts.py` render จาก builder จริง ไม่ได้คัดลอกด้วยมือ
 
 **Output validation (pure code, drives Instructor retries).** `need_combination._NeedStatement` rejects the following, and each raised message names what it found so the retry prompt can quote it:
 
@@ -194,36 +120,8 @@ If every attempt fails, `stages/need_combination.py` writes a comma-joined skill
 
 **The acronyms are spelled out, in Thai.** `MHESI` reaches a model as four letters that could stand for anything, and one that cannot place which ministry's standard it is writing to falls back on generic learning-outcome phrasing. The whole prompt is Thai and the default provider serves Thai-first models, so the Thai name is the form the model has actually read in curriculum documents. Same reason `OBE` and `PLO` each carry one clause of definition rather than being assumed.
 
-```
-คุณเป็นผู้เชี่ยวชาญการออกแบบหลักสูตรตามแนวคิด OBE (Outcome-Based Education)
-คือการออกแบบหลักสูตรโดยเริ่มจากผลลัพธ์ที่ต้องการให้เกิดกับผู้เรียนเป็นตัวตั้ง
-ยึดมาตรฐานของกระทรวงการอุดมศึกษา วิทยาศาสตร์ วิจัยและนวัตกรรม (อว. / MHESI)
-PLO (Program Learning Outcome) คือผลลัพธ์การเรียนรู้ระดับหลักสูตร
-ที่ระบุว่าบัณฑิตทุกคนทำอะไรได้เมื่อสำเร็จการศึกษา ต้องวัดและประเมินได้จริง
-
-จงแปลง 'ความต้องการของตลาด' หนึ่งข้อ ให้เป็น PLO หนึ่งข้อ
-[ถ้ามีหลาย Need: จงรวม 'ความต้องการของตลาด' ที่ให้มาทั้งหมด ให้เป็น PLO เพียงหนึ่งข้อ]
-
-กติกา:
-- เขียนจากมุมผู้เรียน: 'บัณฑิตทำอะไรได้' ไม่ใช่ 'ตลาดต้องการอะไร'
-- ใช้คำกริยาแสดงพฤติกรรมตาม Bloom เพียง 1 คำ
-- ห้ามใช้คำที่วัดไม่ได้: รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก
-- ต้องระบุวัตถุของกริยาให้เจาะจง ห้ามใช้คำกว้างเช่น 'ความรู้ที่จำเป็น'
-- source_need_ids ต้องเป็น need_id ที่ให้มาทั้งหมด ห้ามเพิ่มหรือตัดทิ้ง
-  [ถ้ามีหลาย Need: ต้องครอบคลุมสาระของทุกความต้องการที่ให้มา ห้ามละข้อใดข้อหนึ่ง]
-
-ตอบเป็น JSON object ที่มี field: plo (object) โดย plo มี field:
-  statement_th, statement_en, bloom_level,
-  action_verb_th, source_need_ids, rationale_th, distinctive_feature_th
-(ไม่ต้องระบุ evidence ใด ๆ — ระบบจะผูก evidence จาก need ที่ให้มาเอง)
-
-[สำหรับแต่ละ Need ที่ให้มา:]
-need_id: {need_id}
-ความต้องการของตลาด: {statement_th}
-หมวดสมรรถนะ: {ksec_category}
-ระดับ Bloom ที่เหมาะสม: {bloom_level}
-ความถี่ที่ถูกกล่าวถึง: {freq} ครั้ง (demand {demand_score})
-```
+> ข้อความเต็มของ prompt นี้อยู่ใน [`docs/prompt-inventory.md`](../../../../docs/prompt-inventory.md)
+> ซึ่ง `scripts/dump_prompts.py` render จาก builder จริง ไม่ได้คัดลอกด้วยมือ
 
 `plo_id` and `source_evidence_ids` are deliberately absent from the draft schema. Each is computed in code: the id by `format_plo_id`/`next_plo_id`, the evidence trail as the union of the contributing Needs' own verified `source_evidence_ids`. Asking the model for either invited it to contradict the data — it answered "PLO1" for every Need (collapsing a whole set into one upserted row) and invented evidence ids that pointed nowhere. Program context (`{name_th}`, `{degree_level}`, `{duration_years}`, `{field}` from `ProgramMetadata`) is included in the real prompt; see the file for the exact block. There is no `{vision_th}` — the vision reaches synthesis as evidence behind a Need, not as a metadata field.
 

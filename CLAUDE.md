@@ -153,7 +153,7 @@ tests/integration/     ← LLM mocked, full stages
 ## Where to find things
 
 - **OBE rules / Bloom verbs / SMART criteria (hard/soft rubric)** → skill `references/obe-principles.md`
-- **Prompt templates for any stage** → skill `references/prompts.md`, then mirrored in `src/curriculum_agent/prompts/`
+- **The text of any prompt** → `docs/prompt-inventory.md`, generated from the builders by `scripts/dump_prompts.py` (`--check` fails when it is stale). **Why a prompt says what it says** → skill `references/prompts.md`. The reference used to carry copies of the prompts too, and all three had drifted; don't reintroduce one.
 - **Data schema decisions** → skill `references/data-schemas.md`, implemented in `src/curriculum_agent/models.py`
 - **SMART hard checks (pure code)** → `src/curriculum_agent/stages/smart_rules.py`; the forbidden-word scan and the finding codes → `src/curriculum_agent/smart_vocabulary.py`
 - **The SMART validation agent** → `src/curriculum_agent/stages/smart_agent.py` (loop), `smart_agent_tools.py` (what it may see), `prompts/smart_agent.py`
