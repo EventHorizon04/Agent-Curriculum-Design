@@ -269,9 +269,7 @@ class Settings(BaseSettings):
         nobody chose. Every name is reported at once, so one restart tells the
         operator everything they have to change.
         """
-        stale = [
-            (old, new) for old, new in _RENAMED_SLOT_SETTINGS.items() if getattr(self, old)
-        ]
+        stale = [(old, new) for old, new in _RENAMED_SLOT_SETTINGS.items() if getattr(self, old)]
         if stale:
             lines = "; ".join(f"{old.upper()} -> {new.upper()}" for old, new in stale)
             raise ValueError(
