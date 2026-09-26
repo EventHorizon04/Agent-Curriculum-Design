@@ -267,7 +267,18 @@ def score_needs(groups: list[Any], injected: set[str]) -> dict[str, Any]:
             bucket.filtered += 1
             bucket.off_field += int(not in_field)
             bucket.off_grad += int(not is_grad)
-            bucket.examples.append(", ".join(group.skill_names[:3]))
+            # The evidence ids ride along because a false positive is not
+            # diagnosable without them: the answer key labels a Need by where
+            # its members came from, so "which documents is this group drawn
+            # from?" is the question a disputed verdict turns on. Skill names
+            # alone say what the group is about and nothing about why it was
+            # labelled in scope.
+            bucket.examples.append(
+                f"[{','.join(sorted(set(group.evidence_ids)))}] "
+                + ", ".join(group.skill_names[:3])
+                + f"  (in_field {group.in_field_skill_count}/{members},"
+                + f" graduate {group.graduate_capability_skill_count}/{members})"
+            )
             # `classification` never reaches is_in_scope, so a professional
             # council's own mandate is filtered exactly like anything else. That
             # is worth seeing rather than assuming: a filtered mandate is a
@@ -403,6 +414,7 @@ def render(results: dict[str, Any], baseline: dict[str, Any] | None) -> str:
                 )
             if need["in_scope"]["filtered"]:
                 w("    ⚠ FALSE POSITIVE — เกณฑ์ผ่านคือศูนย์:")
+                w("      (evidence ids ในวงเล็บเหลี่ยม · เฉลยตัดสินจากที่มา ไม่ใช่จากเนื้อหา)")
                 for example in need["in_scope"]["examples"]:
                     w(f"        {example}")
             w("")
