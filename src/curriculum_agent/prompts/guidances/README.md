@@ -30,5 +30,24 @@ is a record for the reader rather than an instruction to the model, and none of
 them leaves a slot for `program_context` or for the designer note
 (`NOTE_POLICY_TH` / `append_note`) that the live builders already wire in.
 
-The first of these has been reviewed line by line against the running prompt:
-`.scratch/prompt-guidances/market-need-synthesis-review.md`.
+All four have been reviewed line by line against the running prompts:
+`.scratch/prompt-guidances/market-need-synthesis-review.md` and
+`.scratch/prompt-guidances/three-file-review.md`.
+
+## What has been adopted (2026-09-26)
+
+The text half of all four is in the builders now — the `--check` output of
+`scripts/dump_prompts.py` is the way to read what a prompt actually says today,
+never this directory.
+
+| adopted | left | why it was left |
+|---|---|---|
+| `market_need_synthesis` rules 1, 7, 8 and `rationale_th` | the `ผู้ปฏิบัติงาน` subject | a decision this repo already made the other way — see `.scratch/prompt-guidances/issues/01` |
+| `skill_extraction`: the definition of a skill, the "not a skill" list, occupational identity | the job identity test · Bloom "lowest necessary level" · rule 10's confidence rubric · `{program_context}` in the system message | the first was landed and measured out the same day (ungrounded spans 0→5, scope contamination 0→1); Bloom runs through `merge_bloom`'s max and would lower a whole Need; nothing reads `confidence`; the context line would pull per-program text into a fingerprint kept identical across programs |
+| `skill_clustering` rules 4 and 6, plus the curriculum-level line | rules 5, 8, 9 | all three govern `label_th`, which `cluster_skill_names` discards the moment it arrives — whether asking for it improves the partition at all is an open experiment |
+| `cluster_merging` rules 2, 3, 4, 5, 6, 8 | rule 9 (`merge_rationale_th`) | a new response field moves `_CLUSTERING_CONTRACT` directly, and it is a reason for a grouping whose label nothing reads |
+
+The "land them in one commit" advice above was followed for the text, and the
+measured cost was the one the review predicted: 24 live cache rows retired, 14
+evidence items re-extracted. What is left all touches a response schema, so it
+still has a fingerprint move to pay when it lands.
