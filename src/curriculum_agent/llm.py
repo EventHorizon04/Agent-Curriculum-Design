@@ -211,7 +211,15 @@ async def complete_need_combination(
     messages: list[dict[str, Any]],
     **kwargs: Any,
 ) -> T:
-    """Light model used for classification and Need sentences."""
+    """Writes the Thai sentence for each Need, and nothing else.
+
+    The docstring used to say "light model used for classification and Need
+    sentences", which was wrong twice over: `light` was this slot's name before
+    the rename to the calling stage, and evidence classification stopped calling
+    an LLM at all when it became a code lookup from `StakeholderType`. One
+    caller, `need_combination`, and the sentence it writes is the only thing
+    `plo_synthesis` is later handed.
+    """
     return await _complete(*_resolve("need_combination"), response_model, messages, **kwargs)
 
 
