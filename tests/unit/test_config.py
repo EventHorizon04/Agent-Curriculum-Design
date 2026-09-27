@@ -5,7 +5,22 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from curriculum_agent.config import Settings
+from curriculum_agent.config import _PROVIDER_DEFAULT_MODEL, SLOTS, Settings
+
+
+def _slot_default(name: str, provider: str) -> str:
+    """The model `SLOTS` declares for this slot on this provider.
+
+    Read off the declaration rather than repeated as a literal here: a test
+    that hardcodes the model name has to be edited every time the choice is
+    revisited, and the edit is indistinguishable from someone changing the
+    choice without saying why. What is worth pinning is that the slot has a
+    choice of its own at all.
+    """
+    slot = next(s for s in SLOTS if s.name == name)
+    assert provider in slot.default_models, f"{name} declares no model for {provider}"
+    return slot.default_models[provider]
+
 
 _SECRETS = {
     "openrouter_api_key": "sk-or-v1-000000000000000000000000000000000000",
@@ -142,7 +157,10 @@ def test_validation_runs_on_its_own_endpoint():
     """
     s = Settings(_env_file=None)
     assert s.validation_provider == "openrouter"
-    assert s.validation_model == "meta-llama/llama-3.3-70b-instruct"
+    # Same reasoning as extraction: judged on following a schema, so it carries
+    # its own model choice rather than the provider-wide fallback.
+    assert s.validation_model == _slot_default("validation", "openrouter")
+    assert s.validation_model != _PROVIDER_DEFAULT_MODEL["openrouter"]
 
 
 def test_the_validation_model_follows_its_own_provider_not_the_default():
@@ -277,7 +295,13 @@ def test_skill_extraction_runs_off_the_thai_first_endpoint():
     decision; changing it back should mean changing this line and saying why."""
     s = Settings(_env_file=None)
     assert s.extraction_provider == "openrouter"
-    assert s.extraction_model == "meta-llama/llama-3.3-70b-instruct"
+    # Its own declared choice, not whatever OpenRouter's fallback happens to be.
+    # This slot is picked on how faithfully a model quotes -- evidence_span_th is
+    # checked against the source and an invented span is dropped -- so it does
+    # not track the provider-wide default, and asserting against that default
+    # would pass even if the slot lost its own entry.
+    assert s.extraction_model == _slot_default("extraction", "openrouter")
+    assert s.extraction_model != _PROVIDER_DEFAULT_MODEL["openrouter"]
 
 
 def test_extraction_provider_unset_follows_the_default_provider():

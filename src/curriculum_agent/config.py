@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import urllib.parse
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -16,6 +17,20 @@ _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "openrouter": "meta-llama/llama-3.3-70b-instruct",
     "opentyphoon": "typhoon-v2.5-30b-a3b-instruct",
 }
+
+# The credentials this file ships so a checkout runs against the compose stack
+# with no .env at all. They are named here rather than written inline on the
+# fields because `_refuse_development_credentials_in_production` has to compare
+# against them: a default that is only a literal in a field declaration is a
+# default nothing can detect it is still using.
+#
+# Convenience in development, a silent hole anywhere else. A deployment that
+# forgets MINIO_SECRET_KEY does not fail — it starts, connects to whatever
+# answers, and looks healthy. APP_ENV=production is what turns that into a
+# refusal at startup.
+_DEV_POSTGRES_DSN = "postgresql+asyncpg://curriculum:curriculum_dev@127.0.0.1:5432/curriculum_agent"
+_DEV_MINIO_ACCESS_KEY = "minioadmin"
+_DEV_MINIO_SECRET_KEY = "minioadmin_dev"
 
 
 # Slot settings that were renamed, and what to say when one turns up.
@@ -65,6 +80,21 @@ class SlotSpec:
     # it a field of its own ended both the asymmetry and the double duty.
     provider_field: str
     model_field: str
+    # This slot's own model choice, per provider, for the providers where it
+    # differs from `_PROVIDER_DEFAULT_MODEL`. Keyed by provider because a model
+    # name is only meaningful at one endpoint: pinning a slot to one string
+    # would send an OpenRouter model id to Typhoon the moment someone moved the
+    # slot's provider.
+    #
+    # It exists so a model choice is a line of code rather than a line of .env.
+    # Which model a stage runs on is an engineering decision about that stage —
+    # extraction quotes evidence verbatim and needs a model that can, and that
+    # reasoning belongs in the repository next to the slot it is about, under
+    # review, the same for everyone. `.env` is for secrets and for what differs
+    # between machines; a model name is neither. Only providers listed here are
+    # overridden, so a slot that is happy with its provider's default declares
+    # nothing.
+    default_models: Mapping[str, str] = field(default_factory=dict)
     # Only validation: "" is its kill switch, and "" must never resolve to
     # llm_provider. Every other slot's provider only selects an endpoint.
     disableable: bool = False
@@ -78,11 +108,34 @@ class SlotSpec:
 # its docstring still said "classification and Need sentences"; heavy was only
 # ever clustering, as its own config comment said outright.
 SLOTS: tuple[SlotSpec, ...] = (
-    SlotSpec("extraction", "extraction_provider", "extraction_model"),
+    # extraction quotes the evidence verbatim — `evidence_span_th` is checked
+    # against the source by `is_grounded` and an invented span is dropped — so
+    # this slot is chosen on how well a model copies, not on how well it writes.
+    # Probed on the real schema against one stored window: glm-5.3-flash
+    # returned 5 skills with 5/5 grounded in 37.5s, llama-3.3-70b 6 with 4/6 in
+    # 13.8s. Quoting is immutable rule 2, so the slower model is the safer one.
+    SlotSpec(
+        "extraction",
+        "extraction_provider",
+        "extraction_model",
+        default_models={"openrouter": "z-ai/glm-5.3-flash"},
+    ),
+    # Left on the provider default (llama-3.3-70b) deliberately: this is the
+    # slot ticket 16 is measuring, and the measurement is only comparable while
+    # the model under it holds still.
     SlotSpec("clustering", "clustering_provider", "clustering_model"),
     SlotSpec("need_combination", "need_combination_provider", "need_combination_model"),
     SlotSpec("plo_synthesis", "plo_synthesis_provider", "plo_synthesis_model"),
-    SlotSpec("validation", "validation_provider", "validation_model", disableable=True),
+    # Same reasoning as extraction, and the same model: this loop reads a Thai
+    # sentence plus tool results and emits an instruction, so it is judged on
+    # following a schema rather than on Thai prose.
+    SlotSpec(
+        "validation",
+        "validation_provider",
+        "validation_model",
+        default_models={"openrouter": "z-ai/glm-5.3-flash"},
+        disableable=True,
+    ),
 )
 
 
@@ -90,6 +143,19 @@ class Settings(BaseSettings):
     # extra="ignore": stray/legacy keys in .env (e.g. from prior experiments)
     # must not crash Settings() — only declared fields are read.
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    # Which half of the contract this process is held to. Everything in this
+    # file has a default that works on a fresh checkout, which is the right
+    # trade for development and the wrong one anywhere a real person's data
+    # lands: the credentials below are in the repository, so a deployment that
+    # forgets to set them starts anyway and looks healthy.
+    #
+    # "production" turns those defaults into a startup refusal
+    # (`_refuse_development_credentials_in_production`). It is a setting rather
+    # than a build flag because the same image runs in both, and it defaults to
+    # development so that forgetting it can only ever make the check stricter
+    # by accident, never weaker.
+    app_env: Literal["development", "production"] = "development"
 
     # "opentyphoon" by default: every prompt in this pipeline is written in Thai
     # and every stored statement is read by a Thai curriculum designer, and a
@@ -113,12 +179,10 @@ class Settings(BaseSettings):
     # asyncpg and curl fall back to the IPv4 address; psycopg does not, so a
     # "localhost" DSN leaves the API hanging in its lifespan with nothing to
     # read. Spelling it numerically keeps the resolver out of the path.
-    postgres_dsn: str = (
-        "postgresql+asyncpg://curriculum:curriculum_dev@127.0.0.1:5432/curriculum_agent"
-    )
+    postgres_dsn: str = _DEV_POSTGRES_DSN
     minio_endpoint: str = "127.0.0.1:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: SecretStr = SecretStr("minioadmin_dev")
+    minio_access_key: str = _DEV_MINIO_ACCESS_KEY
+    minio_secret_key: SecretStr = SecretStr(_DEV_MINIO_SECRET_KEY)
     # Empty means "unset" — _apply_provider_model_defaults fills these in from
     # the provider that governs each slot. They cannot carry a literal default
     # here: a class-body branch on a provider field would be frozen at import
@@ -280,6 +344,47 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _refuse_development_credentials_in_production(self) -> Settings:
+        """Under APP_ENV=production, refuse the credentials this file ships.
+
+        Every one of them is in the repository, so they authenticate nothing —
+        and the failure they cause without this check is the bad kind: the
+        process starts, connects to whatever is listening on the default port,
+        and reports itself healthy. A missing secret should stop a deployment,
+        loudly, at startup, rather than after it has written somewhere nobody
+        meant it to.
+
+        `api_key` is in the list because `require_api_key` treats None as "auth
+        is off", which is the right default for a laptop and an open door on a
+        public address. It is the one entry that is about absence rather than a
+        known value, and it is the same mistake either way: a credential nobody
+        set.
+
+        Every failure is reported in one message. An operator bringing up a new
+        environment usually has more than one of these unset, and a validator
+        that names only the first turns one fix into three restarts.
+        """
+        if self.app_env != "production":
+            return self
+
+        unset: list[str] = []
+        if self.postgres_dsn == _DEV_POSTGRES_DSN:
+            unset.append("POSTGRES_DSN (still the checked-in development DSN)")
+        if self.minio_access_key == _DEV_MINIO_ACCESS_KEY:
+            unset.append("MINIO_ACCESS_KEY (still 'minioadmin')")
+        if self.minio_secret_key.get_secret_value() == _DEV_MINIO_SECRET_KEY:
+            unset.append("MINIO_SECRET_KEY (still the checked-in development value)")
+        if self.api_key is None:
+            unset.append("API_KEY (unset means every write endpoint is unauthenticated)")
+
+        if unset:
+            raise ValueError(
+                "APP_ENV=production, but these are still at their development "
+                "defaults and must be set in the environment:\n  - " + "\n  - ".join(unset)
+            )
+        return self
+
+    @model_validator(mode="after")
     def _apply_provider_model_defaults(self) -> Settings:
         """Resolve every slot's provider, then its model, from `SLOTS`.
 
@@ -291,6 +396,11 @@ class Settings(BaseSettings):
         llm_provider's: pointing a slot at OpenRouter and leaving its model
         unset would otherwise send a Typhoon model name to OpenRouter, which
         fails as an unknown-model error nowhere near its cause.
+
+        A slot's own `default_models` wins over the provider-wide default, and
+        is looked up by the provider that was just resolved rather than by the
+        one declared on the field — so a slot moved to another endpoint gets
+        that endpoint's model, not a name only its usual provider would know.
 
         One loop over one list, because this used to be ten `if` statements and
         the tenth was the one that could be forgotten.
@@ -306,7 +416,8 @@ class Settings(BaseSettings):
             # why this is an `is None` test.
 
             if provider and not getattr(self, slot.model_field):
-                setattr(self, slot.model_field, _PROVIDER_DEFAULT_MODEL[provider])
+                chosen = slot.default_models.get(provider, _PROVIDER_DEFAULT_MODEL[provider])
+                setattr(self, slot.model_field, chosen)
         return self
 
     @computed_field  # type: ignore[prop-decorator]

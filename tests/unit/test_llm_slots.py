@@ -12,7 +12,12 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from curriculum_agent.config import SLOTS, Settings, SlotSpec
+from curriculum_agent.config import (
+    _PROVIDER_DEFAULT_MODEL,
+    SLOTS,
+    Settings,
+    SlotSpec,
+)
 
 
 def test_every_declared_field_exists_on_settings() -> None:
@@ -112,3 +117,70 @@ def test_the_current_names_are_accepted() -> None:
     )
 
     assert settings.clustering_model == "meta-llama/llama-3.3-70b-instruct"
+
+
+def test_a_slots_own_model_default_wins_over_the_providers() -> None:
+    """A model choice is a line of code, not a line of .env.
+
+    Which model a stage runs on is an engineering decision about that stage —
+    extraction has to quote evidence verbatim and was chosen on that — so it
+    belongs in the repository under review, not in a per-machine file. The
+    provider-wide default stays the fallback for every slot that has no opinion.
+    """
+    settings = Settings(extraction_provider="openrouter", extraction_model="")
+
+    assert settings.extraction_model == "z-ai/glm-5.3-flash"
+    assert settings.clustering_model == _PROVIDER_DEFAULT_MODEL["openrouter"]
+
+
+def test_the_override_is_looked_up_by_the_resolved_provider() -> None:
+    """Keyed by provider, and read after the provider is resolved.
+
+    A slot pinned to one model string would send an OpenRouter model id to
+    Typhoon the moment someone moved that slot's provider — an unknown-model
+    error nowhere near its cause.
+    """
+    settings = Settings(extraction_provider="opentyphoon", extraction_model="")
+
+    assert settings.extraction_model == _PROVIDER_DEFAULT_MODEL["opentyphoon"]
+
+
+def test_an_explicit_model_still_wins_over_both() -> None:
+    """The code default is a default. Pinning a model for one run — a probe, an
+    incident, a provider outage — must still be one environment variable."""
+    settings = Settings(extraction_provider="openrouter", extraction_model="some/other-model")
+
+    assert settings.extraction_model == "some/other-model"
+
+
+def test_production_refuses_the_credentials_this_file_ships() -> None:
+    """They are in the repository, so they authenticate nothing.
+
+    Without this the process starts, connects to whatever is listening on the
+    default port and reports itself healthy, which is a worse failure than not
+    starting at all.
+    """
+    with pytest.raises(ValidationError) as exc:
+        Settings(app_env="production")
+
+    message = str(exc.value)
+    for name in ("POSTGRES_DSN", "MINIO_ACCESS_KEY", "MINIO_SECRET_KEY", "API_KEY"):
+        assert name in message, f"{name} missing from: {message}"
+
+
+def test_production_accepts_real_credentials() -> None:
+    settings = Settings(
+        app_env="production",
+        postgres_dsn="postgresql+asyncpg://u:p@db.internal:5432/curriculum_agent",
+        minio_access_key="real-access-key",
+        minio_secret_key="real-secret-key",
+        api_key="real-api-key",
+    )
+
+    assert settings.app_env == "production"
+
+
+def test_development_is_the_default_and_keeps_working_with_no_env() -> None:
+    """Forgetting APP_ENV can only make the check stricter by accident, never
+    weaker — and a fresh checkout still runs against the compose stack."""
+    assert Settings().app_env == "development"
