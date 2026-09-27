@@ -6,6 +6,7 @@ import api from '../api/client'
 import DesignerNote from './components/DesignerNote'
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
+import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
 import type { PLO } from '../types/plo'
 
 interface NeedSummary {
@@ -308,8 +309,11 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
                     <p className="text-xs text-gray-400 italic">{c.statement_en}</p>
                   )}
                 </div>
-                <span className="shrink-0 text-xs font-mono bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600">
-                  {(c.demand_score * 100).toFixed(0)}%
+                <span
+                  title={DEMAND_SCORE_TITLE_TH}
+                  className="shrink-0 text-xs font-mono bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600"
+                >
+                  {demandPercent(c.demand_score)}
                 </span>
               </div>
               <p className="text-xs text-gray-400 mt-1.5">

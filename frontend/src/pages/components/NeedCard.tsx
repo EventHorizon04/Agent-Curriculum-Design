@@ -1,6 +1,11 @@
 import { useState } from 'react'
 import api from '../../api/client'
 import { stakeholderLabel } from '../../constants/stakeholder'
+import {
+  DEMAND_LABEL_TH,
+  DEMAND_SCORE_TITLE_TH,
+  demandPercent,
+} from '../../constants/demand'
 
 /**
  * `ksec_category` and `bloom_level` stay on the row — the pipeline groups and
@@ -78,8 +83,8 @@ export default function NeedCard({ programId, need }: { programId: string; need:
           </span>
         ))}
         <span title="จำนวนครั้งที่ถูกกล่าวถึง">Freq {need.freq}</span>
-        <span title="สัดส่วนน้ำหนักของหลักฐานที่กล่าวถึงความต้องการนี้">
-          Demand {(need.demand_score * 100).toFixed(0)}%
+        <span title={DEMAND_SCORE_TITLE_TH}>
+          {DEMAND_LABEL_TH} {demandPercent(need.demand_score)}
         </span>
         <button
           onClick={toggle}

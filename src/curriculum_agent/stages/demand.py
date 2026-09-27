@@ -15,6 +15,12 @@ from curriculum_agent.models import StakeholderType
 # rest of the corpus says. The other two blocks ask how much of the corpus named
 # it, but they ask it of two audiences separately rather than of one pooled
 # denominator, because a pooled one measures the wrong thing. See below.
+#
+# These three are mirrored in `frontend/src/constants/demand.ts`, which is what
+# every page's tooltip reads. No test spans the two languages, so change them
+# together — the tooltip there described the pooled block for as long as it took
+# someone to notice, and a wrong explanation beside a right number is worse than
+# none: the designer reads the ranking as "how many people said it".
 MANDATE_WEIGHT = 0.20
 PRACTITIONER_WEIGHT = 0.55
 OTHER_VOICE_WEIGHT = 0.25

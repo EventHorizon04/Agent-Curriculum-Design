@@ -4,6 +4,7 @@ import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import { ksecLabel, stakeholderLabel, classStyle, isRequirementStakeholder } from '../constants/stakeholder'
 import { VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
+import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
 import type { PLO } from '../types/plo'
 
 /** `/needs/` returns whole Needs; the report only reads these fields, and the
@@ -478,8 +479,8 @@ function UnusedNeedRow({ need: n, programId }: { need: NeedSummary; programId: s
         <span className="data shrink-0 text-xs text-faint">{n.need_id}</span>
         <span className="min-w-0 flex-1 text-body">{n.statement_th ?? '—'}</span>
         {n.demand_score !== undefined && (
-          <span className="data shrink-0 text-xs text-mute">
-            {(n.demand_score * 100).toFixed(0)}%
+          <span className="data shrink-0 text-xs text-mute" title={DEMAND_SCORE_TITLE_TH}>
+            {demandPercent(n.demand_score)}
           </span>
         )}
       </div>
@@ -710,8 +711,8 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
           <li key={c.need_id}>
             <div className="flex items-baseline gap-3">
               <p className="min-w-0 flex-1 text-sm leading-relaxed text-body">{c.statement_th}</p>
-              <span className="data shrink-0 text-xs text-mute">
-                {(c.demand_score * 100).toFixed(0)}%
+              <span className="data shrink-0 text-xs text-mute" title={DEMAND_SCORE_TITLE_TH}>
+                {demandPercent(c.demand_score)}
               </span>
             </div>
             {c.rationale_th && (
