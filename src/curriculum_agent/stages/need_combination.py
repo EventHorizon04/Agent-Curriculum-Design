@@ -264,13 +264,37 @@ async def _build_groups(
     # Two allocations, and only the first is a budget. `MAX_CORE_PLOS` is a
     # ceiling on outcomes, and only a graduate capability can become one, so the
     # institutional side must not spend it — that is what let eleven names eat
-    # the S bucket's eight slots. Its own allocation exists so the prompt is
-    # still given a number instead of falling back to "typically 4-12 groups";
-    # nothing downstream spends it, and the groups it produces are the ones
-    # `is_in_scope` filters out before synthesis.
+    # the S bucket's eight slots.
+    graduate_sizes = {ksec: len(deduped[(ksec, True)][0]) for ksec in buckets}
+    institutional_sizes = {ksec: len(deduped[(ksec, False)][0]) for ksec in buckets}
+    graduate_targets = allocate_cluster_targets(graduate_sizes)
+
+    # The institutional side needs a number — without one the prompt falls back
+    # to "typically 4-12 groups" — but it must not be a budget, and the first
+    # version made it one by handing it `MAX_CORE_PLOS` too. Fourteen
+    # institutional names were then asked for nine groups: no PLO slot was
+    # spent, but the prompt was told to fragment, which is the very thing this
+    # split exists to stop, just moved to the other population.
+    #
+    # Nothing downstream counts these groups, so the only thing their number has
+    # to serve is the designer reading them at the checkpoint — and three themes
+    # read better than nine near-singletons. So they are clustered to the same
+    # GRANULARITY the graduate side is being asked for: names per group, carried
+    # across. With no graduate names to take a ratio from there is nothing to
+    # match, and the old behaviour is the honest fallback.
+    granularity = (
+        sum(graduate_sizes.values()) / sum(graduate_targets.values())
+        if sum(graduate_targets.values())
+        else 0.0
+    )
+    institutional_total = (
+        max(1, round(sum(institutional_sizes.values()) / granularity)) if granularity else None
+    )
     targets = {
-        True: allocate_cluster_targets({ksec: len(deduped[(ksec, True)][0]) for ksec in buckets}),
-        False: allocate_cluster_targets({ksec: len(deduped[(ksec, False)][0]) for ksec in buckets}),
+        True: graduate_targets,
+        False: allocate_cluster_targets(institutional_sizes, total=institutional_total)
+        if institutional_total
+        else allocate_cluster_targets(institutional_sizes),
     }
     if targets[True]:
         logger.info(

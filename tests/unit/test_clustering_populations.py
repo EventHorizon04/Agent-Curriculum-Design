@@ -164,3 +164,34 @@ async def test_a_name_flagged_both_ways_lands_on_the_graduate_side(
     landed = [sid for g in groups for sid in g.skill_ids]
     assert sorted(landed) == ["A", "B", "C"]
     assert len(landed) == len(set(landed))
+
+
+async def test_the_institutional_side_is_clustered_to_the_same_granularity(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """It gets a number, but not a budget.
+
+    The first version handed it MAX_CORE_PLOS as well, so fourteen
+    institutional names were asked for nine groups: no PLO slot was spent, but
+    the prompt was told to fragment — the very thing this split exists to stop,
+    moved to the other population. Nothing downstream counts these groups, so
+    the number only has to serve the designer reading them, and it follows the
+    names-per-group the graduate side is being asked for.
+    """
+    seen = _record_calls(monkeypatch)
+    graduate = [_skill(f"ทักษะบัณฑิต{i}", f"G{i}", f"E{i % 3}") for i in range(40)]
+    institutional = [
+        _skill(f"ภารกิจสถาบัน{i}", f"I{i}", f"E{i % 3}", graduate=False) for i in range(12)
+    ]
+
+    await nc._build_groups(graduate + institutional, {f"E{i}": "employer" for i in range(3)})
+
+    by_size = {len(names): target for names, target in seen}
+    graduate_target = by_size[40]
+    institutional_target = by_size[12]
+
+    assert graduate_target == MAX_CORE_PLOS, "the graduate side spends the whole ceiling"
+    # 40 names over 10 groups is 4 a group; 12 institutional names at that
+    # granularity is 3 — not another 10.
+    assert institutional_target == round(12 / (40 / graduate_target))
+    assert institutional_target < graduate_target
