@@ -7,6 +7,11 @@ from pydantic import ValidationError
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages import need_combination as nc
+from curriculum_agent.stages.demand import (
+    MANDATE_WEIGHT,
+    OTHER_VOICE_WEIGHT,
+    PRACTITIONER_WEIGHT,
+)
 from tests.support.needs import RATIONALE_TH
 
 
@@ -364,10 +369,10 @@ async def test_demand_score_is_weighted_by_the_skills_own_stakeholder_types(
 ):
     """Scoring survives the loss of `classified_evidence`.
 
-    Both blocks of the score come off `ExtractedSkill.source_stakeholder_type` and
-    `source_evidence_id` now. In a two-item corpus each Need names half of it, so
-    the frequency block is 0.70 × 0.5 for both and only the council Need collects
-    the 0.30 mandate block on top.
+    Every block of the score comes off `ExtractedSkill.source_stakeholder_type`
+    and `source_evidence_id` now. The council is a practitioner voice and the
+    student is not, so each Need is the whole of its own block's audience — and
+    only the council Need collects the mandate block on top.
     """
     council = _skill(
         "ออกแบบระบบฐานข้อมูล",
@@ -388,8 +393,8 @@ async def test_demand_score_is_weighted_by_the_skills_own_stakeholder_types(
     )
 
     by_skill = {n["member_skill_ids"][0]: n["demand_score"] for n in state["needs"]}
-    assert by_skill["S1"] == pytest.approx(0.30 + 0.70 * 0.5)
-    assert by_skill["S2"] == pytest.approx(0.70 * 0.5)
+    assert by_skill["S1"] == pytest.approx(MANDATE_WEIGHT + PRACTITIONER_WEIGHT)
+    assert by_skill["S2"] == pytest.approx(OTHER_VOICE_WEIGHT)
 
 
 async def test_a_group_whose_sentence_cannot_be_written_is_marked_for_review(

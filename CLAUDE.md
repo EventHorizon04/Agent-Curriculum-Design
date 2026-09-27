@@ -297,16 +297,48 @@ tests/integration/     ← LLM mocked, full stages
   in the clustering **cache key** for the same reason `target_clusters` is: it
   reaches the prompt, so two programs whose skill names coincide must not share
   an entry.
-- **`demand_score` is two blocks, not a table of per-type weights.**
-  `0.30 × (สภาวิชาชีพ named it? 1 : 0) + 0.70 × share of the corpus that named it`
-  — `stages/demand.py`. Only `PROFESSIONAL_COUNCIL` buys the mandate block, which
-  is deliberately narrower than `models.REQUIREMENT_TYPES`: that set still holds
+- **`demand_score` is three blocks, and the two frequency blocks have separate
+  denominators.** `0.20 × (สภาวิชาชีพ named it? 1 : 0) + 0.55 × share of the
+  *practitioner* voices that named it + 0.25 × share of everyone else` —
+  `stages/demand.py`. Only `PROFESSIONAL_COUNCIL` buys the mandate block, which is
+  deliberately narrower than `models.REQUIREMENT_TYPES`: that set still holds
   `INSTITUTIONAL_DIRECTION` and still governs evidence and skill classification,
-  but letting the institution's own voice buy the same 30% would let a faculty
-  lift any Need's rank by restating its vision. Everyone else shares one class and
-  is separated by frequency alone. Don't re-add per-type multipliers — the old
-  1.0/0.8/0.6/0.4 table made every stored score depend on numbers nobody could
-  defend, and the score now decides which Needs become PLOs.
+  but letting the institution's own voice buy the same block would let a faculty
+  lift any Need's rank by restating its vision.
+
+  **The mandate block is dead for most Thai programs, which is why it cannot be
+  the only thing separating voices.** มคอ.1 was repealed wholesale by กฎกระทรวง
+  2565, and the "มาตรฐานคุณวุฒิในสาขาวิชา" series กมอ. issued in its place covers
+  the same council-backed fields (แพทยศาสตร์ 2566, เทคนิคการแพทย์/กายภาพบำบัด/
+  เภสัชศาสตร์ 2567). A translation or humanities program has no external document
+  that can ever buy it. The score was then one pooled frequency block, and pooled
+  frequency **inverts** the ranking: a generic capability is one everybody can
+  name, a specialist one is named only by the people who employ the graduate. On
+  the stored TCISM run the top Need was "การเรียนรู้ตลอดชีวิต" (applicant,
+  community, faculty, the faculty's own vision) while every real translation
+  competency sat at the bottom on one employer each and was cut.
+
+  `_PRACTITIONER_TYPES` — council, employer, industry, alumni, expert — is the
+  line, and **it is not `STAKEHOLDER_GROUP`.** Splitting by external/internal was
+  tried first and moved nothing: `APPLICANT` and `COMMUNITY` are external too, so
+  an employer naming something alone scored exactly what a community voice naming
+  something alone scored. `STAKEHOLDER_GROUP` stays a display label; don't
+  "simplify" the scorer onto it. Each block is a share of its own audience, so
+  adding applicant interviews cannot dilute what the employers said, and a block
+  whose audience is absent contributes zero rather than redistributing its weight
+  (same ordering, no branch that varies with corpus composition — and those two
+  guards are also what answers an empty corpus, so there is no early return for
+  it). An unknown stakeholder type is not a practitioner, so stored-data noise
+  falls to the smaller block.
+
+  This is a table mapping types to classes, and the rule it replaced said not to
+  add one. What that rule forbids is still forbidden: the old 1.0/0.8/0.6/0.4
+  *gradation*, per-type multipliers whose individual values nobody could defend
+  and which moved every stored score when one was retuned. Two categorical
+  classes with one stated question between them ("has this voice done the work?")
+  is a different object — a type's class follows from the question, not from a
+  number someone picked. If a new `StakeholderType` seems to need a *third*
+  weight, the answer is a better question, not a third tier.
 - **A Need has to be usable as a PLO on its own.** `plo_synthesis` drafts exactly
   one PLO per Need and is handed nothing but `statement_th`, so a placeholder
   ("ทักษะที่จำเป็น") or a joined skill list makes the synthesis model invent the

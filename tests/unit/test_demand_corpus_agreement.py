@@ -19,6 +19,7 @@ import pytest
 
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import skill_extraction as se
+from curriculum_agent.stages.demand import PRACTITIONER_WEIGHT
 from tests.support.needs import RATIONALE_TH
 
 _SPANS = {
@@ -109,9 +110,10 @@ async def test_the_silent_evidence_item_is_out_of_both_corpora(extracted, monkey
     needs = state["needs"]
     assert len(needs) == 2
 
-    # No professional council in the corpus, so the mandate block is zero and the
-    # whole score is the frequency block: one of the two items that spoke.
-    expected = round(0.70 * (1 / 2), 4)
+    # No professional council in the corpus, so the mandate block is zero. Both
+    # surviving items are employers, so the whole score is the practitioner block:
+    # one of the two practitioner items that spoke.
+    expected = round(PRACTITIONER_WEIGHT * (1 / 2), 4)
     assert {n["demand_score"] for n in needs} == {expected}
     assert {s["importance_score"] for s in extracted} == {expected}
 
