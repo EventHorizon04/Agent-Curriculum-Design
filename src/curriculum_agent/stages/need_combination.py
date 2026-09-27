@@ -40,6 +40,7 @@ from curriculum_agent.stages.need_grouping import (
     find_vague_phrase,
     looks_like_a_skill_list,
     merge_bloom,
+    normalize_need_name,
     resolve_need_ksec,
 )
 
@@ -209,68 +210,129 @@ async def _build_groups(
     `program_context` is the program's field and degree level. It settles what an
     ambiguous skill name means before the names are grouped by it — it is intake
     metadata, not evidence, so nothing about a Need's evidence trail changes.
+
+    Each bucket is clustered as **two populations**, split by whether the name is
+    a graduate capability. Measured cause, not a guess: on the stored corpus the
+    S bucket returned 17-21 groups against a target of 8, and the extra ones were
+    not the model's judgement — it covered only part of the index list and
+    `validate_assignments` filled the rest with one singleton per unassigned
+    name, twelve and thirteen of them. Holding out the eleven rows extraction
+    flagged `is_graduate_capability=False` dropped the mean group count from 15.7
+    to 9.3 across three runs; a control of the same *length* that kept those
+    eleven stayed at 15.0, so it is the content and not the list length. All
+    eleven were administrator, faculty or institutional_direction rows, and
+    extraction had judged every one correctly: designing the curriculum and
+    raising the graduate employment rate are not things a graduate does. They do
+    not belong to any competency the other names form, the model cannot place
+    them, and the groups around them fragment. Ticket 16 has the numbers.
+
+    **Nothing is dropped, and that distinction is the whole point.** Both
+    populations are clustered and both become Needs, traceable as before; the
+    scope guard still decides at `plo_synthesis` which ones can be drafted from.
+    This is not the rule `cluster_skills` states against setting a skill aside —
+    that one is about `is_field_relevant`, where off-field means market demand
+    the program did not expect, which is real demand and must stay in the pool.
+    `is_graduate_capability` is the other axis and says something different: not
+    a thing a graduate does at all. Don't collapse the two axes here.
+
+    The graduate flag is OR-ed across rows sharing a normalised name before the
+    split, the same direction `classify_skills` reads `is_field_relevant`: one
+    extraction call calling a name institutional does not outvote another that
+    did not, and a name must land in exactly one population or dedupe would emit
+    it twice.
     """
     groups: list[_Group] = []
     buckets = bucket_by_ksec(skills)
-    deduped = {ksec: dedupe_with_bloom_max(bucket) for ksec, bucket in buckets.items()}
-    # Sized against the PLO ceiling before any clustering runs. Each bucket used
-    # to be asked for "typically 4-12 groups" with no notion of how many buckets
-    # existed, so three of them produced 12-36 Needs against a ceiling of ten and
-    # plo_synthesis dropped most of what this stage wrote.
-    targets = allocate_cluster_targets({ksec: len(d[0]) for ksec, d in deduped.items()})
-    if targets:
+
+    graduate_names = {
+        normalize_need_name(s.skill_name_th) for s in skills if s.is_graduate_capability
+    }
+
+    def _split(bucket: list[ExtractedSkill]) -> tuple[list[ExtractedSkill], list[ExtractedSkill]]:
+        grad = [s for s in bucket if normalize_need_name(s.skill_name_th) in graduate_names]
+        return grad, [
+            s for s in bucket if normalize_need_name(s.skill_name_th) not in graduate_names
+        ]
+
+    populations = {ksec: _split(bucket) for ksec, bucket in buckets.items()}
+    deduped = {
+        (ksec, is_grad): dedupe_with_bloom_max(pop)
+        for ksec, pair in populations.items()
+        for is_grad, pop in ((True, pair[0]), (False, pair[1]))
+    }
+
+    # Two allocations, and only the first is a budget. `MAX_CORE_PLOS` is a
+    # ceiling on outcomes, and only a graduate capability can become one, so the
+    # institutional side must not spend it — that is what let eleven names eat
+    # the S bucket's eight slots. Its own allocation exists so the prompt is
+    # still given a number instead of falling back to "typically 4-12 groups";
+    # nothing downstream spends it, and the groups it produces are the ones
+    # `is_in_scope` filters out before synthesis.
+    targets = {
+        True: allocate_cluster_targets({ksec: len(deduped[(ksec, True)][0]) for ksec in buckets}),
+        False: allocate_cluster_targets({ksec: len(deduped[(ksec, False)][0]) for ksec in buckets}),
+    }
+    if targets[True]:
         logger.info(
             "Need budget by competency domain: "
             + ", ".join(
-                f"{k.value}={n}" for k, n in sorted(targets.items(), key=lambda kv: kv[0].value)
+                f"{k.value}={n}"
+                for k, n in sorted(targets[True].items(), key=lambda kv: kv[0].value)
             )
         )
 
-    for ksec, bucket in buckets.items():
-        names, index_groups, bloom_by_name = deduped[ksec]
-        if not names:
-            continue
-        target = targets.get(ksec)
-        logger.info(f"Clustering {len(names)} unique {ksec.value} skills into about {target}")
-        name_clusters = validate_assignments(
-            [("", g) for g in await cluster_skill_names(names, target, program_context)], names
-        )
-        for _, name_indices in name_clusters:
-            member_positions = sorted({p for ni in name_indices for p in index_groups[ni]})
-            members = [bucket[p] for p in member_positions]
-            evidence_ids = sorted({m.source_evidence_id for m in members})
-            cls_coverage = classification_coverage([m.classification for m in members])
-            stk_coverage: dict[StakeholderType, int] = {}
-            for m in members:
-                key = m.source_stakeholder_type
-                stk_coverage[key] = stk_coverage.get(key, 0) + 1
-            # Enum declaration order puts external groups before internal ones,
-            # which is the order the report shows them in.
-            present = {m.source_stakeholder_type for m in members}
-            groups.append(
-                _Group(
-                    ksec=resolve_need_ksec(members),
-                    skill_ids=[m.skill_id for m in members],
-                    evidence_ids=evidence_ids,
-                    skill_names=[names[ni] for ni in name_indices],
-                    bloom_level=merge_bloom([bloom_by_name[names[ni]] for ni in name_indices]),
-                    demand_score=compute_demand_score(evidence_ids, stakeholder_type_by_evidence),
-                    is_optional=is_optional_group(cls_coverage),
-                    classification_coverage=cls_coverage,
-                    stakeholder_coverage=stk_coverage,
-                    # Member rows, not distinct names. classify_skills already
-                    # ORs the field flag across every row sharing a name, and
-                    # counting that way here would push the number to the total
-                    # whenever a name recurs, leaving the designer a ratio that is
-                    # always 8/8. The any rule these feed reads the same either
-                    # way; only the fraction shown at the checkpoint differs.
-                    in_field_skill_count=sum(1 for m in members if m.is_field_relevant),
-                    graduate_capability_skill_count=sum(
-                        1 for m in members if m.is_graduate_capability
-                    ),
-                    stakeholder_types=[t for t in StakeholderType if t in present],
-                )
+    for ksec, pair in populations.items():
+        for is_grad, bucket in ((True, pair[0]), (False, pair[1])):
+            names, index_groups, bloom_by_name = deduped[(ksec, is_grad)]
+            if not names:
+                continue
+            target = targets[is_grad].get(ksec)
+            side = "graduate" if is_grad else "institutional"
+            logger.info(
+                f"Clustering {len(names)} unique {ksec.value} {side} skills into about {target}"
             )
+            name_clusters = validate_assignments(
+                [("", g) for g in await cluster_skill_names(names, target, program_context)],
+                names,
+            )
+            for _, name_indices in name_clusters:
+                member_positions = sorted({p for ni in name_indices for p in index_groups[ni]})
+                members = [bucket[p] for p in member_positions]
+                evidence_ids = sorted({m.source_evidence_id for m in members})
+                cls_coverage = classification_coverage([m.classification for m in members])
+                stk_coverage: dict[StakeholderType, int] = {}
+                for m in members:
+                    key = m.source_stakeholder_type
+                    stk_coverage[key] = stk_coverage.get(key, 0) + 1
+                # Enum declaration order puts external groups before internal ones,
+                # which is the order the report shows them in.
+                present = {m.source_stakeholder_type for m in members}
+                groups.append(
+                    _Group(
+                        ksec=resolve_need_ksec(members),
+                        skill_ids=[m.skill_id for m in members],
+                        evidence_ids=evidence_ids,
+                        skill_names=[names[ni] for ni in name_indices],
+                        bloom_level=merge_bloom([bloom_by_name[names[ni]] for ni in name_indices]),
+                        demand_score=compute_demand_score(
+                            evidence_ids, stakeholder_type_by_evidence
+                        ),
+                        is_optional=is_optional_group(cls_coverage),
+                        classification_coverage=cls_coverage,
+                        stakeholder_coverage=stk_coverage,
+                        # Member rows, not distinct names. classify_skills already
+                        # ORs the field flag across every row sharing a name, and
+                        # counting that way here would push the number to the total
+                        # whenever a name recurs, leaving the designer a ratio that is
+                        # always 8/8. The any rule these feed reads the same either
+                        # way; only the fraction shown at the checkpoint differs.
+                        in_field_skill_count=sum(1 for m in members if m.is_field_relevant),
+                        graduate_capability_skill_count=sum(
+                            1 for m in members if m.is_graduate_capability
+                        ),
+                        stakeholder_types=[t for t in StakeholderType if t in present],
+                    )
+                )
     return groups
 
 
