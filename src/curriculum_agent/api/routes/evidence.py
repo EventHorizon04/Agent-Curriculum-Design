@@ -23,8 +23,28 @@ async def list_evidence(program_id: str) -> list[StakeholderEvidence]:
 
 @router.post("/", response_model=StakeholderEvidence, dependencies=[Depends(require_api_key)])
 async def upload_evidence(program_id: str, evidence: StakeholderEvidence) -> StakeholderEvidence:
-    await _repo.bulk_insert([evidence])
-    return evidence
+    """Store one evidence item, classified here rather than as the client sent it.
+
+    `classification` is derived from `stakeholder_type` in code — a mandate is a
+    property of who is speaking — so it is this route's output, never its input.
+    It used to be stored verbatim, and the field defaults to "general" on the
+    model, so every item saved through the form landed as `general` however it
+    was spoken: on the demo programme all three `institutional_direction` items
+    did, and `classify_evidence_type` says every one of them is a `requirement`.
+
+    That default then decided the whole run. No evidence carrying a mandate means
+    no skill classified `requirement` (`classify_skills` propagates it), which
+    makes `is_optional_group` — `want > requirement + need` — true of almost every
+    group; and `MAX_CORE_PLOS` only bounds the core series, so a programme whose
+    Needs are all optional has no ceiling at all. The stored run shows exactly
+    that: 13 of 14 Needs optional, 12 optional PLOs, zero core ones.
+
+    Classification did exist, in `GET /classify-stream`, as a separate step the
+    designer had to know to run. A field the code owns cannot depend on that.
+    """
+    classified = await classify_single(evidence)
+    await _repo.bulk_insert([classified])
+    return classified
 
 
 @router.get("/classify-stream", dependencies=[Depends(require_api_key)])

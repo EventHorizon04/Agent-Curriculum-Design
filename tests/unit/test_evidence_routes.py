@@ -79,3 +79,52 @@ async def test_classify_stream_sets_anti_buffering_headers() -> None:
     assert resp.media_type == "text/event-stream"
     assert resp.headers["cache-control"] == "no-cache"
     assert resp.headers["x-accel-buffering"] == "no"
+
+
+def _posted(stakeholder_type: str, classification: str) -> dict[str, object]:
+    return {
+        "evidence_id": "ev-1",
+        "program_id": "cs-2025",
+        "stakeholder_type": stakeholder_type,
+        "source_name": "แหล่งทดสอบ",
+        "raw_text_th": "ข้อความหลักฐานสำหรับการทดสอบเส้นทางบันทึก",
+        "classification": classification,
+    }
+
+
+def test_upload_classifies_rather_than_storing_what_the_client_sent() -> None:
+    """`classification` is derived from `stakeholder_type` in code, so it is this
+    route's output and never its input.
+
+    It used to be stored verbatim, and the field defaults to "general" on the
+    model, so every item saved through the form landed as `general` whoever was
+    speaking — on the demo programme all three institutional_direction items did.
+    """
+    mock_insert = AsyncMock()
+    with patch.object(evidence_module._repo, "bulk_insert", new=mock_insert):
+        resp = client.post(
+            "/programs/cs-2025/evidence/",
+            json=_posted("institutional_direction", "general"),
+        )
+
+    assert resp.status_code == 200, f"got {resp.status_code}: {resp.text}"
+    assert resp.json()["classification"] == "requirement"
+    stored = mock_insert.await_args.args[0][0]
+    assert stored.classification == "requirement"
+
+
+def test_upload_refuses_a_mandate_the_stakeholder_type_does_not_support() -> None:
+    """The correction runs in both directions. A client claiming `requirement`
+    for an employer is asserting a mandate the rule does not grant, and storing
+    it would buy that Need a place the evidence never earned: `classify_skills`
+    propagates `requirement` to the skill, and a Need holding one stops being
+    optional."""
+    mock_insert = AsyncMock()
+    with patch.object(evidence_module._repo, "bulk_insert", new=mock_insert):
+        resp = client.post(
+            "/programs/cs-2025/evidence/",
+            json=_posted("employer", "requirement"),
+        )
+
+    assert resp.json()["classification"] == "general"
+    assert mock_insert.await_args.args[0][0].classification == "general"
