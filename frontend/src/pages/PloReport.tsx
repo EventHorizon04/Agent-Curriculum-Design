@@ -7,6 +7,7 @@ import { VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smar
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
 import type { ScopeVerdict } from '../constants/scope'
 import { SCOPE_REASON_TH, scopeCountsTh, scopeVerdict } from '../constants/scope'
+import { MAX_CORE_PLOS, MIN_CORE_PLOS } from '../constants/needPolicy'
 import type { PLO } from '../types/plo'
 
 /** `/needs/` returns whole Needs; the report only reads these fields, and the
@@ -106,10 +107,11 @@ const BLOOM_LABEL: Record<string, string> = {
   create: 'Create',
 }
 
-/** Mirrors MIN_NEEDS and MAX_CORE_PLOS in the pipeline. The band is the policy
- *  a curriculum is judged against, so the page states it rather than implying it. */
-const MIN_CORE = 6
-const MAX_CORE = 10
+/** The band is the policy a curriculum is judged against, so the page states it
+ *  rather than implying it. Shared with the need_combination checkpoint, which
+ *  reports the same bounds one stage earlier — see constants/needPolicy.ts. */
+const MIN_CORE = MIN_CORE_PLOS
+const MAX_CORE = MAX_CORE_PLOS
 /** Two past the ceiling, so a set that overshoots still lands on the scale. */
 const BAND_SCALE = 12
 

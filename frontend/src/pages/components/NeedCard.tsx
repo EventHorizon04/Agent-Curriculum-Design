@@ -7,6 +7,12 @@ import {
   demandPercent,
 } from '../../constants/demand'
 import { SCOPE_REASON_TH, scopeCountsTh, scopeVerdict } from '../../constants/scope'
+import {
+  FALLBACK_ACTION_TH,
+  FALLBACK_LABEL_TH,
+  fallbackKind,
+  withoutMarker,
+} from '../../constants/needPolicy'
 
 /**
  * `ksec_category` and `bloom_level` stay on the row — the pipeline groups and
@@ -65,6 +71,11 @@ export default function NeedCard({ programId, need }: { programId: string; need:
   // statement costs only a re-extraction instead of a re-extraction plus every
   // synthesis call that was already paid for.
   const verdict = scopeVerdict(need)
+  // A Need the pipeline could not write. Two kinds, kept apart because the
+  // designer does opposite things about them: one needs a sentence written by
+  // hand, the other needs the stage run again. The marker is read off the
+  // statement because that is the only place it exists — no flag records it.
+  const fallback = fallbackKind(need.statement_th)
 
   const toggle = async () => {
     const next = !open
@@ -82,9 +93,21 @@ export default function NeedCard({ programId, need }: { programId: string; need:
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
       <div className="flex items-start gap-2">
-        <p className="flex-1 text-sm font-medium leading-relaxed text-gray-800">
-          {need.statement_th}
+        <p
+          className={`flex-1 text-sm font-medium leading-relaxed ${
+            fallback ? 'text-gray-500 italic' : 'text-gray-800'
+          }`}
+        >
+          {/* The marker comes off the sentence because the badge beside it now
+              says the same thing, and what is left is the skill list the
+              fallback wrote — which is what the designer has to replace. */}
+          {withoutMarker(need.statement_th)}
         </p>
+        {fallback && (
+          <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-900">
+            {FALLBACK_LABEL_TH[fallback]}
+          </span>
+        )}
         {verdict !== 'in_scope' && (
           <span
             title={scopeCountsTh(need)}
@@ -99,6 +122,11 @@ export default function NeedCard({ programId, need }: { programId: string; need:
           </span>
         )}
       </div>
+      {fallback && (
+        <p className="mt-2 rounded border-l-2 border-orange-300 bg-orange-50 px-2 py-1.5 text-xs leading-relaxed text-orange-900">
+          {FALLBACK_ACTION_TH[fallback]}
+        </p>
+      )}
       {need.rationale_th && (
         <p className="mt-2 text-xs leading-relaxed text-gray-500">
           <span className="font-semibold text-gray-400">เหตุผลการจัดกลุ่ม (คำอธิบายของโมเดล): </span>

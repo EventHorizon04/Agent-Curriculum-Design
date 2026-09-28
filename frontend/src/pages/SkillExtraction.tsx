@@ -9,6 +9,7 @@ import SkillsByStakeholder, {
 } from './components/SkillsByStakeholder'
 import NeedCard, { type NeedRow } from './components/NeedCard'
 import { scopeVerdict } from '../constants/scope'
+import { MAX_CORE_PLOS, MIN_CORE_PLOS, fallbackKind } from '../constants/needPolicy'
 import DesignerNote from './components/DesignerNote'
 
 /** Which stage a run covers. 'all' is the first run, where there is nothing to
@@ -118,6 +119,31 @@ export default function SkillExtraction() {
     () => needs.filter(n => scopeVerdict(n) !== 'in_scope').length,
     [needs],
   )
+
+  /**
+   * How many core PLOs this Need set will actually yield, against the 6-10 band.
+   *
+   * plo_synthesis drops out-of-scope Needs *before* it applies the ceiling, so
+   * the number that lands in the curriculum is the in-scope core count capped at
+   * MAX_CORE_PLOS — not the core count on its own, which is what the list above
+   * shows and what a designer would otherwise count by eye.
+   *
+   * The pipeline already knows this and says so twice, both times only to the
+   * server log: need_combination warns when the core count is short, and
+   * plo_synthesis warns again after the guard has run, naming the guard as the
+   * cause. Its own comment says "the designer must add more at the review
+   * checkpoint" — this is that checkpoint, and until now it said nothing.
+   */
+  const coreOutlook = useMemo(() => {
+    const core = needs.filter(n => !n.is_optional)
+    const surviving = core.filter(n => scopeVerdict(n) === 'in_scope').length
+    return {
+      core: core.length,
+      guarded: core.length - surviving,
+      projected: Math.min(surviving, MAX_CORE_PLOS),
+      unwritten: needs.filter(n => fallbackKind(n.statement_th)).length,
+    }
+  }, [needs])
 
   const staleNeedCount = useMemo(() => {
     if (skills.length === 0 || needs.length === 0) return 0
@@ -249,6 +275,29 @@ export default function SkillExtraction() {
                   </button>
                 </div>
               )}
+              {/* Placed above the guard notice, which explains what to do about
+                  the Needs this count is missing. */}
+              <div
+                className={`rounded-lg border px-3 py-2.5 text-xs leading-relaxed ${
+                  coreOutlook.projected < MIN_CORE_PLOS
+                    ? 'border-amber-300 bg-amber-50 text-amber-900'
+                    : 'border-gray-200 bg-gray-50 text-gray-700'
+                }`}
+              >
+                <p>
+                  จะได้ PLO หลัก <span className="font-semibold">{coreOutlook.projected}</span> ข้อ
+                  {' '}· เกณฑ์ {MIN_CORE_PLOS}-{MAX_CORE_PLOS} ข้อ
+                  {coreOutlook.projected < MIN_CORE_PLOS && ' — ต่ำกว่าเกณฑ์'}
+                </p>
+                <p className="mt-1 text-gray-600">
+                  Need หลัก {coreOutlook.core} ข้อ
+                  {coreOutlook.guarded > 0 && ` · ตัวกรองขอบเขตกันออก ${coreOutlook.guarded} ข้อ`}
+                  {coreOutlook.core - coreOutlook.guarded > MAX_CORE_PLOS &&
+                    ` · เกินเพดาน ระบบใช้ ${MAX_CORE_PLOS} ข้อที่ demand สูงสุด`}
+                  {coreOutlook.unwritten > 0 &&
+                    ` · เขียนไม่สำเร็จ ${coreOutlook.unwritten} ข้อ (นับรวมอยู่ด้วย)`}
+                </p>
+              </div>
               {guardedNeedCount > 0 && (
                 <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs leading-relaxed text-rose-900">
                   <p>
