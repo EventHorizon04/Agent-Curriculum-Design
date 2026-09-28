@@ -23,6 +23,7 @@ import argparse
 import asyncio
 import contextlib
 import json
+import statistics
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -365,57 +366,189 @@ def score_contamination(
 
 
 # --------------------------------------------------------------------------
+# Aggregation across passes
+# --------------------------------------------------------------------------
+
+
+def _pass_metrics(data: dict[str, Any]) -> dict[str, float | None]:
+    """Every scalar the report prints, flattened out of one pass's result.
+
+    The list is the report's contents rather than a selection from them: a
+    number printed on its own is one the next round will argue about with a
+    sample of one, which is the mistake the repeat mechanism exists to stop.
+    """
+    need, skill, contam = data["needs"], data["skills"], data["contamination"]
+    labelled = ("in_scope", "out_of_scope", "unlabelled")
+    return {
+        "needs": sum(need[k]["total"] for k in labelled),
+        "in_scope": need["in_scope"]["total"],
+        "out_of_scope": need["out_of_scope"]["total"],
+        "unlabelled": need["unlabelled"]["total"],
+        "false_positives": need["false_positives"],
+        "oos_filtered": need["out_of_scope"]["filtered"],
+        "recall": need["recall"],
+        "mandated_but_filtered": len(need["mandated_but_filtered"]),
+        "skills": skill["total"],
+        "both_off": skill["overlap"]["both_off"],
+        "field_only": skill["overlap"]["field_only"],
+        "grad_only": skill["overlap"]["grad_only"],
+        "neither": skill["overlap"]["neither"],
+        "scope_named": contam["scope_named"],
+        "ungrounded_spans": contam["ungrounded_spans"],
+    }
+
+
+def _spread(values: list[float | None]) -> dict[str, Any]:
+    """min / median / max over the passes that produced a number.
+
+    The raw sequence is stored beside the summary rather than instead of it: n
+    is small enough that 1,1,1,1,5 and 1,2,3,4,5 are worth telling apart, and
+    they share a min and a max. `recall` is the one metric that can be absent —
+    a case where no Need was labelled out of scope has no recall rather than a
+    recall of zero — so the count of passes that defined it rides along.
+    """
+    defined = [v for v in values if v is not None]
+    if not defined:
+        return {
+            "n": len(values),
+            "n_defined": 0,
+            "values": values,
+            "min": None,
+            "median": None,
+            "max": None,
+        }
+    return {
+        "n": len(values),
+        "n_defined": len(defined),
+        "values": values,
+        "min": min(defined),
+        "median": statistics.median(defined),
+        "max": max(defined),
+    }
+
+
+def summarize(runs: list[dict[str, Any]]) -> dict[str, Any]:
+    """Per case and variant, every metric as a spread over the passes.
+
+    A variant missing from a pass — every extraction call failed and `run_case`
+    skipped it — contributes nothing rather than a zero. A dead pass recorded as
+    zero false positives would read as the guard behaving perfectly on the one
+    pass where it was never asked anything.
+    """
+    summary: dict[str, Any] = {}
+    for case_name in dict.fromkeys(key for run in runs for key in run):
+        summary[case_name] = {}
+        for variant in dict.fromkeys(v for run in runs for v in run.get(case_name, {})):
+            rows = [
+                _pass_metrics(run[case_name][variant])
+                for run in runs
+                if variant in run.get(case_name, {})
+            ]
+            summary[case_name][variant] = {
+                "passes": len(rows),
+                "metrics": {
+                    key: _spread([row[key] for row in rows]) for key in (rows[0] if rows else {})
+                },
+            }
+    return summary
+
+
+# --------------------------------------------------------------------------
 # Reporting
 # --------------------------------------------------------------------------
 
 
-def render(results: dict[str, Any], baseline: dict[str, Any] | None) -> str:
+def _fmt(spread: dict[str, Any], percent: bool = False) -> str:
+    """A spread as one cell: `1-3 (med 2)`, or a bare number when it never moved."""
+    if spread["n_defined"] == 0:
+        return "—"
+    unit = (lambda v: f"{v:.0%}") if percent else (lambda v: f"{v:g}")
+    low, mid, high = spread["min"], spread["median"], spread["max"]
+    cell = unit(low) if low == high else f"{unit(low)}-{unit(high)} (med {unit(mid)})"
+    if spread["n_defined"] != spread["n"]:
+        cell += f" [{spread['n_defined']}/{spread['n']}]"
+    return cell
+
+
+def _series(spread: dict[str, Any], percent: bool = False) -> str:
+    """The per-pass values in order. A range hides which way a metric drifted."""
+    unit = (lambda v: f"{v:.0%}") if percent else (lambda v: f"{v:g}")
+    return ",".join("—" if v is None else unit(v) for v in spread["values"])
+
+
+def render(
+    runs: list[dict[str, Any]], summary: dict[str, Any], baseline: dict[str, Any] | None
+) -> str:
     lines: list[str] = []
     w = lines.append
+    passes = len(runs)
 
-    for case_name, case in results.items():
+    w(f"n = {passes} pass · ทุกตัวเลขเป็นช่วงข้ามรอบ ไม่ใช่ค่าจากรอบเดียว")
+    w("")
+
+    for case_name, case in summary.items():
         w(f"=== case: {case_name}")
         w("")
-        w(f"{'variant':10s} {'FP (in-scope filtered)':>24s} {'recall (out-of-scope)':>23s}")
+        # The pass count is in the headline row, not only in the detail below
+        # it: this table is the part that gets quoted into a ticket, and a range
+        # read without knowing how many samples produced it is the same mistake
+        # as a single number read as a measurement.
+        w(
+            f"{'variant':10s} {'pass':>6s} {'FP (in-scope filtered)':>26s} "
+            f"{'recall (out-of-scope)':>26s}"
+        )
         for variant, data in case.items():
-            need = data["needs"]
-            recall = need["recall"]
-            hit = f"{need['out_of_scope']['filtered']}/{need['out_of_scope']['total']}"
-            recall_txt = "—" if recall is None else f"{hit} ({recall:.0%})"
-            fp = f"{need['false_positives']}/{need['in_scope']['total']}"
-            w(f"{variant:10s} {fp:>24s} {recall_txt:>23s}")
+            metric = data["metrics"]
+            ran = f"{data['passes']}/{passes}"
+            w(
+                f"{variant:10s} {ran:>6s} "
+                f"{_fmt(metric['false_positives']):>26s} "
+                f"{_fmt(metric['recall'], percent=True):>26s}"
+            )
         w("")
 
         for variant, data in case.items():
-            need, skill, contam = data["needs"], data["skills"], data["contamination"]
-            w(f"--- {variant}")
-            labelled = ("in_scope", "out_of_scope", "unlabelled")
+            metric = data["metrics"]
+            w(f"--- {variant}  ({data['passes']}/{passes} pass)")
             w(
-                f"    Need ทั้งหมด {sum(need[k]['total'] for k in labelled)}"
-                f" · ในขอบเขต {need['in_scope']['total']}"
-                f" · นอกขอบเขต {need['out_of_scope']['total']}"
-                f" · ไม่มีเฉลย {need['unlabelled']['total']}"
+                f"    Need ทั้งหมด {_fmt(metric['needs'])}"
+                f" · ในขอบเขต {_fmt(metric['in_scope'])}"
+                f" · นอกขอบเขต {_fmt(metric['out_of_scope'])}"
+                f" · ไม่มีเฉลย {_fmt(metric['unlabelled'])}"
             )
-            w(f"    skill: {skill['total']} · overlap {skill['overlap']}")
             w(
-                f"    contamination: ชื่อลอกจาก scope {contam['scope_named']}"
-                f" · span หาไม่พบ {contam['ungrounded_spans']}"
+                f"    skill: {_fmt(metric['skills'])}"
+                f" · both_off {_fmt(metric['both_off'])}"
+                f" · field_only {_fmt(metric['field_only'])}"
+                f" · grad_only {_fmt(metric['grad_only'])}"
+                f" · neither {_fmt(metric['neither'])}"
             )
-            if need["mandated_but_filtered"]:
-                w(
-                    f"    ⚠ Need ที่ถูกกรองทั้งที่มีสมาชิกเป็น requirement: "
-                    f"{len(need['mandated_but_filtered'])}"
-                )
-                for example in need["mandated_but_filtered"][:5]:
-                    w(f"        {example}")
-                w(
-                    "      `requirement` ไม่ได้ปกป้อง Need จากการกรอง — มันตัดสิน "
-                    "`classification` เท่านั้น ส่วน is_in_scope อ่านธงดิบ"
-                )
-            if need["in_scope"]["filtered"]:
-                w("    ⚠ FALSE POSITIVE — เกณฑ์ผ่านคือศูนย์:")
+            w(
+                f"    contamination: ชื่อลอกจาก scope {_fmt(metric['scope_named'])}"
+                f" · span หาไม่พบ {_fmt(metric['ungrounded_spans'])}"
+            )
+            w(f"    Need ที่ถูกกรองทั้งที่มีสมาชิกเป็น requirement: {_fmt(metric['mandated_but_filtered'])}")
+            # The per-pass series, not only the range. A metric that climbed on
+            # every pass and one that bounced share a min and a max, and only
+            # the first is a reason to suspect something other than sampling.
+            w(
+                f"    รายรอบ: FP {_series(metric['false_positives'])}"
+                f" · Need {_series(metric['needs'])}"
+                f" · recall {_series(metric['recall'], percent=True)}"
+                f" · span หาไม่พบ {_series(metric['ungrounded_spans'])}"
+            )
+            # Examples come from the worst pass rather than the last: the report
+            # is read to decide whether the gate holds, and the pass that failed
+            # hardest is the one that has to be explained.
+            worst = max(
+                (run[case_name][variant] for run in runs if variant in run.get(case_name, {})),
+                key=lambda d: d["needs"]["false_positives"],
+                default=None,
+            )
+            if worst and worst["needs"]["in_scope"]["filtered"]:
+                w("    ⚠ FALSE POSITIVE — เกณฑ์ผ่านคือศูนย์ (ตัวอย่างจากรอบที่ FP สูงสุด):")
                 w("      (evidence ids ในวงเล็บเหลี่ยม · เฉลยตัดสินจากที่มา ไม่ใช่จากเนื้อหา)")
-                for example in need["in_scope"]["examples"]:
+                for example in worst["needs"]["in_scope"]["examples"]:
                     w(f"        {example}")
             w("")
 
@@ -428,6 +561,9 @@ def render(results: dict[str, Any], baseline: dict[str, Any] | None) -> str:
     w("เกณฑ์: false positive ที่ระดับ Need = 0 เป็น hard gate; recall เป็นตัวเลขรายงาน")
     w("ไม่ใช่ gate — Need ในขอบเขตที่ถูกกรองผิดคือ PLO ที่หายไปโดยไม่มีใครรู้ ส่วน Need")
     w("นอกขอบเขตที่หลุดมา designer ลบได้ที่ checkpoint")
+    w("")
+    w("ช่วงข้างบนคือสิ่งที่ config เดียวให้เอง — การแก้ prompt หรือ model ที่ขยับไม่พ้นช่วงนี้")
+    w("ยังไม่ได้วัดอะไร")
     return "\n".join(lines)
 
 
@@ -541,6 +677,17 @@ async def main() -> int:
         help="source of the out-of-field postings for the synthetic case",
     )
     parser.add_argument("--inject", type=int, default=6, help="how many postings to inject")
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help=(
+            "how many passes of the whole thing to run. One pass is a sample, not a "
+            "measurement: every pass re-extracts against a live model, so a metric has "
+            "to move further than its own spread before a prompt or model change "
+            "explains it."
+        ),
+    )
     parser.add_argument("--baseline", type=Path, help="B0 results recorded before the flag shipped")
     parser.add_argument("--out", type=Path, default=Path(".scratch/plo-scope-guard/eval"))
     args = parser.parse_args()
@@ -548,26 +695,44 @@ async def main() -> int:
     if not args.evidence.exists():
         logger.error(f"{args.evidence} not found")
         return 1
+    if args.repeat < 1:
+        logger.error("--repeat must be at least 1")
+        return 1
 
     logger.info(describe_target())
     evidence = json.loads(args.evidence.read_text(encoding="utf-8"))
     injected = load_injected(args.postings, args.inject)
+    injected_ids = {item["evidence_id"] for item in injected}
 
-    with in_memory_llm_cache():
-        results = {"tcism": await run_case("tcism", evidence, set())}
-        if injected:
-            injected_ids = {item["evidence_id"] for item in injected}
-            results["tcism+injected"] = await run_case(
-                "tcism+injected", evidence + injected, injected_ids
-            )
+    runs: list[dict[str, Any]] = []
+    for index in range(args.repeat):
+        logger.info(f"pass {index + 1}/{args.repeat}")
+        # A fresh memo per pass, not one wrapped around the loop. A later pass
+        # whose extraction happened to return the same names would replay the
+        # first pass's grouping, and the clustering variance this flag exists to
+        # measure would be missing from exactly the passes that show it.
+        with in_memory_llm_cache():
+            result = {"tcism": await run_case("tcism", evidence, set())}
+            if injected:
+                result["tcism+injected"] = await run_case(
+                    "tcism+injected", evidence + injected, injected_ids
+                )
+        runs.append(result)
 
     baseline = json.loads(args.baseline.read_text(encoding="utf-8")) if args.baseline else None
+    summary = summarize(runs)
 
     args.out.mkdir(parents=True, exist_ok=True)
+    # The shape changed when --repeat arrived: `runs` is a list even for one
+    # pass, so a reader never has to know which flag produced the file. Files
+    # written before this are the bare {case: {variant: ...}} of a single pass.
     (args.out / "results.json").write_text(
-        json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
+        json.dumps(
+            {"passes": len(runs), "summary": summary, "runs": runs}, ensure_ascii=False, indent=2
+        ),
+        encoding="utf-8",
     )
-    report = render(results, baseline)
+    report = render(runs, summary, baseline)
     (args.out / "report.txt").write_text(report, encoding="utf-8")
     # A Windows console defaults to cp1252 and cannot encode Thai; the report is
     # mostly Thai, so printing it raw kills the run after every call has been paid
@@ -577,10 +742,13 @@ async def main() -> int:
     print(report)
 
     # Exit code reports the hard gate, but nothing is wired to act on it: this is
-    # run by a person reading the report, not by a pipeline gating a merge.
+    # run by a person reading the report, not by a pipeline gating a merge. Over
+    # several passes it means "the gate failed at least once", which is the only
+    # reading a one-bit answer can carry honestly.
     failures = sum(
         variant["needs"]["false_positives"]
-        for case in results.values()
+        for run in runs
+        for case in run.values()
         for variant in case.values()
     )
     return 1 if failures else 0
