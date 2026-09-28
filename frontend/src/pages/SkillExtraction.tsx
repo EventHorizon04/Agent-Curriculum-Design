@@ -8,6 +8,7 @@ import SkillsByStakeholder, {
   type SkillRow,
 } from './components/SkillsByStakeholder'
 import NeedCard, { type NeedRow } from './components/NeedCard'
+import { scopeVerdict } from '../constants/scope'
 import DesignerNote from './components/DesignerNote'
 
 /** Which stage a run covers. 'all' is the first run, where there is nothing to
@@ -103,6 +104,21 @@ export default function SkillExtraction() {
    * Its trace would come back empty, which reads as a bug rather than as stale
    * data — hence the banner.
    */
+  /**
+   * Needs the scope guard will hold back at plo_synthesis.
+   *
+   * Derived here rather than read off a response, the same way the report
+   * derives it: the guard runs at synthesis, so nothing has judged these rows
+   * yet and no endpoint returns a verdict. Saying it at this checkpoint is the
+   * point of saying it at all — the fix is to edit the scope statement and
+   * re-extract, and the button for that is on this page. Discovered at the
+   * report instead, the same fix costs every synthesis call already paid for.
+   */
+  const guardedNeedCount = useMemo(
+    () => needs.filter(n => scopeVerdict(n) !== 'in_scope').length,
+    [needs],
+  )
+
   const staleNeedCount = useMemo(() => {
     if (skills.length === 0 || needs.length === 0) return 0
     const live = new Set(skills.map(s => s.skill_id))
@@ -231,6 +247,27 @@ export default function SkillExtraction() {
                   >
                     Re-run Need
                   </button>
+                </div>
+              )}
+              {guardedNeedCount > 0 && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs leading-relaxed text-rose-900">
+                  <p>
+                    <span className="font-semibold">{guardedNeedCount}</span> จาก {needs.length}{' '}
+                    ข้อจะไม่ถูกส่งต่อไป PLO synthesis เพราะอยู่นอกขอบเขตของหลักสูตร — ป้ายบนการ์ด
+                    บอกเหตุผลรายใบ กด “ดูที่มา” เพื่อดูว่าทักษะตัวไหนทำให้ถูกกัน
+                  </p>
+                  <p className="mt-1.5">
+                    <span className="font-semibold">ถ้าตัดสินผิด:</span> แก้ “ขอบเขตของหลักสูตร” ที่หน้า{' '}
+                    <Link to="/intake" className="underline underline-offset-2">
+                      Intake
+                    </Link>{' '}
+                    แล้วกด <span className="font-semibold">Re-run Skill</span> ด้านบน — ทั้งโปรแกรมถูกสกัดใหม่
+                    (ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ)
+                  </p>
+                  <p className="mt-1.5">
+                    <span className="font-semibold">ถ้าตัดสินถูกแต่ยังอยากได้:</span> เลือกมันที่หน้า
+                    PLO Synthesis แล้วกด “รวมเป็น PLO เดียว” — ตรงนั้นไม่กัน
+                  </p>
                 </div>
               )}
               {needs.map(n => (

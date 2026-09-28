@@ -5,6 +5,8 @@ import api from '../api/client'
 import { ksecLabel, stakeholderLabel, classStyle, isRequirementStakeholder } from '../constants/stakeholder'
 import { VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
+import type { ScopeVerdict } from '../constants/scope'
+import { SCOPE_REASON_TH, scopeCountsTh, scopeVerdict } from '../constants/scope'
 import type { PLO } from '../types/plo'
 
 /** `/needs/` returns whole Needs; the report only reads these fields, and the
@@ -23,26 +25,17 @@ interface NeedSummary {
   source_stakeholder_types?: string[]
 }
 
-/** Mirrors SCOPE_PASS_RATIO in need_grouping.py — half a Need's members have to
- *  clear each axis. Duplicated the way MIN_CORE and MAX_CORE are: the page states
- *  the policy it is reporting against rather than inferring it from the numbers. */
-const SCOPE_PASS_RATIO = 0.5
-
-/** Why a Need produced no PLO. Derived, never stored: the counters say it. */
-type ExclusionReason = 'off_field' | 'not_graduate' | 'both' | 'lost_on_demand'
+/** Why a Need produced no PLO.
+ *
+ *  The scope part is `scopeVerdict`, shared with the need_combination checkpoint
+ *  so the two pages cannot disagree about which Needs survive. The demand part
+ *  is this page's alone: only the report knows a Need went uncited, so only here
+ *  does "in scope and still unused" mean it lost on the ceiling. */
+type ExclusionReason = Exclude<ScopeVerdict, 'in_scope'> | 'lost_on_demand'
 
 function exclusionReason(n: NeedSummary): ExclusionReason {
-  // Missing counters mean nobody ever judged this Need — it predates the guard,
-  // and it has to read as it read before the guard existed.
-  const total = n.member_skill_ids?.length ?? 0
-  const ratio = (count: number | undefined) =>
-    count === undefined || total === 0 ? 1 : count / total
-  const offField = ratio(n.in_field_skill_count) < SCOPE_PASS_RATIO
-  const offGrad = ratio(n.graduate_capability_skill_count) < SCOPE_PASS_RATIO
-  if (offField && offGrad) return 'both'
-  if (offField) return 'off_field'
-  if (offGrad) return 'not_graduate'
-  return 'lost_on_demand'
+  const verdict = scopeVerdict(n)
+  return verdict === 'in_scope' ? 'lost_on_demand' : verdict
 }
 
 interface ReportCounts {
@@ -455,12 +448,6 @@ function UnusedNeeds({ needs, programId }: { needs: NeedSummary[]; programId: st
   )
 }
 
-const REASON_TH: Record<Exclude<ExclusionReason, 'lost_on_demand'>, string> = {
-  off_field: 'นอกสาขา',
-  not_graduate: 'ไม่ใช่สมรรถนะบัณฑิต',
-  both: 'นอกขอบเขตหลักสูตร',
-}
-
 function UnusedNeedRow({ need: n, programId }: { need: NeedSummary; programId: string }) {
   const [open, setOpen] = useState(false)
   const reason = exclusionReason(n)
@@ -488,10 +475,10 @@ function UnusedNeedRow({ need: n, programId }: { need: NeedSummary; programId: s
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {guarded ? (
           <>
-            <Tag tone="seal">{REASON_TH[reason]}</Tag>
+            <Tag tone="seal">{SCOPE_REASON_TH[reason]}</Tag>
             {mandated && <Tag tone="seal">สภาวิชาชีพระบุไว้</Tag>}
             {total !== undefined && passed !== undefined && (
-              <span className="data text-xs text-mute">
+              <span className="data text-xs text-mute" title={scopeCountsTh(n)}>
                 สมาชิกผ่าน {passed}/{total}
               </span>
             )}

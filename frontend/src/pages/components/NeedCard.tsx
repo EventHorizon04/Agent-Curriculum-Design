@@ -6,6 +6,7 @@ import {
   DEMAND_SCORE_TITLE_TH,
   demandPercent,
 } from '../../constants/demand'
+import { SCOPE_REASON_TH, scopeCountsTh, scopeVerdict } from '../../constants/scope'
 
 /**
  * `ksec_category` and `bloom_level` stay on the row — the pipeline groups and
@@ -32,11 +33,26 @@ export interface NeedRow {
   freq: number
   demand_score: number
   is_optional: boolean
+  /** Members that cleared each scope axis. `scopeVerdict` reads them, and a
+   *  missing one counts as passed — see constants/scope.ts for why absent and
+   *  zero cannot mean the same thing here. */
+  in_field_skill_count?: number
+  graduate_capability_skill_count?: number
 }
 
 interface NeedTrace {
   need: NeedRow
-  skills: { skill_id: string; skill_name_th: string; bloom_level: string }[]
+  /** The route returns whole ExtractedSkill rows, so the two flags are already
+   *  on the wire. They are what makes the panel answer the question the badge
+   *  raises — which members got this Need held back — rather than only listing
+   *  what is in the group. */
+  skills: {
+    skill_id: string
+    skill_name_th: string
+    bloom_level: string
+    is_field_relevant?: boolean
+    is_graduate_capability?: boolean
+  }[]
   evidence: { evidence_id: string; source_name: string; classification: string }[]
 }
 
@@ -44,6 +60,11 @@ export default function NeedCard({ programId, need }: { programId: string; need:
   const [trace, setTrace] = useState<NeedTrace | null>(null)
   const [open, setOpen] = useState(false)
   const [error, setError] = useState('')
+  // The guard runs at plo_synthesis, not here — so the badge says "จะไม่ถูกส่งต่อ",
+  // future tense. This checkpoint is the last point at which fixing the scope
+  // statement costs only a re-extraction instead of a re-extraction plus every
+  // synthesis call that was already paid for.
+  const verdict = scopeVerdict(need)
 
   const toggle = async () => {
     const next = !open
@@ -64,6 +85,14 @@ export default function NeedCard({ programId, need }: { programId: string; need:
         <p className="flex-1 text-sm font-medium leading-relaxed text-gray-800">
           {need.statement_th}
         </p>
+        {verdict !== 'in_scope' && (
+          <span
+            title={scopeCountsTh(need)}
+            className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-800"
+          >
+            {SCOPE_REASON_TH[verdict]}
+          </span>
+        )}
         {need.is_optional && (
           <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
             เสริม
@@ -104,7 +133,15 @@ export default function NeedCard({ programId, need }: { programId: string; need:
                 <p className="font-semibold text-gray-500">ทักษะในกลุ่ม ({trace.skills.length})</p>
                 <ul className="mt-1 list-disc pl-4 text-gray-700">
                   {trace.skills.map(s => (
-                    <li key={s.skill_id}>{s.skill_name_th}</li>
+                    <li key={s.skill_id}>
+                      {s.skill_name_th}
+                      {s.is_field_relevant === false && (
+                        <span className="ml-1.5 text-rose-700">นอกสาขา</span>
+                      )}
+                      {s.is_graduate_capability === false && (
+                        <span className="ml-1.5 text-rose-700">ไม่ใช่สมรรถนะบัณฑิต</span>
+                      )}
+                    </li>
                   ))}
                 </ul>
               </div>
