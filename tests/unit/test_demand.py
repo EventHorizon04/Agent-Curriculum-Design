@@ -190,16 +190,37 @@ def test_empty_program_scores_zero_rather_than_dividing_by_zero():
     assert compute_demand_score(["E1"], {}) == 0.0
 
 
-def test_a_want_heavy_group_is_optional():
-    assert is_optional_group({"want": 3, "need": 1, "requirement": 1}) is True
+def test_a_group_only_one_evidence_item_asked_for_is_optional():
+    assert is_optional_group({"want": 3}, 1) is True
 
 
-def test_a_requirement_backed_group_is_not_optional():
-    assert is_optional_group({"want": 2, "requirement": 1, "need": 2}) is False
+def test_a_second_evidence_item_makes_a_group_core():
+    """Two stakeholders asking is what core means, whatever the members are called."""
+    assert is_optional_group({"want": 3}, 2) is False
+
+
+def test_a_mandate_makes_a_group_core_however_few_asked():
+    """A mandate is not a matter of how many people repeated it."""
+    assert is_optional_group({"requirement": 1}, 1) is False
+
+
+def test_member_classification_alone_cannot_decide_the_group():
+    """The bug this rule replaced, pinned.
+
+    Every one of these groups was drawn from several evidence items and every
+    member came back `want`, because `classify_skills` matches normalised name
+    strings and the extraction model never writes the same name twice. Under
+    `want > requirement + need` all three were optional; the old rule is one
+    edit away from returning, and it returns as a set of `want` counts.
+    """
+    for members in ({"want": 18}, {"want": 14, "requirement": 0}, {"want": 3}):
+        assert is_optional_group(members, 7) is False
 
 
 def test_unclassified_members_do_not_make_a_group_optional():
-    assert is_optional_group({"unclassified": 5}) is False
+    """Unclassified means the extractor was unsure, which decides nothing."""
+    assert is_optional_group({"unclassified": 5}, 3) is False
+    assert is_optional_group({"unclassified": 5}, 1) is True
 
 
 def test_classification_coverage_counts_each_class():

@@ -166,12 +166,39 @@ def classification_coverage(member_classes: list[str]) -> dict[str, int]:
     return coverage
 
 
-def is_optional_group(class_coverage: dict[str, int]) -> bool:
-    """True when wants outnumber the mandated and demanded skills in a group.
+def is_optional_group(class_coverage: dict[str, int], evidence_count: int) -> bool:
+    """True when nothing mandates this group and only one evidence item asked for it.
 
-    `unclassified` counts toward neither side: it means "the extractor was unsure",
-    which is not evidence that a group is supplementary.
+    The question is "did more than one stakeholder ask for this capability, or does
+    someone require it?" — and it is asked of the *group*, which is where a
+    capability exists. It used to be asked of the members' `classification`
+    instead: `want > requirement + need`, where a member is `need` when its own
+    skill *name* was extracted from more than one evidence item.
+
+    That proxy never fired. On the stored run, all 91 normalised names came from
+    exactly one evidence item each, so `need` was zero and the only way to be core
+    was to carry a `requirement` — which comes from `INSTITUTIONAL_DIRECTION` alone
+    for any programme without a professional council, and which the scope guard
+    then drops for not being a graduate capability. Core ended at 1 against a floor
+    of 6. Meanwhile the groups those members formed drew on 7, 9 and 10 evidence
+    items: the clustering step knows two phrasings are one capability, and matching
+    normalised name strings cannot. Counting phrasings answers a question nobody
+    asked.
+
+    This is the second half of the bug `POST /evidence/` fixed the first half of —
+    see that route, which records how a missing `requirement` made almost every
+    group optional, and note that `MAX_CORE_PLOS` only bounds the core series, so a
+    programme whose Needs are all optional has no ceiling at all.
+
+    `need` is subsumed rather than dropped: a member classified `need` had its name
+    in several evidence items, so its group has several too, and `evidence_count`
+    already says so. `classification` keeps its meaning everywhere else; this
+    function simply stops reading the group's answer out of it.
+
+    `requirement` still wins outright, and deliberately so — one mandated member
+    makes the group core however small it is, because a mandate is not a matter of
+    how many people repeated it.
     """
-    want = class_coverage.get("want", 0)
-    backed = class_coverage.get("requirement", 0) + class_coverage.get("need", 0)
-    return want > backed
+    if class_coverage.get("requirement", 0):
+        return False
+    return evidence_count <= 1

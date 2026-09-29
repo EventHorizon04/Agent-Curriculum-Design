@@ -33,11 +33,17 @@ async def upload_evidence(program_id: str, evidence: StakeholderEvidence) -> Sta
     did, and `classify_evidence_type` says every one of them is a `requirement`.
 
     That default then decided the whole run. No evidence carrying a mandate means
-    no skill classified `requirement` (`classify_skills` propagates it), which
-    makes `is_optional_group` — `want > requirement + need` — true of almost every
-    group; and `MAX_CORE_PLOS` only bounds the core series, so a programme whose
-    Needs are all optional has no ceiling at all. The stored run shows exactly
-    that: 13 of 14 Needs optional, 12 optional PLOs, zero core ones.
+    no skill classified `requirement` (`classify_skills` propagates it), and
+    `is_optional_group` then read `want > requirement + need`, which was true of
+    almost every group; and `MAX_CORE_PLOS` only bounds the core series, so a
+    programme whose Needs are all optional has no ceiling at all. The stored run
+    showed exactly that: 13 of 14 Needs optional, 12 optional PLOs, zero core ones.
+
+    That rule has since been replaced — `is_optional_group` now asks how many
+    evidence items a group was drawn from — because fixing this route only fixed
+    half of it: `need` never fired either, so `requirement` was the only way to be
+    core and a programme without a professional council had exactly one source of
+    it. This route's job is unchanged, and so is the reason for it.
 
     Classification did exist, in `GET /classify-stream`, as a separate step the
     designer had to know to run. A field the code owns cannot depend on that.

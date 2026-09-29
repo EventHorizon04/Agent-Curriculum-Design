@@ -341,7 +341,11 @@ async def _build_groups(
                         demand_score=compute_demand_score(
                             evidence_ids, stakeholder_type_by_evidence
                         ),
-                        is_optional=is_optional_group(cls_coverage),
+                        # Distinct evidence items, not member rows: "how many
+                        # stakeholders asked for this" is a count of documents,
+                        # and one document naming a capability three ways is one
+                        # stakeholder asking once.
+                        is_optional=is_optional_group(cls_coverage, len(evidence_ids)),
                         classification_coverage=cls_coverage,
                         stakeholder_coverage=stk_coverage,
                         # Member rows, not distinct names. classify_skills already

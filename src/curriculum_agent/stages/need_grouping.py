@@ -16,7 +16,9 @@ from curriculum_agent.models import BLOOM_ORDER, BloomLevel, ExtractedSkill, KSE
 # use rather than by merging them down to a quota: every Need keeps its own
 # sentence and its own evidence trail, and the ones that lose the cut stay in the
 # Need list where a designer can promote one by editing its rivals. Optional
-# (want-based) PLOs are outside this count, as they are outside the 6 floor.
+# PLOs are outside this count, as they are outside the 6 floor — a Need is
+# optional when nothing mandates it and one evidence item asked for it
+# (`is_optional_group`).
 MIN_NEEDS = 6
 MAX_CORE_PLOS = 10
 
