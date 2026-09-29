@@ -198,7 +198,20 @@ def is_optional_group(class_coverage: dict[str, int], evidence_count: int) -> bo
     `requirement` still wins outright, and deliberately so — one mandated member
     makes the group core however small it is, because a mandate is not a matter of
     how many people repeated it.
+
+    `unclassified` still counts toward neither side, and saying so is not enough:
+    a group whose members are *all* unclassified is one the extractor judged
+    off-field from end to end, and under a rule of the shape "optional unless X"
+    it takes a core slot by default whatever X is. The old rule gave it one
+    because `0 > 0` is false; this one would give it one whenever the group drew
+    on two evidence items. It is not free to leave, even though the scope guard
+    drops every such Need before synthesis: immutable rule 6 makes the 6-10 band
+    a property of the **stored set**, and `POST /plos/from-needs` is checked
+    against it, so a core count padded with Needs that can never become PLOs is a
+    number the designer is judged against and cannot reach.
     """
     if class_coverage.get("requirement", 0):
         return False
+    if class_coverage and set(class_coverage) == {"unclassified"}:
+        return True
     return evidence_count <= 1

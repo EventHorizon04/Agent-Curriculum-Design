@@ -358,7 +358,15 @@ tests/integration/     ← LLM mocked, full stages
   mandate is not a matter of how many people repeated it — and `need` is subsumed
   rather than dropped, since a name in several evidence items means a group in
   several. `classification` is unchanged everywhere else; this rule simply stopped
-  reading the group's answer out of it.
+  reading the group's answer out of it. One clause does still read it: a group
+  whose members are **all** `unclassified` is optional. That class counts toward
+  neither side, and under any rule of the shape "optional unless X" a neutral
+  position is a core slot by default — the old rule gave one because `0 > 0` is
+  false, and this one would give one to any such group drawn from two evidence
+  items. The scope guard drops every one of them before synthesis, which is what
+  makes it look free; it is not, because the band is a property of the stored set
+  and `POST /plos/from-needs` checks against it, so the padding lands in a number
+  the designer is judged against and cannot reach.
 - **A Need has to be usable as a PLO on its own.** `plo_synthesis` drafts exactly
   one PLO per Need and is handed nothing but `statement_th`, so a placeholder
   ("ทักษะที่จำเป็น") or a joined skill list makes the synthesis model invent the

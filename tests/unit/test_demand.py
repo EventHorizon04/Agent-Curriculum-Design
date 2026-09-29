@@ -217,10 +217,23 @@ def test_member_classification_alone_cannot_decide_the_group():
         assert is_optional_group(members, 7) is False
 
 
-def test_unclassified_members_do_not_make_a_group_optional():
-    """Unclassified means the extractor was unsure, which decides nothing."""
-    assert is_optional_group({"unclassified": 5}, 3) is False
+def test_a_group_that_is_entirely_unclassified_is_optional():
+    """Off-field end to end cannot hold a core slot, however many items named it.
+
+    The scope guard drops these before synthesis, so nothing downstream sees
+    them — but immutable rule 6 makes the 6-10 band a property of the stored set,
+    and a core count padded with Needs that can never become PLOs is a number the
+    designer is judged against and cannot reach.
+    """
+    assert is_optional_group({"unclassified": 5}, 3) is True
     assert is_optional_group({"unclassified": 5}, 1) is True
+
+
+def test_unclassified_beside_a_classified_member_decides_nothing():
+    """It counts toward neither side; only a group that is nothing else is optional."""
+    assert is_optional_group({"unclassified": 5, "want": 1}, 3) is False
+    assert is_optional_group({"unclassified": 5, "want": 1}, 1) is True
+    assert is_optional_group({"unclassified": 5, "requirement": 1}, 1) is False
 
 
 def test_classification_coverage_counts_each_class():
