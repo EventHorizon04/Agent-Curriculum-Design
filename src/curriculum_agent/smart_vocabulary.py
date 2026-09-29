@@ -87,6 +87,7 @@ class SmartFindingCode(StrEnum):
 
     # Hard — pure code decides these, and they are the only things that escalate.
     S_VERB = "S_verb"
+    S_MULTI_VERB = "S_multi_verb"
     M_FORBIDDEN = "M_forbidden"
     R_EVIDENCE = "R_evidence"
     # Soft — the validator judges these, and none of them block.
@@ -98,7 +99,12 @@ class SmartFindingCode(StrEnum):
 
 
 HARD_CODES = frozenset(
-    {SmartFindingCode.S_VERB, SmartFindingCode.M_FORBIDDEN, SmartFindingCode.R_EVIDENCE}
+    {
+        SmartFindingCode.S_VERB,
+        SmartFindingCode.S_MULTI_VERB,
+        SmartFindingCode.M_FORBIDDEN,
+        SmartFindingCode.R_EVIDENCE,
+    }
 )
 
 # One Thai label per code, in Python, so the exporter and the rubric share the
@@ -107,6 +113,7 @@ HARD_CODES = frozenset(
 # pages carried their own copy of a map that had been stale for months.
 FINDING_LABEL_TH: dict[SmartFindingCode, str] = {
     SmartFindingCode.S_VERB: "กริยาที่ประกาศไว้ไม่ปรากฏในประโยค",
+    SmartFindingCode.S_MULTI_VERB: "ประกาศกริยาเกินหนึ่งตัว หรือสองตัวที่ระดับ Bloom ห่างกัน",
     SmartFindingCode.M_FORBIDDEN: "ใช้คำที่วัดผลไม่ได้",
     SmartFindingCode.R_EVIDENCE: "ร่องรอยหลักฐานไม่ครบหรืออ้างถึง Need ที่ไม่มีอยู่",
     SmartFindingCode.S_OBJECT: "กรรมของกริยากว้างเกินไป",

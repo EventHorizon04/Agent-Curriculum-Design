@@ -6,13 +6,38 @@ vocabulary — only `models.BLOOM_ORDER`, which ranks the levels. So the rubric'
 "exactly one recognized Bloom verb" rule and the "two verbs only if adjacent"
 rule were prompt text with no code behind them.
 
-**Advisory only.** Nothing here is wired into `smart_rules.hard_failures`, and
-it must stay that way until the vocabulary has seen real programs: a PLO using
-a sound verb this table forgot would hard-fail Specific and escalate, which is
-worse than the gap it closes. It feeds the validator's `check_hard` and
-`bloom_lookup` observations so the agent can *name* a two-verb statement or a
-level mismatch in a repair instruction. This table is a judgement call and
-wants a Thai curriculum specialist's review before it gains any authority.
+**Advisory for the statement; authoritative for the declared verb.** This was
+advisory only, held back from `smart_rules.hard_failures` "until the vocabulary
+has seen real programs", because a PLO using a sound verb this table forgot
+would hard-fail Specific and escalate — a worse outcome than the gap it closes.
+The programs arrived, and measuring against them moved the line in one specific
+place rather than removing it.
+
+What the nine stored PLOs showed: six declared a *phrase* in `action_verb_th`
+("ออกแบบและดำเนินการ", "ออกแบบและดำเนินการตรวจสอบ", "ตีความและอธิบาย"), and the S
+hard check — `action_verb_th in statement_th` — passed all six, because synthesis
+writes the phrase into the sentence it is checked against. So the rubric's "one
+Bloom verb per outcome" rule was broken at the field that declares the verb,
+while the check meant to catch it read the sentence.
+
+The feared failure did not appear there, and a different one did. Scanning the
+*statement* flags six of the nine, of which four are sound outcomes carrying a
+means clause ("โดยใช้เทคโนโลยี"), a purpose clause ("เพื่อสร้างคอนเทนต์") or the
+noun "แนวปฏิบัติ" — over-reporting, not a forgotten verb. Scanning the declared
+phrase flags three, all three genuinely two levels apart or three verbs long,
+and none of the six passes is an over-report. `smart_rules.declares_too_many_verbs`
+is therefore the one caller allowed to gate on this table, and it gates only on
+verbs the table *recognises*: a phrase that scans to nothing passes, so a gap in
+this vocabulary still cannot escalate an outcome. Stored OPT4 declares
+"ประพฤติตน", which is not here, and passes for exactly that reason.
+
+Everything else stays advisory. `scan_statement_verbs` over a full statement
+feeds the validator's `check_hard` and `bloom_lookup` observations so the agent
+can *name* a two-verb sentence or a level mismatch in a repair instruction, and
+that is all it may do — the measurement above is what says why. This table is
+still a judgement call and still wants a Thai curriculum specialist's review;
+adding a verb to it now widens what `S_multi_verb` can reject, so an entry costs
+more than it did.
 
 Lives beside `smart_rules.py` rather than in `models.py`: it is domain policy
 that will grow to hundreds of strings, and `models.py` is schemas.

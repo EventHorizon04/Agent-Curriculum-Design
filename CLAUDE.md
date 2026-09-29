@@ -113,7 +113,7 @@ These are project decisions. If a request conflicts with one, surface the confli
 1. **The agent stops at PLO.** OBE chain is PLO → YLO → CLO, but YLO/CLO are faculty work. Never add YLO/CLO generation back.
 2. **Every PLO must trace to evidence.** `source_need_ids` and `source_evidence_ids` are non-empty. Evidence itself only carries `requirement`/`general`; `need`/`want`/`unclassified` is decided per skill (`ExtractedSkill.classification`) once every evidence item is extracted, since frequency is a cross-evidence property. Pydantic validators enforce the non-empty trail; do not weaken them.
 3. **Forbidden words in PLO statements:** รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก. The Pydantic model rejects these (exception: a PLO with `smart_escalated=True` is kept for human repair) — do not bypass.
-4. **One Bloom action verb per outcome.** Two verbs allowed only if at adjacent levels.
+4. **One Bloom action verb per outcome.** Two verbs allowed only if at adjacent levels. Enforced in pure code on **`action_verb_th`**, not on the statement (`smart_rules.declares_too_many_verbs`) — see the pitfall below for why that is the only place it can be enforced.
 5. **SMART gate on every synthesized PLO, and the last word is pure code.** Hard criteria (S verb-in-statement, M no-forbidden-word-*used*, R evidence-resolves) are the **floor**: `validate_and_build` runs `hard_failures` on the final statement whatever else happened, and that call alone sets `smart_escalated`. An unfixed PLO is marked for human repair, never silently dropped. A **validation agent** (`stages/smart_agent.py`, its own `VALIDATION_*` slot) investigates through tools — the code verdict, the cited Needs, an excerpt of their evidence, the sibling outcomes, the Thai Bloom table — and instructs repairs (max 3 per PLO) that `complete_plo_synthesis` writes, then re-checks. It **cannot declare a hard failure passed**: `Finish` carries no field that clears one, and the code gate runs afterwards regardless, so its influence is monotone — it can shrink the failure list, never declare it empty. Five soft verdicts (S object quality, M assessability, A level plausibility, R answers-its-Needs, T horizon) become `soft_flags` **and** set the matching `SMARTCheck` field, so `passed` means what it says; they never block. Every failure is recorded as a `SmartFinding` with a Thai reason, and `smart_validated_by` says which validator produced the verdict — an outage yields `code_only` with no manufactured findings, because a validator that could not run must not escalate anything.
 6. **6-10 main PLOs per program, each drafted from one Need.** Both bounds live in `stages/need_grouping.py` — one policy, in the module whose clustering has to respect it. The floor (`MIN_NEEDS`) cannot be enforced by code — too few Needs simply means too few PLOs — so a core count below 6 logs a policy warning for the designer to address at the checkpoint. The ceiling (`MAX_CORE_PLOS`) is enforced **by choosing which Needs to use, not by merging them**: `need_combination` still turns every core group into its own Need, and synthesis takes the 10 highest `demand_score` ones. `need_combination` aims at the ceiling rather than overshooting it blindly: `allocate_cluster_targets` splits `MAX_CORE_PLOS` across the K/S/EC buckets in proportion to their unique skill names, and each bucket's clustering call is asked for about that many groups. It is a target, not a cap — `validate_assignments` still accepts whatever partition comes back, since a skill dropped to hit a number is worse than a Need over budget. The Needs that lose the cut stay stored and visible, still tracing to their evidence — they are unused, not deleted, and both the synthesis log and the PLO report name them. The bounds are a property of the **stored set**, not of one stage's output, and `POST /plos/from-needs` is checked against both. **A Need is behind at most one PLO**: the merge route supersedes every outcome citing a selected Need (`plos_citing`) and writes the merged one in its place, in a single transaction (`PLORepository.replace`). It used to append, which left a Need behind both its own outcome and the merged one — two PLOs claiming the same evidence read as two independent market demands in the มคอ.2 matrix when they are one. Because a merge replaces, it moves the core count in both directions: folding several outcomes into one lowers it, merging Needs nothing cites yet raises it, so the route refuses above `MAX_CORE_PLOS` and below `MIN_NEEDS` — the floor only when *this* merge causes the shortfall, so a program that started with too few Needs is not frozen. The merged outcome is numbered from the surviving ids, so it reuses the lowest slot it frees. A Need cited only by a superseded outcome returns to the pool and is logged. Optional PLOs (`is_optional=True`) are outside both bounds, in synthesis and in the merge route alike; `is_optional_group` decides which Needs those are, and the pitfall below says why it counts evidence items rather than member classifications.
 
@@ -173,6 +173,27 @@ tests/integration/     ← LLM mocked, full stages
   comes from the synthesis slot, always, and a helpful model handed that field
   would make "a repair is never answered by a different model than wrote the
   draft" one field away from false.
+- **Immutable rule 4 is enforced on `action_verb_th`, and a statement scan is
+  what does not work.** `hard_failures` tested `action_verb_th in statement_th`
+  and nothing else about verbs, so the rule was prompt text with no code behind
+  it — and it broke at the field that declares the verb rather than in the
+  sentence. Six of the nine stored PLOs declared a *phrase*
+  ("ออกแบบและดำเนินการ", "ออกแบบและดำเนินการตรวจสอบ", "ตีความและอธิบาย"), and every
+  one passed S, because synthesis writes the whole phrase into the sentence it is
+  checked against. Scanning the statement instead is the obvious fix and the
+  wrong one: Thai packs means and purpose into the same sentence, so
+  `scan_statement_verbs` reports "โดยใช้เทคโนโลยี", "เพื่อสร้างคอนเทนต์" and the
+  noun "แนวปฏิบัติ" beside the outcome verb — it flags six of the nine, four of
+  them sound. The declared phrase has no subordinate clauses to mistake, and on
+  it the check flags three, all genuine. **A phrase the table does not recognise
+  passes**: `bloom_verbs` is a judgement call with no specialist review, its
+  header says so, and a gap in a vocabulary this repo wrote alone must not
+  escalate an outcome (stored OPT4 declares "ประพฤติตน"). Two verbs pass when
+  *some* pair of their levels is adjacent, not every pair, because
+  `levels_for_verb` returns a list exactly where the rubric says the object
+  settles the level. `declares_too_many_verbs` is the only caller allowed to gate
+  on that table; everything else it feeds stays advisory, and adding a verb to it
+  now widens what this check rejects.
 - **The forbidden-word check is about words *used*, not substrings.** Thai has
   no word boundaries, so `word in statement` flagged `รักษา` (holds รัก),
   `จำแนก`/`จำลอง` (จำ) and `ความรู้`/`เรียนรู้` (รู้). Each hard-failed M, burned
