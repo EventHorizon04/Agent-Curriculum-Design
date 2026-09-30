@@ -286,7 +286,10 @@ async def validate_and_build(
     smart_check = SMARTCheck(
         specific=HardCriterion.S_VERB not in fails and verdicts["specific_object_ok"],
         measurable=HardCriterion.M_FORBIDDEN not in fails and verdicts["measurable_ok"],
-        achievable=verdicts["achievable_ok"],
+        # A asks whether this is the graduate's to achieve. The Bloom level is one
+        # way the answer is no; an outcome whose doer is the institution, or whose
+        # work belongs to another profession, are the other two.
+        achievable=verdicts["achievable_ok"] and verdicts["actor_ok"] and verdicts["scope_ok"],
         relevant=HardCriterion.R_EVIDENCE not in fails and verdicts["relevant_needs_ok"],
         timely=verdicts["time_bound_ok"],
         notes_th=result.diagnosis_th,

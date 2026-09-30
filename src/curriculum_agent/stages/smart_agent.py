@@ -42,6 +42,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 from curriculum_agent.config import settings
 from curriculum_agent.llm import complete_plo_synthesis, complete_validation
 from curriculum_agent.models import ProgramMetadata, SmartFinding
+from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
     build_refusal_observation,
@@ -104,12 +105,22 @@ def _schema_failure_reason(exc: Exception, *, limit: int = 240) -> str:
     return text.splitlines()[0][:limit] if text else type(inner).__name__
 
 
-# Soft verdict field -> the code recorded when it is false. These five strings
-# are the ones the exporter and both frontend pages already render.
+# Soft verdict field -> the code recorded when it is false. Every code here has
+# a label in FINDING_LABEL_TH and its frontend mirror, which is what the
+# exporter and both pages render.
+#
+# actor_ok and scope_ok arrived after the other five and answer what nothing
+# else did at the PLO level. The scope guard judges a *Need* from skill flags
+# and a ratio, so a Need that passes it can still yield a sentence describing
+# the institution's mission or another profession's job; these two read the
+# sentence itself. They fold into SMARTCheck.achievable in plo_synthesis rather
+# than adding a field, so no stored row changes shape.
 _SOFT_VERDICTS: tuple[tuple[str, SmartFindingCode], ...] = (
     ("specific_object_ok", SmartFindingCode.S_OBJECT),
     ("measurable_ok", SmartFindingCode.M_ASSESSABLE),
     ("achievable_ok", SmartFindingCode.A_LEVEL),
+    ("actor_ok", SmartFindingCode.A_ACTOR),
+    ("scope_ok", SmartFindingCode.A_SCOPE),
     ("relevant_needs_ok", SmartFindingCode.R_NEEDS),
     ("time_bound_ok", SmartFindingCode.T_HORIZON),
 )
@@ -184,6 +195,8 @@ class Finish(BaseModel):
     specific_object_ok: bool = True
     measurable_ok: bool = True
     achievable_ok: bool = True
+    actor_ok: bool = True
+    scope_ok: bool = True
     relevant_needs_ok: bool = True
     time_bound_ok: bool = True
     findings_th: dict[str, str] = Field(default_factory=dict)
@@ -229,7 +242,7 @@ class SmartAgentResult(BaseModel):
 
     @property
     def soft_verdicts(self) -> dict[str, bool]:
-        """The five booleans, derived from the findings so the two cannot drift."""
+        """One boolean per soft verdict, derived from the findings so the two cannot drift."""
         failed = {f.criterion for f in self.soft_findings}
         return {field: code not in failed for field, code in _SOFT_VERDICTS}
 
@@ -399,6 +412,8 @@ async def _loop(
         action_verb_th=draft.action_verb_th,
         degree_level=metadata.degree_level,
         duration_years=metadata.duration_years,
+        program_context=build_program_context_th(metadata.model_dump()),
+        scope_th=metadata.scope_th or None,
         cited_needs=[
             (need_id, ctx.needs_by_id[need_id].statement_th)
             for need_id in ctx.authoritative_need_ids

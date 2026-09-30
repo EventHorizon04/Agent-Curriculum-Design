@@ -94,6 +94,12 @@ class SmartFindingCode(StrEnum):
     S_OBJECT = "S_object"
     M_ASSESSABLE = "M_assessable"
     A_LEVEL = "A_level"
+    # Both fold into SMARTCheck.achievable rather than adding a field, so every
+    # stored row keeps reading: "is this the graduate's to achieve at all" is the
+    # question A asks, and these are the two ways the answer can be no that the
+    # Bloom level cannot see.
+    A_ACTOR = "A_actor"
+    A_SCOPE = "A_scope"
     R_NEEDS = "R_needs"
     T_HORIZON = "T_horizon"
 
@@ -119,6 +125,8 @@ FINDING_LABEL_TH: dict[SmartFindingCode, str] = {
     SmartFindingCode.S_OBJECT: "กรรมของกริยากว้างเกินไป",
     SmartFindingCode.M_ASSESSABLE: "ไม่ชัดว่าประเมินด้วยเครื่องมือใด",
     SmartFindingCode.A_LEVEL: "ระดับ Bloom ไม่สมเหตุสมผลกับระดับคุณวุฒิ",
+    SmartFindingCode.A_ACTOR: "ผู้กระทำไม่ใช่บัณฑิต แต่เป็นสถาบัน องค์กร หรือหลักสูตร",
+    SmartFindingCode.A_SCOPE: "เป็นงานของวิชาชีพอื่น อยู่นอกขอบเขตของหลักสูตร",
     SmartFindingCode.R_NEEDS: "ยังไม่ตอบ Need ที่อ้างถึง",
     SmartFindingCode.T_HORIZON: "กรอบเวลาขัดกับการสำเร็จหลักสูตร",
 }

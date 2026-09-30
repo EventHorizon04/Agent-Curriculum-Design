@@ -28,6 +28,7 @@ Every PLO must satisfy all five SMART dimensions **before it leaves the PLO synt
 
 **Validation rule:**
 - Exactly one Bloom action verb from the table below (see [Bloom Taxonomy](#bloom-taxonomy--cognitive-domain-action-verbs)) is present, applied to a named object (a skill, artifact, standard, or domain) — not a vague noun phrase.
+- **[hard] `S_multi_verb`** — the *declared* verb (`action_verb_th`) is one Bloom verb, or two at adjacent levels. Judged on the declared phrase, never the sentence: Thai carries means and purpose clauses ("โดยใช้…", "เพื่อสร้าง…") in the same sentence, and a sentence scan reports those as extra outcome verbs. A declared phrase the Thai verb table does not recognise passes — a gap in that table must not escalate an outcome.
 - Reject if the object of the verb is an unqualified generic term such as "ความรู้" (knowledge in general), "ทักษะที่จำเป็น" (necessary skills), "ความสามารถโดยรวม" (overall ability) with no domain, tool, standard, or context attached.
 - Reject if the statement could apply equally to almost any program in any field (fails the "does this differentiate the program" test).
 
@@ -56,6 +57,10 @@ Every PLO must satisfy all five SMART dimensions **before it leaves the PLO synt
 - Cross-check the Bloom level implied by the verb against the qualification level (bachelor's vs. master's vs. doctoral) — a bachelor's PLO should not require Evaluate/Create-level mastery of research-frontier content that normally needs graduate training.
 - Cross-check against the tech-stack/resources on record for the program (staff expertise, lab equipment, industry partners). If a PLO requires infrastructure the program doesn't have and has no plan to acquire, flag it — this is a human-review flag, not an auto-reject, since resources can change.
 - This dimension is the hardest to check automatically; treat it as a flag for human review in the PLO synthesis checkpoint rather than a hard validator failure.
+- **[soft] The doer is the graduate** (`actor_ok` → `A_actor`). An outcome describing the institution's own work — building partnerships with foreign universities, designing the curriculum structure — is not something one graduate can achieve, whatever its Bloom level. The scope guard filters such *Needs* by skill flags and a ratio; this reads the *sentence*, which can still describe the institution after its Need passed.
+- **[soft] The work belongs to this profession** (`scope_ok` → `A_scope`). Judged against the designer's `scope_th` when there is one, otherwise against the field recorded at intake. Using another profession's tool for this profession's work is in scope (AI-assisted translation in a translation program); doing that profession's work is not (building the AI model). With neither a scope statement nor a field, the verdict defaults true.
+- When actor or scope fails because the **Need itself** is institutional or out of scope, the fix is not a rewording: the validator finishes with a diagnosis sending the outcome back to the Need stage instead of spending a repair. A rewrite that turns an institution's task into a graduate's has changed what the outcome is about.
+- Both fold into `SMARTCheck.achievable` with the Bloom-level check — no new `SMARTCheck` field, so every stored verdict still reads.
 
 **ไม่ผ่าน (ตัวอย่างความเสี่ยง):** PLO ระดับปริญญาตรีที่กำหนดให้ผู้เรียน "คิดค้นสถาปัตยกรรมคอมพิวเตอร์ควอนตัมแบบใหม่" โดยหลักสูตรไม่มีห้องปฏิบัติการหรือคณาจารย์ด้านนี้
 **ผ่าน:** PLO ที่สอดคล้องกับทรัพยากรและระยะเวลาของหลักสูตรจริง
@@ -93,17 +98,19 @@ Three hard checks are pure code (`stages/smart_rules.py`), and they are the **fl
 2. **[M_FORBIDDEN, hard]** No forbidden unmeasurable word present (รู้ / จำ / เข้าใจ / ซาบซึ้ง / ตระหนัก / ศรัทธา / รัก).
 3. **[R_EVIDENCE, hard]** `source_need_ids` evidence trail is non-empty and resolves to a real `Need`/`StakeholderEvidence` record.
 
-The **validation agent** (`stages/smart_agent.py`, on its own `VALIDATION_*` slot) investigates and instructs: it reads the pure-code verdict through a `check_hard` tool, may read the cited Needs, an excerpt of their evidence, the sibling outcomes and the Thai Bloom table, and when a statement needs repair it emits an *instruction* that `complete_plo_synthesis` executes — then re-checks what came back. It cannot declare a hard failure passed: `Finish` carries no field that clears one, and the code gate above runs afterwards regardless. Its five soft verdicts still never block:
+The **validation agent** (`stages/smart_agent.py`, on its own `VALIDATION_*` slot) investigates and instructs: it reads the pure-code verdict through a `check_hard` tool, may read the cited Needs, an excerpt of their evidence, the sibling outcomes and the Thai Bloom table, and when a statement needs repair it emits an *instruction* that `complete_plo_synthesis` executes — then re-checks what came back. It cannot declare a hard failure passed: `Finish` carries no field that clears one, and the code gate above runs afterwards regardless. Its seven soft verdicts still never block:
 
 | Verdict | Asks |
 |---|---|
 | `specific_object_ok` | Is the verb's object specific — not "ความรู้", not "ทักษะที่จำเป็น"? |
 | `measurable_ok` | Observable *and* assessable with a real instrument (exam, artefact, performance, portfolio)? |
 | `achievable_ok` | Is the Bloom level plausible for `degree_level` and reachable within `duration_years`? |
+| `actor_ok` | Is the doer one graduate, not the institution, the programme or its management? |
+| `scope_ok` | Is the work inside this programme's profession (`scope_th`, else the intake field)? |
 | `relevant_needs_ok` | Does the statement actually answer the Needs it cites? |
 | `time_bound_ok` | Defaults true; fails only on a conflicting horizon. |
 
-Repairs are bounded — max 3 per PLO, plus a turn budget and a per-PLO deadline — then `smart_escalated=True` and the PLO is kept for human repair, never dropped. Soft verdicts land in `soft_flags` (`S_object`, `M_assessable`, `A_level`, `R_needs`, `T_horizon`) **and** in the matching `SMARTCheck` field, so `SMARTCheck.passed` stops reporting success for a flagged outcome. When the validator itself cannot run or cannot finish — a dead endpoint, an exhausted budget, a malformed answer — every soft verdict defaults true, no finding is manufactured, and `smart_validated_by="code_only"` records that the pure checks decided alone. An outage degrades toward "not flagged" rather than falsely flagging sound work, and never toward an escalation nobody judged.
+Repairs are bounded — max 3 per PLO, plus a turn budget and a per-PLO deadline — then `smart_escalated=True` and the PLO is kept for human repair, never dropped. Soft verdicts land in `soft_flags` (`S_object`, `M_assessable`, `A_level`, `A_actor`, `A_scope`, `R_needs`, `T_horizon`) **and** in the matching `SMARTCheck` field (the three A codes all in `achievable`), so `SMARTCheck.passed` stops reporting success for a flagged outcome. When the validator itself cannot run or cannot finish — a dead endpoint, an exhausted budget, a malformed answer — every soft verdict defaults true, no finding is manufactured, and `smart_validated_by="code_only"` records that the pure checks decided alone. An outage degrades toward "not flagged" rather than falsely flagging sound work, and never toward an escalation nobody judged.
 
 R's institutional component is not in this list: it is checked once per program from `Need.source_stakeholder_types`, as described under R above. It is **not** the agent's job either — do not add a `check_institutional` tool.
 

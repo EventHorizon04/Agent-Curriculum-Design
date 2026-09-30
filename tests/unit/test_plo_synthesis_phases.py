@@ -397,3 +397,41 @@ async def test_an_unbuildable_outcome_is_a_gap_not_an_exception(
     )
 
     assert plo is None
+
+
+@pytest.mark.parametrize("code", ["A_actor", "A_scope"])
+async def test_actor_or_scope_failing_makes_the_outcome_not_achievable(
+    monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    """SMARTCheck keeps its five booleans — no migration, and every stored row
+    still reads — so the two new verdicts fold into A. `passed` has to stop
+    reporting success for an outcome the validator said is not a graduate's to
+    achieve, while escalation still reads the hard failures alone."""
+    from curriculum_agent.models import SmartFinding
+    from curriculum_agent.smart_vocabulary import SmartFindingCode
+    from tests.support.smart_agent import agent_verdict
+
+    async def flags(draft, ctx, metadata, **kw):  # noqa: ANN001, ANN003
+        return agent_verdict(
+            draft,
+            soft_findings=[
+                SmartFinding(criterion=SmartFindingCode(code), severity="soft", note_th="x")
+            ],
+            diagnosis_th="ส่งกลับขั้น Need",
+        )
+
+    monkeypatch.setattr(ps, "run_smart_agent", flags)
+
+    plo = await ps.validate_and_build(
+        _draft_for("N1"),
+        metadata=META,
+        needs=[_need("N1", 0.9)],
+        program_id="cs-test",
+        plo_id="PLO1",
+        known_need_ids={"N1"},
+    )
+
+    assert plo is not None
+    assert plo.smart_check.achievable is False
+    assert plo.smart_escalated is False
+    assert plo.soft_flags == [code]

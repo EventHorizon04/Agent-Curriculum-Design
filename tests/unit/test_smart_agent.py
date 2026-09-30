@@ -209,7 +209,7 @@ async def test_a_soft_failure_is_flagged_and_never_escalates(
     assert result.repair_count == 0
 
 
-async def test_the_five_verdicts_are_derived_from_the_findings(
+async def test_the_soft_verdicts_are_derived_from_the_findings(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Stored once, read two ways — so the booleans and the findings cannot
@@ -222,6 +222,8 @@ async def test_the_five_verdicts_are_derived_from_the_findings(
         "specific_object_ok": True,
         "measurable_ok": False,
         "achievable_ok": True,
+        "actor_ok": True,
+        "scope_ok": True,
         "relevant_needs_ok": True,
         "time_bound_ok": True,
     }
@@ -750,3 +752,50 @@ async def test_the_evidence_index_reads_the_table_once(monkeypatch: pytest.Monke
     assert (await index.get("E2")) is not None
     assert (await index.get("E9")) is None
     assert calls == 1
+
+
+async def test_actor_and_scope_failures_are_soft_findings_under_a(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Soft, like every interpreted verdict: they never escalate and never cost a
+    repair on their own."""
+    _drive(
+        monkeypatch,
+        [
+            ("check_hard", {}),
+            _finish(
+                actor_ok=False,
+                scope_ok=False,
+                findings_th={
+                    "A_actor": "ผู้กระทำคือหลักสูตร",
+                    "A_scope": "เป็นงานพัฒนาโมเดล AI ไม่ใช่งานแปล",
+                },
+                diagnosis_th="ควรส่งกลับขั้น Need",
+            ),
+        ],
+    )
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert set(result.soft_flags) == {"A_actor", "A_scope"}
+    notes = {f.criterion.value: f.note_th for f in result.soft_findings}
+    assert notes["A_scope"] == "เป็นงานพัฒนาโมเดล AI ไม่ใช่งานแปล"
+    assert result.soft_verdicts["actor_ok"] is False
+    assert result.soft_verdicts["scope_ok"] is False
+    assert result.repair_count == 0
+
+
+async def test_the_loop_hands_the_validator_the_programs_field_and_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The prompt builder can carry the yardstick; this is what proves the loop
+    passes it. Without the field line scope_ok has nothing to be judged against,
+    and on a program with no scope_th — the common case — it would be a no-op."""
+    fake = _drive(monkeypatch, [_finish()])
+    scoped = META.model_copy(update={"scope_th": "หลักสูตรนี้ครอบคลุมการพัฒนาซอฟต์แวร์และระบบสารสนเทศ"})
+
+    await sa.run_smart_agent(_draft(), _ctx(), scoped)
+
+    opening = fake.messages_seen[0][1]["content"]
+    assert "สาขาวิทยาการคอมพิวเตอร์" in opening
+    assert "ขอบเขตวิชาชีพของหลักสูตร: หลักสูตรนี้ครอบคลุมการพัฒนาซอฟต์แวร์" in opening

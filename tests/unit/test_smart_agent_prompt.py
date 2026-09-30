@@ -249,3 +249,53 @@ def test_the_repair_observation_reports_the_verdict_both_before_and_after() -> N
     assert "(ไม่มี)" in observation
     assert "เข้าใจหลักการ" in observation
     assert "อธิบายหลักการได้" in observation
+
+
+# ------------------------- actor and scope -------------------------
+#
+# Nothing checked a PLO against who does the work or what profession the
+# program trains for. The scope guard answers both for a *Need*, from skill
+# flags and a 0.5 ratio, and a Need that passes it can still yield a sentence
+# describing the institution's mission or another profession's job.
+
+
+def test_actor_and_scope_are_asked_as_verdicts() -> None:
+    system = _system()
+    assert "actor_ok" in system
+    assert "scope_ok" in system
+    assert "A_actor" in system
+    assert "A_scope" in system
+
+
+def test_the_validator_is_told_which_program_it_is_judging() -> None:
+    """It saw the degree and the duration and never the field, so "is this in
+    the profession's scope" had nothing to be answered against."""
+    user = _user(program_context="หลักสูตรระดับปริญญาตรี สาขาการแปลภาษาไทยและภาษาจีน")
+    assert "สาขาการแปลภาษาไทยและภาษาจีน" in user
+
+
+def test_the_designers_own_scope_statement_is_the_yardstick_when_there_is_one() -> None:
+    user = _user(
+        program_context="หลักสูตรระดับปริญญาตรี สาขาการแปลภาษาไทยและภาษาจีน",
+        scope_th="หลักสูตรนี้ครอบคลุมการแปลเอกสาร การล่าม และการตรวจแก้งานแปล",
+    )
+    assert "ขอบเขตวิชาชีพของหลักสูตร: หลักสูตรนี้ครอบคลุมการแปลเอกสาร" in user
+
+
+def test_no_scope_and_no_field_says_nothing_about_scope() -> None:
+    """With nothing to measure against, the rubric already tells the validator to
+    answer true — so the user turn must not carry an empty scope line that reads
+    as "the scope is nothing"."""
+    user = _user()
+    assert "ขอบเขตวิชาชีพ" not in user
+    assert "ถ้าไม่ได้แสดงขอบเขตวิชาชีพหรือสาขาไว้ ให้ scope_ok เป็น true" in _system()
+
+
+def test_a_need_that_is_itself_out_of_scope_is_sent_back_not_repaired() -> None:
+    """Rewording cannot turn an institution's mission into a graduate's
+    capability, and a repair that tries changes the substance of the outcome.
+    It would also spend the repair budget on a soft verdict, which is how PLO1
+    in ticket 15 ran out of repairs before its real problem was looked at."""
+    system = _system()
+    assert "ส่งกลับขั้น Need" in system
+    assert "ห้ามสั่ง request_repair" in system
