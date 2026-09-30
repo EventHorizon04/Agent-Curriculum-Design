@@ -181,6 +181,8 @@ async def _complete(
     model: str,
     response_model: type[T],
     messages: list[dict[str, Any]],
+    *,
+    reasoning_max_tokens: int | None = None,
     **kwargs: Any,
 ) -> T:
     """One structured completion against one endpoint.
@@ -190,18 +192,34 @@ async def _complete(
     to be made once per slot and will eventually be made one short.
 
     `messages` may already carry assistant turns: the validation agent's loop
-    accumulates the conversation and calls its wrapper once per turn. That
-    works because this function passes the list through, so multi-turn needs no
-    support of its own here.
+    accumulates the conversation and calls its wrapper once per turn, so
+    multi-turn needs no support of its own here — but it does need the list
+    handed over as a copy. instructor's JSON mode appends the response schema to
+    the system message *in place* (its `kwargs.copy()` is shallow, so the dict it
+    edits is the caller's), and a list reused across turns therefore grew one
+    schema per call: the same opening turn measured 5,773, then 7,423, then
+    9,073 prompt tokens, and turn eight carried eight copies. A shallow copy of
+    each message is enough, because every builder here emits string content.
+
+    `reasoning_max_tokens` bounds a model's hidden reasoning where the endpoint
+    has a field for it, which is OpenRouter's `reasoning`. Some models there
+    spend one `max_tokens` on both reasoning and answer with nothing between
+    them, and the validation model spent all of it thinking and returned no
+    content at all — see `smart_agent._MAX_REASONING_TOKENS`. Elsewhere the field
+    means nothing and is not sent, so moving a slot off OpenRouter cannot start
+    failing its calls over an unknown parameter.
     """
     logger.debug(f"LLM call: {model} ({provider})")
+    extra_body = _extra_body(provider)
+    if reasoning_max_tokens is not None and provider == "openrouter":
+        extra_body = {**extra_body, "reasoning": {"max_tokens": reasoning_max_tokens}}
     return await _get_client(provider).chat.completions.create(
         model=model,
         response_model=response_model,
         # Prompt builders emit OpenAI-shaped role/content dicts; cast to the SDK's
         # message param type instead of restructuring at runtime.
-        messages=cast(list[ChatCompletionMessageParam], messages),
-        extra_body=_extra_body(provider),
+        messages=cast(list[ChatCompletionMessageParam], [dict(m) for m in messages]),
+        extra_body=extra_body,
         **kwargs,
     )
 

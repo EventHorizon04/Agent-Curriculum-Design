@@ -210,6 +210,9 @@ class ToolBudget:
 
     evidence_reads: set[str] = field(default_factory=set)
     seen_calls: set[str] = field(default_factory=set)
+    # Set once a step's hidden reasoning ran to the step cap. Per PLO because the
+    # input that set it off stays in the conversation — see smart_agent._ask_step.
+    reasoning_bounded: bool = False
 
 
 @dataclass(frozen=True)

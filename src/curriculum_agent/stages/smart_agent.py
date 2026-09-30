@@ -35,9 +35,10 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
-from instructor.core.exceptions import InstructorRetryException
+from instructor.core.exceptions import IncompleteOutputException, InstructorRetryException
 from loguru import logger
 from pydantic import BaseModel, Field, ValidationError, model_validator
+from tenacity import AsyncRetrying, retry_if_not_exception_type, stop_after_attempt
 
 from curriculum_agent.config import settings
 from curriculum_agent.llm import complete_plo_synthesis, complete_validation
@@ -73,6 +74,72 @@ _MAX_MALFORMED = 2
 # costs the whole verdict for that PLO. The ceiling is cheap because it caps
 # what may be generated, not what is billed.
 _MAX_STEP_TOKENS = 4096
+
+# Ceiling on one step's *hidden* reasoning, used only after a step ran away. The
+# validation model on OpenRouter spends one max_tokens on reasoning and answer
+# alike, and nothing stops the first from taking all of it: on stored OPT1 it
+# reasoned for 4,096 tokens (about 12,000 characters) and returned no content,
+# two runs out of two, for a step whose answer was "call check_hard". Given
+# 16,000 it stopped at 5,715. The step failed as malformed, the loop gave up,
+# and the verdict fell to code_only — which drops every soft criterion. On
+# healthy turns the same model reasoned for 22 to 335 tokens.
+#
+# Bounding it on every step was tried first and measured worse. With the bound
+# set this endpoint reports 0 reasoning tokens — it behaves as off, whatever the
+# number — and the judgement loosened with it: OPT8's out-of-scope flag, which
+# held 4/4 with reasoning, held 2/4 without. So `_ask_step` asks unbounded, and
+# bounds only a PLO whose step came back truncated. A cap rather than `effort`
+# because it is correct whether or not the provider honours the number.
+_MAX_REASONING_TOKENS = 1024
+
+# Two attempts, as before, for a schema miss — instructor re-asks with the
+# validation error quoted, which is worth a call. Not for a truncation: its
+# default policy retries every exception, so a runaway step spent the full step
+# cap twice (141 seconds on OPT1's first turn) and still reached the loop
+# truncated. A blind retry cannot fix a runaway; bounding reasoning can, and
+# only the loop can decide to do that. Built per call because tenacity's
+# Retrying objects carry state.
+_STEP_ATTEMPTS = 2
+
+
+def _step_retrying() -> AsyncRetrying:
+    return AsyncRetrying(
+        stop=stop_after_attempt(_STEP_ATTEMPTS),
+        retry=retry_if_not_exception_type(IncompleteOutputException),
+    )
+
+
+async def _ask_step(messages: list[dict[str, Any]], ctx: ValidationContext) -> ValidationStep:
+    """One validation step, with hidden reasoning bounded only once it ran away.
+
+    A truncation on an unbounded step is re-asked at once with reasoning bounded,
+    inside the same turn: the model never answered, so nothing it said was
+    malformed, and the input that set it off is still there — so the bound stays
+    for the rest of this PLO. A truncation on a bounded step propagates; the
+    answer itself outgrew the step cap, and the loop treats that as malformed.
+    """
+
+    async def ask(reasoning_max_tokens: int | None) -> ValidationStep:
+        return await complete_validation(
+            ValidationStep,
+            messages,
+            max_retries=_step_retrying(),
+            temperature=0,
+            max_tokens=_MAX_STEP_TOKENS,
+            reasoning_max_tokens=reasoning_max_tokens,
+        )
+
+    if not ctx.budget.reasoning_bounded:
+        try:
+            return await ask(None)
+        except IncompleteOutputException:
+            logger.warning(
+                f"  SMART agent {ctx.plo_id}: hidden reasoning ran to the "
+                f"{_MAX_STEP_TOKENS}-token step cap with no answer — asking again "
+                f"with reasoning bounded for the rest of this PLO"
+            )
+            ctx.budget.reasoning_bounded = True
+    return await ask(_MAX_REASONING_TOKENS)
 
 
 def _schema_failure_reason(exc: Exception, *, limit: int = 240) -> str:
@@ -433,13 +500,7 @@ async def _loop(
     turn = 0
     for turn in range(1, settings.validation_max_turns + 1):
         try:
-            step = await complete_validation(
-                ValidationStep,
-                messages,
-                max_retries=2,
-                temperature=0,
-                max_tokens=_MAX_STEP_TOKENS,
-            )
+            step = await _ask_step(messages, ctx)
         # InstructorRetryException is what a schema failure actually reaches
         # here as: instructor re-asks internally and, once the retries are
         # spent, wraps the last ValidationError rather than re-raising it. It
@@ -448,8 +509,9 @@ async def _loop(
         # bad step abandoned the whole verdict and `_MAX_MALFORMED` could never
         # be reached. The bare ValidationError stays caught beside it: a step
         # that fails validation outside instructor's retry wrapper is the same
-        # condition and deserves the same budget.
-        except (InstructorRetryException, ValidationError) as exc:
+        # condition and deserves the same budget. So does a truncation that
+        # survived bounded reasoning (see _ask_step): the answer outgrew the cap.
+        except (InstructorRetryException, ValidationError, IncompleteOutputException) as exc:
             malformed += 1
             logger.warning(
                 f"  SMART agent {ctx.plo_id} turn {turn}: malformed step "

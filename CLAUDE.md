@@ -194,6 +194,37 @@ tests/integration/     ← LLM mocked, full stages
   settles the level. `declares_too_many_verbs` is the only caller allowed to gate
   on that table; everything else it feeds stays advisory, and adding a verb to it
   now widens what this check rejects.
+- **instructor edits the caller's message list, and the validation agent reuses
+  one.** JSON mode appends the response schema to the system message *in place*
+  — its `kwargs.copy()` is shallow — so the SMART loop, which keeps a single list
+  for every turn, sent one more ~1,650-token schema per call: the same opening
+  turn measured 5,773, 7,423, then 9,073 prompt tokens. `llm._complete` hands
+  instructor a copy of each message, at the one place every slot goes through.
+  `tests/unit/test_llm_request_shape.py` observes this below instructor, with only
+  the HTTP transport mocked, because the loop's own tests replace the model with
+  a fake that never reaches instructor and could not have seen it.
+- **The validation model's hidden reasoning is bounded only after it runs away.**
+  It spends one `max_tokens` on reasoning and on the answer; on stored OPT1 it
+  reasoned for all 4,096 and answered nothing, two runs of two, which made the
+  step malformed and the verdict `code_only` — every soft criterion lost. Bounding
+  reasoning on every step fixed that and loosened the judgement: this endpoint
+  treats any `reasoning.max_tokens` as off, and OPT8's out-of-scope flag fell from
+  4/4 to 2/4. So `smart_agent._ask_step` asks unbounded, and on a truncation
+  re-asks the same step bounded — no turn spent, not counted malformed — and keeps
+  the bound for the rest of that PLO, since the input that set it off is still in
+  the conversation. `_step_retrying` stops instructor retrying a truncation
+  (its default retries every exception, and a runaway spent the step cap twice
+  before the loop heard of it). A truncation *with* the bound is the answer
+  outgrowing the cap, and takes the malformed path. `reasoning` is OpenRouter's
+  field and is sent nowhere else. **This is not free, and the cost is still
+  open.** Runaways are common and random even at temperature 0 — one or two of
+  nine PLOs on one run, five of nine on another — and a PLO that ran away is
+  judged bounded, which is the looser judgement: on the final run OPT8 ran away
+  and lost its flag again. It is still strictly better than before, where the
+  same PLO got `code_only` and no soft verdict at all (`code_only` went 3/9 →
+  1/9, escalations 2 → 0), but a fix that lets a runaway PLO keep reasoning —
+  a larger step cap on the re-ask, or a different validation model — has not
+  been tried.
 - **The forbidden-word check is about words *used*, not substrings.** Thai has
   no word boundaries, so `word in statement` flagged `รักษา` (holds รัก),
   `จำแนก`/`จำลอง` (จำ) and `ความรู้`/`เรียนรู้` (รู้). Each hard-failed M, burned

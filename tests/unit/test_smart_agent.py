@@ -17,6 +17,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from instructor.core.exceptions import IncompleteOutputException
 from pydantic import ValidationError
 
 from curriculum_agent.models import BloomLevel, Need, ProgramMetadata, StakeholderEvidence
@@ -799,3 +800,87 @@ async def test_the_loop_hands_the_validator_the_programs_field_and_scope(
     opening = fake.messages_seen[0][1]["content"]
     assert "สาขาวิทยาการคอมพิวเตอร์" in opening
     assert "ขอบเขตวิชาชีพของหลักสูตร: หลักสูตรนี้ครอบคลุมการพัฒนาซอฟต์แวร์" in opening
+
+
+# ---------------------- hidden reasoning ----------------------
+#
+# The validation model spends one max_tokens on hidden reasoning and on the
+# answer. On stored OPT1 it reasoned for all 4,096 tokens and answered nothing,
+# two runs out of two. Bounding reasoning on every step fixed that and cost the
+# verdict: OPT8's A_scope flag held 4/4 with reasoning and 2/4 without. So the
+# bound is applied only to a PLO whose step actually ran away.
+
+
+class _RunawayOnce:
+    """A validator that truncates on its first uncapped call, then behaves."""
+
+    def __init__(self, script: list[Any]) -> None:
+        self.inner = FakeToolModel(script)
+        self.calls: list[int | None] = []
+        self._ran_away = False
+
+    async def __call__(self, response_model, messages, **kwargs):  # noqa: ANN001, ANN003
+        self.calls.append(kwargs.get("reasoning_max_tokens"))
+        if kwargs.get("reasoning_max_tokens") is None and not self._ran_away:
+            self._ran_away = True
+            raise IncompleteOutputException(last_completion=None)
+        return await self.inner(response_model, messages, **kwargs)
+
+
+async def test_a_healthy_step_is_asked_with_reasoning_unbounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _drive(monkeypatch, [("check_hard", {}), _finish()])
+
+    await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert all(k.get("reasoning_max_tokens") is None for k in fake.kwargs_seen)
+
+
+async def test_a_step_that_ran_away_is_asked_again_with_reasoning_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The re-ask is the same step, so it costs no turn and is not malformed:
+    nothing the model *answered* was wrong, it never answered."""
+    fake = _RunawayOnce([("check_hard", {}), _finish()])
+    monkeypatch.setattr(sa, "complete_validation", fake)
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert fake.calls[0] is None
+    assert fake.calls[1] is not None and fake.calls[1] < sa._MAX_STEP_TOKENS
+    assert result.reason is sa.ValidationReason.FINISHED
+    assert result.ran is True
+    assert result.turns == 2
+
+
+async def test_once_a_step_ran_away_the_rest_of_that_plo_stays_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The input that set it off is still in the conversation on the next turn.
+    Going back to unbounded would spend another full step cap to rediscover it."""
+    fake = _RunawayOnce([("check_hard", {}), ("bloom_lookup", {"verb_th": "ออกแบบ"}), _finish()])
+    monkeypatch.setattr(sa, "complete_validation", fake)
+
+    await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert fake.calls[0] is None
+    assert all(c is not None for c in fake.calls[1:])
+    assert len(fake.calls) == 4
+
+
+async def test_a_step_truncated_even_when_bounded_is_malformed_not_an_outage(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Then the answer itself is too long for the step cap. That is the model
+    failing the schema, and it gets the malformed budget — not the provider-error
+    path, which abandons the verdict on the first occurrence."""
+
+    async def always_truncated(response_model, messages, **kwargs):  # noqa: ANN001, ANN003
+        raise IncompleteOutputException(last_completion=None)
+
+    monkeypatch.setattr(sa, "complete_validation", always_truncated)
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.reason is sa.ValidationReason.MALFORMED

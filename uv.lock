@@ -663,6 +663,7 @@ dependencies = [
     { name = "pydantic-settings" },
     { name = "sqlalchemy" },
     { name = "streamlit" },
+    { name = "tenacity" },
     { name = "unstructured" },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -704,6 +705,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.3" },
     { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "streamlit", specifier = ">=1.32" },
+    { name = "tenacity", specifier = ">=8.2" },
     { name = "unstructured", specifier = ">=0.13" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27" },
 ]
