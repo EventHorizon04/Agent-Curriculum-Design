@@ -138,17 +138,43 @@ at `MAX_CORE_PLOS`, number from 1. A fold therefore frees a core slot and the
 next unit below the cut takes it — the stage produces fewer duplicates, not
 fewer PLOs, while there are Needs left to use.
 
-## The floor
+## The floor: a separate, lower bound for merging
 
-Folding lowers the number of distinct outcomes, and on the stored run it will
-likely take the core count from 8 to 5 or 6. The design accepts that and does
-**not** refuse a fold to stay at `MIN_NEEDS`: two PLOs that say one thing are not
-two outcomes, and keeping them to satisfy a count is the padding the band is
-meant to expose. The existing core-below-floor warning fires as before; the
-dedupe step adds one line naming how many core Needs it folded, so the designer
-reading the shortfall can see it came from duplicates rather than from missing
-evidence. The merge route's own floor check is unchanged — it guards a manual
-action on a stored set, which is a different situation.
+Folding lowers the number of distinct outcomes; on the stored run it would take
+the core count from 8 to 5 or 6. The policy band stays 6-10 (`MIN_NEEDS`,
+`MAX_CORE_PLOS`) and so does every warning built on it. Merging gets its own,
+looser floor: **`MIN_CORE_AFTER_MERGE = 4`**, declared in `stages/need_grouping.py`
+beside the other two bounds — one policy module, as rule 6 already says.
+
+Two PLOs that say one thing are not two outcomes, so a merge is allowed to take
+the set below 6. It is not allowed to take it below 4: at that point the set has
+stopped looking like a programme's outcomes, and a model's grouping, or a hurried
+click, should not be what gets it there. Between 4 and 5 the existing
+core-below-`MIN_NEEDS` warning fires as it does today, and the dedupe step adds
+one line naming how many core Needs it folded, so the designer can tell a
+shortfall from duplicates apart from a shortfall from missing evidence.
+
+**Automatic folds.** After `accept_groups`, slot selection runs with every
+accepted group folded. If the core slot count is then below
+`target = min(MIN_CORE_AFTER_MERGE, core slot count with no folds)`, the accepted
+group with the **lowest top-member demand** that reduces the core count (it has
+two or more core members) is unfolded, and selection runs again, until the
+target is met or no such group is left. `min(...)` is the merge route's own
+"only when this merge causes the shortfall" clause: a programme that has three
+core Needs to begin with is not blocked, it simply gets no core folds. Lowest
+demand goes first because the most-demanded outcomes are the ones the numbering
+and the report lead with, and a fold there is the one most worth keeping. Each
+unfold is logged with its labels and the reason `floor`. Groups whose members
+are all optional, or that fold an optional Need into a core one, never lower the
+core count and are never unfolded for it. The ceiling is not something the step
+checks: folds only lower the count, and slot selection still caps at
+`MAX_CORE_PLOS` by choosing units.
+
+**Manual merges.** `POST /plos/from-needs` checks its floor against
+`MIN_CORE_AFTER_MERGE` instead of `MIN_NEEDS`, keeping the "only when this merge
+causes it" clause and the `MAX_CORE_PLOS` ceiling as they are. Its Thai 422
+message names 4. One floor for both paths, so a merge the step would have made
+automatically is never refused by hand.
 
 ## Failure
 
@@ -167,8 +193,11 @@ Persisting `reason_th` on the PLO is left for later; it would need a field.
 
 From "6-10 main PLOs per program, each drafted from one Need" to "each drafted
 from one Need, **or from up to three same-KSEC Needs that the duplicate check
-found to ask for one capability**". The ceiling is still enforced by choosing
-units, not by merging to fit a number: the dedupe step never sees the ceiling.
+found to ask for one capability**", plus one sentence: merging — automatic or
+through the merge route — may take the core count below 6 but not below
+`MIN_CORE_AFTER_MERGE` (4), unless the set was already below it. The 6-10 band,
+its warnings, and the rule that the ceiling is enforced by choosing units rather
+than merging to fit a number are unchanged.
 
 ## Measurement before commit
 
@@ -196,15 +225,23 @@ designer after this lands.
 - units and slot selection: a fold frees a slot the next Need fills; unit demand
   is the top member's; optional-with-core becomes core; two optionals stay
   optional; ceiling counts units; numbering stays demand order.
+- floor: a fold that would leave 3 core slots is unfolded, lowest-demand group
+  first; a set starting at 3 gets no core folds but keeps optional folds; an
+  optional-into-core group is never unfolded for the floor; the result at
+  exactly 4 is kept.
+- merge route: a merge leaving 5 or 4 core PLOs succeeds; one leaving 3 from 4
+  is refused with the Thai 422; on a set already at 3, a merge that does not
+  lower the count (Needs nothing cites yet) still succeeds.
 - `run`: kill switch makes no call; a raising call yields today's slots; fewer
   than two Needs makes no call; a folded slot's PLO cites every member.
 - prompt builder: labels in demand order, KSEC tag and context line present,
   no `need_id` in the text.
 - `test_llm_slots.py` walks the new `SlotSpec` without edits.
-- Mutation pass on each drop rule and on the unit demand rule.
+- Mutation pass on each drop rule, the unit demand rule, the floor target
+  (`min`), and the unfold order.
 
 ## Docs
 
-`CLAUDE.md` (stack slot list, rule 6, a pitfall on why evidence overlap is not
+`CLAUDE.md` (stack slot list, rule 6 including the merge route's floor, a pitfall on why evidence overlap is not
 the similarity), `.env.example`, skill `references/prompts.md` (why the prompt
 says what it says), `docs/prompt-inventory.md` via `scripts/dump_prompts.py`.
