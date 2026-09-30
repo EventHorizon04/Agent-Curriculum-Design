@@ -402,11 +402,54 @@ def merge_bloom(levels: Iterable[BloomLevel]) -> BloomLevel:
 
     The same capability described by two sources at different cognitive demands
     (remember vs analyze) is taught to the higher one — the lower is implied by it.
+
+    That reason is about *one* capability, and so is every caller left: two rows
+    of one skill name, at extraction and at dedupe. A group of different skills
+    is not one capability, and taking its maximum is what `group_bloom` replaced.
     """
     ordered = list(levels)
     if not ordered:
         raise ValueError("merge_bloom requires at least one Bloom level")
     return max(ordered, key=lambda lv: _BLOOM_RANK[lv])
+
+
+def group_bloom(levels: list[BloomLevel], frequencies: list[int]) -> BloomLevel:
+    """The Bloom level a group of different skills asks for: its lower weighted median.
+
+    `levels[i]` is one member name's level (already the maximum over that name's
+    rows, per `merge_bloom`) and `frequencies[i]` how many rows it had. The
+    result is the lowest level at which the cumulative weight reaches half the
+    group, so a higher level wins only with more than half of the group behind
+    it, and a tie does not round up.
+
+    This used to be `merge_bloom`, the maximum, and one member set the level for
+    the whole group. On the stored run 21% of extracted skills were Create and
+    69% of Needs were; OPT2 was Create from 2 Create members of 18, with 9 at
+    Apply. It did not stop at the Need: the level reaches the summarize prompt
+    as "สร้างและออกแบบสิ่งใหม่ได้" and plo_synthesis as the level to write to, so
+    five Needs and the five PLOs drafted from them all opened with ออกแบบ — for a
+    bachelor's programme whose evidence is mostly Apply.
+
+    The median rather than the mode because Bloom levels are ordered: a group
+    split between Apply and Analyze should not land on whichever one happens to
+    have one more member when a level between them is what the whole group
+    supports. Lower rather than upper because the failure being corrected is
+    inflation, and because "more than half the group" is the only threshold here
+    that needs no constant of its own — a bachelor's ceiling on Create, as the
+    pipeline review proposed, falls out of it for every level at once.
+    """
+    if not levels or len(levels) != len(frequencies):
+        raise ValueError("group_bloom requires one frequency per level and at least one level")
+    total = sum(frequencies)
+    weight = {level: 0 for level in BLOOM_ORDER}
+    for level, count in zip(levels, frequencies, strict=True):
+        weight[level] += count
+    running = 0
+    for level in BLOOM_ORDER:
+        running += weight[level]
+        if 2 * running >= total:
+            return level
+    raise AssertionError("the running weight reaches the total at the last level")
 
 
 def dedupe_with_bloom_max(

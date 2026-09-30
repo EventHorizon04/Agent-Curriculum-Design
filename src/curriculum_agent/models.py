@@ -302,7 +302,8 @@ class Need(BaseModel):
     rationale_th: str = ""
     # Single-valued by construction: grouping runs inside one KSEC bucket.
     ksec_category: KSECCategory
-    # Highest Bloom level among member skills.
+    # What most of the group asks for — the lower mention-weighted median of the
+    # members' levels (need_grouping.group_bloom), not the highest one.
     bloom_level: BloomLevel
     member_skill_ids: list[str] = Field(min_length=1)
     source_evidence_ids: list[str] = Field(min_length=1)

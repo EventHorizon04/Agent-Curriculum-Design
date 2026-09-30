@@ -439,6 +439,22 @@ tests/integration/     ← LLM mocked, full stages
   and push a well-written sentence into a `[ต้องทบทวน]` fallback. `None` (no list)
   stays distinct from `0.0` (covers nothing). No threshold, column, or checkpoint
   flag yet: ticket 18 asks for the distribution before a number.
+- **A Need's Bloom level is what most of its group asks for, not its top
+  member.** `need_grouping.group_bloom` is the lower mention-weighted median of
+  the members' levels; it replaced `merge_bloom`, the maximum, at the one call
+  that combines *different* skills. On the stored run 21% of extracted skills
+  were Create and 69% of Needs were — OPT2 was Create from 2 Create members of
+  18, 9 of them Apply — and the level travels: it reaches the summarize prompt
+  as "สร้างและออกแบบสิ่งใหม่ได้" and `plo_synthesis` as the level to write to,
+  so five Needs and the five PLOs drafted from them all opened with ออกแบบ, for
+  a bachelor's programme whose evidence is mostly Apply. The lower median means
+  a level wins only with more than half the group behind it, which is the
+  ceiling on Create the pipeline review asked for without a constant of its own.
+  `merge_bloom` stays where its reason holds — two rows of *one* skill name, at
+  extraction and at dedupe, where the lower level is implied by the higher.
+  Stored Needs are not migrated: the level is written into the Need's sentence
+  as well as its field, so only re-running need_combination changes what a PLO
+  is drafted from.
 - **A Need has to be usable as a PLO on its own.** `plo_synthesis` drafts exactly
   one PLO per Need and is handed nothing but `statement_th`, so a placeholder
   ("ทักษะที่จำเป็น") or a joined skill list makes the synthesis model invent the

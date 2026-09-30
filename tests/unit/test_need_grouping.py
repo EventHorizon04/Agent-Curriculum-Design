@@ -411,3 +411,59 @@ def test_an_index_outside_the_group_or_repeated_counts_once_or_not_at_all() -> N
     from curriculum_agent.stages.need_grouping import supporting_coverage
 
     assert supporting_coverage([0, 0, 7, -1], [3, 1]) == 0.75
+
+
+# --- group_bloom: a group's level is what most of it asks for, not its top member.
+#
+# merge_bloom takes the maximum, which is right for one skill name extracted at
+# two levels (the lower is implied by the higher) and wrong for a group of
+# different skills: one Create member made the whole group Create. On the stored
+# run 21% of skills were Create and 69% of Needs were, and every PLO copied its
+# Need's level — OPT2 was Create from 2 Create members out of 18, 9 of them Apply.
+
+
+def test_a_group_takes_the_level_most_of_its_mentions_ask_for() -> None:
+    """Stored OPT2's members: und 1, app 9, ana 3, eva 3, cre 2."""
+    from curriculum_agent.stages.need_grouping import group_bloom
+
+    levels = (
+        [BloomLevel.UNDERSTAND]
+        + [BloomLevel.APPLY] * 9
+        + [BloomLevel.ANALYZE] * 3
+        + [BloomLevel.EVALUATE] * 3
+        + [BloomLevel.CREATE] * 2
+    )
+    assert group_bloom(levels, [1] * len(levels)) is BloomLevel.APPLY
+
+
+def test_the_top_level_needs_more_than_half_the_group() -> None:
+    """The lower weighted median: Create is chosen only when Create members carry
+    more than half the weight. That is the bachelor-level ceiling the pipeline
+    review asked for, arrived at without a second constant."""
+    from curriculum_agent.stages.need_grouping import group_bloom
+
+    assert group_bloom([BloomLevel.APPLY, BloomLevel.CREATE], [1, 1]) is BloomLevel.APPLY
+    assert (
+        group_bloom([BloomLevel.APPLY, BloomLevel.CREATE, BloomLevel.CREATE], [1, 1, 1])
+        is BloomLevel.CREATE
+    )
+
+
+def test_a_name_mentioned_more_often_weighs_more() -> None:
+    from curriculum_agent.stages.need_grouping import group_bloom
+
+    assert group_bloom([BloomLevel.APPLY, BloomLevel.CREATE], [1, 3]) is BloomLevel.CREATE
+    assert group_bloom([BloomLevel.APPLY, BloomLevel.CREATE], [3, 1]) is BloomLevel.APPLY
+
+
+def test_a_single_member_group_is_its_own_level() -> None:
+    from curriculum_agent.stages.need_grouping import group_bloom
+
+    assert group_bloom([BloomLevel.EVALUATE], [1]) is BloomLevel.EVALUATE
+
+
+def test_group_bloom_rejects_an_empty_group() -> None:
+    from curriculum_agent.stages.need_grouping import group_bloom
+
+    with pytest.raises(ValueError):
+        group_bloom([], [])

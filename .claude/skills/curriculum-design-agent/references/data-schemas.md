@@ -172,7 +172,7 @@ class Need(BaseModel):
     statement_en: str | None = None
     rationale_th: str = ""  # why this group is one demand — an explanation, NOT a trail
     ksec_category: KSECCategory  # single-valued by construction — see below; one of K/S/EC/E/C
-    bloom_level: BloomLevel  # highest Bloom level among member skills
+    bloom_level: BloomLevel  # lower mention-weighted median of member levels (group_bloom)
     member_skill_ids: list[str] = Field(min_length=1)  # ExtractedSkill IDs
     source_evidence_ids: list[str] = Field(min_length=1)
     stakeholder_coverage: dict[StakeholderType, int] = {}  # which groups, how often

@@ -663,3 +663,39 @@ def test_a_malformed_supporting_list_degrades_instead_of_failing_the_call(
         supporting_indices=answer,  # type: ignore[arg-type]
     )
     assert written.supporting_indices == kept
+
+
+async def test_one_create_member_does_not_make_the_need_create(monkeypatch: pytest.MonkeyPatch):
+    """The level reaches the summarize prompt as "สร้างและออกแบบสิ่งใหม่ได้", which
+    is why five stored Needs and the PLOs copied from them all opened with
+    ออกแบบ. The level has to be the group's, or the sentence and the outcome
+    inherit a demand only one member made."""
+    rows = [
+        _skill("แปลเอกสารสัญญา", KSECCategory.S, "S1", "E1"),
+        _skill("ตรวจทานคำแปล", KSECCategory.S, "S2", "E2"),
+        _skill("แปลเอกสารธุรกิจ", KSECCategory.S, "S3", "E3"),
+        _skill("ออกแบบเครื่องมือแปล", KSECCategory.S, "S4", "E4"),
+    ]
+    rows[3] = rows[3].model_copy(update={"bloom_level": BloomLevel.CREATE})
+
+    async def one_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
+        return [list(range(len(names)))]
+
+    seen: list[str] = []
+
+    async def capture(model, messages, **kw):  # noqa: ANN001, ANN003
+        seen.append(messages[1]["content"])
+        return await _fake_summarize(model, messages, **kw)
+
+    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(nc, "complete_need_combination", capture)
+    _patch_repo(monkeypatch)
+
+    state = await nc.run(
+        {"program_id": "cs-test", "extracted_skills": [r.model_dump(mode="json") for r in rows]}
+    )
+
+    assert state["needs"][0]["bloom_level"] == "apply"
+    assert "(apply)" in seen[0]

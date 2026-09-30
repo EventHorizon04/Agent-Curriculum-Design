@@ -40,8 +40,8 @@ from curriculum_agent.stages.need_grouping import (
     dedupe_with_bloom_max,
     find_code_identifier,
     find_vague_phrase,
+    group_bloom,
     looks_like_a_skill_list,
-    merge_bloom,
     normalize_need_name,
     resolve_need_ksec,
     supporting_coverage,
@@ -406,7 +406,12 @@ async def _build_groups(
                         evidence_ids=evidence_ids,
                         skill_names=[names[ni] for ni in ranked],
                         skill_frequencies=[len(index_groups[ni]) for ni in ranked],
-                        bloom_level=merge_bloom([bloom_by_name[names[ni]] for ni in name_indices]),
+                        # What most of the group asks for, not its top member —
+                        # see group_bloom for how the maximum inflated five PLOs.
+                        bloom_level=group_bloom(
+                            [bloom_by_name[names[ni]] for ni in ranked],
+                            [len(index_groups[ni]) for ni in ranked],
+                        ),
                         demand_score=compute_demand_score(
                             evidence_ids, stakeholder_type_by_evidence
                         ),
