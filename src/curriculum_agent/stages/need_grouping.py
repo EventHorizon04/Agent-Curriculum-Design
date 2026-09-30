@@ -369,6 +369,34 @@ def resolve_need_ksec(members: list[ExtractedSkill]) -> KSECCategory:
     return tags.pop()
 
 
+def supporting_coverage(supporting: list[int] | None, frequencies: list[int]) -> float | None:
+    """Share of a group's mentions that its sentence says it speaks for.
+
+    `supporting` is the model's own claim, positions into the listed names;
+    `frequencies[i]` is how many member rows collapsed into name `i`. Weighted by
+    mentions rather than by names because the question is what the group is made
+    of, and a name extracted from five evidence items is more of it than a name
+    extracted once — ticket 18's silent case was a sentence written from the
+    group's rare members while its common ones went unmentioned.
+
+    None means the model gave no list, and it has to stay distinct from 0.0: a
+    run where the field was dropped must not read as every sentence covering
+    nothing. Out-of-range and repeated positions are discarded rather than
+    rejected — this is a measurement, and a measurement that could fail the call
+    would turn well-written Needs into `[ต้องทบทวน]` fallbacks.
+
+    This is self-report. It says what the writer claims to have reflected, not
+    what a reader would find, and nothing here can tell the two apart.
+    """
+    if supporting is None:
+        return None
+    total = sum(frequencies)
+    if total <= 0:
+        return None
+    cited = {i for i in supporting if 0 <= i < len(frequencies)}
+    return sum(frequencies[i] for i in cited) / total
+
+
 def merge_bloom(levels: Iterable[BloomLevel]) -> BloomLevel:
     """Return the highest Bloom level present.
 

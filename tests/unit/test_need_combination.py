@@ -585,3 +585,81 @@ async def test_a_requirement_skill_judged_off_field_still_counts_as_off_field(
     assert need["classification_coverage"] == {"requirement": 1}
     assert need["in_field_skill_count"] == 0
     assert need["graduate_capability_skill_count"] == 0
+
+
+def test_a_statement_without_supporting_indices_is_still_accepted() -> None:
+    """The coverage field is a measurement, and a measurement must not cost a Need.
+
+    A validator that raised on a missing or malformed list would send Instructor
+    round again and, three misses later, turn a well-written sentence into a
+    `[ต้องทบทวน]` fallback for the designer to rewrite by hand.
+    """
+    written = nc._NeedStatement(
+        statement_th="ต้องการบัณฑิตที่แปลและตรวจสอบเอกสารสัญญาทางธุรกิจไทย-จีนได้อย่างถูกต้อง",
+        rationale_th=RATIONALE_TH,
+    )
+    assert written.supporting_indices is None
+
+
+async def test_names_reach_the_prompt_most_mentioned_first(monkeypatch: pytest.MonkeyPatch):
+    """The listing cap cuts from the end, so the end has to be the rarest names.
+
+    Ordered as clustering returned them, a cap could drop the name the group is
+    mostly made of and keep one extracted once; coverage would then be measured
+    against a list the sentence was never shown the core of.
+    """
+    rows = [
+        _skill("ล่ามการประชุม", KSECCategory.S, "S1", "E1"),
+        _skill("แปลเอกสารสัญญา", KSECCategory.S, "S2", "E1"),
+        _skill("แปลเอกสารสัญญา", KSECCategory.S, "S3", "E2"),
+        _skill("แปลเอกสารสัญญา", KSECCategory.S, "S4", "E3"),
+    ]
+
+    async def one_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
+        return [list(range(len(names)))]
+
+    seen: list[str] = []
+
+    async def capture(model, messages, **kw):  # noqa: ANN001, ANN003
+        seen.append(messages[1]["content"])
+        return await _fake_summarize(model, messages, **kw)
+
+    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(nc, "complete_need_combination", capture)
+    _patch_repo(monkeypatch)
+
+    await nc.run(
+        {"program_id": "cs-test", "extracted_skills": [r.model_dump(mode="json") for r in rows]}
+    )
+
+    assert "0 | แปลเอกสารสัญญา" in seen[0]
+    assert "1 | ล่ามการประชุม" in seen[0]
+
+
+@pytest.mark.parametrize(
+    ("answer", "kept"),
+    [
+        ("0,1,2", None),
+        ({"0": True}, None),
+        (["1", "x", 2, 2.0, None], [1, 2]),
+        ([], []),
+    ],
+)
+def test_a_malformed_supporting_list_degrades_instead_of_failing_the_call(
+    answer: object, kept: list[int] | None
+) -> None:
+    """No validator of ours raises here, and that is not enough on its own.
+
+    Pydantic still type-checks `list[int]`, so a model answering "0,1,2" as a
+    string would fail the call, send Instructor round again, and could end in a
+    `[ต้องทบทวน]` fallback over a field the stage only logs. Whatever arrives is
+    reduced to the integers in it, or to None when there is no list at all.
+    """
+    written = nc._NeedStatement(
+        statement_th="ต้องการบัณฑิตที่แปลและตรวจสอบเอกสารสัญญาทางธุรกิจไทย-จีนได้อย่างถูกต้อง",
+        rationale_th=RATIONALE_TH,
+        supporting_indices=answer,  # type: ignore[arg-type]
+    )
+    assert written.supporting_indices == kept

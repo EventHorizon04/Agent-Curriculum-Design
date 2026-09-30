@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 
 from instructor.core.exceptions import ValidationError as InstructorValidationError
 from loguru import logger
@@ -19,6 +20,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.summarize_need import (
+    MAX_LISTED_SKILLS,
     MAX_RATIONALE_CHARS,
     MIN_RATIONALE_CHARS,
     MIN_STATEMENT_CHARS,
@@ -42,6 +44,7 @@ from curriculum_agent.stages.need_grouping import (
     merge_bloom,
     normalize_need_name,
     resolve_need_ksec,
+    supporting_coverage,
 )
 
 # Instructor re-asks the model when _NeedStatement's validator raises, quoting
@@ -89,6 +92,34 @@ class _NeedStatement(BaseModel):
     statement_th: str = Field(min_length=1)
     statement_en: str | None = None
     rationale_th: str = Field(min_length=1)
+    # Positions into the listed names that the sentence says it speaks for.
+    # Deliberately unvalidated: it is a measurement, and a validator that raised
+    # here would send Instructor round again and, three misses later, turn a
+    # well-written sentence into a `[ต้องทบทวน]` fallback. `supporting_coverage`
+    # discards what it cannot use instead. None — the model sent no list — is kept
+    # apart from [] so a dropped field cannot read as "covers nothing".
+    supporting_indices: list[int] | None = None
+
+    @field_validator("supporting_indices", mode="before")
+    @classmethod
+    def _never_fail_on_the_measurement(cls, value: Any) -> list[int] | None:
+        """Reduce whatever arrived to its integers, or to None if it is not a list.
+
+        Leaving the field unvalidated is not enough: pydantic still type-checks
+        `list[int]`, so an answer of "0,1,2" would fail the call over a number
+        the stage only logs.
+        """
+        if not isinstance(value, list):
+            return None
+        kept: list[int] = []
+        for item in value:
+            if isinstance(item, bool):
+                continue
+            if isinstance(item, int) or (isinstance(item, float) and item.is_integer()):
+                kept.append(int(item))
+            elif isinstance(item, str) and item.strip().isdigit():
+                kept.append(int(item.strip()))
+        return list(dict.fromkeys(kept))
 
     @field_validator("rationale_th")
     @classmethod
@@ -182,7 +213,11 @@ class _Group(BaseModel):
     ksec: KSECCategory
     skill_ids: list[str]
     evidence_ids: list[str]
+    # Most-mentioned first, and skill_frequencies[i] is how many member rows
+    # collapsed into skill_names[i]. The order is what the summarize prompt's
+    # listing cap cuts from the end of, and the counts are what coverage weighs.
     skill_names: list[str]
+    skill_frequencies: list[int]
     bloom_level: BloomLevel
     demand_score: float
     is_optional: bool
@@ -191,6 +226,37 @@ class _Group(BaseModel):
     stakeholder_types: list[StakeholderType]
     in_field_skill_count: int
     graduate_capability_skill_count: int
+
+
+def _log_coverage(group: _Group, written: _NeedStatement) -> None:
+    """One line per written Need: how much of its group the sentence claims.
+
+    Logged, not stored, and no threshold. Ticket 18 says not to set a number
+    before there is a reason for it, and a first run's distribution is that
+    reason; a column and a checkpoint flag can follow once the figure has shown
+    it means something. Fallback Needs are skipped — nobody wrote their sentence.
+    """
+    names = len(group.skill_names)
+    shown = min(names, MAX_LISTED_SKILLS)
+    mentions = sum(group.skill_frequencies)
+    # A position past the cap was never on the page, so a model citing one is
+    # guessing; it counts for nothing even though the name exists.
+    claimed = (
+        None
+        if written.supporting_indices is None
+        else sorted({i for i in written.supporting_indices if 0 <= i < shown})
+    )
+    coverage = supporting_coverage(claimed, group.skill_frequencies)
+    if coverage is None or claimed is None:
+        logger.info(
+            f"Need coverage {group.ksec.value}: not reported ({names} names, {mentions} mentions)"
+        )
+        return
+    capped = f" ({names - shown} past the listing cap)" if shown < names else ""
+    logger.info(
+        f"Need coverage {group.ksec.value}: {coverage:.0%} of {mentions} mentions, "
+        f"{len(claimed)}/{names} names{capped}"
+    )
 
 
 async def _build_groups(
@@ -331,12 +397,15 @@ async def _build_groups(
                 # Enum declaration order puts external groups before internal ones,
                 # which is the order the report shows them in.
                 present = {m.source_stakeholder_type for m in members}
+                # Stable, so names mentioned equally often keep clustering's order.
+                ranked = sorted(name_indices, key=lambda ni: -len(index_groups[ni]))
                 groups.append(
                     _Group(
                         ksec=resolve_need_ksec(members),
                         skill_ids=[m.skill_id for m in members],
                         evidence_ids=evidence_ids,
-                        skill_names=[names[ni] for ni in name_indices],
+                        skill_names=[names[ni] for ni in ranked],
+                        skill_frequencies=[len(index_groups[ni]) for ni in ranked],
                         bloom_level=merge_bloom([bloom_by_name[names[ni]] for ni in name_indices]),
                         demand_score=compute_demand_score(
                             evidence_ids, stakeholder_type_by_evidence
@@ -421,6 +490,7 @@ async def run(state: AgentState) -> AgentState:
                 ),
                 max_retries=_STATEMENT_ATTEMPTS,
             )
+            _log_coverage(group, written)
         except Exception as exc:
             rejected = _model_answered_but_was_rejected(exc)
             if rejected:

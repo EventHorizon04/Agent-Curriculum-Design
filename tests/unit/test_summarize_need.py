@@ -244,3 +244,40 @@ def test_the_narrowness_rule_does_not_license_writing_vaguely() -> None:
     # The two rules have to survive together: this one bounds the object, the
     # dilution rule bounds the wording. Losing either leaves the other unopposed.
     assert "ห้ามลดทอนทักษะเฉพาะทาง" in system
+
+
+def test_each_skill_is_listed_with_the_index_the_answer_cites() -> None:
+    """supporting_indices is a list of positions, so the positions must be on the page.
+
+    The names used to arrive as one comma-joined string, so a sentence could not
+    say which members it reflects even if it tried — which is why ticket 18's
+    silent case (a fifteen-name group whose sentence speaks for three) was
+    undetectable by construction rather than merely hard to detect.
+    """
+    user = build_summarize_need_prompt(["แปลเอกสารสัญญา", "ล่ามการประชุม"], "S", "apply")[1]["content"]
+    assert "0 | แปลเอกสารสัญญา" in user
+    assert "1 | ล่ามการประชุม" in user
+
+
+def test_the_prompt_says_leaving_a_skill_out_is_a_right_answer() -> None:
+    """Asked which members it covered, a model reaches for all of them.
+
+    Two things follow if nothing pushes back: the coverage figure reads 100%
+    everywhere and measures nothing, and the sentence grows to name every member,
+    which is the joined skill list `_NeedStatement` rejects. So the prompt says in
+    so many words that omitting a member the sentence does not speak for is
+    correct, and that the sentence must not be lengthened to cover more.
+    """
+    system = build_summarize_need_prompt(["ทักษะตัวอย่าง"], "S", "apply")[0]["content"]
+    assert "ไม่ต้องพยายามให้ครบทุกข้อ" in system
+    assert "ห้ามเขียนประโยคให้ยาวขึ้นเพื่อครอบทุกข้อ" in system
+
+
+def test_only_the_listed_skills_carry_an_index() -> None:
+    """A name past the listing cap cannot be cited, so it must not be numbered."""
+    from curriculum_agent.prompts.summarize_need import MAX_LISTED_SKILLS
+
+    names = [f"ทักษะที่{i}" for i in range(MAX_LISTED_SKILLS + 5)]
+    user = build_summarize_need_prompt(names, "S", "apply")[1]["content"]
+    assert f"{MAX_LISTED_SKILLS - 1} | ทักษะที่{MAX_LISTED_SKILLS - 1}" in user
+    assert f"ทักษะที่{MAX_LISTED_SKILLS}" not in user

@@ -388,6 +388,26 @@ tests/integration/     ← LLM mocked, full stages
   makes it look free; it is not, because the band is a property of the stored set
   and `POST /plos/from-needs` checks against it, so the padding lands in a number
   the designer is judged against and cannot reach.
+- **`supporting_indices` is self-report, and only its low end means anything.**
+  The summarize call numbers the member names and asks which ones the sentence
+  speaks for; `need_grouping.supporting_coverage` weighs the answer by mentions
+  and `need_combination` logs it. It exists because a Need's trail claims every
+  member's evidence whatever its sentence says — ticket 18 found a fifteen-name
+  group whose sentence spoke for three — and the names used to arrive as one
+  comma-joined string, so the sentence could not say what it covered at all.
+  Measured against the stored Needs by eye, the model does discriminate (that
+  fifteen-name group reported the lowest figure, 27%) but it **over-claims**,
+  often by 1.5–3×: a ten-name group reporting 50% had a sentence covering one or
+  two. So a low figure is a real alarm and a high one proves nothing, and any
+  flag built on it must fire on low values with the inflation in mind. It also
+  does not see the other large-group failure: a sentence that crams three
+  capabilities together covers much of its group and scores high. The field is a
+  measurement and must never cost a Need — no validator raises on it, and a
+  `mode="before"` validator reduces a malformed answer to its integers or to
+  `None` because pydantic's own `list[int]` check would otherwise fail the call
+  and push a well-written sentence into a `[ต้องทบทวน]` fallback. `None` (no list)
+  stays distinct from `0.0` (covers nothing). No threshold, column, or checkpoint
+  flag yet: ticket 18 asks for the distribution before a number.
 - **A Need has to be usable as a PLO on its own.** `plo_synthesis` drafts exactly
   one PLO per Need and is handed nothing but `statement_th`, so a placeholder
   ("ทักษะที่จำเป็น") or a joined skill list makes the synthesis model invent the

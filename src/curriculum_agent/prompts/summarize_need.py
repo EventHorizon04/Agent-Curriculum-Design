@@ -16,6 +16,14 @@ MIN_STATEMENT_CHARS = 40
 MIN_RATIONALE_CHARS = 20
 MAX_RATIONALE_CHARS = 240
 
+# How many member names one call is shown. It was a bare `[:30]` on a
+# comma-joined string, which cost nothing while nothing cited a position. Now
+# supporting_indices does, so the cap is named: a name past it carries no index,
+# cannot be claimed, and counts against coverage — which is honest, since the
+# sentence was never written from it. The caller orders names most-mentioned
+# first so that what the cap drops is the rarest of them.
+MAX_LISTED_SKILLS = 30
+
 _KSEC_LABEL_TH: dict[str, str] = {
     "K": "ความรู้",
     "S": "ทักษะ",
@@ -125,6 +133,19 @@ def build_summarize_need_prompt(
     outright, because a model told "too narrow" will otherwise reach for
     "ทักษะการสื่อสาร".
 
+    `supporting_indices` is the sentence's own account of which listed members it
+    speaks for, and the names are numbered for that reason alone. Before, they
+    arrived as one comma-joined string, so a sentence could not say what it
+    covered even if it tried — which is why ticket 18's silent case, a
+    fifteen-name group whose sentence spoke for three while the Need claimed all
+    ten evidence items, was undetectable by construction. The prompt says outright
+    that leaving a member out is a correct answer and that the sentence must not
+    grow to cover more: asked which members it reflected, a model otherwise
+    claims all of them, and the figure measures nothing while the sentence drifts
+    toward the joined list the no-list rule forbids. It is self-report, not a
+    reading of the sentence; `need_grouping.supporting_coverage` turns it into a
+    number and says so.
+
     `rationale_th` is asked for alongside the sentence rather than in a second
     call, because the reason a group is one demand is what the model is already
     deciding while it writes the sentence — asked afterwards it would be
@@ -197,17 +218,21 @@ def build_summarize_need_prompt(
         "บอกว่าทักษะในกลุ่มนี้รวมกันเป็นความต้องการเดียวได้เพราะอะไร "
         "ต้องอ้างถึงหน้าที่หรืองานร่วมที่ทักษะเหล่านั้นใช้ทำ "
         "ห้ามตอบกว้าง ๆ ว่า 'เป็นทักษะที่เกี่ยวข้องกัน' หรือ 'อยู่ในสายงานเดียวกัน' "
-        "และห้ามอ้างหลักฐานหรือแหล่งที่มาที่ไม่ได้อยู่ในรายชื่อทักษะที่ให้มา\n\n" + NOTE_POLICY_TH
+        "และห้ามอ้างหลักฐานหรือแหล่งที่มาที่ไม่ได้อยู่ในรายชื่อทักษะที่ให้มา\n"
+        "  supporting_indices: list[int] เลขลำดับของทักษะที่ประโยคนี้สะท้อนจริง "
+        "ใส่เฉพาะข้อที่ผู้อ่านเห็นได้จากประโยคว่าถูกพูดถึง ไม่ต้องพยายามให้ครบทุกข้อ "
+        "การเว้นข้อที่ประโยคไม่ได้พูดถึงคือคำตอบที่ถูกต้อง "
+        "และห้ามเขียนประโยคให้ยาวขึ้นเพื่อครอบทุกข้อ\n\n" + NOTE_POLICY_TH
     )
     label = _KSEC_LABEL_TH.get(ksec, ksec)
     bloom_label = _BLOOM_LABEL_TH.get(bloom_level, bloom_level)
-    keywords = ", ".join(skill_names[:30])
+    listed = "\n".join(f"{i} | {name}" for i, name in enumerate(skill_names[:MAX_LISTED_SKILLS]))
     context_line = f"บริบทหลักสูตร: {program_context}\n" if program_context else ""
     user = (
         f"{context_line}"
         f"หมวดสมรรถนะ: {label} ({ksec})\n"
         f"ระดับที่ตลาดเรียกร้อง: {bloom_label} ({bloom_level})\n"
-        f"ทักษะในกลุ่มนี้: {keywords}"
+        f"ทักษะในกลุ่มนี้ (เลขลำดับ | ทักษะ):\n{listed}"
     )
     return [
         {"role": "system", "content": system},

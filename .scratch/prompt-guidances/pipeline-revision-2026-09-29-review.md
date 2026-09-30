@@ -23,7 +23,7 @@
 
 | # | ข้อเสนอ | สถานะ | ราคา |
 |---|---|---|---|
-| A1 | ขั้น 4: `supporting_indices` / `not_covered_indices` + coverage | **รับ — มีค่าสูงสุดในเอกสาร** | ฟรีจาก cache · +field บน `_NeedStatement` |
+| A1 | ขั้น 4: `supporting_indices` / `not_covered_indices` + coverage | ✅ **ทำแล้ว (log อย่างเดียว)** — ผลวัดอยู่ใน [ใบ 18](../plo-scope-guard/issues/18-groups-too-large-for-one-sentence.md) | ฟรีจาก cache |
 | A2 | ขั้น 6: บังคับกริยาเดียวด้วยโค้ด | ✅ **ทำแล้ว** — ดูท้ายไฟล์ | ฟรีจาก cache |
 | A3 | ขั้น 6: `scope_ok` / `actor_ok` | **รับ** | ฟรี ข้อมูลมีอยู่แล้ว |
 | A4 | ขั้น 3.5: Bloom จากมัธยฐานแทน max | **ต้องตัดสิน** — ขัดเหตุผลที่บันทึกไว้ | ฟรี code-only |

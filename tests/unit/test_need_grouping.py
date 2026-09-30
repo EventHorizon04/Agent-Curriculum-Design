@@ -377,3 +377,37 @@ def test_a_generic_head_fused_to_a_generic_domain_word_is_detected(statement: st
 )
 def test_a_generic_head_carried_into_a_real_capability_passes(statement: str) -> None:
     assert find_vague_phrase(statement) is None
+
+
+# --- supporting_coverage: how much of a group its sentence speaks for.
+#
+# Weighted by mentions, not by names, because a name extracted from five evidence
+# items is more of what the group is than a name extracted once — and ticket 18's
+# silent case is precisely a sentence written from the rare members.
+
+
+def test_coverage_is_unknown_when_the_model_did_not_answer() -> None:
+    """Not reported is not the same as covering nothing, and must not read as 0%."""
+    from curriculum_agent.stages.need_grouping import supporting_coverage
+
+    assert supporting_coverage(None, [3, 1]) is None
+
+
+def test_an_empty_answer_covers_nothing() -> None:
+    from curriculum_agent.stages.need_grouping import supporting_coverage
+
+    assert supporting_coverage([], [3, 1]) == 0.0
+
+
+def test_coverage_weighs_each_name_by_its_mentions() -> None:
+    from curriculum_agent.stages.need_grouping import supporting_coverage
+
+    assert supporting_coverage([0], [3, 1]) == 0.75
+    assert supporting_coverage([1], [3, 1]) == 0.25
+
+
+def test_an_index_outside_the_group_or_repeated_counts_once_or_not_at_all() -> None:
+    """The model's list is its claim; code decides what the claim is worth."""
+    from curriculum_agent.stages.need_grouping import supporting_coverage
+
+    assert supporting_coverage([0, 0, 7, -1], [3, 1]) == 0.75
