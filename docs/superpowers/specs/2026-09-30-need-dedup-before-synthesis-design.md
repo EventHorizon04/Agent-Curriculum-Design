@@ -164,7 +164,9 @@ target is met or no such group is left. `min(...)` is the merge route's own
 core Needs to begin with is not blocked, it simply gets no core folds. Lowest
 demand goes first because the most-demanded outcomes are the ones the numbering
 and the report lead with, and a fold there is the one most worth keeping. Each
-unfold is logged with its labels and the reason `floor`. Groups whose members
+unfold is logged with its labels and the reason `floor`.
+(Below the floor every lowering fold is unfolded whichever way the target is
+written, so the implementation loops against `MIN_CORE_AFTER_MERGE` directly.) Groups whose members
 are all optional, or that fold an optional Need into a core one, never lower the
 core count and are never unfolded for it. The ceiling is not something the step
 checks: folds only lower the count, and slot selection still caps at
@@ -237,8 +239,8 @@ designer after this lands.
 - prompt builder: labels in demand order, KSEC tag and context line present,
   no `need_id` in the text.
 - `test_llm_slots.py` walks the new `SlotSpec` without edits.
-- Mutation pass on each drop rule, the unit demand rule, the floor target
-  (`min`), and the unfold order.
+- Mutation pass on each drop rule, the unit demand rule, the floor, and
+  the unfold order.
 
 ## Docs
 
