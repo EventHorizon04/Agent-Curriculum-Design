@@ -79,9 +79,12 @@ Labels, not `need_id`s: a UUID is 36 characters the model has to copy exactly,
 and `supporting_indices` already showed indices are what a model returns
 reliably. Code maps labels back.
 
-**Instruction, in Thai:** group Needs that ask the graduate for the *same
-capability* — one PLO could serve both without losing what either asked for.
-Sharing a topic, a tool, or a source is not enough (the marketing/ethics pair
+**Instruction, in Thai:** two Needs are duplicates when their **main task and
+main object are the same, even if the wording or the context differs** — the
+definition the 2026-09-29 pipeline proposal gives for its stage-8 redundancy
+check, with its example pair ("แปลเอกสารธุรกิจโดยใช้เทคโนโลยี" /
+"ประยุกต์ใช้เทคโนโลยีในการแปลเอกสารธุรกิจ"). Task-and-object is checkable where
+"same capability" is not. Sharing a topic, a tool, or a source is not enough (the marketing/ethics pair
 above shares 55% of its evidence). Each Need in at most one group; a group has
 2–3 members of one KSEC tag; leaving every Need ungrouped is a valid answer and
 the expected one for a well-separated set. One `reason_th` per group saying what
@@ -188,7 +191,12 @@ absence is today's behaviour, so an outage costs duplicates, never a PLO.
 
 No schema change and no migration. A folded PLO cites two or three Needs in
 `source_need_ids`, and its trail carries all their evidence — visible on the PLO
-page as it is for a manual merge. The reason for each fold is in the log.
+page as it is for a manual merge. The reason for each fold is in the log, and
+so is one summary line per run — groups accepted, dropped by rule, unfolded for
+the floor, and the core PLO count before and after folding — the before/after
+figure the pipeline proposal asks each stage to report. With the kill switch
+that is the whole ablation for this step: the same run with
+`NEED_DEDUP_PROVIDER=` is the baseline.
 Persisting `reason_th` on the PLO is left for later; it would need a field.
 
 ## Rule 6, amended

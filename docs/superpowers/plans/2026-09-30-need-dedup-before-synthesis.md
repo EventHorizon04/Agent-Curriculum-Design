@@ -287,6 +287,16 @@ def test_an_empty_answer_is_named_as_a_valid_one() -> None:
     assert "รายการว่าง" in system
 
 
+def test_a_duplicate_is_defined_by_main_task_and_object() -> None:
+    """The definition is the checkable one — task plus object — and the example
+    pair shows that different wording and context do not make two Needs distinct."""
+    system = build_need_dedup_prompt(_ROWS)[0]["content"]
+
+    assert "งานหลักและวัตถุหลักเหมือนกัน" in system
+    assert "แปลเอกสารธุรกิจโดยใช้เทคโนโลยี" in system
+    assert "ประยุกต์ใช้เทคโนโลยีในการแปลเอกสารธุรกิจ" in system
+
+
 def test_shared_topic_or_source_is_named_as_not_enough() -> None:
     """The failure the evidence-overlap measurement predicts: Needs from the same
     documents, or sharing a tool like AI, read as duplicates."""
@@ -321,7 +331,8 @@ _SYSTEM_TH = """คุณคือผู้เชี่ยวชาญการ�
 จนผลลัพธ์การเรียนรู้ระดับหลักสูตร (PLO) ข้อเดียวรองรับได้โดยไม่ทิ้งสิ่งที่ข้อใดข้อหนึ่งขอ
 
 กติกา:
-1. จัดไว้กลุ่มเดียวกันเฉพาะเมื่อความต้องการเหล่านั้นถามหางานหรือความสามารถเดียวกัน \
+1. Need สองข้อซ้ำกันเมื่องานหลักและวัตถุหลักเหมือนกัน แม้ถ้อยคำหรือบริบทต่างกัน \
+เช่น "แปลเอกสารธุรกิจโดยใช้เทคโนโลยี" กับ "ประยุกต์ใช้เทคโนโลยีในการแปลเอกสารธุรกิจ" \
 การพูดถึงหัวข้อเดียวกัน ใช้เครื่องมือเดียวกัน (เช่น AI หรือเทคโนโลยีดิจิทัล) หรือมาจากกลุ่มผู้มีส่วนได้ส่วนเสียเดียวกัน ยังไม่พอ
 2. Need หนึ่งข้ออยู่ได้ไม่เกินหนึ่งกลุ่ม
 3. หนึ่งกลุ่มมี 2-3 ข้อ และทุกข้อในกลุ่มต้องอยู่ในหมวด KSEC เดียวกัน
@@ -329,7 +340,7 @@ _SYSTEM_TH = """คุณคือผู้เชี่ยวชาญการ�
 ซึ่งเป็นคำตอบที่ถูกต้องสำหรับชุดที่แยกกันชัดเจน
 5. บางข้ออาจเป็นรายชื่อทักษะที่ยังไม่ได้เรียบเรียงเป็นประโยค ให้ตัดสินจากงานที่รายชื่อนั้นบอก
 6. อ้างถึง Need ด้วยป้ายกำกับ (N1, N2, ...) เท่านั้น
-7. reason_th: หนึ่งประโยคภาษาไทย บอกว่าสมาชิกในกลุ่มขอสมรรถนะอะไรร่วมกัน
+7. reason_th: หนึ่งประโยคภาษาไทย บอกงานหลักและวัตถุหลักที่สมาชิกในกลุ่มมีร่วมกัน
 
 ตอบเป็น JSON ตาม schema ที่กำหนด"""
 
@@ -352,10 +363,12 @@ def build_need_dedup_prompt(
     that breaks one. The prompt states them anyway, because a group dropped for
     a rule the model never saw is a duplicate that ships as two PLOs.
 
-    Rule 1 carries the lesson of the measurement in the design doc: on the
-    stored run, Needs drawn from the same few documents shared up to 55% of
-    their evidence while asking for different things, so "same topic, same
-    tool, same source" is named as not enough. Rule 4 exists because a model
+    Rule 1 defines a duplicate as the same main task and main object, the
+    checkable definition the 2026-09-29 pipeline proposal gives for set-level
+    redundancy, with its example pair. It also carries the lesson of the
+    measurement in the design doc: on the stored run, Needs drawn from the same
+    few documents shared up to 55% of their evidence while asking for different
+    things, so "same topic, same tool, same source" is named as not enough. Rule 4 exists because a model
     asked to find duplicates otherwise finds some.
 
     `program_context` is `build_program_context_th`'s line; None says nothing.
@@ -372,7 +385,7 @@ def build_need_dedup_prompt(
 - [ ] **Step 4: Run — passes**
 
 Run: `uv run pytest tests/unit/test_need_dedup_prompt.py -q`
-Expected: PASS (6 tests).
+Expected: PASS (7 tests).
 
 - [ ] **Step 5: Add the prompt to the inventory**
 
@@ -412,7 +425,7 @@ In `scripts/dump_prompts.py`:
 
 ส่งป้าย `N1`, `N2`, ... แทน `need_id` เพราะ UUID ยาว 36 ตัวที่โมเดลต้องคัดลอกให้ตรง · กฎโครงสร้างทุกข้อ
 (2-3 ข้อต่อกลุ่ม · KSEC เดียวกัน · หนึ่ง Need หนึ่งกลุ่ม) โค้ดตรวจซ้ำใน `accept_groups` และทิ้งทั้งกลุ่มที่ผิด
-ไม่ตัดสมาชิกออก · กฎข้อ 1 บอกชัดว่าหัวข้อ เครื่องมือ หรือแหล่งที่มาเดียวกันยังไม่พอ เพราะ Need ที่มาจาก
+ไม่ตัดสมาชิกออก · กฎข้อ 1 นิยาม "ซ้ำ" ว่างานหลักและวัตถุหลักเหมือนกัน และบอกชัดว่าหัวข้อ เครื่องมือ หรือแหล่งที่มาเดียวกันยังไม่พอ เพราะ Need ที่มาจาก
 เอกสารชุดเดียวกันใช้ evidence ร่วมกันสูงถึง 55% ทั้งที่ขอคนละเรื่อง
 
 {dedup}
@@ -466,7 +479,7 @@ Create `tests/unit/test_need_dedup.py`:
 ```python
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -599,6 +612,18 @@ def test_a_dropped_group_does_not_reserve_its_members() -> None:
 
 def test_an_empty_answer_accepts_nothing() -> None:
     assert accept_groups(DedupAnswer(), label_needs([_need("a"), _need("b")])) == []
+
+
+def test_the_answer_is_summarised_in_one_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accepted and dropped counts, for the per-stage figures a study reports."""
+    logger = Mock()
+    monkeypatch.setattr(nd, "logger", logger)
+    labelled = label_needs([_need("a"), _need("b"), _need("c", ksec=KSECCategory.K)])
+
+    accept_groups(_answer(["N1", "N2"], ["N2", "N3"]), labelled)
+
+    lines = [c.args[0] for c in logger.info.call_args_list]
+    assert "need_dedup: 1 group(s) accepted, 1 dropped by rule" in lines
 
 
 # --------------------------- find_duplicate_groups ---------------------------
@@ -751,6 +776,10 @@ def accept_groups(answer: DedupAnswer, labelled: dict[str, Need]) -> list[FoldGr
                 reason_th=group.reason_th.strip(),
             )
         )
+    logger.info(
+        f"need_dedup: {len(accepted)} group(s) accepted, "
+        f"{len(answer.groups) - len(accepted)} dropped by rule"
+    )
     return accepted
 
 
@@ -785,7 +814,7 @@ async def find_duplicate_groups(needs: list[Need], metadata: ProgramMetadata) ->
 - [ ] **Step 4: Run — passes**
 
 Run: `uv run pytest tests/unit/test_need_dedup.py -q`
-Expected: PASS (16 tests).
+Expected: PASS (17 tests).
 
 - [ ] **Step 5: Stub the call for every other test**
 
@@ -859,7 +888,7 @@ Create `tests/unit/test_plo_synthesis_dedup.py`:
 ```python
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -1055,6 +1084,29 @@ async def test_run_drafts_one_plo_from_every_member_of_a_fold(
     assert handed == ["N6", "N5", "N4", "N3", "N2", "N1"], "the finder sees demand order"
 
 
+async def test_run_logs_the_core_count_before_and_after_folding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    needs = [_need(f"N{i}", i / 10) for i in range(1, 7)]  # 6 core
+    _patch_llm(monkeypatch)
+    monkeypatch.setattr(
+        ps, "find_duplicate_groups", AsyncMock(return_value=[_fold(needs[5], needs[4])])
+    )
+    logger = Mock()
+    monkeypatch.setattr(ps, "logger", logger)
+
+    await ps.run(
+        {
+            "program_id": "test",
+            "metadata": _METADATA,
+            "needs": [n.model_dump(mode="json") for n in needs],
+        }
+    )
+
+    lines = [c.args[0] for c in logger.info.call_args_list]
+    assert "need_dedup: 1 fold(s) kept, 0 unfolded for the floor — core PLO slots 6 → 5" in lines
+
+
 async def test_run_applies_the_floor_to_what_the_finder_returns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1230,13 +1282,22 @@ through the end of the `for is_optional in (False, True):` loop (the line `     
     # filter runs before it: two slots spent on one capability are a slot a
     # distinct Need below the cut never got.
     ordered = synthesis_order(needs)
-    folds = enforce_merge_floor(ordered, await find_duplicate_groups(ordered, metadata))
+    found = await find_duplicate_groups(ordered, metadata)
+    folds = enforce_merge_floor(ordered, found)
     for fold in folds:
         logger.info(
             f"Stage 4: one PLO from Needs {', '.join(n.need_id for n in fold.needs)} — "
             f"{fold.reason_th or 'no reason given'}"
         )
-    slots = _select_slots(build_units(ordered, folds))
+    units = build_units(ordered, folds)
+    # One line a before/after comparison can be read off, with or without the
+    # kill switch: the same run with NEED_DEDUP_PROVIDER= is this step's baseline.
+    logger.info(
+        f"need_dedup: {len(folds)} fold(s) kept, {len(found) - len(folds)} unfolded "
+        f"for the floor — core PLO slots {core_slot_count(build_units(ordered, []))} → "
+        f"{core_slot_count(units)}"
+    )
+    slots = _select_slots(units)
 ```
 
 Then replace the floor-warning `cause` block near the end of `run`:
@@ -1268,7 +1329,7 @@ with:
 - [ ] **Step 6: Run the new tests, then the whole synthesis area**
 
 Run: `uv run pytest tests/unit/test_plo_synthesis_dedup.py -q`
-Expected: PASS (15 tests).
+Expected: PASS (16 tests).
 
 Run: `uv run pytest -q tests/unit/test_plo_synthesis_guard.py tests/unit/test_plo_synthesis_phases.py tests/unit/test_plo_id_scheme.py`
 Expected: PASS — the autouse stub answers "no groups", so behaviour is unchanged.
@@ -1558,6 +1619,7 @@ In `.claude/skills/curriculum-design-agent/references/prompts.md`, add a section
 `prompts/need_dedup.py`. The text is in `docs/prompt-inventory.md` §8; this is why it says what it says.
 
 - **Labels, not ids.** Needs are sent as `N1`, `N2`, … in demand order. A UUID is 36 characters the model has to copy exactly; short indices are what a model returns reliably (`supporting_indices` showed the same).
+- **A duplicate is the same main task and main object**, whatever the wording or context — the checkable definition the 2026-09-29 pipeline proposal gives for set-level redundancy, with its example pair.
 - **"Same topic, same tool, same source is not enough."** The evidence-overlap measurement is why: Needs drawn from the same documents share much of their evidence while asking for different things, and a model left to its own reading groups them the same way.
 - **An empty answer is named as valid.** A model asked to find duplicates otherwise finds some.
 - **The structural rules are stated and then enforced again in code** (`accept_groups`). Stating them keeps a good grouping from being thrown away for a rule the model never saw; enforcing them keeps a bad one from reaching synthesis.
