@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from curriculum_agent.config import SLOTS, Settings
+from curriculum_agent.config import _PROVIDER_DEFAULT_MODEL, SLOTS, Settings
 
 
 def _slot_default(name: str, provider: str) -> str:
@@ -130,8 +130,8 @@ def test_model_defaults_follow_the_openrouter_provider():
         plo_synthesis_provider=None,
         validation_provider=None,
     )
-    assert s.need_combination_model == "z-ai/glm-5.3-flash"
-    assert s.clustering_model == "z-ai/glm-5.3-flash"
+    assert s.need_combination_model == _PROVIDER_DEFAULT_MODEL["openrouter"]
+    assert s.clustering_model == _slot_default("clustering", "openrouter")
 
 
 def test_the_default_provider_is_thai_first():
@@ -244,7 +244,9 @@ def test_clustering_gets_its_own_provider_and_model():
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
     assert s.clustering_provider == "openrouter"
-    assert s.clustering_model == "z-ai/glm-5.3-flash"
+    # Its own choice, not OpenRouter's default: glm's reasoning outran the
+    # stage's timeout here (see the SLOTS entry).
+    assert s.clustering_model == _slot_default("clustering", "openrouter")
     assert s.need_combination_model == "typhoon-v2.5-30b-a3b-instruct"
 
 

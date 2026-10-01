@@ -136,10 +136,14 @@ def test_a_slots_own_model_default_wins_over_the_providers(
     match".
     """
     monkeypatch.setitem(_PROVIDER_DEFAULT_MODEL, "openrouter", "x/provider-default")
-    settings = Settings(extraction_provider="openrouter", extraction_model="")
+    settings = Settings(
+        extraction_provider="openrouter",
+        extraction_model="",
+        need_combination_provider="openrouter",
+    )
 
     assert settings.extraction_model == "z-ai/glm-5.3-flash"
-    assert settings.clustering_model == "x/provider-default"
+    assert settings.need_combination_model == "x/provider-default"
 
 
 def test_the_override_is_looked_up_by_the_resolved_provider() -> None:
