@@ -120,18 +120,26 @@ def test_the_current_names_are_accepted() -> None:
     assert settings.clustering_model == "meta-llama/llama-3.3-70b-instruct"
 
 
-def test_a_slots_own_model_default_wins_over_the_providers() -> None:
+def test_a_slots_own_model_default_wins_over_the_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A model choice is a line of code, not a line of .env.
 
     Which model a stage runs on is an engineering decision about that stage —
     extraction has to quote evidence verbatim and was chosen on that — so it
     belongs in the repository under review, not in a per-machine file. The
     provider-wide default stays the fallback for every slot that has no opinion.
+
+    The provider default is moved to a sentinel first: since OpenRouter's
+    default became the same glm model extraction pins, the shipped values can
+    no longer tell "the slot's own choice won" from "the default happened to
+    match".
     """
+    monkeypatch.setitem(_PROVIDER_DEFAULT_MODEL, "openrouter", "x/provider-default")
     settings = Settings(extraction_provider="openrouter", extraction_model="")
 
     assert settings.extraction_model == "z-ai/glm-5.3-flash"
-    assert settings.clustering_model == _PROVIDER_DEFAULT_MODEL["openrouter"]
+    assert settings.clustering_model == "x/provider-default"
 
 
 def test_the_override_is_looked_up_by_the_resolved_provider() -> None:

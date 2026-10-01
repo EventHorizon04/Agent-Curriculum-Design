@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from curriculum_agent.config import _PROVIDER_DEFAULT_MODEL, SLOTS, Settings
+from curriculum_agent.config import SLOTS, Settings
 
 
 def _slot_default(name: str, provider: str) -> str:
@@ -130,8 +130,8 @@ def test_model_defaults_follow_the_openrouter_provider():
         plo_synthesis_provider=None,
         validation_provider=None,
     )
-    assert s.need_combination_model == "meta-llama/llama-3.3-70b-instruct"
-    assert s.clustering_model == "meta-llama/llama-3.3-70b-instruct"
+    assert s.need_combination_model == "z-ai/glm-5.3-flash"
+    assert s.clustering_model == "z-ai/glm-5.3-flash"
 
 
 def test_the_default_provider_is_thai_first():
@@ -159,8 +159,8 @@ def test_validation_runs_on_its_own_endpoint():
     assert s.validation_provider == "openrouter"
     # Same reasoning as extraction: judged on following a schema, so it carries
     # its own model choice rather than the provider-wide fallback.
+    # `_slot_default` fails unless the slot declares that choice itself.
     assert s.validation_model == _slot_default("validation", "openrouter")
-    assert s.validation_model != _PROVIDER_DEFAULT_MODEL["openrouter"]
 
 
 def test_the_validation_model_follows_its_own_provider_not_the_default():
@@ -244,7 +244,7 @@ def test_clustering_gets_its_own_provider_and_model():
     s = Settings(_env_file=None)
     assert s.llm_provider == "opentyphoon"
     assert s.clustering_provider == "openrouter"
-    assert s.clustering_model == "meta-llama/llama-3.3-70b-instruct"
+    assert s.clustering_model == "z-ai/glm-5.3-flash"
     assert s.need_combination_model == "typhoon-v2.5-30b-a3b-instruct"
 
 
@@ -299,9 +299,10 @@ def test_skill_extraction_runs_off_the_thai_first_endpoint():
     # This slot is picked on how faithfully a model quotes -- evidence_span_th is
     # checked against the source and an invented span is dropped -- so it does
     # not track the provider-wide default, and asserting against that default
-    # would pass even if the slot lost its own entry.
+    # would pass even if the slot lost its own entry. `_slot_default` fails
+    # unless the slot declares that choice itself — which is also why there is
+    # no `!= _PROVIDER_DEFAULT_MODEL` check: the two are the same model today.
     assert s.extraction_model == _slot_default("extraction", "openrouter")
-    assert s.extraction_model != _PROVIDER_DEFAULT_MODEL["openrouter"]
 
 
 def test_extraction_provider_unset_follows_the_default_provider():

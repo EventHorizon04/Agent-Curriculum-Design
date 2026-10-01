@@ -12,9 +12,15 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Model names to fall back on when a slot's *_MODEL is left unset. Keyed by
 # provider so switching the provider that governs a slot carries that slot's
 # model with it.
+#
+# OpenRouter's was meta-llama/llama-3.3-70b-instruct until 2026-10-01. Every
+# probe that compared the two on this pipeline's own data chose glm-5.3-flash
+# (extraction, validation, the duplicate check — see their SLOTS entries), and
+# clustering was the last slot still on llama, so the default moved rather than
+# leaving one model in service that no measurement had picked.
 _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "ollama": "gemma4:31b-cloud",
-    "openrouter": "meta-llama/llama-3.3-70b-instruct",
+    "openrouter": "z-ai/glm-5.3-flash",
     "opentyphoon": "typhoon-v2.5-30b-a3b-instruct",
 }
 
@@ -121,15 +127,15 @@ SLOTS: tuple[SlotSpec, ...] = (
         "extraction_model",
         default_models={"openrouter": "z-ai/glm-5.3-flash"},
     ),
-    # Left on the provider default (llama-3.3-70b) deliberately: this is the
-    # slot ticket 16 is measuring, and the measurement is only comparable while
-    # the model under it holds still.
+    # On the provider default, now glm-5.3-flash. It was llama-3.3-70b while
+    # ticket 16 measured this slot, so a clustering figure taken before
+    # 2026-10-01 is a llama baseline and is not comparable with one taken after.
     SlotSpec("clustering", "clustering_provider", "clustering_model"),
     SlotSpec("need_combination", "need_combination_provider", "need_combination_model"),
     # Runs at the start of plo_synthesis, before any draft, so it sits here in
     # pipeline order. Probed on the 9 stored in-scope Needs (design doc,
-    # "Measured"), 3 runs each: llama-3.3-70b (the clustering model, the
-    # provider default) folded 1fe0 with d7c4+5dd3 and 396a with 9d07 every
+    # "Measured"), 3 runs each: llama-3.3-70b (then the clustering model and
+    # the provider default) folded 1fe0 with d7c4+5dd3 and 396a with 9d07 every
     # run — neither pair shares a main task and object — while glm-5.3-flash
     # folded only 252f+6a45 and afe6+befb, left 1fe0/396a/9d07 ungrouped, on
     # all 3 runs.
