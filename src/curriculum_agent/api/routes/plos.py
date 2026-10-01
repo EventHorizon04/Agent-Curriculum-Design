@@ -218,7 +218,7 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     """
     from curriculum_agent.stages.need_grouping import (  # noqa: PLC0415
         MAX_CORE_PLOS,
-        MIN_NEEDS,
+        MIN_CORE_AFTER_MERGE,
         is_in_scope,
     )
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
@@ -261,9 +261,10 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
 
     # The 6-10 policy is a property of the stored set, not of one stage's output,
     # and a replacing merge moves the count in both directions: folding several
-    # outcomes into one lowers it, merging Needs nothing cites yet raises it. Both
-    # bounds are therefore checked here. Optional PLOs are outside the count, for
-    # the same reason they are in synthesis.
+    # outcomes into one lowers it, merging Needs nothing cites yet raises it.
+    # Both bounds are therefore checked here — the ceiling at MAX_CORE_PLOS, the
+    # floor at MIN_CORE_AFTER_MERGE below. Optional PLOs are outside the count,
+    # for the same reason they are in synthesis.
     if projected_core > MAX_CORE_PLOS:
         raise HTTPException(
             status_code=422,
@@ -273,15 +274,19 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
                 "เพื่อให้การรวมนี้แทนที่ PLO เดิมแทนที่จะเพิ่มข้อใหม่"
             ),
         )
-    # Only when this merge is what takes the count below the floor. A program that
-    # is already short of six — too few Needs to begin with — must not have every
-    # further merge refused for a shortfall it did not cause.
-    if projected_core < MIN_NEEDS and projected_core < current_core:
+    # The merge floor, not the policy floor: a merge may leave the set under the
+    # 6-10 band — two PLOs that say one thing are not two outcomes, and the band's
+    # own warning still tells the designer — but not under MIN_CORE_AFTER_MERGE.
+    # plo_synthesis folds duplicates down to the same number, so nothing the stage
+    # does on its own is refused here by hand. Only when this merge causes the
+    # shortfall: a program that is already short must not have every further
+    # merge refused for a shortfall it did not cause.
+    if projected_core < MIN_CORE_AFTER_MERGE and projected_core < current_core:
         raise HTTPException(
             status_code=422,
             detail=(
-                f"การรวมนี้จะเหลือ PLO หลัก {projected_core} ข้อ ต่ำกว่านโยบายขั้นต่ำ "
-                f"{MIN_NEEDS} ข้อ รวม Need ที่ยังไม่มี PLO ขึ้นมาเป็นข้อใหม่ก่อน "
+                f"การรวมนี้จะเหลือ PLO หลัก {projected_core} ข้อ ต่ำกว่าขั้นต่ำของการรวม "
+                f"{MIN_CORE_AFTER_MERGE} ข้อ รวม Need ที่ยังไม่มี PLO ขึ้นมาเป็นข้อใหม่ก่อน "
                 "แล้วจึงรวมข้อที่ซ้ำซ้อนกัน"
             ),
         )

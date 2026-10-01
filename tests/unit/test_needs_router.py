@@ -752,14 +752,14 @@ async def test_a_replacing_merge_is_allowed_at_the_ceiling(
 async def test_from_needs_refuses_a_merge_that_falls_through_the_floor(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
-    """Now that merging removes outcomes, the floor is reachable too — and a
-    program is as broken below six as above ten."""
-    from curriculum_agent.stages.need_grouping import MIN_NEEDS
+    """The merge floor refuses only when this merge is what causes the shortfall.
+    Four core PLOs, two folded into one, leaves three — below the merge floor."""
+    from curriculum_agent.stages.need_grouping import MIN_CORE_AFTER_MERGE
 
     _patch_merge(
         monkeypatch,
-        needs=[_named_need(f"N{i}") for i in range(1, MIN_NEEDS + 1)],
-        plos=[_core_plo(i) for i in range(1, MIN_NEEDS + 1)],
+        needs=[_named_need(f"N{i}") for i in range(1, MIN_CORE_AFTER_MERGE + 1)],
+        plos=[_core_plo(i) for i in range(1, MIN_CORE_AFTER_MERGE + 1)],
     )
     synth = AsyncMock()
     with patch("curriculum_agent.stages.plo_synthesis.synthesize_from_needs", synth):
@@ -768,7 +768,7 @@ async def test_from_needs_refuses_a_merge_that_falls_through_the_floor(
         )
 
     assert response.status_code == 422
-    assert str(MIN_NEEDS) in response.json()["detail"]
+    assert str(MIN_CORE_AFTER_MERGE) in response.json()["detail"]
     synth.assert_not_awaited()
 
 

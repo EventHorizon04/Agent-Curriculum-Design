@@ -194,11 +194,11 @@ def test_the_ceiling_still_refuses_a_merge_that_would_exceed_it(
     assert "เกินเพดาน" in response.json()["detail"]
 
 
-def test_the_floor_still_refuses_a_merge_that_causes_the_shortfall(
+def test_a_merge_may_take_the_set_below_the_policy_band(
     merge_env: Callable[..., PLO],
 ) -> None:
-    """Six core PLOs, three of them folded into one, leaves four. The floor fires
-    because this merge is what caused the shortfall."""
+    """Six core PLOs, three folded into one, leaves four: under the 6-10 band,
+    at the merge floor. Two PLOs that say one thing are not two outcomes."""
     needs = [_need(f"N{i}") for i in range(1, 7)]
     existing = [_plo(f"PLO{i}", [f"N{i}"]) for i in range(1, 7)]
     merge_env(needs, existing)
@@ -208,8 +208,43 @@ def test_the_floor_still_refuses_a_merge_that_causes_the_shortfall(
             "/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2", "N3"]}
         )
 
+    assert response.status_code == 200, response.text
+
+
+def test_the_merge_floor_refuses_a_merge_that_causes_the_shortfall(
+    merge_env: Callable[..., PLO],
+) -> None:
+    """Four core PLOs, two folded into one, leaves three — below the merge floor,
+    and this merge is what caused it."""
+    needs = [_need(f"N{i}") for i in range(1, 5)]
+    existing = [_plo(f"PLO{i}", [f"N{i}"]) for i in range(1, 5)]
+    merge_env(needs, existing)
+
+    with patch.object(plos_route, "logger"):
+        response = client.post(
+            "/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]}
+        )
+
     assert response.status_code == 422
-    assert "ต่ำกว่านโยบายขั้นต่ำ" in response.json()["detail"]
+    assert "ต่ำกว่าขั้นต่ำของการรวม" in response.json()["detail"]
+    assert "4" in response.json()["detail"]
+
+
+def test_a_set_already_below_the_floor_can_still_grow(
+    merge_env: Callable[..., PLO],
+) -> None:
+    """Two core PLOs, and a merge of two Needs nothing cites adds a third: still
+    below the floor, but this merge did not cause the shortfall."""
+    needs = [_need(f"N{i}") for i in range(1, 5)]
+    existing = [_plo("PLO1", ["N1"]), _plo("PLO2", ["N2"])]
+    merge_env(needs, existing)
+
+    with patch.object(plos_route, "logger"):
+        response = client.post(
+            "/programs/cs-test/plos/from-needs", json={"need_ids": ["N3", "N4"]}
+        )
+
+    assert response.status_code == 200, response.text
 
 
 def test_out_of_scope_needs_do_not_change_which_bound_applies(
@@ -218,17 +253,17 @@ def test_out_of_scope_needs_do_not_change_which_bound_applies(
     """Same shortfall, same refusal, whether the Needs being merged are in scope or
     not. The guard does not get to relax the count policy in either direction, and
     the override path does not get to bypass it."""
-    needs = [_need(f"X{i}", in_scope=False) for i in range(1, 7)]
-    existing = [_plo(f"PLO{i}", [f"X{i}"]) for i in range(1, 7)]
+    needs = [_need(f"X{i}", in_scope=False) for i in range(1, 5)]
+    existing = [_plo(f"PLO{i}", [f"X{i}"]) for i in range(1, 5)]
     merge_env(needs, existing)
 
     with patch.object(plos_route, "logger"):
         response = client.post(
-            "/programs/cs-test/plos/from-needs", json={"need_ids": ["X1", "X2", "X3"]}
+            "/programs/cs-test/plos/from-needs", json={"need_ids": ["X1", "X2"]}
         )
 
     assert response.status_code == 422
-    assert "ต่ำกว่านโยบายขั้นต่ำ" in response.json()["detail"]
+    assert "ต่ำกว่าขั้นต่ำของการรวม" in response.json()["detail"]
 
 
 # --------------------------- PUT and revalidate ---------------------------
