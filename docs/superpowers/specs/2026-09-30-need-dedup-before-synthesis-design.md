@@ -273,7 +273,7 @@ substance). The 9 in-scope Needs fold into exactly 4 units, so
 `enforce_merge_floor` finds the core count already at `MIN_CORE_AFTER_MERGE`
 (4) and unfolds nothing.
 
-**Pass/fail per criterion:**
+**Pass/fail per criterion, as first read:**
 
 - **must fold `252f`+`6a45`:** PASS, stable all 3 runs — folded together
   every time, without `d7c4` (which the criterion allows).
@@ -282,14 +282,68 @@ substance). The 9 in-scope Needs fold into exactly 4 units, so
   `1b4f` is out of scope on this corpus (absent from the 9 in-scope Needs).
   `5dd3` itself folds instead into `[1fe0,d7c4,5dd3]` every run, which breaks
   no rule (same KSEC `S`, size 3 ≤ `MAX_GROUP_SIZE`).
-- **must not fold `1fe0` with `252f` or `afe6`:** PASS, stable all 3 runs —
-  `1fe0` is grouped with `d7c4`/`5dd3` only, never with `252f` or `afe6`.
+- **must not fold `1fe0` with `252f` or `afe6`:** literal PASS, stable all 3
+  runs — `1fe0` is grouped with `d7c4`/`5dd3` only, never with `252f` or
+  `afe6`.
 - **stable across three runs:** PASS — identical group membership on all 3
   runs; only `reason_th` wording differs.
 
-All required criteria pass on the default model; the glm-5.3-flash comparison
-and the `SLOTS` model-switch commit in the brief are therefore **not**
-triggered.
+**Corrected verdict (controller review, same day):** the literal criteria
+list named `252f`/`afe6` as the pairs to watch, not the only pairs that
+matter. Read against what the criterion is *for* — "don't fold Needs that do
+not share a main task and object" — llama **fails**: `[1fe0,d7c4,5dd3]` puts
+a digital-marketing-strategy Need in the same unit as "use digital tools to
+manage translation work" and "develop a digital translation tool", which
+share no single main task/object any more than `1fe0`+`252f` would, and
+`[396a,9d07]` pairs "Chinese consumer culture and etiquette" with
+"translating academic documents" on the same reasoning gap. Both false folds
+were stable across all 3 runs — the floor landing at exactly 4 core units
+(coincidentally `MIN_CORE_AFTER_MERGE`) hid the fold rate rather than
+confirming it was reasonable: all 9 in-scope Needs folded into only 4 units,
+leaving nothing standalone. llama-3.3-70b is **not** fit for this slot on
+this evidence.
+
+### glm-5.3-flash comparison (same corpus, same day)
+
+Same probe, `llm.settings.need_dedup_model = "z-ai/glm-5.3-flash"` set
+in-script before `main()` (provider stays `openrouter`), 3 runs, no prompt
+edits. No drop warnings from `accept_groups` on any run (each run: "2
+group(s) accepted, 0 dropped by rule").
+
+| run | accepted groups | after `enforce_merge_floor` |
+|-----|------------------|------------------------------|
+| 1 | `[252f,6a45]` `[afe6,befb]` | identical |
+| 2 | `[252f,6a45]` `[afe6,befb]` | identical |
+| 3 | `[252f,6a45]` `[afe6,befb]` | identical |
+
+Group composition is byte-identical across all 3 runs (`reason_th` paraphrase
+varies, substance does not). Only 4 of the 9 in-scope Needs end up folded at
+all (`252f`, `6a45`, `afe6`, `befb`); `1fe0`, `396a`, `d7c4`, `5dd3`, `9d07`
+are left as their own units every run.
+
+**Pass/fail, including the controller's added checks:**
+
+- **must fold `252f`+`6a45`:** PASS, stable all 3 runs.
+- **must fold `afe6`+`befb`:** PASS, stable all 3 runs.
+- **must fold `5dd3`+`1b4f` (only if in scope):** not applicable, as above.
+- **must not fold `1fe0` with `252f` or `afe6`:** PASS — `1fe0` is not folded
+  with anything, any run.
+- **`1fe0` must not be in any group:** PASS, stable all 3 runs — `1fe0` is
+  standalone every run.
+- **`396a`+`9d07` must not be grouped:** PASS, stable all 3 runs — both are
+  standalone every run.
+- **fold rate:** 4/9 Needs folded (2 pairs), versus llama's 9/9 (one group of
+  3, three of 2) — glm folds only the two pairs every reading of the
+  criteria agrees on, and leaves the rest alone.
+- **stable across three runs:** PASS.
+
+glm-5.3-flash passes every criterion, including the controller's additions,
+stably across all 3 runs. Per the brief's decision rule, the `SLOTS`
+model-switch is made: `need_dedup`'s `default_models` now reads
+`{"openrouter": "z-ai/glm-5.3-flash"}` (`src/curriculum_agent/config.py`),
+`.env.example`'s `NEED_DEDUP_MODEL` line matches, and
+`tests/unit/test_llm_slots.py tests/unit/test_llm_target.py` pass unchanged
+(32 passed). The prompt itself (`prompts/need_dedup.py`) was not touched.
 
 ## Tests
 
