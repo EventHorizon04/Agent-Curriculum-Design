@@ -105,7 +105,7 @@ def test_the_startup_line_says_a_disabled_slot_is_disabled(
 
 
 def test_the_duplicate_check_can_be_switched_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """"" is the need_dedup kill switch: the startup line says so rather than
+    """ "" is the need_dedup kill switch: the startup line says so rather than
     resolving it back to a live provider."""
     monkeypatch.setattr(llm.settings, "need_dedup_provider", "")
 

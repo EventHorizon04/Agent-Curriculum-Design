@@ -221,9 +221,7 @@ def test_the_merge_floor_refuses_a_merge_that_causes_the_shortfall(
     merge_env(needs, existing)
 
     with patch.object(plos_route, "logger"):
-        response = client.post(
-            "/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]}
-        )
+        response = client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]})
 
     assert response.status_code == 422
     assert "ต่ำกว่าขั้นต่ำของการรวม" in response.json()["detail"]
@@ -240,9 +238,7 @@ def test_a_set_already_below_the_floor_can_still_grow(
     merge_env(needs, existing)
 
     with patch.object(plos_route, "logger"):
-        response = client.post(
-            "/programs/cs-test/plos/from-needs", json={"need_ids": ["N3", "N4"]}
-        )
+        response = client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["N3", "N4"]})
 
     assert response.status_code == 200, response.text
 
@@ -258,9 +254,7 @@ def test_out_of_scope_needs_do_not_change_which_bound_applies(
     merge_env(needs, existing)
 
     with patch.object(plos_route, "logger"):
-        response = client.post(
-            "/programs/cs-test/plos/from-needs", json={"need_ids": ["X1", "X2"]}
-        )
+        response = client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["X1", "X2"]})
 
     assert response.status_code == 422
     assert "ต่ำกว่าขั้นต่ำของการรวม" in response.json()["detail"]

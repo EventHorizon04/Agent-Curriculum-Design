@@ -170,8 +170,12 @@ def _select_slots(units: list[list[Need]]) -> list[_Slot]:
     """Number the units, most-demanded first, capping the core series.
 
     Pure code, and no awaits: the ceiling and the id scheme are decided before a
-    single draft goes out, so PLO1 is the capability the market asked for most
-    and the numbering is reproducible across re-runs on the same Needs.
+    single draft goes out, so PLO1 is the capability the market asked for most.
+    Numbering is reproducible across re-runs for the same fold answer, but the
+    fold answer itself is not — the dedup model's grouping can change between
+    runs, and a unit's membership (so its PLO id) moves with it. Set
+    `NEED_DEDUP_PROVIDER=` for a fully deterministic run: every Need keeps its
+    own slot and the numbering is then reproducible on the same Needs alone.
     """
     slots: list[_Slot] = []
     for is_optional in (False, True):
@@ -473,7 +477,7 @@ async def synthesize_from_needs(
 
 
 async def run(state: AgentState) -> AgentState:
-    """Stage 4: one PLO per Need."""
+    """Stage 4: one PLO per Need, or per group of Needs the duplicate check folded."""
     program_id = state.get("program_id", "unknown")
     metadata_dict = state.get("metadata")
     if not metadata_dict:
@@ -632,9 +636,7 @@ async def run(state: AgentState) -> AgentState:
         folded_core = sum(max(0, _core_members(f) - 1) for f in folds)
         causes = []
         if filtered:
-            causes.append(
-                f"กรอง Need นอกขอบเขตออก {len(filtered)} ใบก่อนร่าง (หลักฐานในขอบเขตไม่พอ)"
-            )
+            causes.append(f"กรอง Need นอกขอบเขตออก {len(filtered)} ใบก่อนร่าง (หลักฐานในขอบเขตไม่พอ)")
         if folded_core:
             # Said here so a shortfall from duplicates reads differently from one
             # from missing evidence.

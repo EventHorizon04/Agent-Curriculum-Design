@@ -779,7 +779,7 @@ async def test_a_program_already_below_the_floor_can_still_merge(
     afterwards — a program with too few Needs to begin with must not be frozen."""
     from curriculum_agent.stages.need_grouping import MIN_NEEDS
 
-    # Three core outcomes, already below six. Merging two optional Needs leaves
+    # Three core outcomes, already below the merge floor. Merging two optional Needs leaves
     # the core count exactly where it was.
     _patch_merge(
         monkeypatch,

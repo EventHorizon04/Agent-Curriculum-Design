@@ -9,8 +9,8 @@ members, exactly as a designer's manual merge would be.
 
 Evidence overlap is not the similarity, and it was measured before this was
 written: on the stored run a marketing Need and an ethics Need shared 55% of
-their evidence while the one pair that truly duplicated shared under 20%. A
-small corpus puts every Need on the same few documents. See the design doc,
+their evidence while a true duplicate pair shared under 20%. A small corpus
+puts every Need on the same few documents. See the design doc,
 `docs/superpowers/specs/2026-09-30-need-dedup-before-synthesis-design.md`.
 
 The structural rules live in `accept_groups`, not in pydantic validators: a

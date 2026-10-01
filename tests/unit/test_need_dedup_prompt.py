@@ -64,7 +64,9 @@ def test_shared_topic_or_source_is_named_as_not_enough() -> None:
 
 
 def test_program_context_is_included_when_given_and_absent_otherwise() -> None:
-    with_context = _text(build_need_dedup_prompt(_ROWS, program_context="หลักสูตรระดับปริญญาตรี สาขาภาษาจีน"))  # noqa: E501
+    with_context = _text(
+        build_need_dedup_prompt(_ROWS, program_context="หลักสูตรระดับปริญญาตรี สาขาภาษาจีน")
+    )
     without = _text(build_need_dedup_prompt(_ROWS))
 
     assert "หลักสูตรระดับปริญญาตรี สาขาภาษาจีน" in with_context

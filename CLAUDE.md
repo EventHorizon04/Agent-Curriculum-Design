@@ -133,8 +133,8 @@ src/curriculum_agent/
   config.py            ← pydantic-settings, reads .env
   prompts/             ← one file per LLM prompt, typed builder fns
   stages/              ← intake, stakeholder_needs, skill_extraction,
-                          need_combination, llm_clustering, plo_synthesis,
-                          plo_report (+ smart_rules, smart_agent,
+                          need_combination, llm_clustering, need_dedup,
+                          plo_synthesis, plo_report (+ smart_rules, smart_agent,
                           smart_agent_tools, bloom_verbs)
   data/                ← repositories, postgres, minio_store,
                           prune_threads / prune_cache (maintenance sweeps)
@@ -500,7 +500,7 @@ tests/integration/     ← LLM mocked, full stages
   duplicate check before synthesis (`stages/need_dedup.py`) reads the Need
   *sentences* through a model, because the free signal measured useless: on
   the stored run a marketing Need and an ethics Need shared 55% of their
-  evidence while the one true duplicate pair shared under 20% — a small corpus
+  evidence while a true duplicate pair shared under 20% — a small corpus
   puts every Need on the same few documents. The model's answer is judged in
   `accept_groups`, not by pydantic validators (a validator failure fails the
   whole call and loses every good group with the bad one), and a group that

@@ -6,8 +6,9 @@ import pytest
 
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import BloomLevel, KSECCategory, Need
+from curriculum_agent.stages import need_dedup
 from curriculum_agent.stages import plo_synthesis as ps
-from curriculum_agent.stages.need_dedup import FoldGroup
+from curriculum_agent.stages.need_dedup import DedupAnswer, DuplicateGroup, FoldGroup
 from tests.support.smart_agent import set_soft_judge
 
 _METADATA = {
@@ -237,3 +238,33 @@ async def test_run_applies_the_floor_to_what_the_finder_returns(
     )
 
     assert len(result["plos"]) == 4, "folding would leave 3, below the merge floor"
+
+
+async def test_run_with_dedup_disabled_never_calls_the_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """NEED_DEDUP_PROVIDER="" is the kill switch: find_duplicate_groups returns
+    before the model is ever awaited, so every Need keeps its own slot, in
+    demand order."""
+    needs = [_need(f"N{i}", i / 10) for i in range(1, 4)]  # N3 > N2 > N1 by demand
+    _patch_llm(monkeypatch)
+    monkeypatch.setattr(ps.settings, "need_dedup_provider", "")
+    stub = AsyncMock(
+        return_value=DedupAnswer(
+            groups=[DuplicateGroup(labels=["N1", "N2"], reason_th="งานเดียวกัน")]
+        )
+    )
+    monkeypatch.setattr(need_dedup, "complete_need_dedup", stub)
+
+    result = await ps.run(
+        {
+            "program_id": "test",
+            "metadata": _METADATA,
+            "needs": [n.model_dump(mode="json") for n in needs],
+        }
+    )
+
+    plos = result["plos"]
+    assert [p["plo_id"] for p in plos] == ["PLO1", "PLO2", "PLO3"]
+    assert [p["source_need_ids"] for p in plos] == [["N3"], ["N2"], ["N1"]]
+    stub.assert_not_awaited()
