@@ -131,6 +131,18 @@ Every draft this prompt produces goes past the validation agent and then the pur
 
 ---
 
+## plo_synthesis: the duplicate check before drafting
+
+`prompts/need_dedup.py`. The text is in `docs/prompt-inventory.md` §8; this is why it says what it says.
+
+- **Labels, not ids.** Needs are sent as `N1`, `N2`, … in demand order. A UUID is 36 characters the model has to copy exactly; short indices are what a model returns reliably (`supporting_indices` showed the same).
+- **A duplicate is the same main task and main object**, whatever the wording or context — the checkable definition the 2026-09-29 pipeline proposal gives for set-level redundancy, with its example pair.
+- **"Same topic, same tool, same source is not enough."** The evidence-overlap measurement is why: Needs drawn from the same documents share much of their evidence while asking for different things, and a model left to its own reading groups them the same way.
+- **An empty answer is named as valid.** A model asked to find duplicates otherwise finds some.
+- **The structural rules are stated and then enforced again in code** (`accept_groups`). Stating them keeps a good grouping from being thrown away for a rule the model never saw; enforcing them keeps a bad one from reaching synthesis.
+
+---
+
 ## SMART validation agent prompts
 
 **Purpose:** the S/M/R **hard** criteria (the declared verb appears in the statement, no forbidden word used, non-empty evidence trail) are never checked by an LLM at all — they are pure code in `stages/smart_rules.py` (`hard_failures()`), because they are mechanically checkable and a model is a slower, less reliable way to check them. The agent covers the five **soft** verdicts that genuinely need judgement, and instructs the repairs that fix the hard ones.
