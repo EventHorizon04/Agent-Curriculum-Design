@@ -228,6 +228,69 @@ Bloom fix (`7d5d2a0`) also changes stored Needs only on a need_combination
 re-run, so the end-to-end check is need_combination → plo_synthesis, run by the
 designer after this lands.
 
+## Measured (2026-09-30)
+
+Probe run against `program_id = "program"` on `main` (`f1608c4`), read-only —
+`ProgramRepository.get` / `NeedRepository.list_by_program` / `find_duplicate_groups`
+only, no repository write method called, no `run()` call. `llm.describe_target()`
+line for the slot under test:
+
+```
+need_dedup: provider=openrouter base_url=https://openrouter.ai/api/v1 api_key=set model=meta-llama/llama-3.3-70b-instruct
+```
+
+(all five slots printed; truncated here to `need_dedup`, as the probe filters).
+
+13 stored Needs, 9 in scope (`is_in_scope`) — `1b4f` is **not** among them, so
+the `5dd3`+`1b4f` criterion is not applicable to this corpus. In synthesis
+order:
+
+| # | id | KSEC | optional | demand | statement (first ~70 chars) |
+|---|------|------|----------|--------|------------------------------|
+| N1 | `1fe0` | S | no | 0.689 | ต้องการบัณฑิตที่ออกแบบและดำเนินการกลยุทธ์การตลาดดิจิทัลสำหรับธุรกิจไทย |
+| N2 | `252f` | S | no | 0.441 | [ต้องทบทวน] การขัดเกลาภาษาเพื่อการปรับเนื้อหาให้เข้ากับบริบทท้องถิ่น ( |
+| N3 | `6a45` | S | no | 0.414 | [ต้องทบทวน] การควบคุมและตรวจแก้งานแปลหลังการแปลด้วย AI, การคิดวิเคราะห |
+| N4 | `afe6` | EC | no | 0.359 | ต้องการบัณฑิตที่ประพฤติตนอย่างมีคุณธรรมจริยธรรมในการสื่อสารและดำเนินธุ |
+| N5 | `befb` | EC | no | 0.331 | ต้องการบัณฑิตที่สร้างสรรค์แนวทางการสื่อสารข้ามวัฒนธรรมในบริบทการแปลและ |
+| N6 | `396a` | K | no | 0.220 | ต้องการบัณฑิตที่ตีความและอธิบายความเข้าใจวัฒนธรรมร่วมสมัยของผู้บริโภค |
+| N7 | `d7c4` | S | no | 0.138 | ต้องการบัณฑิตที่ใช้เทคโนโลยีดิจิทัลเป็นเครื่องมือในการจัดการงานแปลภาษา |
+| N8 | `5dd3` | S | **yes** | 0.110 | ต้องการบัณฑิตที่ออกแบบและพัฒนาเครื่องมือการแปลดิจิทัลที่รองรับการสื่อส |
+| N9 | `9d07` | K | no | 0.083 | ต้องการบัณฑิตที่ประยุกต์ใช้ความรู้ด้านภาษาและวัฒนธรรมไทย-จีนในการแปลเอ |
+
+Three runs, default model (`meta-llama/llama-3.3-70b-instruct`), temperature 0,
+no prompt edits between runs. No drop warnings from `accept_groups` on any run
+(each run: "4 group(s) accepted, 0 dropped by rule").
+
+| run | accepted groups | after `enforce_merge_floor` |
+|-----|------------------|------------------------------|
+| 1 | `[1fe0,d7c4,5dd3]` `[252f,6a45]` `[afe6,befb]` `[396a,9d07]` | identical — floor already met (4 units) |
+| 2 | `[1fe0,d7c4,5dd3]` `[252f,6a45]` `[afe6,befb]` `[396a,9d07]` | identical |
+| 3 | `[1fe0,d7c4,5dd3]` `[252f,6a45]` `[afe6,befb]` `[396a,9d07]` | identical |
+
+The four group compositions are byte-identical across all three runs; only
+each group's Thai `reason_th` text varies run to run (paraphrase, not
+substance). The 9 in-scope Needs fold into exactly 4 units, so
+`enforce_merge_floor` finds the core count already at `MIN_CORE_AFTER_MERGE`
+(4) and unfolds nothing.
+
+**Pass/fail per criterion:**
+
+- **must fold `252f`+`6a45`:** PASS, stable all 3 runs — folded together
+  every time, without `d7c4` (which the criterion allows).
+- **must fold `afe6`+`befb`:** PASS, stable all 3 runs.
+- **must fold `5dd3`+`1b4f` (only if `1b4f` in scope):** not applicable —
+  `1b4f` is out of scope on this corpus (absent from the 9 in-scope Needs).
+  `5dd3` itself folds instead into `[1fe0,d7c4,5dd3]` every run, which breaks
+  no rule (same KSEC `S`, size 3 ≤ `MAX_GROUP_SIZE`).
+- **must not fold `1fe0` with `252f` or `afe6`:** PASS, stable all 3 runs —
+  `1fe0` is grouped with `d7c4`/`5dd3` only, never with `252f` or `afe6`.
+- **stable across three runs:** PASS — identical group membership on all 3
+  runs; only `reason_th` wording differs.
+
+All required criteria pass on the default model; the glm-5.3-flash comparison
+and the `SLOTS` model-switch commit in the brief are therefore **not**
+triggered.
+
 ## Tests
 
 - `accept_groups`: each of the four drop rules, label mapping, unknown labels,
