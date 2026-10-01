@@ -22,6 +22,16 @@ from curriculum_agent.models import BLOOM_ORDER, BloomLevel, ExtractedSkill, KSE
 MIN_NEEDS = 6
 MAX_CORE_PLOS = 10
 
+# How far a merge may take the core set: below MIN_NEEDS, never below this. Two
+# PLOs that say one thing are not two outcomes, so folding duplicates is allowed
+# to leave a set short of the policy band — the band's own warning still fires
+# and tells the designer so. Four is where the set stops looking like a
+# programme's outcomes, and a model's grouping or a hurried click should not be
+# what gets it there. One floor for both paths: plo_synthesis's automatic folds
+# (`enforce_merge_floor`) and the manual merge route, so nothing the stage folds
+# on its own is a merge the designer would be refused by hand.
+MIN_CORE_AFTER_MERGE = 4
+
 # How much of a Need has to survive each scope axis for the Need to keep its
 # place. Half, because a full pipeline run measured where the line actually sits:
 # on ten Needs from a real programme, every threshold from 0.34 to 0.60 filtered

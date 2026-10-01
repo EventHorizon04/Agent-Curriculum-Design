@@ -19,8 +19,10 @@ from curriculum_agent.models import (
     StakeholderType,
 )
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
+from curriculum_agent.stages.need_dedup import FoldGroup, find_duplicate_groups
 from curriculum_agent.stages.need_grouping import (
     MAX_CORE_PLOS,
+    MIN_CORE_AFTER_MERGE,
     MIN_NEEDS,
     SCOPE_PASS_RATIO,
     is_in_scope,
@@ -106,6 +108,97 @@ def plos_citing(plos: Iterable[PLO], need_ids: Iterable[str]) -> list[PLO]:
 def synthesis_order(needs: list[Need]) -> list[Need]:
     """Most-demanded first, `need_id` breaking ties so numbering is reproducible."""
     return sorted(needs, key=lambda n: (-n.demand_score, n.need_id))
+
+
+def build_units(needs: list[Need], folds: Sequence[FoldGroup]) -> list[list[Need]]:
+    """What slot selection chooses among: each fold as one unit, every other
+    Need alone. Members are in synthesis order, so a unit's first Need is its
+    most-demanded one — what it ranks by, and what its prompt lists first."""
+    folded = {n.need_id for fold in folds for n in fold.needs}
+    units = [synthesis_order(list(fold.needs)) for fold in folds]
+    units += [[n] for n in needs if n.need_id not in folded]
+    return units
+
+
+def _unit_is_optional(unit: list[Need]) -> bool:
+    # The same rule validate_and_build applies to the PLO the unit becomes.
+    return all(n.is_optional for n in unit)
+
+
+def _core_members(fold: FoldGroup) -> int:
+    return sum(1 for n in fold.needs if not n.is_optional)
+
+
+def core_slot_count(units: list[list[Need]]) -> int:
+    """Core PLO slots these units would fill, after the ceiling."""
+    return min(sum(1 for u in units if not _unit_is_optional(u)), MAX_CORE_PLOS)
+
+
+def enforce_merge_floor(needs: list[Need], folds: Sequence[FoldGroup]) -> list[FoldGroup]:
+    """Unfold groups until the core slots reach the merge floor.
+
+    A set that starts below the floor is not blocked: every fold that would
+    shrink it is unfolded, the loop runs out of candidates, and the set stays
+    as it was — the merge route's own "only when this merge causes the
+    shortfall". (Writing the target as `min(floor, unfolded count)` changes
+    nothing: below the floor, every lowering fold goes either way.)
+    Lowest top-member demand goes first, because the most-demanded outcomes are
+    the ones the numbering and the report lead with. Only a fold with two or more
+    core members lowers the count, so only those are ever unfolded.
+    """
+    kept = list(folds)
+    while core_slot_count(build_units(needs, kept)) < MIN_CORE_AFTER_MERGE:
+        lowering = [f for f in kept if _core_members(f) >= 2]
+        if not lowering:
+            break
+        victim = min(
+            lowering,
+            key=lambda f: (
+                synthesis_order(list(f.needs))[0].demand_score,
+                synthesis_order(list(f.needs))[0].need_id,
+            ),
+        )
+        kept.remove(victim)
+        logger.warning(
+            f"need_dedup: unfolded {', '.join(n.need_id for n in victim.needs)} — "
+            f"folding it would leave fewer than {MIN_CORE_AFTER_MERGE} core PLOs (floor)"
+        )
+    return kept
+
+
+def _select_slots(units: list[list[Need]]) -> list[_Slot]:
+    """Number the units, most-demanded first, capping the core series.
+
+    Pure code, and no awaits: the ceiling and the id scheme are decided before a
+    single draft goes out, so PLO1 is the capability the market asked for most
+    and the numbering is reproducible across re-runs on the same Needs.
+    """
+    slots: list[_Slot] = []
+    for is_optional in (False, True):
+        series = sorted(
+            (u for u in units if _unit_is_optional(u) is is_optional),
+            key=lambda u: (-u[0].demand_score, u[0].need_id),
+        )
+        if not is_optional and len(series) > MAX_CORE_PLOS:
+            # Logged, not silent: a designer looking at 22 Needs and 10 PLOs has to
+            # be able to find out which lost and why. plo_report shows the same
+            # set on the review page.
+            dropped = [n.need_id for u in series[MAX_CORE_PLOS:] for n in u]
+            logger.warning(
+                f"{len(series)} core PLO candidates exceed the {MAX_CORE_PLOS}-PLO "
+                f"ceiling — synthesizing the {MAX_CORE_PLOS} highest-demand ones and "
+                f"leaving {len(dropped)} Need(s) unused: {', '.join(dropped)}"
+            )
+            series = series[:MAX_CORE_PLOS]
+        slots += [
+            _Slot(
+                plo_id=format_plo_id(index, is_optional=is_optional),
+                needs=unit,
+                is_optional=is_optional,
+            )
+            for index, unit in enumerate(series, start=1)
+        ]
+    return slots
 
 
 class _PLODraft(BaseModel):
@@ -437,34 +530,28 @@ async def run(state: AgentState) -> AgentState:
         )
         needs = [n for n in needs if is_in_scope(n)]
 
-    logger.info(f"Stage 4: synthesizing one PLO per Need ({len(needs)} Needs)")
+    logger.info(f"Stage 4: synthesizing PLOs from {len(needs)} Needs")
 
-    # Slot selection, most-demanded first, so PLO1 is the capability the market
-    # asked for most and the numbering is reproducible across re-runs on the
-    # same Needs. No awaits in this block: the ceiling and the id scheme are
-    # pure code, and the numbers are fixed before a single call goes out.
-    slots: list[_Slot] = []
-    for is_optional in (False, True):
-        series = synthesis_order([n for n in needs if n.is_optional is is_optional])
-        if not is_optional and len(series) > MAX_CORE_PLOS:
-            # Logged, not silent: a designer looking at 22 Needs and 10 PLOs has to
-            # be able to find out which twelve lost and why. plo_report shows the
-            # same set on the review page.
-            dropped = series[MAX_CORE_PLOS:]
-            logger.warning(
-                f"{len(series)} core Needs exceed the {MAX_CORE_PLOS}-PLO ceiling — "
-                f"synthesizing the {MAX_CORE_PLOS} highest-demand ones and leaving "
-                f"{len(dropped)} unused: {', '.join(n.need_id for n in dropped)}"
-            )
-            series = series[:MAX_CORE_PLOS]
-        slots += [
-            _Slot(
-                plo_id=format_plo_id(index, is_optional=is_optional),
-                needs=[need],
-                is_optional=is_optional,
-            )
-            for index, need in enumerate(series, start=1)
-        ]
+    # Duplicates are folded before the ceiling, for the same reason the scope
+    # filter runs before it: two slots spent on one capability are a slot a
+    # distinct Need below the cut never got.
+    ordered = synthesis_order(needs)
+    found = await find_duplicate_groups(ordered, metadata)
+    folds = enforce_merge_floor(ordered, found)
+    for fold in folds:
+        logger.info(
+            f"Stage 4: one PLO from Needs {', '.join(n.need_id for n in fold.needs)} — "
+            f"{fold.reason_th or 'no reason given'}"
+        )
+    units = build_units(ordered, folds)
+    # One line a before/after comparison can be read off, with or without the
+    # kill switch: the same run with NEED_DEDUP_PROVIDER= is this step's baseline.
+    logger.info(
+        f"need_dedup: {len(folds)} fold(s) kept, {len(found) - len(folds)} unfolded "
+        f"for the floor — core PLO slots {core_slot_count(build_units(ordered, []))} → "
+        f"{core_slot_count(units)}"
+    )
+    slots = _select_slots(units)
 
     # One index per stage run, shared by every validation: EvidenceRepository
     # has no get_by_id, so ten validators reading overlapping evidence would
@@ -542,11 +629,17 @@ async def run(state: AgentState) -> AgentState:
         # tell "not enough in-scope evidence" apart from "too few Needs to begin
         # with" (which need_combination warns about), and two warnings in
         # different parts of the log leave them to join it up themselves.
-        cause = (
-            f"กรอง Need นอกขอบเขตออก {len(filtered)} ใบก่อนร่าง (หลักฐานในขอบเขตไม่พอ)"
-            if filtered
-            else "need_combination should have enforced this"
-        )
+        folded_core = sum(max(0, _core_members(f) - 1) for f in folds)
+        causes = []
+        if filtered:
+            causes.append(
+                f"กรอง Need นอกขอบเขตออก {len(filtered)} ใบก่อนร่าง (หลักฐานในขอบเขตไม่พอ)"
+            )
+        if folded_core:
+            # Said here so a shortfall from duplicates reads differently from one
+            # from missing evidence.
+            causes.append(f"รวม Need หลักที่ถามหาสมรรถนะเดียวกันเข้าด้วยกัน {folded_core} ใบ")
+        cause = " · ".join(causes) or "need_combination should have enforced this"
         logger.warning(
             f"Stage 4 produced {core} core PLOs, below the {MIN_NEEDS} minimum policy — "
             f"{cause}; review at the checkpoint"
