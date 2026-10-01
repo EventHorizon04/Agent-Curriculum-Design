@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from unittest.mock import AsyncMock
 
 if sys.platform == "win32":
     # Block `import magic` (python-magic) on Windows. Under Git Bash the PATH
@@ -55,6 +56,20 @@ def _default_api_key_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
     env loading, turning every unauthenticated-request test into a spurious
     401."""
     monkeypatch.setattr(settings, "api_key", None)
+
+
+@pytest.fixture(autouse=True)
+def _no_need_dedup_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The duplicate check before synthesis is on by default, so every test that
+    runs `plo_synthesis.run` would otherwise make a real network call. Stubbed at
+    the one call site to answer "no duplicates", which is exactly the behaviour
+    those tests were written against. A test about folding patches it again —
+    a later `setattr` wins."""
+    from curriculum_agent.stages import need_dedup  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        need_dedup, "complete_need_dedup", AsyncMock(return_value=need_dedup.DedupAnswer())
+    )
 
 
 @pytest.fixture
