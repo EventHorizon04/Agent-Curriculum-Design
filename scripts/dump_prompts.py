@@ -24,6 +24,7 @@ from curriculum_agent.prompts.cluster_skills import (
 )
 from curriculum_agent.prompts.designer_note import NOTE_HEADER_TH, NOTE_POLICY_TH
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
+from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
@@ -97,6 +98,12 @@ def _build() -> str:
     plo = _render(
         build_plo_from_need_prompt(_METADATA, [_NEED], note_th="<ข้อความจากผู้ออกแบบหลักสูตร>")
     )
+    dedup = _render(
+        build_need_dedup_prompt(
+            [("N1", "S", "<ประโยคความต้องการ 1>"), ("N2", "S", "<ประโยคความต้องการ 2>")],
+            program_context="<program context>",
+        )
+    )
     smart = _render(
         build_smart_agent_prompt(
             statement_th="<ประโยค PLO ที่ร่างไว้>",
@@ -135,6 +142,7 @@ def _build() -> str:
         merge=merge,
         summarize=summarize,
         plo=plo,
+        dedup=dedup,
         smart=smart,
         repair=repair,
         note_policy=NOTE_POLICY_TH,
@@ -174,6 +182,7 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 5 | แปลง Need เป็น PLO | `build_plo_from_need_prompt` | `stages/plo_synthesis.py` → `draft_from_needs` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
 | 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_loop` | `validation` | `ValidationStep` | ❌ |
 | 7 | สั่งแก้ประโยค PLO | `build_agent_repair_prompt` | `stages/smart_agent.py` → `_repair` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
+| 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -374,6 +383,25 @@ prompt ซ่อมพกแค่คำสั่ง + ประโยคเด�
 เขียนคำวินิจฉัยไม่ใช่โมเดลที่เขียนคำแก้ `instruction_th` จึงต้องอยู่ได้ด้วยตัวเอง
 
 {repair}
+
+---
+
+## 8. หา Need ที่ถามหาสมรรถนะเดียวกันก่อนร่าง PLO
+
+| | |
+|---|---|
+| **builder** | `prompts/need_dedup.py` → `build_need_dedup_prompt(rows, *, program_context=None)` |
+| **ผู้เรียก** | `stages/need_dedup.py` → `find_duplicate_groups` (ครั้งเดียวต่อการรัน `plo_synthesis`) |
+| **slot / wrapper** | `need_dedup` → `complete_need_dedup` · ปิดได้ด้วย `NEED_DEDUP_PROVIDER=` |
+| **response model** | `DedupAnswer` (`groups: [{{labels, reason_th}}]`) |
+| **cache** | ไม่มี |
+
+ส่งป้าย `N1`, `N2`, ... แทน `need_id` เพราะ UUID ยาว 36 ตัวที่โมเดลต้องคัดลอกให้ตรง · กฎโครงสร้างทุกข้อ
+(2-3 ข้อต่อกลุ่ม · KSEC เดียวกัน · หนึ่ง Need หนึ่งกลุ่ม) โค้ดตรวจซ้ำใน `accept_groups` และทิ้งทั้งกลุ่มที่ผิด
+ไม่ตัดสมาชิกออก · กฎข้อ 1 นิยาม "ซ้ำ" ว่างานหลักและวัตถุหลักเหมือนกัน และบอกชัดว่าหัวข้อ เครื่องมือ หรือแหล่งที่มาเดียวกันยังไม่พอ เพราะ Need ที่มาจาก
+เอกสารชุดเดียวกันใช้ evidence ร่วมกันสูงถึง 55% ทั้งที่ขอคนละเรื่อง
+
+{dedup}
 
 ---
 
