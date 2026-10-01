@@ -127,12 +127,17 @@ SLOTS: tuple[SlotSpec, ...] = (
     SlotSpec("clustering", "clustering_provider", "clustering_model"),
     SlotSpec("need_combination", "need_combination_provider", "need_combination_model"),
     # Runs at the start of plo_synthesis, before any draft, so it sits here in
-    # pipeline order. Left on the provider default (llama-3.3-70b, the
-    # clustering model) until the probe in the design doc says otherwise.
+    # pipeline order. Probed on the 9 stored in-scope Needs (design doc,
+    # "Measured"), 3 runs each: llama-3.3-70b (the clustering model, the
+    # provider default) folded 1fe0 with d7c4+5dd3 and 396a with 9d07 every
+    # run — neither pair shares a main task and object — while glm-5.3-flash
+    # folded only 252f+6a45 and afe6+befb, left 1fe0/396a/9d07 ungrouped, on
+    # all 3 runs.
     SlotSpec(
         "need_dedup",
         "need_dedup_provider",
         "need_dedup_model",
+        default_models={"openrouter": "z-ai/glm-5.3-flash"},
         disableable=True,
     ),
     SlotSpec("plo_synthesis", "plo_synthesis_provider", "plo_synthesis_model"),
