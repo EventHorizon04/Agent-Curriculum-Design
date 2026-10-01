@@ -60,15 +60,16 @@ def test_slot_names_are_unique() -> None:
     assert len(set(names)) == len(names), names
 
 
-def test_exactly_one_slot_can_be_switched_off() -> None:
-    """`disableable` is not a convenience: it says "" is a meaningful value for
-    this slot's provider, which is true of the validation agent's kill switch
-    and of nothing else. A second disableable slot would mean a second provider
-    field where empty and unset differ, and every reader of that field would
-    have to learn the distinction."""
+def test_only_the_optional_checks_can_be_switched_off() -> None:
+    """`disableable` says "" is a meaningful value for this slot's provider: the
+    slot is a check the pipeline can run without, and "" is its kill switch. That
+    is true of the validation agent and of the duplicate check before synthesis —
+    both fall back to pure code — and of nothing that *produces* the pipeline's
+    output. A third disableable slot is a third provider field where empty and
+    unset differ, and every reader of that field has to learn the distinction."""
     disableable = [slot.name for slot in SLOTS if slot.disableable]
 
-    assert disableable == ["validation"]
+    assert disableable == ["need_dedup", "validation"]
 
 
 def test_asking_for_a_slot_that_does_not_exist_says_so() -> None:

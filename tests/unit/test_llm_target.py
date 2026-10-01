@@ -104,6 +104,15 @@ def test_the_startup_line_says_a_disabled_slot_is_disabled(
     assert "api_key" not in target.split("validation:")[1]
 
 
+def test_the_duplicate_check_can_be_switched_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """"" is the need_dedup kill switch: the startup line says so rather than
+    resolving it back to a live provider."""
+    monkeypatch.setattr(llm.settings, "need_dedup_provider", "")
+
+    assert "need_dedup: disabled" in llm.describe_target()
+    assert llm._resolve("need_dedup")[0] == ""
+
+
 def test_plo_synthesis_stays_on_the_thai_endpoint_while_clustering_leaves(
     typhoon: Settings,
 ) -> None:
@@ -197,6 +206,7 @@ def test_describe_target_names_every_slot_and_no_key(typhoon: Settings) -> None:
     assert "extraction: provider=openrouter" in described
     assert "clustering: provider=openrouter" in described
     assert "need_combination: provider=opentyphoon" in described
+    assert "need_dedup: provider=openrouter" in described
     assert "plo_synthesis: provider=opentyphoon" in described
     assert "validation: provider=openrouter" in described
     assert typhoon.openrouter_base_url in described
@@ -205,6 +215,7 @@ def test_describe_target_names_every_slot_and_no_key(typhoon: Settings) -> None:
     assert typhoon.plo_synthesis_model in described
     assert typhoon.extraction_model in described
     assert typhoon.validation_model in described
+    assert typhoon.need_dedup_model in described
     assert "api_key=set" in described
 
 
@@ -225,6 +236,7 @@ def test_every_slot_is_reported_and_warmed_from_one_list(typhoon: Settings) -> N
         "extraction",
         "clustering",
         "need_combination",
+        "need_dedup",
         "plo_synthesis",
         "validation",
     ]

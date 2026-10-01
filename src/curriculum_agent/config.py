@@ -95,8 +95,9 @@ class SlotSpec:
     # overridden, so a slot that is happy with its provider's default declares
     # nothing.
     default_models: Mapping[str, str] = field(default_factory=dict)
-    # Only validation: "" is its kill switch, and "" must never resolve to
-    # llm_provider. Every other slot's provider only selects an endpoint.
+    # need_dedup and validation: "" is their kill switch, and "" must never
+    # resolve to llm_provider. Every other slot's provider only selects an
+    # endpoint.
     disableable: bool = False
 
 
@@ -125,6 +126,15 @@ SLOTS: tuple[SlotSpec, ...] = (
     # the model under it holds still.
     SlotSpec("clustering", "clustering_provider", "clustering_model"),
     SlotSpec("need_combination", "need_combination_provider", "need_combination_model"),
+    # Runs at the start of plo_synthesis, before any draft, so it sits here in
+    # pipeline order. Left on the provider default (llama-3.3-70b, the
+    # clustering model) until the probe in the design doc says otherwise.
+    SlotSpec(
+        "need_dedup",
+        "need_dedup_provider",
+        "need_dedup_model",
+        disableable=True,
+    ),
     SlotSpec("plo_synthesis", "plo_synthesis_provider", "plo_synthesis_model"),
     # Same reasoning as extraction, and the same model: this loop reads a Thai
     # sentence plus tool results and emits an instruction, so it is judged on
@@ -201,6 +211,17 @@ class Settings(BaseSettings):
     # Thai-first default is a property of `llm_provider`, and this slot's job is
     # to inherit it.
     need_combination_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = None
+    # The duplicate check before PLO synthesis: one call per synthesis run that
+    # reads every in-scope Need's sentence and answers with groups of labels —
+    # a grouping, not Thai prose, which is why it defaults to OpenRouter beside
+    # clustering. Its own knob, so neither can move without the other.
+    #
+    # Disableable, like validation and for the same reason: the step is a check
+    # the stage can run without. `NEED_DEDUP_PROVIDER=` (empty) skips the call
+    # and every Need gets its own slot, which is also what an outage falls back
+    # to — and the baseline any measurement of this step is taken against.
+    need_dedup_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"
+    need_dedup_model: str = ""
     clustering_model: str = ""
     # The clustering slot is LLM clustering, and nothing else. It holds a whole KSEC
     # bucket of skills in one context and reasons over it, which is the work a

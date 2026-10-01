@@ -241,6 +241,20 @@ async def complete_need_combination(
     return await _complete(*_resolve("need_combination"), response_model, messages, **kwargs)
 
 
+async def complete_need_dedup(
+    response_model: type[T],
+    messages: list[dict[str, Any]],
+    **kwargs: Any,
+) -> T:
+    """The duplicate check before PLO synthesis — see Settings.need_dedup_provider.
+
+    One caller, `stages.need_dedup.find_duplicate_groups`, once per synthesis
+    run. It answers with labels, never with Thai a designer reads, and whatever
+    it answers is judged again in pure code before anything is folded.
+    """
+    return await _complete(*_resolve("need_dedup"), response_model, messages, **kwargs)
+
+
 async def complete_clustering(
     response_model: type[T],
     messages: list[dict[str, Any]],
