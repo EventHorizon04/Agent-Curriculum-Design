@@ -68,9 +68,10 @@ def next_plo_id(existing_ids: Iterable[str], *, is_optional: bool) -> str:
     """Lowest unused number in the relevant series.
 
     Needed by the designer-driven merge endpoint, which creates one outcome at a
-    time and cannot see the whole ordered set. `plo_id` is the table's primary key
-    and the repository upserts, so a reused id would silently overwrite an
-    existing outcome rather than failing.
+    time and cannot see the whole ordered set. A PLO's identity is
+    (program_id, plo_id) and the repository upserts on it, so a reused id within
+    this program would silently overwrite an existing outcome rather than
+    failing.
     """
     prefix = _OPTIONAL_PREFIX if is_optional else _MAIN_PREFIX
     used = {

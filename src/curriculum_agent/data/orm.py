@@ -3,7 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    PrimaryKeyConstraint,
+    String,
+    Text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -103,7 +112,13 @@ class NeedTable(Base):
 class PLOTable(Base):
     __tablename__ = "plos"
 
-    plo_id: Mapped[str] = mapped_column(String, primary_key=True)
+    # Composite PK. plo_id alone (PLO1..PLOn / OPT1..OPTn) repeats across every
+    # program, so a single-column PK let one program's synthesis run move
+    # another program's PLO1 to itself via upsert-by-plo_id and overwrite it.
+    # A PLO's identity is (program, plo_id), never plo_id alone.
+    __table_args__ = (PrimaryKeyConstraint("program_id", "plo_id", name="plos_pkey"),)
+
+    plo_id: Mapped[str] = mapped_column(String)
     program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
     statement_th: Mapped[str] = mapped_column(Text)
     statement_en: Mapped[str | None] = mapped_column(Text, nullable=True)

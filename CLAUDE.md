@@ -298,6 +298,17 @@ tests/integration/     ← LLM mocked, full stages
   it: revalidating one outcome silently reshuffled the exported มคอ.2 matrix and
   the UI list. `is_optional` first (OPT sorts above PLO lexicographically), then
   length before value (or PLO10 lands between PLO1 and PLO2).
+- **A PLO's identity is (program, plo_id); `plo_id` alone is a per-program
+  label.** `plo_id` (PLO1..PLOn, OPT1..OPTn) repeats across every program — it
+  was only ever unique within one program's own synthesis run. `PLOTable` used
+  to carry it as the sole primary key, so `PLORepository.bulk_insert` and
+  `.replace` resolving an upsert with `session.get(PLOTable, plo.plo_id)`
+  looked at plo_id only: a second program's PLO1 synthesis run found the
+  *first* program's PLO1 row and overwrote it in place, including relabelling
+  it onto the second program's `program_id`. The first program lost seven
+  outcomes with no error raised anywhere. The PK is now a composite
+  `(program_id, plo_id)` (migration `e4b6d19a3f72`), and every `session.get`
+  on `PLOTable` passes both.
 - **Don't pass full evidence text into synthesis prompts.** Summarize each Need in ≤200 tokens. Full evidence stays in Postgres for drill-down, not in the synthesis prompt.
 - **The extraction cache is keyed on `settings.extraction_model`, and so is what
   it stores.** One name in three places — the key, the hit comparison, and the

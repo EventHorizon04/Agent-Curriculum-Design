@@ -337,7 +337,12 @@ class PLORepository:
         async with AsyncSessionLocal() as session:
             for plo in plos:
                 data = plo.model_dump(mode="json")
-                existing = await session.get(PLOTable, plo.plo_id)
+                # Composite identity — plo_id alone repeats across programs, and
+                # session.get(PLOTable, plo.plo_id) used to resolve to whichever
+                # program got there first, moving its row to this one on upsert.
+                existing = await session.get(
+                    PLOTable, {"program_id": plo.program_id, "plo_id": plo.plo_id}
+                )
                 if existing is None:
                     session.add(PLOTable(**data))
                 else:
@@ -354,9 +359,10 @@ class PLORepository:
         program has lost outcomes and gained nothing, and if the insert then fails
         the designer is looking at a curriculum with holes in it.
 
-        Deleting first also frees the plo_id the new outcome wants: `plo_id` is
-        the primary key and `next_plo_id` hands back the lowest free number, so a
-        merge normally reuses the lowest slot it just emptied.
+        Deleting first also frees the plo_id the new outcome wants: a PLO's
+        identity is (program_id, plo_id) and `next_plo_id` hands back the lowest
+        free number within this program, so a merge normally reuses the lowest
+        slot it just emptied.
 
         Returns the number of rows removed.
         """
@@ -375,7 +381,10 @@ class PLORepository:
                 removed = result.rowcount
             for plo in add:
                 data = plo.model_dump(mode="json")
-                existing = await session.get(PLOTable, plo.plo_id)
+                # Same composite identity as bulk_insert — see the comment there.
+                existing = await session.get(
+                    PLOTable, {"program_id": plo.program_id, "plo_id": plo.plo_id}
+                )
                 if existing is None:
                     session.add(PLOTable(**data))
                 else:

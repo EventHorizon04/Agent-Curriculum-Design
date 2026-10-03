@@ -249,8 +249,9 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
 
     selected = [by_id[nid] for nid in body.need_ids]
     # A merged outcome is supplementary only when every Need feeding it is, and it
-    # takes the next free number in that series — plo_id is the primary key and the
-    # repository upserts, so reusing one would overwrite an existing outcome.
+    # takes the next free number in that series — a PLO's identity is
+    # (program_id, plo_id) and the repository upserts on it, so reusing a plo_id
+    # within this program would overwrite an existing outcome.
     is_optional = all(n.is_optional for n in selected)
     existing = await _repo.list_by_program(program_id)
 
