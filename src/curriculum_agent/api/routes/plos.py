@@ -148,7 +148,10 @@ async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
 
 @router.post("/run", response_model=list[PLO])
 async def run_plo_synthesis(program_id: str, body: DesignerNoteRequest | None = None) -> list[PLO]:
-    from curriculum_agent.stages.plo_synthesis import run  # noqa: PLC0415
+    from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
+        SynthesisAlreadyRunning,
+        run,
+    )
 
     metadata = await ProgramRepository().get(program_id)
     if metadata is None:
@@ -169,7 +172,12 @@ async def run_plo_synthesis(program_id: str, body: DesignerNoteRequest | None = 
     if body is not None and body.note_th:
         state["designer_note"] = body.note_th
 
-    result_state = await run(state)
+    try:
+        result_state = await run(state)
+    except SynthesisAlreadyRunning as exc:
+        # Same program, a run already in flight — refuse rather than let a
+        # second run's delete/insert interleave with the first's.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return [PLO.model_validate(p) for p in result_state.get("plos", [])]
 
 

@@ -482,7 +482,48 @@ async def synthesize_from_needs(
     )
 
 
+# Program ids with a synthesis run currently in flight. Module-level and
+# per-process: a second run for the same program used to start while the first
+# was still mid-flight (minutes of LLM calls), and the second request's HTTP
+# response did not match what ended up in the database — the delete/insert at
+# the end of this stage ran twice, so a PLO card could read "2 needs" while its
+# trace panel, which reads the DB fresh, showed the other run's 1. Overlapping
+# runs can also interleave their delete and insert and leave a mixed set behind.
+# This guard refuses the second run outright rather than letting that race
+# happen. It is a per-process set, so it only covers the single-process
+# deployment this PoC runs (`python -m curriculum_agent.api`); a multi-worker
+# deployment would need a DB-level lock instead, since each worker would have
+# its own copy of this set.
+_SYNTHESIS_IN_FLIGHT: set[str] = set()
+
+
+class SynthesisAlreadyRunning(RuntimeError):
+    """Raised by `run` when a program already has a synthesis run in flight."""
+
+
 async def run(state: AgentState) -> AgentState:
+    """Single-flight guard around `_run`: refuse a second concurrent run.
+
+    The check-and-add is a plain `in` test followed by a `set.add`, with no
+    `await` between them — asyncio is single-threaded and only switches tasks at
+    an `await`, so nothing can interleave between the check and the add within
+    one event loop, making this atomic in practice despite not being a lock.
+    The slot is freed in `finally` so a run that raises (empty Needs, a dead
+    endpoint) or is cancelled does not strand the program unable to retry.
+    """
+    program_id = state.get("program_id", "unknown")
+    if program_id in _SYNTHESIS_IN_FLIGHT:
+        raise SynthesisAlreadyRunning(
+            f"กำลังสังเคราะห์ PLO ของโปรแกรม '{program_id}' อยู่ — รอให้รอบเดิมเสร็จก่อน"
+        )
+    _SYNTHESIS_IN_FLIGHT.add(program_id)
+    try:
+        return await _run(state)
+    finally:
+        _SYNTHESIS_IN_FLIGHT.discard(program_id)
+
+
+async def _run(state: AgentState) -> AgentState:
     """Stage 4: one PLO per Need, or per group of Needs the duplicate check folded."""
     program_id = state.get("program_id", "unknown")
     metadata_dict = state.get("metadata")
