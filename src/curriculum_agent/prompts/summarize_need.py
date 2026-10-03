@@ -166,11 +166,18 @@ def build_summarize_need_prompt(
     <resource> ในการ <task>" because the model was copying the Bloom label's own
     verb, so the prompt now forbids that shape outright and asks for the task as
     the main verb with the resource moved into a "โดยใช้..." clause. The
-    **added-qualifier** rule forbids words like "อย่างลึกซึ้ง", "เชิงยุทธศาสตร์" or
-    "ขั้นสูง" that are not in any member skill's name — stored PLO2 copied
-    "อย่างลึกซึ้ง" straight out of its Need, and no skill in that group ever said
-    so. A fifth rule forbids a floating quantifier ("หลายด้าน", "อย่างรอบด้าน")
-    in place of naming which ones.
+    **added-qualifier** rule bans a level word like "อย่างลึกซึ้ง", "เชิงยุทธศาสตร์"
+    or "ขั้นสูง" unless most of the group shares it — not merely "not in any
+    member's name", which measurement showed is the wrong bar: stored PLO2's
+    "อย่างลึกซึ้ง" does appear, in 1 of that Need's 18 member names
+    ("การตรวจทานคำศัพท์เทคนิคเฉพาะทางกฎหมายอย่างลึกซึ้ง"), and another stored Need's
+    "ขั้นสูง" came from 1 of 15 — both one-member outliers a model generalised
+    into the whole sentence. Only "เชิงลึก" was invented outright, present in
+    none of its group's 3 names. A rule banning only words absent from every
+    name would have let the first two through; the rule is written on the same
+    majority test as the context-only-when-shared rule above. A fifth rule
+    forbids a floating quantifier ("หลายด้าน", "อย่างรอบด้าน") in place of naming
+    which ones.
 
     `not_covered_indices` is where a member the sentence cannot honestly speak
     for goes, with a reason code (`low_freq`, `not_graduate`, `off_task`) and a
@@ -250,8 +257,9 @@ def build_summarize_need_prompt(
         "ส่วนการ 'ใช้' เครื่องมือเหล่านั้นทำงานของสาขาเขียนได้\n"
         "- ห้ามเขียนในรูป 'ประยุกต์ใช้/ใช้ <ความรู้ ทักษะ เทคโนโลยี หรือเครื่องมือ> ในการ <งาน>' "
         "ให้เขียน <งาน> เป็นงานที่บัณฑิตทำโดยตรง และย้ายสิ่งที่ใช้ไปไว้ในวลี 'โดยใช้...'\n"
-        "- ห้ามเติมคำขยายที่ไม่มีในชื่อทักษะของกลุ่ม เช่น 'เชิงยุทธศาสตร์' 'นวัตกรรม' 'ระดับนโยบาย' "
-        "'ระดับนานาชาติ' 'ชั้นนำ' 'อย่างลึกซึ้ง' 'เชิงลึก' 'ขั้นสูง'\n"
+        "- ห้ามใช้คำขยายเชิงระดับ เช่น 'เชิงยุทธศาสตร์' 'นวัตกรรม' 'ระดับนโยบาย' 'ระดับนานาชาติ' "
+        "'ชั้นนำ' 'อย่างลึกซึ้ง' 'เชิงลึก' 'ขั้นสูง' เว้นแต่ทักษะส่วนใหญ่ในกลุ่มใช้คำนั้นร่วมกัน "
+        "คำขยายที่มาจากทักษะเพียงหนึ่งหรือสองรายการ หรือไม่มีในชื่อทักษะเลย ห้ามใส่\n"
         "- ห้ามใช้คำบอกปริมาณลอย ๆ เช่น 'หลายด้าน' 'อย่างรอบด้าน' ให้ระบุว่าด้านใด\n"
         + context_rule
         + "- ห้ามใช้คำกว้างที่ไม่บอกว่าคืออะไร เช่น 'ทักษะที่จำเป็น' "

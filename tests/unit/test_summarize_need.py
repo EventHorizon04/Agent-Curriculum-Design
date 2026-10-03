@@ -331,12 +331,18 @@ def test_summarize_prompt_states_the_off_profession_rule() -> None:
     assert "งานของวิชาชีพอื่นที่ไม่ใช่งานของสาขานี้" in system
 
 
-def test_summarize_prompt_forbids_qualifiers_not_in_the_skill_names() -> None:
-    """Stored PLO2 carried "อย่างลึกซึ้ง" copied from its Need, with no member
-    skill ever saying so."""
+def test_summarize_prompt_bans_a_level_qualifier_unless_the_group_majority_shares_it() -> None:
+    """Stored PLO2's "อย่างลึกซึ้ง" is not invented: it is present in 1 of that
+    Need's 18 member names, and another stored Need's "ขั้นสูง" came from 1 of
+    15 — both one-member outliers generalised into the whole sentence. A rule
+    banning only words absent from every member's name would not catch either
+    case, so the rule is written on the same majority test as the
+    context-only-when-shared rule above.
+    """
     system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
     assert "อย่างลึกซึ้ง" in system  # named as a forbidden example
-    assert "ห้ามเติมคำขยายที่ไม่มีในชื่อทักษะของกลุ่ม" in system
+    assert "ห้ามใช้คำขยายเชิงระดับ" in system
+    assert "เว้นแต่ทักษะส่วนใหญ่ในกลุ่มใช้คำนั้นร่วมกัน" in system
 
 
 def test_summarize_prompt_forbids_floating_quantifiers() -> None:
