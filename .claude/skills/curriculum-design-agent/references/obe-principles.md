@@ -94,7 +94,7 @@ R has **three components**, checked three different ways:
 
 Three hard checks are pure code (`stages/smart_rules.py`), and they are the **floor**: `plo_synthesis.validate_and_build` runs them on the final statement whatever else happened, and that call alone sets `smart_escalated`.
 
-1. **[S_VERB, hard]** Exactly one recognized Bloom verb present in the statement.
+1. **[S_VERB, hard]** The statement opens with its declared verb (`action_verb_th`), read after a leading subject such as "บัณฑิตสามารถ" is stripped (`smart_rules.strip_outcome_prefix`; synthesis also removes it from every draft). Presence anywhere in the sentence is not enough: a verb in a means clause ("…โดยประยุกต์ใช้ AI") is not the outcome.
 2. **[M_FORBIDDEN, hard]** No forbidden unmeasurable word present (รู้ / จำ / เข้าใจ / ซาบซึ้ง / ตระหนัก / ศรัทธา / รัก).
 3. **[R_EVIDENCE, hard]** `source_need_ids` evidence trail is non-empty and resolves to a real `Need`/`StakeholderEvidence` record.
 

@@ -1,4 +1,11 @@
-from curriculum_agent.stages.smart_rules import CRITERION_FIX_HINTS_TH, HardCriterion, hard_failures
+import pytest
+
+from curriculum_agent.stages.smart_rules import (
+    CRITERION_FIX_HINTS_TH,
+    HardCriterion,
+    hard_failures,
+    strip_outcome_prefix,
+)
 
 KNOWN = {"c1", "c2"}
 
@@ -115,3 +122,50 @@ def test_a_verb_sitting_at_several_levels_passes_on_its_closest_one():
     phrase = "เปรียบเทียบและกำกับติดตาม"
     fails = hard_failures(_statement_using(phrase), phrase, ["c1"], KNOWN)
     assert HardCriterion.S_MULTI_VERB not in fails
+
+
+# --------------------------- the declared verb leads the sentence ---------------------------
+#
+# Stored PLO2 declared "ประยุกต์ใช้" while its outcome was "แปลและตรวจสอบ...":
+# the declared verb sat in a means clause ("โดยประยุกต์ใช้เทคโนโลยี AI"), and a
+# presence test passed it. Thai outcome statements open with their verb, so the
+# check is on the opening, after the subject prefix the sentence should not
+# carry anyway.
+
+
+def test_a_declared_verb_only_in_a_means_clause_fails_specific():
+    statement = "แปลและตรวจสอบเอกสารกฎหมายไทย-จีน โดยประยุกต์ใช้เทคโนโลยี AI ในการตรวจทาน"
+    fails = hard_failures(statement, "ประยุกต์ใช้", ["c1"], KNOWN)
+    assert HardCriterion.S_VERB in fails
+
+
+def test_a_declared_verb_behind_a_graduate_prefix_passes():
+    """The prefix is stripped before the opening is checked, so a designer's
+    edit that still says "บัณฑิตสามารถ..." is not failed for the subject."""
+    statement = "บัณฑิตสามารถประพฤติตนอย่างมีจริยธรรมในการสื่อสารข้ามวัฒนธรรม"
+    fails = hard_failures(statement, "ประพฤติตน", ["c1"], KNOWN)
+    assert HardCriterion.S_VERB not in fails
+
+
+@pytest.mark.parametrize(
+    ("statement", "expected"),
+    [
+        ("บัณฑิตสามารถวิเคราะห์ข้อมูลได้", "วิเคราะห์ข้อมูลได้"),
+        ("บัณฑิตจะสามารถวิเคราะห์ข้อมูลได้", "วิเคราะห์ข้อมูลได้"),
+        ("บัณฑิตมีความสามารถในการวิเคราะห์ข้อมูล", "วิเคราะห์ข้อมูล"),
+        ("ผู้เรียนสามารถวิเคราะห์ข้อมูลได้", "วิเคราะห์ข้อมูลได้"),
+        ("ผู้สำเร็จการศึกษาสามารถ วิเคราะห์ข้อมูลได้", "วิเคราะห์ข้อมูลได้"),
+        ("สามารถวิเคราะห์ข้อมูลได้", "วิเคราะห์ข้อมูลได้"),
+        ("  บัณฑิตสามารถวิเคราะห์ข้อมูลได้", "วิเคราะห์ข้อมูลได้"),
+        ("วิเคราะห์ข้อมูลได้", "วิเคราะห์ข้อมูลได้"),
+        ("  วิเคราะห์ข้อมูลได้", "วิเคราะห์ข้อมูลได้"),
+    ],
+)
+def test_the_graduate_prefix_is_stripped(statement: str, expected: str) -> None:
+    assert strip_outcome_prefix(statement) == expected
+
+
+def test_a_prefix_word_inside_the_sentence_is_left_alone() -> None:
+    """Only the opening is the subject; "บัณฑิต" later in the sentence is content."""
+    statement = "วิเคราะห์ความสามารถของบัณฑิตสามารถด้านภาษา"
+    assert strip_outcome_prefix(statement) == statement

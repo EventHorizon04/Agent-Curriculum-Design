@@ -32,7 +32,7 @@ export const SMART_LABEL_TH: Record<string, string> = {
 
 export const FINDING_LABEL_TH: Record<string, string> = {
   // hard — pure code decides these, and they are the only things that escalate
-  S_verb: 'กริยาที่ประกาศไว้ไม่ปรากฏในประโยค',
+  S_verb: 'ประโยคไม่ได้ขึ้นต้นด้วยกริยาที่ประกาศไว้',
   S_multi_verb: 'ประกาศกริยาเกินหนึ่งตัว หรือสองตัวที่ระดับ Bloom ห่างกัน',
   M_forbidden: 'ใช้คำที่วัดผลไม่ได้',
   R_evidence: 'ร่องรอยหลักฐานไม่ครบหรืออ้างถึง Need ที่ไม่มีอยู่',

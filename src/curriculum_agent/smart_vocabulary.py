@@ -118,7 +118,7 @@ HARD_CODES = frozenset(
 # Excel file a designer sends to MHESI as raw English codes, and both frontend
 # pages carried their own copy of a map that had been stale for months.
 FINDING_LABEL_TH: dict[SmartFindingCode, str] = {
-    SmartFindingCode.S_VERB: "กริยาที่ประกาศไว้ไม่ปรากฏในประโยค",
+    SmartFindingCode.S_VERB: "ประโยคไม่ได้ขึ้นต้นด้วยกริยาที่ประกาศไว้",
     SmartFindingCode.S_MULTI_VERB: "ประกาศกริยาเกินหนึ่งตัว หรือสองตัวที่ระดับ Bloom ห่างกัน",
     SmartFindingCode.M_FORBIDDEN: "ใช้คำที่วัดผลไม่ได้",
     SmartFindingCode.R_EVIDENCE: "ร่องรอยหลักฐานไม่ครบหรืออ้างถึง Need ที่ไม่มีอยู่",

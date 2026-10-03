@@ -435,3 +435,20 @@ async def test_actor_or_scope_failing_makes_the_outcome_not_achievable(
     assert plo.smart_check.achievable is False
     assert plo.smart_escalated is False
     assert plo.soft_flags == [code]
+
+
+def test_every_adopted_draft_loses_the_graduate_prefix() -> None:
+    """`_adopt` is the one place every draft enters — the first one and each
+    repair — so the subject prefix is stripped there and cannot ship, however
+    often a repair writes it back."""
+    draft = ps._PLODraft(
+        statement_th="บัณฑิตสามารถวิเคราะห์ระบบสารสนเทศสำหรับงาน N1 ได้",
+        bloom_level=BloomLevel.ANALYZE,
+        action_verb_th="วิเคราะห์",
+        source_need_ids=["N1"],
+        rationale_th="ทักษะที่ตลาดต้องการสำหรับ N1",
+    )
+
+    adopted = ps._adopt(draft, ["N1"])
+
+    assert adopted.statement_th == "วิเคราะห์ระบบสารสนเทศสำหรับงาน N1 ได้"

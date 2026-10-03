@@ -42,6 +42,7 @@ from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
     hard_failures,
+    strip_outcome_prefix,
 )
 
 # Re-exported: SiblingSummary lives with the tools that return it, but callers
@@ -268,8 +269,13 @@ def _adopt(draft: _PLODraft, authoritative_need_ids: list[str]) -> _PLODraft:
     A copy, not an alias. Pinning the caller's own list onto several drafts was
     harmless while synthesis was sequential; it is a shared-mutable footgun now
     that PLOs are validated concurrently.
+
+    The subject prefix ("บัณฑิตสามารถ...") is stripped here for the same reason
+    the ids are pinned here: this is the one door every shippable statement
+    comes through, so a repair that writes the prefix back loses it again.
     """
     draft.source_need_ids = list(authoritative_need_ids)
+    draft.statement_th = strip_outcome_prefix(draft.statement_th)
     return draft
 
 

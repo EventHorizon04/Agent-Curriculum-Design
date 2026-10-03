@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 from curriculum_agent.smart_vocabulary import forbidden_words_in
@@ -19,7 +20,9 @@ class HardCriterion(StrEnum):
 
 CRITERION_FIX_HINTS_TH: dict[HardCriterion, str] = {
     HardCriterion.S_VERB: (
-        "Specific ไม่ผ่าน: action_verb_th ต้องปรากฏใน statement_th และเป็นกริยา Bloom เพียงตัวเดียวที่ชัดเจน"
+        "Specific ไม่ผ่าน: statement_th ต้องขึ้นต้นด้วย action_verb_th "
+        "ซึ่งเป็นกริยาของผลลัพธ์หลัก ไม่ใช่กริยาในวลีรองอย่าง 'โดยใช้...' หรือ 'เพื่อ...' "
+        "ถ้างานหลักของประโยคคือกริยาอื่น ให้เปลี่ยน action_verb_th เป็นกริยานั้น หรือเรียบเรียงประโยคใหม่"
     ),
     HardCriterion.S_MULTI_VERB: (
         "Specific ไม่ผ่าน: action_verb_th ต้องเป็นกริยา Bloom เพียงตัวเดียว "
@@ -37,6 +40,29 @@ CRITERION_FIX_HINTS_TH: dict[HardCriterion, str] = {
         "(ห้ามมี id ที่ไม่รู้จักแม้แต่รายการเดียว) และต้องมีอย่างน้อย 1 รายการ"
     ),
 }
+
+
+# "บัณฑิตสามารถ..." / "ผู้เรียนจะสามารถ..." / "บัณฑิตมีความสามารถในการ..." /
+# a bare "สามารถ..." at the opening. An outcome statement in this programme opens
+# with its verb; the subject is the graduate by definition of a PLO, so saying
+# it adds nothing and pushes the verb off the opening the S check reads.
+_OUTCOME_PREFIX_RE = re.compile(
+    r"^\s*(?:(?:บัณฑิต|ผู้เรียน|ผู้สำเร็จการศึกษา)\s*(?:จะ)?\s*(?:มีความ)?)?"
+    r"สามารถ\s*(?:ใน(?:การ)?)?\s*"
+)
+
+
+def strip_outcome_prefix(statement_th: str) -> str:
+    """The statement without a leading subject-and-ability prefix.
+
+    Pure wording: it removes words, never meaning, which is why code does it
+    instead of spending one of the validation agent's three repairs on it.
+    `plo_synthesis._adopt` applies it to every draft that can ship, and
+    `hard_failures` applies it before reading the opening, so text that reached
+    the gate some other way (a designer's edit, the agent's own probe) is judged
+    on its verb rather than its subject.
+    """
+    return _OUTCOME_PREFIX_RE.sub("", statement_th, count=1).lstrip()
 
 
 def declares_too_many_verbs(action_verb_th: str) -> bool:
@@ -87,9 +113,9 @@ def hard_failures(
     source_need_ids: list[str],
     known_need_ids: set[str],
 ) -> list[HardCriterion]:
-    """Code-level SMART hard checks (S verb presence and count, M forbidden words, R evidence)."""
+    """Code-level SMART hard checks (S verb leads and is one, M forbidden words, R evidence)."""
     fails: list[HardCriterion] = []
-    if not action_verb_th or action_verb_th not in statement_th:
+    if not action_verb_th or not strip_outcome_prefix(statement_th).startswith(action_verb_th):
         fails.append(HardCriterion.S_VERB)
     if declares_too_many_verbs(action_verb_th):
         fails.append(HardCriterion.S_MULTI_VERB)
