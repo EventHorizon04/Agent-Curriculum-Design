@@ -314,8 +314,7 @@ def test_a_need_that_is_itself_out_of_scope_is_sent_back_not_repaired() -> None:
 
 def test_specific_object_names_the_wrapper_case() -> None:
     system = _system()
-    assert "ประยุกต์ใช้" in system
-    assert "ในการ" in system
+    assert "กรรมเป็นทรัพยากร" in system
     assert "S_object" in system
 
 
