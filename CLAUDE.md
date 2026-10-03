@@ -208,6 +208,24 @@ tests/integration/     ← LLM mocked, full stages
   draft and repair, because it is the one door every shippable statement comes
   through, and spending one of three agent repairs on deleting a subject would
   take budget from the hard failures.
+- **The opening-verb check cannot see the "ประยุกต์ใช้" wrapper, and that is
+  handled in the two prompts, not in code.** "ประยุกต์ใช้"/"ใช้" is always
+  apply-level, so "ประยุกต์ใช้ <resource> ในการ <real task>" opens with a verb
+  that is genuinely the declared one — S passes — while the real task
+  (พัฒนา/แปล/ล่าม, at another Bloom level or another profession's work) sits
+  inside the "ในการ..." clause, invisible to a check that only reads the
+  opening word. Stored PLOs 3, 6, and 7 all had this shape, passed every soft
+  criterion on nine validator runs, and one diagnosis said a repair had
+  *deliberately* moved a create-level verb into that clause to make
+  "ประยุกต์ใช้" the main verb and pass `A_level` — the wrapper is how a repair
+  games the level check. The fix is in `build_plo_from_need_prompt` (don't
+  write the wrapper; the real task's verb is `action_verb_th` and opens the
+  sentence, the resource goes in a "โดยใช้..." means clause, and this holds
+  even when the Need sentence itself is wrapped) and in the SMART rubric
+  (`specific_object_ok`, `scope_ok`, and `achievable_ok` all read through the
+  wrapper to the real task). Not a code gate: a statement scan for "ในการ"
+  would also flag legitimate means/purpose clauses, the same reason a
+  sentence-level verb scan doesn't work for `S_multi_verb` above.
 - **instructor edits the caller's message list, and the validation agent reuses
   one.** JSON mode appends the response schema to the system message *in place*
   — its `kwargs.copy()` is shallow — so the SMART loop, which keeps a single list

@@ -62,3 +62,24 @@ def test_a_graduate_side_need_still_reaches_the_prompt_intact() -> None:
     user = build_plo_from_need_prompt(_META, [_need(statement)])[1]["content"]
 
     assert statement in user
+
+
+def test_the_rule_forbids_the_apply_wrapper_around_the_real_task() -> None:
+    """ประยุกต์ใช้/ใช้ is always apply-level, so wrapping it around the real task
+    ("ประยุกต์ใช้ความรู้ในการแปลงานวิชาการ") lets the real task's Bloom level and
+    profession hide in the "ในการ..." clause and still pass S (opens with the
+    declared verb) and A_level. The real task's verb must be action_verb_th and
+    open the sentence; the resource is a means clause instead."""
+    system = _system("ต้องการบัณฑิตที่ประเมินอาการผู้ป่วยแรกรับได้")
+
+    assert "ประยุกต์ใช้" in system
+    assert "ในการ" in system
+    assert "โดยใช้" in system
+
+
+def test_the_rule_holds_even_when_the_need_itself_is_worded_as_a_wrapper() -> None:
+    """A Need is a requirement, not the wording to keep — synthesis must not copy
+    the wrapper shape just because the Need sentence came in that form."""
+    system = _system("ต้องการบัณฑิตที่ประยุกต์ใช้ความรู้ด้านภาษาในการแปลงานวิชาการ")
+
+    assert "แม้ Need" in system or "แม้ประโยคความต้องการ" in system

@@ -299,3 +299,32 @@ def test_a_need_that_is_itself_out_of_scope_is_sent_back_not_repaired() -> None:
     system = _system()
     assert "ส่งกลับขั้น Need" in system
     assert "ห้ามสั่ง request_repair" in system
+
+
+# ------------------------- the ประยุกต์ใช้ wrapper -------------------------
+#
+# PLO3/6/7 all had the shape "ประยุกต์ใช้ <resource> ในการ <real task>" — the
+# wrapper verb is always apply-level, so it passed S (opens with the declared
+# verb) and A_level while the real task (พัฒนา/แปล/ล่าม) sat hidden in the
+# "ในการ..." clause, at another Bloom level or outside the profession. One
+# diagnosis said a repair had *deliberately* moved a create-level verb into
+# that clause to make "ประยุกต์ใช้" the main verb — the wrapper is how a repair
+# games the level check.
+
+
+def test_specific_object_names_the_wrapper_case() -> None:
+    system = _system()
+    assert "ประยุกต์ใช้" in system
+    assert "ในการ" in system
+    assert "S_object" in system
+
+
+def test_scope_is_judged_on_the_work_inside_the_wrapper_clause() -> None:
+    system = _system()
+    assert "ประยุกต์ใช้เทคโนโลยีในการพัฒนาเครื่องมือ" in system
+    assert "พัฒนาเครื่องมือ" in system
+
+
+def test_achievable_judges_the_real_tasks_verb_not_the_wrapper() -> None:
+    system = _system()
+    assert "ไม่ใช่บนกริยา 'ประยุกต์ใช้' ที่เป็นเปลือกหุ้ม" in system
