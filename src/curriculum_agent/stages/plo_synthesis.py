@@ -26,6 +26,7 @@ from curriculum_agent.stages.need_grouping import (
     MIN_NEEDS,
     SCOPE_PASS_RATIO,
     is_in_scope,
+    is_unwritten_need,
 )
 from curriculum_agent.stages.smart_agent import (
     ValidationReason,
@@ -581,6 +582,27 @@ async def _run(state: AgentState) -> AgentState:
             f"{', '.join(n.need_id for n in filtered)}"
         )
         needs = [n for n in needs if is_in_scope(n)]
+
+    # A fallback Need's statement is a marker plus a comma-joined list of skill
+    # names, not a requirement — need_combination writes it when the sentence
+    # call was rejected or never reached the model, precisely so the designer
+    # sees it at the checkpoint instead of a PLO getting drafted from a word
+    # list. Nothing downstream of need_combination used to check for it: on the
+    # tourism program a `[ต้องทบทวน] การบูรณาการความรู้ด้านสุขภาพ…` Need was
+    # synthesised straight into PLO2, a capability invented from skill names
+    # rather than traced to anything a stakeholder asked for. Dropped the same
+    # way as an out-of-scope Need — stays stored and traceable, is not offered
+    # to the duplicate check, and does not take a slot, so the slot goes to the
+    # next Need below the cut. known_need_ids above already covers these ids,
+    # since it is computed before either filter.
+    unwritten = [n for n in needs if is_unwritten_need(n)]
+    if unwritten:
+        logger.warning(
+            f"Stage 4: ข้าม Need ที่ยังไม่ได้เขียนประโยค {len(unwritten)} ใบ "
+            "(ผู้ออกแบบหลักสูตรต้องเขียนเอง หรือรันขั้นรวมทักษะเป็น Need ใหม่): "
+            f"{', '.join(n.need_id for n in unwritten)}"
+        )
+        needs = [n for n in needs if not is_unwritten_need(n)]
 
     logger.info(f"Stage 4: synthesizing PLOs from {len(needs)} Needs")
 

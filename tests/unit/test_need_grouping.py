@@ -4,15 +4,55 @@ from unittest.mock import patch
 
 import pytest
 
-from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
+from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, Need, StakeholderType
 from curriculum_agent.stages.need_grouping import (
+    PROVIDER_MARKER_TH,
+    REVIEW_MARKER_TH,
     bucket_by_ksec,
     dedupe_with_bloom_max,
     find_code_identifier,
     find_vague_phrase,
+    is_unwritten_need,
     looks_like_a_skill_list,
     merge_bloom,
 )
+
+
+def _need(statement_th: str) -> Need:
+    return Need(
+        need_id="N1",
+        program_id="cs-test",
+        statement_th=statement_th,
+        ksec_category=KSECCategory.S,
+        bloom_level=BloomLevel.APPLY,
+        member_skill_ids=["S1"],
+        source_evidence_ids=["E1"],
+        freq=1,
+        demand_score=0.5,
+    )
+
+
+def test_is_unwritten_need_true_for_the_rejected_review_marker() -> None:
+    assert is_unwritten_need(_need(f"{REVIEW_MARKER_TH} ทักษะ A, ทักษะ B"))
+
+
+def test_is_unwritten_need_true_for_the_provider_failure_marker() -> None:
+    assert is_unwritten_need(_need(f"{PROVIDER_MARKER_TH} ทักษะ A, ทักษะ B"))
+
+
+def test_is_unwritten_need_false_for_a_normal_sentence() -> None:
+    assert not is_unwritten_need(_need("ต้องการบัณฑิตที่วิเคราะห์ปัญหาทางธุรกิจเพื่อเสนอทางแก้ได้"))
+
+
+def test_is_unwritten_need_false_when_the_marker_appears_mid_sentence() -> None:
+    """`startswith`, not `in`: a Need that happens to talk about reviewing
+    something is an ordinary sentence, not a fallback — the marker is only ever
+    written at the head."""
+    assert not is_unwritten_need(_need(f"ต้องการบัณฑิตที่ทบทวนประเด็นนี้ {REVIEW_MARKER_TH} ภายหลังเทอมได้"))
+
+
+def test_is_unwritten_need_true_with_leading_whitespace() -> None:
+    assert is_unwritten_need(_need(f"  {REVIEW_MARKER_TH} ทักษะ A"))
 
 
 def _skill(

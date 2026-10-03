@@ -8,6 +8,7 @@ import pytest
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import BloomLevel, KSECCategory, Need
 from curriculum_agent.stages import plo_synthesis as ps
+from curriculum_agent.stages.need_grouping import PROVIDER_MARKER_TH, REVIEW_MARKER_TH
 from curriculum_agent.stages.plo_synthesis import run
 from tests.support.smart_agent import set_soft_judge
 
@@ -88,11 +89,12 @@ def _need(
     demand: float = 0.7,
     optional: bool = False,
     in_scope: bool = True,
+    statement_th: str | None = None,
 ) -> Need:
     return Need(
         need_id=nid,
         program_id="test",
-        statement_th=f"ต้องการบัณฑิตที่ทำงาน {nid} ในสถานประกอบการจริงได้",
+        statement_th=statement_th or f"ต้องการบัณฑิตที่ทำงาน {nid} ในสถานประกอบการจริงได้",
         ksec_category=KSECCategory.S,
         bloom_level=BloomLevel.ANALYZE,
         member_skill_ids=[f"S-{nid}"],
@@ -317,3 +319,94 @@ async def test_a_program_that_wrote_no_scope_statement_loses_nothing(
 
     assert len(state["plos"]) == 6
     assert [c.args[0] for c in mock_logger.warning.call_args_list if "นอกขอบเขต" in c.args[0]] == []
+
+
+# --------------------------- unwritten-need filter ---------------------------
+#
+# A fallback Need's statement is a marker plus a comma-joined skill list, not a
+# requirement (CLAUDE.md: "A Need has to be usable as a PLO on its own"). On the
+# tourism program a [ต้องทบทวน] fallback was drafted straight into PLO2 — a
+# capability invented from skill names, tracing to no stakeholder demand at
+# all. This filter sits right after the scope filter and runs the same way:
+# stays stored, is not offered to the duplicate check, does not take a slot.
+
+
+async def test_unwritten_needs_are_not_drafted_and_produce_no_plo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither marker reaches the draft call, and a normal Need beside them is
+    still drafted."""
+    needs = [
+        _need("N1"),
+        _need("U1", statement_th=f"{REVIEW_MARKER_TH} ทักษะ A, ทักษะ B"),
+        _need("U2", statement_th=f"{PROVIDER_MARKER_TH} ทักษะ C, ทักษะ D"),
+    ]
+    _patch_llm(monkeypatch, needs)
+    wrapped = ps.complete_plo_synthesis
+    seen_need_ids: set[str] = set()
+
+    async def spying(model, messages, **kw):  # noqa: ANN001, ANN003
+        body = messages[-1]["content"]
+        for n in needs:
+            if f"need_id: {n.need_id}\n" in body:
+                seen_need_ids.add(n.need_id)
+        return await wrapped(model, messages, **kw)
+
+    monkeypatch.setattr(ps, "complete_plo_synthesis", spying)
+
+    state = await ps.run(
+        {
+            "program_id": "test",
+            "metadata": _METADATA,
+            "needs": [n.model_dump(mode="json") for n in needs],
+        }
+    )
+
+    assert seen_need_ids == {"N1"}, "the draft call must never receive an unwritten Need"
+    assert len(state["plos"]) == 1
+    assert state["plos"][0]["source_need_ids"] == ["N1"]
+
+
+async def test_the_slot_an_unwritten_need_would_have_taken_goes_to_the_next_need(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dropped before the ceiling is applied, exactly like an out-of-scope Need,
+    so the highest-demand *written* Needs fill the ceiling rather than losing a
+    slot to a fallback with no requirement behind it."""
+    monkeypatch.setattr(ps, "MAX_CORE_PLOS", 2)
+    needs = [
+        _need("N1", demand=0.9),
+        _need("N2", demand=0.7),
+        _need("N3", demand=0.5),
+        _need("U1", demand=0.99, statement_th=f"{REVIEW_MARKER_TH} ทักษะ A, ทักษะ B"),
+    ]
+
+    state = await _run(needs, monkeypatch)
+
+    used = {nid for p in state["plos"] for nid in p["source_need_ids"]}
+    assert used == {"N1", "N2"}, "U1 must not occupy the slot its demand score would win"
+
+
+async def test_an_unwritten_need_is_not_passed_to_the_duplicate_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    needs = [
+        _need("N1", demand=0.9),
+        _need("N2", demand=0.7),
+        _need("U1", demand=0.99, statement_th=f"{PROVIDER_MARKER_TH} ทักษะ A, ทักษะ B"),
+    ]
+    _patch_llm(monkeypatch, needs)
+    dedup_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr(ps, "find_duplicate_groups", dedup_mock)
+
+    await ps.run(
+        {
+            "program_id": "test",
+            "metadata": _METADATA,
+            "needs": [n.model_dump(mode="json") for n in needs],
+        }
+    )
+
+    dedup_mock.assert_awaited_once()
+    passed_ids = {n.need_id for n in dedup_mock.call_args.args[0]}
+    assert passed_ids == {"N1", "N2"}

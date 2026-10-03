@@ -35,6 +35,8 @@ from curriculum_agent.stages.demand import (
 from curriculum_agent.stages.llm_clustering import cluster_skill_names, validate_assignments
 from curriculum_agent.stages.need_grouping import (
     MIN_NEEDS,
+    PROVIDER_MARKER_TH,
+    REVIEW_MARKER_TH,
     allocate_cluster_targets,
     bucket_by_ksec,
     dedupe_with_bloom_max,
@@ -58,8 +60,14 @@ _STATEMENT_ATTEMPTS = 3
 # only a human can settle; a call that never completed is infrastructure, and
 # re-running the stage is very likely all it takes. One marker for both left the
 # designer rewriting Needs by hand that a retry would have produced.
-_REVIEW_MARKER_TH = "[ต้องทบทวน]"
-_PROVIDER_MARKER_TH = "[เรียกโมเดลไม่สำเร็จ]"
+#
+# Defined in need_grouping now (plo_synthesis and the merge route need the
+# predicate built on them without pulling in this module's LLM client and
+# prompt builder); aliased here under the old underscore spelling so this
+# module's own code below, and callers like `nc._REVIEW_MARKER_TH` in the test
+# suite, don't have to change.
+_REVIEW_MARKER_TH = REVIEW_MARKER_TH
+_PROVIDER_MARKER_TH = PROVIDER_MARKER_TH
 
 
 # The three reasons a shown member can be left out of the sentence. Checked

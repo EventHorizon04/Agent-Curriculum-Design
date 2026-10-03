@@ -561,6 +561,18 @@ tests/integration/     ← LLM mocked, full stages
   tool, in a translation program) out of the sentence's main task — using that
   tool to do this profession's work still stays in. Both routes a member out
   through `not_covered_indices` instead of dropping it silently.
+  **A fallback marker is not a Need either, and nothing downstream used to
+  check for one.** On the tourism program a `[ต้องทบทวน]` fallback — a marker
+  plus the comma-joined skill names, written when the sentence call was
+  rejected or never reached the model — was drafted straight into PLO2, a
+  capability invented from skill names rather than traced to any stakeholder
+  demand. `need_grouping.is_unwritten_need` is the one predicate (`REVIEW_MARKER_TH` /
+  `PROVIDER_MARKER_TH` are public there; `need_combination` re-exports both under
+  their old underscore names): `plo_synthesis._run` drops a marked Need the same
+  way as an out-of-scope one, right after the scope filter — stored and
+  traceable, not drafted, not offered to the duplicate check, no slot spent — and
+  `POST /plos/from-needs` answers 422 if the designer selects one, since unlike
+  scope this is not an override a human gets to make by picking it anyway.
 - **Two Needs sharing evidence are not two Needs asking for one thing.** The
   duplicate check before synthesis (`stages/need_dedup.py`) reads the Need
   *sentences* through a model, because the free signal measured useless: on

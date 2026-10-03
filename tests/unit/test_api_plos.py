@@ -16,6 +16,8 @@ from curriculum_agent.models import (
     ProgramMetadata,
     SMARTCheck,
 )
+from curriculum_agent.stages import plo_synthesis as ps_module
+from curriculum_agent.stages.need_grouping import PROVIDER_MARKER_TH, REVIEW_MARKER_TH
 
 client = TestClient(app)
 
@@ -53,11 +55,11 @@ def _program() -> ProgramMetadata:
     )
 
 
-def _need(nid: str, *, in_scope: bool = True) -> Need:
+def _need(nid: str, *, in_scope: bool = True, statement_th: str | None = None) -> Need:
     return Need(
         need_id=nid,
         program_id="cs-test",
-        statement_th=f"ต้องการบัณฑิตที่ทำงาน {nid} ในสถานประกอบการจริงได้",
+        statement_th=statement_th or f"ต้องการบัณฑิตที่ทำงาน {nid} ในสถานประกอบการจริงได้",
         ksec_category=KSECCategory.S,
         bloom_level=BloomLevel.ANALYZE,
         member_skill_ids=[f"S-{nid}"],
@@ -258,6 +260,50 @@ def test_out_of_scope_needs_do_not_change_which_bound_applies(
 
     assert response.status_code == 422
     assert "ต่ำกว่าขั้นต่ำของการรวม" in response.json()["detail"]
+
+
+# --------------------------- merge route, unwritten-need guard ---------------------------
+#
+# A fallback Need's statement is a marker plus a comma-joined skill list, not a
+# requirement. Unlike scope, this is not an override a designer gets to make by
+# selecting it anyway: rewording cannot supply a requirement nobody wrote, so
+# the route refuses rather than logging and proceeding the way it does for
+# scope above.
+
+
+def test_merging_an_unwritten_need_is_refused_with_422(merge_env: Callable[..., PLO]) -> None:
+    merge_env(
+        [_need("N1"), _need("U1", statement_th=f"{REVIEW_MARKER_TH} ทักษะ A, ทักษะ B")],
+        [],
+    )
+
+    response = client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "U1"]})
+
+    assert response.status_code == 422
+    assert "U1" in response.json()["detail"]
+
+
+def test_merging_an_unwritten_need_calls_no_llm_and_writes_nothing(
+    merge_env: Callable[..., PLO],
+) -> None:
+    merge_env(
+        [_need("N1"), _need("U1", statement_th=f"{PROVIDER_MARKER_TH} ทักษะ C, ทักษะ D")],
+        [],
+    )
+
+    response = client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "U1"]})
+
+    assert response.status_code == 422
+    ps_module.synthesize_from_needs.assert_not_called()
+    plos_route.PLORepository.replace.assert_not_called()
+
+
+def test_an_all_written_merge_is_unaffected(merge_env: Callable[..., PLO]) -> None:
+    merge_env([_need("N1"), _need("N2")], [])
+
+    response = client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]})
+
+    assert response.status_code == 200, response.text
 
 
 # --------------------------- PUT and revalidate ---------------------------

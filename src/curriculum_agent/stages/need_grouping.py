@@ -123,6 +123,48 @@ def passes_scope_axes(in_field_count: int, graduate_count: int, member_count: in
     )
 
 
+# Prefixes on a Need whose sentence never got written, both visible in the UI's
+# Need list — which is where the designer decides what to do about it, and the
+# two failures need opposite responses. A rejected sentence is a content problem
+# only a human can settle; a call that never completed is infrastructure, and
+# re-running the stage is very likely all it takes. One marker for both left the
+# designer rewriting Needs by hand that a retry would have produced.
+#
+# Defined here rather than in need_combination, which is where the fallback is
+# actually written: need_combination pulls in the LLM client and the prompt
+# builder, and plo_synthesis / the merge route need the predicate below without
+# that import weight (and without a cycle, since need_combination already
+# imports this module). need_combination re-exports both names under their old
+# underscore-prefixed spelling so existing callers and tests are unaffected.
+REVIEW_MARKER_TH = "[ต้องทบทวน]"
+PROVIDER_MARKER_TH = "[เรียกโมเดลไม่สำเร็จ]"
+_UNWRITTEN_MARKERS = (REVIEW_MARKER_TH, PROVIDER_MARKER_TH)
+
+
+def is_unwritten_need(need: Need) -> bool:
+    """True when `need` is a fallback, not a sentence anyone wrote.
+
+    A Need is drafted straight into one PLO ("A Need has to be usable as a PLO
+    on its own"), and a fallback's `statement_th` is a marker followed by a
+    comma-joined list of the group's skill names — the exact shape
+    `looks_like_a_skill_list` exists to reject when a model writes it, but
+    `_NeedStatement.model_construct` skips that validator on purpose so the
+    fallback can be built at all. Nothing upstream of this predicate stops it
+    from being drafted anyway: on the tourism program, a
+    `[ต้องทบทวน] การบูรณาการความรู้ด้านสุขภาพ…` Need was synthesised straight
+    into a PLO describing a capability nobody had actually asked for.
+
+    Checked with `startswith` on the stripped statement, not `in` — a sentence
+    that happens to mention "ต้องทบทวน" mid-way through is an ordinary Need
+    about reviewing something, not a fallback, and the marker is only ever
+    written at the head of the sentence. Leading whitespace is stripped first
+    because the fallback is built as an f-string (`f"{marker} ..."`) and no
+    guarantee elsewhere forbids a stray space surviving round-trips through
+    storage.
+    """
+    return need.statement_th.lstrip().startswith(_UNWRITTEN_MARKERS)
+
+
 _WS_RE = re.compile(r"\s+")
 _BLOOM_RANK = {level: i for i, level in enumerate(BLOOM_ORDER)}
 

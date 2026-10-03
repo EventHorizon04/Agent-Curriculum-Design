@@ -228,6 +228,7 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         MAX_CORE_PLOS,
         MIN_CORE_AFTER_MERGE,
         is_in_scope,
+        is_unwritten_need,
     )
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
         SiblingSummary,
@@ -248,6 +249,25 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         raise HTTPException(status_code=422, detail=f"ไม่พบ Need: {', '.join(missing)}")
 
     selected = [by_id[nid] for nid in body.need_ids]
+
+    # A fallback Need's statement is a marker plus a comma-joined skill list, not
+    # a requirement — there is no PLO to draft it into, merged or otherwise. The
+    # scope guard below is a designer override (selecting an out-of-scope Need is
+    # a decision, logged but allowed); this is not, because rewording cannot
+    # supply a requirement nobody wrote, and a human has to write the sentence
+    # (or re-run need_combination) before this Need can become anyone's PLO.
+    # Checked before any LLM call and before anything is written.
+    unwritten = [n for n in selected if is_unwritten_need(n)]
+    if unwritten:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "ยังไม่ได้เขียนประโยคสำหรับ Need: "
+                f"{', '.join(n.need_id for n in unwritten)} — ผู้ออกแบบหลักสูตรต้องเขียนประโยคเอง "
+                "หรือรันขั้นรวมทักษะเป็น Need ใหม่ ก่อนนำมารวมเป็น PLO"
+            ),
+        )
+
     # A merged outcome is supplementary only when every Need feeding it is, and it
     # takes the next free number in that series — a PLO's identity is
     # (program_id, plo_id) and the repository upserts on it, so reusing a plo_id
