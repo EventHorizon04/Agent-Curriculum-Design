@@ -111,11 +111,22 @@ async def test_a_second_run_for_the_same_program_while_the_first_is_in_flight_is
     first = asyncio.create_task(ps.run(_state("cs-test", [_need("N1")])))
     await entered.wait()
 
-    with pytest.raises(ps.SynthesisAlreadyRunning, match="cs-test"):
-        await ps.run(_state("cs-test", [_need("N1")]))
+    try:
+        # Bounded rather than a bare `await`: if the guard is ever removed,
+        # the second call would try to draft for real and hang on the same
+        # mocked call the first run is suspended in — a deadlock, not a
+        # failed assertion. `wait_for` turns that into a prompt TimeoutError
+        # (which `pytest.raises(SynthesisAlreadyRunning, ...)` does not match
+        # and so still fails the test) instead of hanging the whole suite.
+        with pytest.raises(ps.SynthesisAlreadyRunning, match="cs-test"):
+            await asyncio.wait_for(ps.run(_state("cs-test", [_need("N1")])), timeout=2)
+    finally:
+        # The first run must not be left stranded whether the assertion above
+        # passed or failed — otherwise one failing assertion leaks a hung task
+        # into the rest of the suite.
+        release.set()
+        result = await first
 
-    release.set()
-    result = await first
     assert len(result["plos"]) == 1
 
 
