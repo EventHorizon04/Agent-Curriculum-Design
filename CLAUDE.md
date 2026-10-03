@@ -471,6 +471,11 @@ tests/integration/     ← LLM mocked, full stages
   and push a well-written sentence into a `[ต้องทบทวน]` fallback. `None` (no list)
   stays distinct from `0.0` (covers nothing). No threshold, column, or checkpoint
   flag yet: ticket 18 asks for the distribution before a number.
+  `not_covered_indices` (which shown member the sentence excludes, and why) and
+  `designer_input_used` (whether the optional designer note changed a word
+  choice) follow the same discipline: never-fail `mode="before"` validators
+  that drop a malformed entry instead of raising, logged by `_log_coverage` and
+  a per-run summary line, and never stored.
 - **A Need's Bloom level is what most of its group asks for, not its top
   member.** `need_grouping.group_bloom` is the lower mention-weighted median of
   the members' levels; it replaced `merge_bloom`, the maximum, at the one call
@@ -526,6 +531,25 @@ tests/integration/     ← LLM mocked, full stages
   The rule lives in `build_summarize_need_prompt` and is pinned by
   `test_summarize_need.py`; `_CIRCULAR_PHRASES_TH` is unaffected, since a trailing
   "ตามที่ตลาดต้องการ" says nothing whatever the sentence opened with.
+  **The sentence's three parts are no longer unconditional.** Task and object
+  are still required, but the work-context part is written in only when most
+  of the group — weighted by `skill_frequencies`, not a bare count — shares
+  that context; a context one or two low-frequency members happen to mention
+  must not become the whole sentence's setting either, for the same reason the
+  dilution rule exists. This replaced an unconditional "ต้องมีครบ 3 ส่วน" that
+  asked every group for a context it might not actually share. The same pass
+  fixed the apply Bloom label for the same underlying reason: every stored
+  apply-level Need came out wrapped as "ประยุกต์ใช้ <resource> ในการ <task>"
+  because `_BLOOM_LABEL_TH["apply"]` ("ประยุกต์ใช้ในงานจริงได้") handed the
+  model a verb to copy; the label was reworded to "นำไปลงมือทำงานจริงได้" and a
+  dedicated wrapper rule now forbids that sentence shape directly, moving the
+  resource into a "โดยใช้..." clause. Two more rules read straight off the
+  stored corpus: an actor rule rejects institutional/administrative work
+  ("การสร้างความร่วมมือกับมหาวิทยาลัย") in favour of what one new graduate
+  does, and an off-profession rule keeps another profession's work (building a
+  tool, in a translation program) out of the sentence's main task — using that
+  tool to do this profession's work still stays in. Both routes a member out
+  through `not_covered_indices` instead of dropping it silently.
 - **Two Needs sharing evidence are not two Needs asking for one thing.** The
   duplicate check before synthesis (`stages/need_dedup.py`) reads the Need
   *sentences* through a model, because the free signal measured useless: on

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from instructor.core.exceptions import ValidationError as InstructorValidationError
 from loguru import logger
@@ -62,6 +62,38 @@ _REVIEW_MARKER_TH = "[ต้องทบทวน]"
 _PROVIDER_MARKER_TH = "[เรียกโมเดลไม่สำเร็จ]"
 
 
+# The three reasons a shown member can be left out of the sentence. Checked
+# against the raw answer in the never-fail validator below — an entry naming
+# anything else is dropped rather than raised, the same discipline as
+# supporting_indices.
+_NOT_COVERED_REASONS = {"low_freq", "not_graduate", "off_task"}
+
+
+class _NotCovered(BaseModel):
+    """One shown member the sentence does not speak for, and why.
+
+    A measurement, like supporting_indices — it is read by `_log_coverage` and
+    never stored, so nothing here can turn a well-written sentence into a
+    `[ต้องทบทวน]` fallback.
+    """
+
+    index: int
+    reason_code: Literal["low_freq", "not_graduate", "off_task"]
+    note_th: str = ""
+
+
+class _DesignerInputUse(BaseModel):
+    """Whether the optional designer note changed a word choice, and how.
+
+    Logged once per run (`need_combination.run`), not stored — there is no
+    threshold yet, only a first distribution to look at, the same reasoning
+    ticket 18 gives for supporting_indices.
+    """
+
+    used: bool
+    detail_th: str = ""
+
+
 def _model_answered_but_was_rejected(exc: BaseException) -> bool:
     """True when the sentence came back and _NeedStatement refused it.
 
@@ -99,6 +131,12 @@ class _NeedStatement(BaseModel):
     # discards what it cannot use instead. None — the model sent no list — is kept
     # apart from [] so a dropped field cannot read as "covers nothing".
     supporting_indices: list[int] | None = None
+    # Shown members the sentence does not speak for, and why. Same measurement
+    # discipline as supporting_indices: never-fail, logged, never stored.
+    not_covered_indices: list[_NotCovered] | None = None
+    # Whether the designer's optional note changed a word choice. Logged once
+    # per run, not stored — see the class docstring.
+    designer_input_used: _DesignerInputUse | None = None
 
     @field_validator("supporting_indices", mode="before")
     @classmethod
@@ -120,6 +158,65 @@ class _NeedStatement(BaseModel):
             elif isinstance(item, str) and item.strip().isdigit():
                 kept.append(int(item.strip()))
         return list(dict.fromkeys(kept))
+
+    @field_validator("not_covered_indices", mode="before")
+    @classmethod
+    def _never_fail_on_not_covered(cls, value: Any) -> list[dict[str, Any]] | None:
+        """Drop a malformed entry instead of failing the whole call.
+
+        Not a list at all -> None. Within a list, an entry with a non-int index
+        or an unrecognised reason_code is dropped rather than raised — the same
+        reasoning as supporting_indices: this is read by a log line, and three
+        retries over a field nobody stores would turn a good sentence into a
+        `[ต้องทบทวน]` fallback.
+        """
+        if isinstance(value, _NotCovered):
+            return [value.model_dump()]
+        if not isinstance(value, list):
+            return None
+        kept: list[dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, _NotCovered):
+                kept.append(item.model_dump())
+                continue
+            if not isinstance(item, dict):
+                continue
+            index = item.get("index")
+            if isinstance(index, bool):
+                continue
+            if isinstance(index, float) and index.is_integer():
+                index = int(index)
+            if not isinstance(index, int):
+                continue
+            reason_code = item.get("reason_code")
+            if reason_code not in _NOT_COVERED_REASONS:
+                continue
+            note_th = item.get("note_th", "")
+            if not isinstance(note_th, str):
+                note_th = ""
+            kept.append({"index": index, "reason_code": reason_code, "note_th": note_th})
+        return kept
+
+    @field_validator("designer_input_used", mode="before")
+    @classmethod
+    def _never_fail_on_designer_input_used(cls, value: Any) -> dict[str, Any] | None:
+        """A malformed answer loses the whole field rather than failing the call.
+
+        Unlike not_covered_indices this is a single object, not a list, so there
+        is no per-entry salvage to do: either it names a real bool `used` or the
+        field becomes None, the same way a non-list supporting_indices does.
+        """
+        if isinstance(value, _DesignerInputUse):
+            return value.model_dump()
+        if not isinstance(value, dict):
+            return None
+        used = value.get("used")
+        if not isinstance(used, bool):
+            return None
+        detail_th = value.get("detail_th", "")
+        if not isinstance(detail_th, str):
+            detail_th = ""
+        return {"used": used, "detail_th": detail_th}
 
     @field_validator("rationale_th")
     @classmethod
@@ -228,6 +325,28 @@ class _Group(BaseModel):
     graduate_capability_skill_count: int
 
 
+def _coverage_breakdown(
+    shown: int, claimed: set[int] | None, not_covered: list[_NotCovered] | None
+) -> tuple[dict[str, int], int]:
+    """How many shown members fall under each not_covered reason, and how many
+    are claimed by neither supporting_indices nor not_covered_indices.
+
+    Pure and separate from the logging call so it can be tested without loguru.
+    An index past `shown` was never on the page — a model citing one is
+    guessing — so it is dropped here exactly the way `_log_coverage` already
+    drops an out-of-range supporting index.
+    """
+    reasons_by_index: dict[int, str] = {}
+    for entry in not_covered or []:
+        if 0 <= entry.index < shown:
+            reasons_by_index[entry.index] = entry.reason_code
+    reason_counts: dict[str, int] = {}
+    for reason in reasons_by_index.values():
+        reason_counts[reason] = reason_counts.get(reason, 0) + 1
+    accounted = (claimed or set()) | set(reasons_by_index)
+    return reason_counts, shown - len(accounted)
+
+
 def _log_coverage(group: _Group, written: _NeedStatement) -> None:
     """One line per written Need: how much of its group the sentence claims.
 
@@ -235,6 +354,10 @@ def _log_coverage(group: _Group, written: _NeedStatement) -> None:
     before there is a reason for it, and a first run's distribution is that
     reason; a column and a checkpoint flag can follow once the figure has shown
     it means something. Fallback Needs are skipped — nobody wrote their sentence.
+
+    Extended with not_covered_indices and an "unaccounted" count under the same
+    discipline: shown members the model neither claimed nor explained are the
+    gap between the two fields, and are only worth watching, not acting on yet.
     """
     names = len(group.skill_names)
     shown = min(names, MAX_LISTED_SKILLS)
@@ -246,16 +369,26 @@ def _log_coverage(group: _Group, written: _NeedStatement) -> None:
         if written.supporting_indices is None
         else sorted({i for i in written.supporting_indices if 0 <= i < shown})
     )
+    reason_counts, unaccounted = _coverage_breakdown(
+        shown, set(claimed) if claimed is not None else None, written.not_covered_indices
+    )
+    not_covered_part = (
+        ", not_covered " + ", ".join(f"{r}={c}" for r, c in sorted(reason_counts.items()))
+        if reason_counts
+        else ""
+    )
+    unaccounted_part = f", unaccounted {unaccounted}/{shown}"
     coverage = supporting_coverage(claimed, group.skill_frequencies)
     if coverage is None or claimed is None:
         logger.info(
             f"Need coverage {group.ksec.value}: not reported ({names} names, {mentions} mentions)"
+            f"{not_covered_part}{unaccounted_part}"
         )
         return
     capped = f" ({names - shown} past the listing cap)" if shown < names else ""
     logger.info(
         f"Need coverage {group.ksec.value}: {coverage:.0%} of {mentions} mentions, "
-        f"{len(claimed)}/{names} names{capped}"
+        f"{len(claimed)}/{names} names{capped}{not_covered_part}{unaccounted_part}"
     )
 
 
@@ -482,7 +615,13 @@ async def run(state: AgentState) -> AgentState:
     groups = await _build_groups(skills, scoring_corpus, program_context)
 
     needs: list[Need] = []
+    # Across the whole run, not stored: how many written (non-fallback) Needs
+    # exist, and how many of those report the designer note changed a word
+    # choice. Printed once below, only when a note was actually given.
+    written_count = 0
+    note_used_count = 0
     for group in groups:
+        is_fallback = False
         try:
             written = await complete_need_combination(
                 _NeedStatement,
@@ -492,6 +631,7 @@ async def run(state: AgentState) -> AgentState:
                     group.bloom_level.value,
                     note_th=note_th,
                     program_context=program_context,
+                    skill_frequencies=group.skill_frequencies,
                 ),
                 max_retries=_STATEMENT_ATTEMPTS,
             )
@@ -532,6 +672,12 @@ async def run(state: AgentState) -> AgentState:
                     "ผู้ออกแบบหลักสูตรต้องเขียนทั้งประโยคและเหตุผลเอง"
                 ),
             )
+            is_fallback = True
+
+        if not is_fallback:
+            written_count += 1
+            if written.designer_input_used is not None and written.designer_input_used.used:
+                note_used_count += 1
 
         needs.append(
             Need(
@@ -553,6 +699,12 @@ async def run(state: AgentState) -> AgentState:
                 in_field_skill_count=group.in_field_skill_count,
                 graduate_capability_skill_count=group.graduate_capability_skill_count,
             )
+        )
+
+    if note_th:
+        logger.info(
+            f"need_combination: designer note used in {note_used_count}/{written_count} "
+            "written Needs"
         )
 
     core_count = sum(1 for n in needs if not n.is_optional)

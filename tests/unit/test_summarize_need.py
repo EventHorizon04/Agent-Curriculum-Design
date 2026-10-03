@@ -281,3 +281,106 @@ def test_only_the_listed_skills_carry_an_index() -> None:
     user = build_summarize_need_prompt(names, "S", "apply")[1]["content"]
     assert f"{MAX_LISTED_SKILLS - 1} | ทักษะที่{MAX_LISTED_SKILLS - 1}" in user
     assert f"ทักษะที่{MAX_LISTED_SKILLS}" not in user
+
+
+# --- the apply label no longer hands the model a verb to copy ---------------
+
+
+def test_the_apply_label_no_longer_carries_a_verb_to_copy() -> None:
+    """Every stored apply-level Need read "ประยุกต์ใช้ <resource> ในการ <task>"
+    because the model was copying this label's own verb. The replacement names
+    the same cognitive demand without a verb a wrapper sentence can echo back.
+
+    Checked against the label value itself, not the whole system message: the
+    new wrapper rule legitimately names "ประยุกต์ใช้" as the forbidden shape, so
+    a blanket `not in system` would fail on the fix meant to prevent the bug.
+    """
+    from curriculum_agent.prompts.summarize_need import _BLOOM_LABEL_TH
+
+    assert "ประยุกต์ใช้" not in _BLOOM_LABEL_TH["apply"]
+
+
+def test_the_apply_group_user_turn_does_not_carry_the_old_verb_either() -> None:
+    user = build_summarize_need_prompt(["การดูแลผู้ป่วย"], "S", "apply")[1]["content"]
+    assert "ประยุกต์ใช้" not in user
+    assert "นำไปลงมือทำงานจริงได้" in user
+
+
+# --- the new rules this review added ----------------------------------------
+
+
+def test_summarize_prompt_states_the_wrapper_rule() -> None:
+    """ "ประยุกต์ใช้ AI ในการแปล" is the wrapper shape the apply label used to
+    teach; the task must be the main verb and the resource a "โดยใช้..." clause.
+    """
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    assert "ห้ามเขียนในรูป 'ประยุกต์ใช้/ใช้" in system
+    assert "โดยใช้..." in system
+
+
+def test_summarize_prompt_states_the_actor_rule() -> None:
+    """The doer has to be a new graduate, not the institution or its management."""
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    assert "ผู้ลงมือทำคือบัณฑิตจบใหม่" in system
+    assert "not_covered_indices" in system
+
+
+def test_summarize_prompt_states_the_off_profession_rule() -> None:
+    """Another profession's work must not be the sentence's main task."""
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    assert "งานของวิชาชีพอื่นที่ไม่ใช่งานของสาขานี้" in system
+
+
+def test_summarize_prompt_forbids_qualifiers_not_in_the_skill_names() -> None:
+    """Stored PLO2 carried "อย่างลึกซึ้ง" copied from its Need, with no member
+    skill ever saying so."""
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    assert "อย่างลึกซึ้ง" in system  # named as a forbidden example
+    assert "ห้ามเติมคำขยายที่ไม่มีในชื่อทักษะของกลุ่ม" in system
+
+
+def test_summarize_prompt_forbids_floating_quantifiers() -> None:
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    assert "ห้ามใช้คำบอกปริมาณลอย ๆ" in system
+
+
+def test_summarize_prompt_states_the_majority_rule_not_a_percentage() -> None:
+    """Every skill name has frequency 1 on the stored corpus, so the rule is
+    written as "what most of the group shares", never as an X% threshold."""
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    assert "ยึดสิ่งที่ทักษะส่วนใหญ่มีร่วมกัน" in system
+    assert "เฉพาะเมื่อทักษะส่วนใหญ่ในกลุ่ม" in system
+
+
+def test_summarize_prompt_states_the_designer_note_rule() -> None:
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    assert "ข้อกำหนดเพิ่มเติมจากผู้ออกแบบหลักสูตร (ถ้ามี) ใช้เลือกถ้อยคำ" in system
+    assert "designer_input_used" in system
+
+
+def test_the_json_spec_names_the_two_new_fields() -> None:
+    system = build_summarize_need_prompt(["การแปลสัญญา"], "S", "apply")[0]["content"]
+    assert "not_covered_indices" in system
+    assert "designer_input_used" in system
+
+
+# --- the frequency column is opt-in --------------------------------------
+
+
+def test_the_frequency_column_appears_only_when_frequencies_are_given() -> None:
+    with_freq = build_summarize_need_prompt(
+        ["แปลเอกสารสัญญา", "ล่ามการประชุม"], "S", "apply", skill_frequencies=[3, 1]
+    )[1]["content"]
+    assert "0 | แปลเอกสารสัญญา | 3" in with_freq
+    assert "1 | ล่ามการประชุม | 1" in with_freq
+    assert "เลขลำดับ | ทักษะ | ความถี่" in with_freq
+
+
+def test_the_listing_is_unchanged_without_frequencies() -> None:
+    """The two-column listing a caller that never heard of frequencies relies on
+    must not move underneath it."""
+    without_freq = build_summarize_need_prompt(["แปลเอกสารสัญญา", "ล่ามการประชุม"], "S", "apply")[1][
+        "content"
+    ]
+    assert "0 | แปลเอกสารสัญญา\n1 | ล่ามการประชุม" in without_freq
+    assert "เลขลำดับ | ทักษะ):" in without_freq

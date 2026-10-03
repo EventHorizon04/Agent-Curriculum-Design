@@ -665,6 +665,218 @@ def test_a_malformed_supporting_list_degrades_instead_of_failing_the_call(
     assert written.supporting_indices == kept
 
 
+# --- not_covered_indices and designer_input_used are measurements too -------
+
+
+_VALID_STATEMENT = "ต้องการบัณฑิตที่แปลและตรวจสอบเอกสารสัญญาทางธุรกิจไทย-จีนได้อย่างถูกต้อง"
+
+
+@pytest.mark.parametrize(
+    ("answer", "kept"),
+    [
+        ("not a list", None),
+        (None, None),
+        ([], []),
+        (
+            [{"index": 0, "reason_code": "low_freq"}],
+            [{"index": 0, "reason_code": "low_freq", "note_th": ""}],
+        ),
+        (
+            [{"index": "0", "reason_code": "low_freq"}],  # string index -> dropped
+            [],
+        ),
+        (
+            [{"index": 0, "reason_code": "made_up"}],  # unknown reason -> dropped
+            [],
+        ),
+        (
+            [
+                {"index": 0, "reason_code": "not_graduate", "note_th": "เป็นงานของสถาบัน"},
+                {"index": "x", "reason_code": "off_task"},
+                {"index": 1, "reason_code": "nonsense_reason"},
+            ],
+            [{"index": 0, "reason_code": "not_graduate", "note_th": "เป็นงานของสถาบัน"}],
+        ),
+    ],
+)
+def test_a_malformed_not_covered_list_degrades_instead_of_failing_the_call(
+    answer: object, kept: list[dict[str, object]] | None
+) -> None:
+    """Same discipline as supporting_indices: a bad entry is dropped, a
+    non-list answer becomes None, and nothing here can fail the call."""
+    written = nc._NeedStatement(
+        statement_th=_VALID_STATEMENT,
+        rationale_th=RATIONALE_TH,
+        not_covered_indices=answer,  # type: ignore[arg-type]
+    )
+    if kept is None:
+        assert written.not_covered_indices is None
+    else:
+        assert [nc_.model_dump() for nc_ in written.not_covered_indices] == kept
+
+
+def test_a_valid_not_covered_entry_round_trips() -> None:
+    written = nc._NeedStatement(
+        statement_th=_VALID_STATEMENT,
+        rationale_th=RATIONALE_TH,
+        not_covered_indices=[
+            {"index": 2, "reason_code": "off_task", "note_th": "พัฒนาเครื่องมือ ไม่ใช่งานแปล"}
+        ],
+    )
+    assert written.not_covered_indices == [
+        nc._NotCovered(index=2, reason_code="off_task", note_th="พัฒนาเครื่องมือ ไม่ใช่งานแปล")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("answer", "expected"),
+    [
+        ("not a dict", None),
+        (None, None),
+        ({"used": "yes"}, None),  # not a bool -> None
+        ({"detail_th": "x"}, None),  # no `used` at all -> None
+        ({"used": True}, {"used": True, "detail_th": ""}),
+        ({"used": False, "detail_th": 123}, {"used": False, "detail_th": ""}),
+        (
+            {"used": True, "detail_th": "เลือกใช้คำว่า 'ล่าม' ตามข้อกำหนด"},
+            {"used": True, "detail_th": "เลือกใช้คำว่า 'ล่าม' ตามข้อกำหนด"},
+        ),
+    ],
+)
+def test_a_malformed_designer_input_used_becomes_none(
+    answer: object, expected: dict[str, object] | None
+) -> None:
+    written = nc._NeedStatement(
+        statement_th=_VALID_STATEMENT,
+        rationale_th=RATIONALE_TH,
+        designer_input_used=answer,  # type: ignore[arg-type]
+    )
+    if expected is None:
+        assert written.designer_input_used is None
+    else:
+        assert written.designer_input_used.model_dump() == expected
+
+
+def test_fallback_needs_carry_none_for_both_new_fields() -> None:
+    """model_construct skips validators but still fills field defaults."""
+    written = nc._NeedStatement.model_construct(
+        statement_th=f"{nc._PROVIDER_MARKER_TH} x",
+        rationale_th=f"{nc._PROVIDER_MARKER_TH} ไม่มีเหตุผลประกอบ",
+    )
+    assert written.not_covered_indices is None
+    assert written.designer_input_used is None
+
+
+# --- _coverage_breakdown: the pure helper _log_coverage reads --------------
+
+
+def test_coverage_breakdown_counts_not_covered_by_reason() -> None:
+    not_covered = [
+        nc._NotCovered(index=0, reason_code="low_freq"),
+        nc._NotCovered(index=1, reason_code="not_graduate"),
+        nc._NotCovered(index=2, reason_code="not_graduate"),
+    ]
+    reason_counts, unaccounted = nc._coverage_breakdown(
+        shown=4, claimed={3}, not_covered=not_covered
+    )
+    assert reason_counts == {"low_freq": 1, "not_graduate": 2}
+    assert unaccounted == 0
+
+
+def test_coverage_breakdown_reports_members_in_neither_list() -> None:
+    reason_counts, unaccounted = nc._coverage_breakdown(shown=5, claimed={0}, not_covered=None)
+    assert reason_counts == {}
+    assert unaccounted == 4
+
+
+def test_coverage_breakdown_drops_a_not_covered_index_past_the_listing_cap() -> None:
+    """A position past `shown` was never on the page, the same rule
+    supporting_indices already follows."""
+    not_covered = [nc._NotCovered(index=10, reason_code="low_freq")]
+    reason_counts, unaccounted = nc._coverage_breakdown(
+        shown=3, claimed=None, not_covered=not_covered
+    )
+    assert reason_counts == {}
+    assert unaccounted == 3
+
+
+async def test_the_call_site_passes_the_groups_frequencies_to_the_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """`skill_frequencies` has to reach the prompt builder in the group's own
+    most-mentioned-first order for the frequency column to mean anything."""
+    rows = [
+        _skill("แปลเอกสารสัญญา", KSECCategory.S, "S1", "E1"),
+        _skill("แปลเอกสารสัญญา", KSECCategory.S, "S2", "E2"),
+        _skill("ล่ามการประชุม", KSECCategory.S, "S3", "E3"),
+    ]
+
+    async def one_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
+        return [list(range(len(names)))]
+
+    seen: list[str] = []
+
+    async def capture(model, messages, **kw):  # noqa: ANN001, ANN003
+        seen.append(messages[1]["content"])
+        return await _fake_summarize(model, messages, **kw)
+
+    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(nc, "complete_need_combination", capture)
+    _patch_repo(monkeypatch)
+
+    await nc.run(
+        {"program_id": "cs-test", "extracted_skills": [r.model_dump(mode="json") for r in rows]}
+    )
+
+    assert "0 | แปลเอกสารสัญญา | 2" in seen[0]
+    assert "1 | ล่ามการประชุม | 1" in seen[0]
+
+
+async def test_designer_note_usage_is_logged_once_per_run(monkeypatch: pytest.MonkeyPatch):
+    """Counted over written (non-fallback) Needs only, and only printed when a
+    note was actually given for this run."""
+
+    async def fake_summarize_using_note(model, messages, **kw):  # noqa: ANN001, ANN003
+        return nc._NeedStatement(
+            statement_th=_VALID_STATEMENT,
+            rationale_th=RATIONALE_TH,
+            designer_input_used={"used": True, "detail_th": "เลือกคำว่า 'ตรวจสอบ'"},
+        )
+
+    async def fake_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
+        return [[i] for i in range(len(names))]
+
+    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize_using_note)
+    _patch_repo(monkeypatch)
+
+    skills = [
+        _skill("แปลเอกสารสัญญา", KSECCategory.S, "S1", "E1"),
+        _skill("ล่ามการประชุม", KSECCategory.S, "S2", "E2"),
+    ]
+
+    messages: list[str] = []
+    import loguru
+
+    handler_id = loguru.logger.add(lambda m: messages.append(m.record["message"]), level="INFO")
+    try:
+        await nc.run(
+            {
+                "program_id": "cs-test",
+                "extracted_skills": [s.model_dump(mode="json") for s in skills],
+                "designer_note": "เน้นคำว่าตรวจสอบ",
+            }
+        )
+    finally:
+        loguru.logger.remove(handler_id)
+
+    assert any("designer note used in 2/2 written Needs" in m for m in messages)
+
+
 async def test_one_create_member_does_not_make_the_need_create(monkeypatch: pytest.MonkeyPatch):
     """The level reaches the summarize prompt as "สร้างและออกแบบสิ่งใหม่ได้", which
     is why five stored Needs and the PLOs copied from them all opened with
