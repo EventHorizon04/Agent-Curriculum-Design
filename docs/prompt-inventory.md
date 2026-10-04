@@ -139,7 +139,7 @@ Rules:
 - Every index must be assigned to exactly one group (no duplicates, no omissions).
 - Do not use indices that are not present in the list.
 - The context frames the reading only. Every skill listed comes from real market evidence: never drop, exclude, or set aside a skill for looking off-field — it still belongs to exactly one group.
-- Produce about 4 groups. Depart from that only where the data clearly will not support it.
+- Produce about 4 groups. You may produce up to 6 only to keep apart skills that belong to different subject areas or different kinds of work: a group's members must share one area or one kind of work. Never put unrelated areas into one group to reach the number — e.g. marketing and cost management, safety standards and ethics, and starting one's own business are three areas, not one. Do not use the allowance to split one area into near-duplicate groups or to give a single skill its own group when it fits an existing one.
 - Preserve the occupational identity the names carry: never fold a specialised group into a generic one. 'การแปลเอกสารธุรกิจ / การแปลสัญญา / การแปลเอกสารกฎหมาย' is 'การแปลเอกสารวิชาชีพ', never 'การสื่อสาร'.
 - Group at the level of a class of work a graduate repeats across situations, not at the level of one task inside it. Each group can become one of the program's ten outcomes, so splitting 'translating sales contracts' from 'translating legal contracts' spends two of them on one professional function.
 - label_th MUST be written in Thai, not English — it is shown to Thai users.

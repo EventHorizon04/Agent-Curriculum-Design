@@ -85,6 +85,38 @@ def test_the_cluster_prompt_bounds_how_narrow_a_group_may_be() -> None:
     assert "meaning comes before the count" not in system.lower()
 
 
+def test_the_cluster_prompt_bounds_the_departure_above_the_target() -> None:
+    """A bucket target of 1 is what folded six unrelated tourism knowledge areas
+    into one group on program-2's K bucket. The allowance has to be bounded
+    (target + 2) and licensed only by area/kind-of-work, or it reopens the door
+    guidances rule 6 was removed for."""
+    system = build_cluster_skills_prompt(["a", "b", "c"], 1)[0]["content"]
+
+    assert "up to 3" in system
+    assert "different subject areas or different kinds of work" in system
+
+
+def test_the_cluster_prompt_forbids_singletons_and_near_duplicate_splits() -> None:
+    """The allowance exists to keep unrelated areas apart, not to license a
+    group of one for every skill that looks distinct — that is guidances rule
+    6, already tried and removed for taking group counts to 16/48 against a
+    budget of ten."""
+    system = build_cluster_skills_prompt(["a", "b"], 2)[0]["content"]
+
+    assert "near-duplicate groups" in system
+    assert "single skill its own group when it fits an existing one" in system
+
+
+def test_the_untargeted_cluster_prompt_carries_no_allowance_text() -> None:
+    """The contract fingerprint calls this with names alone, so the untargeted
+    form must stay exactly what it was."""
+    system = build_cluster_skills_prompt(["a", "b"])[0]["content"]
+
+    assert "typically 4–12 groups" in system
+    assert "near-duplicate" not in system
+    assert "different subject areas" not in system
+
+
 def test_the_cluster_prompt_keeps_a_specialised_group_out_of_a_generic_one() -> None:
     """The failure this catches is a partition, not a label: three translation
     skills folded under one generic heading is one group where the evidence
