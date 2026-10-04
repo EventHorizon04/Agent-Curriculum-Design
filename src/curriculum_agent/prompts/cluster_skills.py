@@ -35,6 +35,19 @@ def build_cluster_skills_prompt(
     does not need to be told the target is soft; `allocate_cluster_targets`
     already refuses to trade a skill for a number, and that refusal lives in code
     where no prompt can talk it into anything.
+
+    A bounded version was also tried and reverted (2026-10-04): "up to target + 2,
+    only to keep different subject areas or kinds of work apart, never for
+    near-duplicate splits or singletons". Measured with llama, three runs per
+    bucket, cache bypassed, against this rule: on the tourism program's K bucket
+    (6 names, target 1) — the case it was written for — the old rule split
+    health/wellness from business/standards in 2 of 3 runs and the bounded rule
+    merged all six in 3 of 3; on the translation program's S bucket (53 names,
+    target 7) groups fell from 4/4/6 to 3/3/4, further under target. Raising that
+    K target to 2 under this rule did not help either (1/2/2 groups, and the
+    splits were 5+1). The lumped tourism Need came from llama's run-to-run
+    variance on short Thai names, not from this wording; a fix belongs to the
+    clustering model or method, not to the count rule.
     """
     # The context frames how a name is read; it must not become a filter. Every
     # skill reaching this call was extracted from evidence a stakeholder actually
