@@ -171,6 +171,8 @@ SLOTS: tuple[SlotSpec, ...] = (
     # writes a statement. glm-5.3-flash for the same reason as need_dedup: the
     # task is judging and labelling, and one call per program pays its reasoning
     # latency once. disableable: the review is advisory, so "" turns it off.
+    # Its hidden reasoning is bounded at the call (stages/plo_review._MAX_REASONING_TOKENS)
+    # because unbounded it did not finish inside the timeout.
     SlotSpec(
         "plo_review",
         "plo_review_provider",

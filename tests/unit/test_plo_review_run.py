@@ -103,6 +103,8 @@ async def test_the_prompt_carries_every_plo_and_its_needs(live: AsyncMock) -> No
     assert "[PLO1]" in user and "[PLO2]" in user
     assert "ต้องการบัณฑิตที่แปลเอกสารธุรกิจได้" in user
     assert live.await_args.kwargs["temperature"] == 0
+    assert live.await_args.kwargs["max_tokens"] == 8192
+    assert live.await_args.kwargs["reasoning_max_tokens"] == 1024
 
 
 async def test_an_unchanged_set_reuses_the_stored_review(live: AsyncMock) -> None:

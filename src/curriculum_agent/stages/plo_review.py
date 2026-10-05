@@ -231,6 +231,12 @@ def accept_review(
 
 _ATTEMPTS = 2
 _MAX_TOKENS = 8192
+# Measured on the tourism program, 3 runs each (2026-10-05): unbounded glm-5.3-flash
+# produced nothing (one truncation at 8192 tokens after 175s, two 180s timeouts);
+# with reasoning bounded at 1024 tokens it answered 3/3 in 45-57s and met every
+# spec criterion. See docs/superpowers/specs/2026-10-04-plo-set-review-design.md,
+# "Measured" section.
+_MAX_REASONING_TOKENS = 1024
 
 # Per process, like plo_synthesis._SYNTHESIS_IN_FLIGHT and for the same reason:
 # two forced reviews of one program racing to write its single row. The same
@@ -285,6 +291,7 @@ async def _call(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | None:
                 max_retries=_ATTEMPTS,
                 temperature=0,
                 max_tokens=_MAX_TOKENS,
+                reasoning_max_tokens=_MAX_REASONING_TOKENS,
             )
     except Exception as exc:  # provider error, timeout, truncation, schema failure
         logger.warning(f"plo_review: call failed for {program_id}, nothing stored: {exc!r}")

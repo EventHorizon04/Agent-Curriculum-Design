@@ -241,3 +241,18 @@ Record the results in this spec under "Measured" before merging.
   a separate decision.
 - The Excel export and the frontend rendering.
 - Reviewing Needs or clustering output.
+
+## Measured (2026-10-05)
+
+Tourism program (`program-2`, 9 PLOs), `_call` invoked directly, nothing stored, 3 runs per variant:
+
+| Variant | Answered | Time per run | PLO1+PLO4 redundant | KSEC entries | Unknown ids dropped |
+|---|---|---|---|---|---|
+| glm-5.3-flash, reasoning unbounded | 0/3 | 175 s (truncated at 8192 tokens), 180 s, 180 s (timeouts) | – | – | – |
+| glm-5.3-flash, `reasoning_max_tokens=1024` | 3/3 | 48 s, 45 s, 57 s | 3/3 (as PLO1+PLO4+PLO9) | 9/9 every run | 0 |
+| llama-3.3-70b | 3/3 | 22 s, 23 s, 39 s | 3/3 (as PLO1+PLO4+PLO9) | 4, 2, 2 of 9 | 0 |
+
+- glm bounded met every criterion: the "ดำเนินการบริการท่องเที่ยวเชิงคุณภาพ" trio flagged every run; the ethics PLO6 kept E|C every run; PLO8 (current E|C from its Need, statement about planning a project) suggested S+E every run — a useful catch the code-derived KSEC cannot make; Bloom notes were specific (PLO8 "ประเมินผลกระทบ…อย่างเป็นระบบ" → evaluate).
+- llama skipped most KSEC entries despite the rubric requiring one per PLO, and its Bloom reasons did not follow from the statements (e.g. "ออกแบบและพัฒนา" → evaluate).
+- Decision: glm-5.3-flash with hidden reasoning bounded at 1024 tokens (`plo_review._MAX_REASONING_TOKENS`). On this endpoint a bound may switch reasoning off (see CLAUDE.md on the validation agent); the bounded answers above are what was judged.
+- Not yet measured: the translation program — its PLOs must be re-synthesised first (PLO1-PLO7 were lost to the pre-fix primary-key bug).
