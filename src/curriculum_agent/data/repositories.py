@@ -13,6 +13,7 @@ from curriculum_agent.data.orm import (
     EvidenceTable,
     LLMCacheTable,
     NeedTable,
+    PLOReviewTable,
     PLOTable,
     ProgramTable,
     SessionTable,
@@ -24,6 +25,7 @@ from curriculum_agent.models import (
     PLO,
     ExtractedSkill,
     Need,
+    PLOSetReview,
     ProgramMetadata,
     ProgramSummary,
     SessionInfo,
@@ -164,6 +166,9 @@ class ProgramRepository:
             await session.execute(delete(SkillTable).where(SkillTable.program_id == program_id))
             await session.execute(delete(NeedTable).where(NeedTable.program_id == program_id))
             await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
+            await session.execute(
+                delete(PLOReviewTable).where(PLOReviewTable.program_id == program_id)
+            )
             await session.execute(
                 delete(CheckpointTable).where(CheckpointTable.program_id == program_id)
             )
@@ -423,6 +428,60 @@ class PLORepository:
             )
             rows = result.scalars().all()
             return [PLO.model_validate(_row_to_dict(row)) for row in rows]
+
+
+_REVIEW_BODY_FIELDS = {"redundancies", "ksec", "bloom", "bloom_distribution_th", "summary_th"}
+
+
+class PLOReviewRepository:
+    """The latest PLO set review per program. Advisory data; see stages/plo_review.py."""
+
+    async def get(self, program_id: str) -> PLOSetReview | None:
+        async with AsyncSessionLocal() as session:
+            row = await session.get(PLOReviewTable, program_id)
+            if row is None:
+                return None
+            return PLOSetReview.model_validate(
+                {
+                    **row.review,
+                    "program_id": row.program_id,
+                    "plo_fingerprint": row.plo_fingerprint,
+                    "model": row.model,
+                    "created_at": row.created_at,
+                }
+            )
+
+    async def upsert(self, review: PLOSetReview) -> None:
+        body = review.model_dump(mode="json", include=_REVIEW_BODY_FIELDS)
+        async with AsyncSessionLocal() as session:
+            existing = await session.get(PLOReviewTable, review.program_id)
+            if existing is None:
+                session.add(
+                    PLOReviewTable(
+                        program_id=review.program_id,
+                        plo_fingerprint=review.plo_fingerprint,
+                        model=review.model,
+                        created_at=review.created_at,
+                        review=body,
+                    )
+                )
+            else:
+                existing.plo_fingerprint = review.plo_fingerprint
+                existing.model = review.model
+                existing.created_at = review.created_at
+                existing.review = body
+            await session.commit()
+
+    async def delete_by_program(self, program_id: str) -> int:
+        async with AsyncSessionLocal() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(PLOReviewTable).where(PLOReviewTable.program_id == program_id)
+                ),
+            )
+            await session.commit()
+            return result.rowcount
 
 
 class CheckpointRepository:

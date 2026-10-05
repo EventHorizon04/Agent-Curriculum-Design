@@ -144,6 +144,25 @@ class PLOTable(Base):
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class PLOReviewTable(Base):
+    """The advisory PLO set review, one row per program (stages/plo_review.py).
+
+    Keyed by program alone: only the latest review is kept, and a new one
+    replaces it. `plo_fingerprint` says which PLO set it was made from; the
+    findings ride in one JSONB column because nothing queries inside them.
+    """
+
+    __tablename__ = "plo_reviews"
+
+    program_id: Mapped[str] = mapped_column(
+        String, ForeignKey("programs.program_id"), primary_key=True
+    )
+    plo_fingerprint: Mapped[str] = mapped_column(String(64))
+    model: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    review: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
 class CheckpointTable(Base):
     __tablename__ = "checkpoints"
 
