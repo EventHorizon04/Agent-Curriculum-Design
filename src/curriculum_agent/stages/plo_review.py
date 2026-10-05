@@ -255,8 +255,12 @@ async def _call(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | None:
     if not settings.plo_review_provider:
         logger.info("plo_review: disabled — the report goes out without a set review")
         return None
-    metadata = await ProgramRepository().get(program_id)
-    needs = await NeedRepository().list_by_program(program_id)
+    try:
+        metadata = await ProgramRepository().get(program_id)
+        needs = await NeedRepository().list_by_program(program_id)
+    except Exception as exc:
+        logger.warning(f"plo_review: could not load inputs for {program_id}, no call made: {exc!r}")
+        return None
     needs_by_id = {n.need_id: n for n in needs}
     messages = build_plo_review_prompt(
         _items(plos, needs_by_id),
@@ -306,8 +310,13 @@ async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | N
     _REVIEW_IN_FLIGHT.add(program_id)  # no await between the check and the add
     try:
         review = await _call(program_id, plos)
-        if review is not None:
+        if review is None:
+            return None
+        try:
             await PLOReviewRepository().upsert(review)
+        except Exception as exc:
+            logger.warning(f"plo_review: could not store the review for {program_id}: {exc!r}")
+            return None
         return review
     finally:
         _REVIEW_IN_FLIGHT.discard(program_id)
@@ -315,7 +324,11 @@ async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | N
 
 async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | None:
     """The review the report should show: reused if the set is unchanged."""
-    stored = await PLOReviewRepository().get(program_id)
+    try:
+        stored = await PLOReviewRepository().get(program_id)
+    except Exception as exc:
+        logger.warning(f"plo_review: could not read the stored review for {program_id}: {exc!r}")
+        stored = None
     if stored is not None and not is_stale(stored, plos):
         return stored
     try:

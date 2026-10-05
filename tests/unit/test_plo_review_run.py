@@ -180,3 +180,46 @@ async def test_run_with_no_plos_leaves_no_review(live: AsyncMock) -> None:
     state = await pr.run({"program_id": "p", "plos": []})
     assert state["plo_review"] is None
     live.assert_not_awaited()
+
+
+# ---- Fix round 1: every boundary the review touches must fail safe ----
+
+
+async def test_a_storage_failure_returns_none_and_falls_back_to_the_stored_review(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    old = await pr.fresh_review("p", _PLOS)
+    monkeypatch.setattr(_MemoryRepo, "upsert", AsyncMock(side_effect=RuntimeError("db down")))
+    changed = [_PLOS[0].model_copy(update={"statement_th": "ล่ามการเจรจาธุรกิจ"}), _PLOS[1]]
+    assert await pr.fresh_review("p", changed) is None
+    assert await pr.review_plo_set("p", changed) == old
+
+
+async def test_the_stored_review_read_failing_does_not_stop_a_fresh_one(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_MemoryRepo, "get", AsyncMock(side_effect=RuntimeError("db down")))
+    review = await pr.review_plo_set("p", _PLOS)
+    assert review is not None
+    assert review.summary_th == "สองข้อซ้ำกัน"
+    live.assert_awaited_once()
+
+
+async def test_a_needs_read_failure_means_no_call_is_made(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        pr,
+        "NeedRepository",
+        lambda: AsyncMock(list_by_program=AsyncMock(side_effect=RuntimeError("db down"))),
+    )
+    assert await pr.fresh_review("p", _PLOS) is None
+    live.assert_not_awaited()
+
+
+async def test_run_with_a_storage_failure_leaves_the_state_unset(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(_MemoryRepo, "upsert", AsyncMock(side_effect=RuntimeError("db down")))
+    state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
+    assert state["plo_review"] is None
