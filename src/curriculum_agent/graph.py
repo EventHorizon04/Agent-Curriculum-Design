@@ -46,6 +46,10 @@ class AgentState(TypedDict, total=False):
     # Stage 3
     plos: list[dict[str, Any]]
 
+    # Advisory PLO set review, read by plo_report. None when the review did not
+    # run (slot disabled, call failed, or no stored review to fall back on).
+    plo_review: dict[str, Any] | None
+
     # Stage 3 report — assembled by plo_report, keyed for designer drill-down.
     report: dict[str, Any]
 

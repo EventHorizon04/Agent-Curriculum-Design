@@ -14,13 +14,23 @@ claim — a PLO's current KSEC, whether a suggestion agrees, the declared level.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
+from loguru import logger
 from pydantic import BaseModel, Field
 
+from curriculum_agent.config import settings
+from curriculum_agent.data.repositories import (
+    NeedRepository,
+    PLOReviewRepository,
+    ProgramRepository,
+)
+from curriculum_agent.graph import AgentState
+from curriculum_agent.llm import complete_plo_review
 from curriculum_agent.models import (
     PLO,
     BloomFinding,
@@ -30,6 +40,8 @@ from curriculum_agent.models import (
     PLOSetReview,
     RedundancyFinding,
 )
+from curriculum_agent.prompts.plo_review import ReviewItem, build_plo_review_prompt
+from curriculum_agent.prompts.program_context import build_program_context_th
 
 MAX_REDUNDANCY_GROUP = 3
 _KSEC_ORDER = ("K", "S", "E", "C")
@@ -206,3 +218,120 @@ def accept_review(
         summary_th=answer.summary_th.strip(),
     )
     return review, drops
+
+
+_ATTEMPTS = 2
+_MAX_TOKENS = 8192
+
+# Per process, like plo_synthesis._SYNTHESIS_IN_FLIGHT and for the same reason:
+# two forced reviews of one program racing to write its single row. The same
+# limit applies — a multi-worker deployment needs a DB-level lock.
+_REVIEW_IN_FLIGHT: set[str] = set()
+
+
+class ReviewAlreadyRunning(RuntimeError):
+    """Raised by `fresh_review` when the program already has a review in flight."""
+
+
+def _items(plos: Sequence[PLO], needs_by_id: Mapping[str, Need]) -> list[ReviewItem]:
+    return [
+        ReviewItem(
+            plo_id=p.plo_id,
+            is_optional=p.is_optional,
+            statement_th=p.statement_th,
+            action_verb_th=p.action_verb_th,
+            bloom_level=p.bloom_level.value,
+            current_ksec=tuple(current_ksec(p, needs_by_id)),
+            need_statements_th=tuple(
+                needs_by_id[nid].statement_th for nid in p.source_need_ids if nid in needs_by_id
+            ),
+        )
+        for p in sorted(plos, key=lambda p: (p.is_optional, len(p.plo_id), p.plo_id))
+    ]
+
+
+async def _call(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | None:
+    """One review call, judged. None on every failure — nothing is manufactured."""
+    if not settings.plo_review_provider:
+        logger.info("plo_review: disabled — the report goes out without a set review")
+        return None
+    metadata = await ProgramRepository().get(program_id)
+    needs = await NeedRepository().list_by_program(program_id)
+    needs_by_id = {n.need_id: n for n in needs}
+    messages = build_plo_review_prompt(
+        _items(plos, needs_by_id),
+        program_context=build_program_context_th(metadata.model_dump(mode="json"))
+        if metadata
+        else None,
+    )
+    try:
+        async with asyncio.timeout(settings.plo_review_timeout_seconds):
+            answer = await complete_plo_review(
+                ReviewAnswer,
+                messages,
+                max_retries=_ATTEMPTS,
+                temperature=0,
+                max_tokens=_MAX_TOKENS,
+            )
+    except Exception as exc:  # provider error, timeout, truncation, schema failure
+        logger.warning(f"plo_review: call failed for {program_id}, nothing stored: {exc!r}")
+        return None
+    review, drops = accept_review(
+        answer,
+        plos,
+        needs_by_id,
+        program_id=program_id,
+        fingerprint=plo_fingerprint(plos),
+        model=settings.plo_review_model,
+        created_at=datetime.now(UTC).replace(tzinfo=None),
+    )
+    logger.info(
+        f"plo_review: kept {len(review.redundancies)} redundancy / {len(review.ksec)} ksec / "
+        f"{len(review.bloom)} bloom, dropped {dict(drops) or 'nothing'}"
+    )
+    if is_empty(review):
+        logger.warning(
+            f"plo_review: the answer for {program_id} held nothing usable, nothing stored"
+        )
+        return None
+    return review
+
+
+async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | None:
+    """Always calls. Stores and returns the review, or None if it did not happen."""
+    if program_id in _REVIEW_IN_FLIGHT:
+        raise ReviewAlreadyRunning(
+            f"กำลังตรวจชุด PLO ของโปรแกรม '{program_id}' อยู่ — รอให้รอบเดิมเสร็จก่อน"
+        )
+    _REVIEW_IN_FLIGHT.add(program_id)  # no await between the check and the add
+    try:
+        review = await _call(program_id, plos)
+        if review is not None:
+            await PLOReviewRepository().upsert(review)
+        return review
+    finally:
+        _REVIEW_IN_FLIGHT.discard(program_id)
+
+
+async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | None:
+    """The review the report should show: reused if the set is unchanged."""
+    stored = await PLOReviewRepository().get(program_id)
+    if stored is not None and not is_stale(stored, plos):
+        return stored
+    try:
+        fresh = await fresh_review(program_id, plos)
+    except ReviewAlreadyRunning:
+        logger.info(
+            f"plo_review: a review of {program_id} is already running — showing the stored one"
+        )
+        return stored
+    return fresh if fresh is not None else stored
+
+
+async def run(state: AgentState) -> AgentState:
+    """Graph and report-route entry: put the set review on the state for plo_report."""
+    program_id = state.get("program_id", "unknown")
+    plos = [PLO.model_validate(d) for d in state.get("plos", [])]
+    review = await review_plo_set(program_id, plos) if plos else None
+    state["plo_review"] = review.model_dump(mode="json") if review is not None else None
+    return state

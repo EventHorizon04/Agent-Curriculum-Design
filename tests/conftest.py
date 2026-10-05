@@ -72,6 +72,26 @@ def _no_need_dedup_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+class _NoStoredReview:
+    async def get(self, program_id: str) -> None:
+        return None
+
+    async def upsert(self, review: object) -> None:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _plo_review_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The set review runs before every report, and both reach the network and
+    the database. Off by default in tests — the same answer as the kill switch,
+    so every report test sees `review=None` exactly as before the review existed.
+    The review's own tests turn it back on and fake each boundary themselves."""
+    from curriculum_agent.stages import plo_review  # noqa: PLC0415
+
+    monkeypatch.setattr(settings, "plo_review_provider", "")
+    monkeypatch.setattr(plo_review, "PLOReviewRepository", _NoStoredReview)
+
+
 @pytest.fixture
 def program_metadata() -> ProgramMetadata:
     return ProgramMetadata(
