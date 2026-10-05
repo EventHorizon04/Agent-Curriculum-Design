@@ -101,7 +101,8 @@ def test_the_startup_line_says_a_disabled_slot_is_disabled(
     target = llm.describe_target()
 
     assert "validation: disabled" in target
-    assert "api_key" not in target.split("validation:")[1]
+    validation_segment = next(seg for seg in target.split(" | ") if seg.startswith("validation:"))
+    assert "api_key" not in validation_segment
 
 
 def test_the_duplicate_check_can_be_switched_off(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -239,6 +240,7 @@ def test_every_slot_is_reported_and_warmed_from_one_list(typhoon: Settings) -> N
         "need_dedup",
         "plo_synthesis",
         "validation",
+        "plo_review",
     ]
     assert len(set(labels)) == len(labels)
 

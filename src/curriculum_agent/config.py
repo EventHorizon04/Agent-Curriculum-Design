@@ -167,6 +167,17 @@ SLOTS: tuple[SlotSpec, ...] = (
         default_models={"openrouter": "z-ai/glm-5.3-flash"},
         disableable=True,
     ),
+    # Reads the finished PLO set once, after synthesis, and reports — it never
+    # writes a statement. glm-5.3-flash for the same reason as need_dedup: the
+    # task is judging and labelling, and one call per program pays its reasoning
+    # latency once. disableable: the review is advisory, so "" turns it off.
+    SlotSpec(
+        "plo_review",
+        "plo_review_provider",
+        "plo_review_model",
+        default_models={"openrouter": "z-ai/glm-5.3-flash"},
+        disableable=True,
+    ),
 )
 
 
@@ -305,6 +316,11 @@ class Settings(BaseSettings):
     # ceil(N / concurrency) x this, and turns a hung provider into one
     # code-only verdict rather than a stage that never returns.
     validation_timeout_seconds: int = 240
+    # The PLO set review (stages/plo_review.py). Advisory: "" (empty) switches it
+    # off and the report says so; None follows LLM_PROVIDER like every slot.
+    plo_review_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"
+    plo_review_model: str = ""
+    plo_review_timeout_seconds: int = 180
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
     # fans out a call per evidence item, and now one per window of each item

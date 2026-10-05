@@ -255,6 +255,19 @@ async def complete_need_dedup(
     return await _complete(*_resolve("need_dedup"), response_model, messages, **kwargs)
 
 
+async def complete_plo_review(
+    response_model: type[T],
+    messages: list[dict[str, Any]],
+    **kwargs: Any,
+) -> T:
+    """The PLO set review before the report — see Settings.plo_review_provider.
+
+    One caller, `stages.plo_review`, once per changed PLO set. Its answer is
+    advice for the designer and is judged again in pure code before it is stored.
+    """
+    return await _complete(*_resolve("plo_review"), response_model, messages, **kwargs)
+
+
 async def complete_clustering(
     response_model: type[T],
     messages: list[dict[str, Any]],

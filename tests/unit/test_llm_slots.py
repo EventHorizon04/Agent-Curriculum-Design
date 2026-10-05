@@ -69,7 +69,7 @@ def test_only_the_optional_checks_can_be_switched_off() -> None:
     unset differ, and every reader of that field has to learn the distinction."""
     disableable = [slot.name for slot in SLOTS if slot.disableable]
 
-    assert disableable == ["need_dedup", "validation"]
+    assert disableable == ["need_dedup", "validation", "plo_review"]
 
 
 def test_asking_for_a_slot_that_does_not_exist_says_so() -> None:
@@ -197,3 +197,11 @@ def test_development_is_the_default_and_keeps_working_with_no_env() -> None:
     """Forgetting APP_ENV can only make the check stricter by accident, never
     weaker — and a fresh checkout still runs against the compose stack."""
     assert Settings().app_env == "development"
+
+
+def test_plo_review_runs_on_glm_and_can_be_switched_off() -> None:
+    s = Settings(_env_file=None)
+    assert s.plo_review_provider == "openrouter"
+    assert s.plo_review_model == "z-ai/glm-5.3-flash"
+    assert s.plo_review_timeout_seconds == 180
+    assert Settings(_env_file=None, plo_review_provider="").plo_review_provider == ""
