@@ -61,6 +61,10 @@ class PLOReportResponse(BaseModel):
     # The advisory set review shown beside the report (stages/plo_review.py).
     review: PLOSetReview | None = None
     review_stale: bool = False
+    # Whether the slot can run at all right now, vs. having run and failed or
+    # never having run. "" (off) and a provider outage both leave `review=None`,
+    # and the designer cannot tell those apart without this.
+    review_enabled: bool = False
 
 
 @router.get("/", response_model=list[PLO])
@@ -204,6 +208,20 @@ async def run_plo_report(program_id: str) -> PLOReportResponse:
         "plos": [p.model_dump(mode="json") for p in plos],
     }
     state = await plo_review.run(state)
+    # plo_review.run is an LLM call up to plo_review_timeout_seconds (180s) —
+    # long enough for a PUT edit, a merge, or a re-synthesis to land on this
+    # program while it was in flight. Re-read rather than reuse the snapshot
+    # taken above: plo_report.run persists whatever is in state["plos"]
+    # (PLORepository.bulk_insert), and persisting the old snapshot would revert
+    # that change. review_stale is computed by plo_report against the set it
+    # actually persists, not against the one the review call saw.
+    plos = await _repo.list_by_program(program_id)
+    if not plos:
+        raise HTTPException(
+            status_code=422,
+            detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
+        )
+    state["plos"] = [p.model_dump(mode="json") for p in plos]
     result_state = await run(state)
     report = result_state["report"]
     return PLOReportResponse(
@@ -213,12 +231,17 @@ async def run_plo_report(program_id: str) -> PLOReportResponse:
         needs_not_synthesized=report["needs_not_synthesized"],
         review=report["review"],
         review_stale=report["review_stale"],
+        review_enabled=bool(settings.plo_review_provider),
     )
 
 
 class PLOReviewResponse(BaseModel):
     review: PLOSetReview | None
     stale: bool
+    # Same purpose as PLOReportResponse.review_enabled: tells "switched off"
+    # apart from "failed" / "never ran" for a `review=None` the UI otherwise
+    # cannot explain.
+    review_enabled: bool = False
 
 
 @router.get("/review", response_model=PLOReviewResponse)
@@ -226,8 +249,21 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
     from curriculum_agent.stages.plo_review import is_stale  # noqa: PLC0415
 
     plos = await _repo.list_by_program(program_id)
-    review = await PLOReviewRepository().get(program_id)
-    return PLOReviewResponse(review=review, stale=review is not None and is_stale(review, plos))
+    try:
+        review = await PLOReviewRepository().get(program_id)
+    except Exception as exc:
+        # A read failure here must not 500 the whole page — GET /plos/ already
+        # raises on an unrelated bad row, and this route must not add a second
+        # way for the report/checkpoint page to go blank over stored review data.
+        logger.warning(f"plo_review: could not read the stored review for {program_id}: {exc!r}")
+        return PLOReviewResponse(
+            review=None, stale=False, review_enabled=bool(settings.plo_review_provider)
+        )
+    return PLOReviewResponse(
+        review=review,
+        stale=review is not None and is_stale(review, plos),
+        review_enabled=bool(settings.plo_review_provider),
+    )
 
 
 @router.post("/review/run", response_model=PLOReviewResponse)
@@ -249,7 +285,14 @@ async def run_plo_review(program_id: str) -> PLOReviewResponse:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if review is None:
         raise HTTPException(status_code=503, detail="ตรวจชุด PLO ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
-    return PLOReviewResponse(review=review, stale=False)
+    # fresh_review's call can run for up to plo_review_timeout_seconds (180s);
+    # re-read rather than reuse `plos` so staleness is judged against whatever
+    # landed on this program while the call was in flight, not the snapshot
+    # from before it started.
+    plos_now = await _repo.list_by_program(program_id)
+    return PLOReviewResponse(
+        review=review, stale=plo_review.is_stale(review, plos_now), review_enabled=True
+    )
 
 
 class MergeNeedsRequest(DesignerNoteRequest):

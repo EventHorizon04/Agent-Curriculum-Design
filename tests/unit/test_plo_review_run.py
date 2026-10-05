@@ -217,6 +217,24 @@ async def test_a_needs_read_failure_means_no_call_is_made(
     live.assert_not_awaited()
 
 
+async def test_review_plo_set_degrades_to_the_stored_review_while_one_is_in_flight(
+    live: AsyncMock,
+) -> None:
+    """A second caller (e.g. GET /review's implicit refresh path, or a racing
+    report/run) must not pile a second call onto a review already running for
+    this program — it gets the stored answer instead, and the model is never
+    asked twice."""
+    old = await pr.fresh_review("p", _PLOS)
+    changed = [_PLOS[0].model_copy(update={"statement_th": "ล่ามการเจรจาธุรกิจ"}), _PLOS[1]]
+    pr._REVIEW_IN_FLIGHT.add("p")
+    try:
+        result = await pr.review_plo_set("p", changed)
+    finally:
+        pr._REVIEW_IN_FLIGHT.discard("p")
+    assert result == old
+    live.assert_awaited_once()
+
+
 async def test_run_with_a_storage_failure_leaves_the_state_unset(
     live: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:

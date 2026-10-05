@@ -160,7 +160,7 @@ class ProgramRepository:
 
         Deletes skills before evidence because SkillTable.source_evidence_id
         is a FK into EvidenceTable. Returns False (no-op) if program_id
-        doesn't exist — the six prior deletes affect zero rows either way.
+        doesn't exist — the seven prior deletes affect zero rows either way.
         """
         async with AsyncSessionLocal() as session:
             await session.execute(delete(SkillTable).where(SkillTable.program_id == program_id))

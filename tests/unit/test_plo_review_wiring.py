@@ -114,7 +114,71 @@ def test_report_route_runs_the_review_first() -> None:
     body = resp.json()
     assert body["review"]["summary_th"] == "ดีแล้ว"
     assert body["review_stale"] is False
+    assert body["review_enabled"] is False  # conftest kill switch
     review_run.assert_awaited_once()
+
+
+def test_report_route_re_reads_the_plos_after_the_review_call() -> None:
+    """The review call can run for up to plo_review_timeout_seconds (180s) —
+    long enough for a PUT edit, a merge, or a re-synthesis to land on this
+    program while it is in flight. The route must persist and report what is
+    actually stored afterwards (set B), not the snapshot it read before
+    starting the review (set A) — otherwise plo_report.bulk_insert reverts
+    whatever changed in the meantime."""
+    plo_b = _PLO.model_copy(update={"statement_th": "แปลเอกสารราชการ"})
+    review_run = AsyncMock(
+        side_effect=lambda s: {
+            **s,
+            "plo_review": _review(plo_fingerprint([_PLO])).model_dump(mode="json"),
+        }
+    )
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.stages.plo_review.run", review_run),
+        patch.object(plo_report, "NeedRepository") as needs,
+        patch.object(plo_report, "PLORepository") as plos_repo,
+    ):
+        repo.list_by_program = AsyncMock(side_effect=[[_PLO], [plo_b]])
+        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        bulk_insert = AsyncMock()
+        plos_repo.return_value.bulk_insert = bulk_insert
+        resp = client.post("/programs/p1/plos/report/run")
+    assert resp.status_code == 200
+    assert repo.list_by_program.await_count == 2
+    body = resp.json()
+    assert [p["statement_th"] for p in body["plos"]] == ["แปลเอกสารราชการ"]
+    inserted = bulk_insert.await_args.args[0]
+    assert [p.statement_th for p in inserted] == ["แปลเอกสารราชการ"]
+    # The review was built from set A's fingerprint; what was actually
+    # persisted is set B, so the review is reported stale.
+    assert body["review_stale"] is True
+
+
+def test_report_route_422_when_the_re_read_finds_nothing() -> None:
+    review_run = AsyncMock(side_effect=lambda s: {**s, "plo_review": None})
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.stages.plo_review.run", review_run),
+    ):
+        repo.list_by_program = AsyncMock(side_effect=[[_PLO], []])
+        resp = client.post("/programs/p1/plos/report/run")
+    assert resp.status_code == 422
+
+
+def test_report_route_review_enabled_true_when_the_slot_is_on(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
+    review_run = AsyncMock(side_effect=lambda s: {**s, "plo_review": None})
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.stages.plo_review.run", review_run),
+        patch.object(plo_report, "NeedRepository") as needs,
+        patch.object(plo_report, "PLORepository") as plos_repo,
+    ):
+        repo.list_by_program = AsyncMock(return_value=[_PLO])
+        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        plos_repo.return_value.bulk_insert = AsyncMock()
+        resp = client.post("/programs/p1/plos/report/run")
+    assert resp.json()["review_enabled"] is True
 
 
 def test_get_review_reports_staleness() -> None:
@@ -137,7 +201,36 @@ def test_get_review_with_none_stored() -> None:
         repo.list_by_program = AsyncMock(return_value=[_PLO])
         rr.return_value.get = AsyncMock(return_value=None)
         resp = client.get("/programs/p1/plos/review")
-    assert resp.json() == {"review": None, "stale": False}
+    # conftest's kill switch has the slot off for every test, so review_enabled
+    # reads false here — it answers "is the slot on", independent of whether a
+    # row was ever stored.
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
+
+
+def test_get_review_review_enabled_true_when_the_slot_is_on(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.api.routes.plos.PLOReviewRepository") as rr,
+    ):
+        repo.list_by_program = AsyncMock(return_value=[_PLO])
+        rr.return_value.get = AsyncMock(return_value=None)
+        resp = client.get("/programs/p1/plos/review")
+    assert resp.json()["review_enabled"] is True
+
+
+def test_get_review_guards_a_storage_read_failure() -> None:
+    """A raise from PLOReviewRepository().get must not 500 the whole route —
+    GET /review answers review=None, stale=False rather than losing the page."""
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.api.routes.plos.PLOReviewRepository") as rr,
+    ):
+        repo.list_by_program = AsyncMock(return_value=[_PLO])
+        rr.return_value.get = AsyncMock(side_effect=RuntimeError("db down"))
+        resp = client.get("/programs/p1/plos/review")
+    assert resp.status_code == 200
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
 
 
 def test_review_run_422_without_plos() -> None:
@@ -187,4 +280,25 @@ def test_review_run_returns_the_fresh_review(monkeypatch) -> None:
         repo.list_by_program = AsyncMock(return_value=[_PLO])
         resp = client.post("/programs/p1/plos/review/run")
     assert resp.status_code == 200
-    assert resp.json()["review"]["summary_th"] == "ดีแล้ว" and resp.json()["stale"] is False
+    body = resp.json()
+    assert body["review"]["summary_th"] == "ดีแล้ว" and body["stale"] is False
+    assert body["review_enabled"] is True
+
+
+def test_review_run_reports_staleness_from_the_set_read_after_the_call(monkeypatch) -> None:
+    """fresh_review answers the call it made against the PLOs it was handed, but
+    the stale flag must reflect whatever is stored by the time the route
+    answers — a merge or an edit could have landed while the (up to 180s) call
+    was in flight. Second list_by_program call returns a different set from the
+    first, so the review's own fingerprint (set A) is now stale against it."""
+    monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
+    plo_b = _PLO.model_copy(update={"statement_th": "แปลเอกสารราชการ"})
+    fresh = _review(plo_fingerprint([_PLO]))
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.stages.plo_review.fresh_review", AsyncMock(return_value=fresh)),
+    ):
+        repo.list_by_program = AsyncMock(side_effect=[[_PLO], [plo_b]])
+        resp = client.post("/programs/p1/plos/review/run")
+    assert resp.status_code == 200
+    assert resp.json()["stale"] is True

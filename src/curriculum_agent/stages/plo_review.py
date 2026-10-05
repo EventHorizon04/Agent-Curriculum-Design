@@ -93,7 +93,16 @@ def current_ksec(plo: PLO, needs_by_id: Mapping[str, Need]) -> list[str]:
 
 
 def plo_fingerprint(plos: Sequence[PLO]) -> str:
-    """What the review was made from. Any edit a designer could act on moves it."""
+    """What the review was made from. Any edit a designer could act on moves it.
+
+    It is built from the PLOs alone. Need statements, Need KSEC tags, and the
+    program context are also prompt inputs (`_items`, `build_plo_review_prompt`)
+    but are not covered by this fingerprint — so re-running need_combination
+    without re-running synthesis leaves a stored review reading as current
+    (`is_stale` returns False) even though it was built from Need text that no
+    longer exists. `POST /review/run` forces a fresh call regardless of
+    staleness and is the way to refresh it in that case.
+    """
     parts = [
         "\x1f".join(
             [
