@@ -25,6 +25,7 @@ from curriculum_agent.prompts.cluster_skills import (
 from curriculum_agent.prompts.designer_note import NOTE_HEADER_TH, NOTE_POLICY_TH
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
+from curriculum_agent.prompts.plo_review import ReviewItem, build_plo_review_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
@@ -104,6 +105,31 @@ def _build() -> str:
             program_context="<program context>",
         )
     )
+    review = _render(
+        build_plo_review_prompt(
+            [
+                ReviewItem(
+                    plo_id="<PLO1>",
+                    is_optional=False,
+                    statement_th="<ประโยค PLO หลัก>",
+                    action_verb_th="<กริยา>",
+                    bloom_level="apply",
+                    current_ksec=("S",),
+                    need_statements_th=("<ประโยคความต้องการ>",),
+                ),
+                ReviewItem(
+                    plo_id="<OPT1>",
+                    is_optional=True,
+                    statement_th="<ประโยค PLO เสริม>",
+                    action_verb_th="<กริยา>",
+                    bloom_level="analyze",
+                    current_ksec=("E", "C"),
+                    need_statements_th=("<ประโยคความต้องการ>",),
+                ),
+            ],
+            program_context="<program context>",
+        )
+    )
     smart = _render(
         build_smart_agent_prompt(
             statement_th="<ประโยค PLO ที่ร่างไว้>",
@@ -143,6 +169,7 @@ def _build() -> str:
         summarize=summarize,
         plo=plo,
         dedup=dedup,
+        review=review,
         smart=smart,
         repair=repair,
         note_policy=NOTE_POLICY_TH,
@@ -183,6 +210,7 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_loop` | `validation` | `ValidationStep` | ❌ |
 | 7 | สั่งแก้ประโยค PLO | `build_agent_repair_prompt` | `stages/smart_agent.py` → `_repair` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
+| 9 | ตรวจชุด PLO ก่อนรายงาน | `build_plo_review_prompt` | `stages/plo_review.py` → `review_plo_set` | `plo_review` | `ReviewAnswer` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -402,6 +430,35 @@ prompt ซ่อมพกแค่คำสั่ง + ประโยคเด�
 เอกสารชุดเดียวกันใช้ evidence ร่วมกันสูงถึง 55% ทั้งที่ขอคนละเรื่อง
 
 {dedup}
+
+---
+
+## 9. ตรวจชุด PLO ทั้งหมดก่อนออกรายงาน
+
+| | |
+|---|---|
+| **builder** | `prompts/plo_review.py` → `build_plo_review_prompt(items, *, program_context=None)` |
+| **ผู้เรียก** | `stages/plo_review.py` → `review_plo_set` |
+| **slot / wrapper** | `plo_review` → `complete_plo_review` · ปิดได้ด้วย `PLO_REVIEW_PROVIDER=` |
+| **response model** | `ReviewAnswer` |
+| **cache** | ไม่มี |
+
+เป็นด่านเดียวที่อ่าน **ทั้งชุด** PLO พร้อมกัน — ทุกด่านก่อนหน้าตรวจทีละ PLO เทียบกับ Need ของตัวเอง
+ส่วนความซ้ำซ้อนระหว่างร่าง โดเมนที่คาบเกี่ยวหลาย KSEC และการกระจายระดับ Bloom ทั้งชุด
+เป็นสมบัติของชุด ไม่ใช่ของ PLO ข้อใดข้อหนึ่ง
+
+**เป็นคำแนะนำล้วน ไม่มีการเขียนทับอะไร** — prompt บอกตรง ๆ ว่ากรรมการคนนี้ไม่ได้แก้ PLO
+ห้ามเขียนประโยคใหม่ ผลตรวจไปที่ตาราง `plo_reviews` และคำตอบ API เท่านั้น ไม่กระทบ PLO, Need, KSEC
+tag หรือระดับ Bloom ที่เก็บไว้จริง และไม่เข้า Excel export
+
+ข้อเสนอ KSEC เป็น**เซ็ตที่เลือกได้มากกว่าหนึ่งหมวด** — ประโยคหนึ่งอาจเป็นได้ทั้ง S และ E พร้อมกัน
+ต่างจาก `current_ksec` ที่ PLO ถืออยู่จริงซึ่งเป็นหมวดเดียวเสมอ (`EC` อ่านเป็น E และ C)
+`current`/`agrees`/`declared` คำนวณด้วยโค้ดจากสองเซ็ตนี้เทียบกัน ไม่ใช่สิ่งที่ขอจากโมเดล
+
+กฎ "อยู่สาขาเดียวกันไม่ถือว่าซ้ำ" กันไม่ให้หลักสูตรที่ทุกข้อเกี่ยวกับงานเดียวกันโดยธรรมชาติ
+(เช่นหลักสูตรการแปล ทุกข้อมีการแปล) ถูกตีว่าซ้ำกันหมด — ต้องงานหลักและวัตถุหลักเดียวกันจริง
+
+{review}
 
 ---
 
