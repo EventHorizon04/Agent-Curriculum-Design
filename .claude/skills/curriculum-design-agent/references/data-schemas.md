@@ -285,6 +285,54 @@ Validation rules for PLO (enforce in code):
 - `soft_flags` stays `list[str]`, not the enum. A row carrying a code this build no longer knows would otherwise raise on read, and `R_alignment` was emitted for months. The typed detail is in `findings`; a validator keeps the flat list and the soft findings in step, exempting a row that has flags but no findings (that is what `legacy` means).
 - `smart_validated_by` distinguishes four facts the UI must not conflate: `agent` (judged and this is the verdict), `code_only` (the validator could not run; the pure checks decided alone), `stale` (a designer edited the statement and nothing has re-judged it — set by `PUT /plos/{id}`), `legacy` (predates the validator). `POST /plos/{id}/revalidate` is what moves a `stale` row back to `agent`.
 
+## Stage 4b: PLO set review (advisory)
+
+```python
+class RedundancyFinding(BaseModel):
+    """PLOs the set review reads as one outcome. Advisory."""
+    plo_ids: list[str]
+    reason_th: str
+    suggestion_th: str = ""
+
+class KsecFinding(BaseModel):
+    """Where one PLO's domain should sit, possibly several of K/S/E/C.
+
+    `current` and `agrees` are computed in code from the PLO's Needs; only
+    `suggested` and `reason_th` come from the reviewer. Plain `str` lists, not
+    a Literal: a stored row must stay readable if the vocabulary ever moves
+    (the `soft_flags` lesson)."""
+    plo_id: str
+    current: list[str]
+    suggested: list[str]
+    agrees: bool
+    reason_th: str = ""
+
+class BloomFinding(BaseModel):
+    plo_id: str
+    declared: BloomLevel
+    suggested_level: BloomLevel | None = None
+    reason_th: str = ""
+
+class PLOSetReview(BaseModel):
+    """The advisory review of one program's PLO set — see stages/plo_review.py.
+
+    `plo_fingerprint` is the set it was made from; a review whose fingerprint
+    no longer matches the stored PLOs is stale and is shown labelled as such."""
+    program_id: str
+    plo_fingerprint: str
+    model: str
+    created_at: datetime
+    redundancies: list[RedundancyFinding] = Field(default_factory=list)
+    ksec: list[KsecFinding] = Field(default_factory=list)
+    bloom: list[BloomFinding] = Field(default_factory=list)
+    bloom_distribution_th: str = ""
+    summary_th: str = ""
+```
+
+`plo_reviews` is one row per program (`program_id` primary key, FK to `programs.program_id`, cascade-deleted with it), holding `plo_fingerprint`, `model`, `created_at`, and the rest of `PLOSetReview` in a single JSONB `review` column — no migration needed for a new finding field, the same reasoning as `SMARTCheck.findings`.
+
+**Advisory only.** The review reads the finished PLO set once, after synthesis, and writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table and nothing else. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. `plo_report` shows a stored review beside the report and labels it stale once `plo_fingerprint` no longer matches the current PLO set; a review that did not run (slot disabled, call failed, nothing stored yet) produces no findings and never blocks the report.
+
 ## Cross-stage: human-in-the-loop checkpoint
 
 ```python
