@@ -528,6 +528,58 @@ class PLO(BaseModel):
         return self
 
 
+# ------------------------- PLO set review -------------------------
+
+
+class RedundancyFinding(BaseModel):
+    """PLOs the set review reads as one outcome. Advisory."""
+
+    plo_ids: list[str]
+    reason_th: str
+    suggestion_th: str = ""
+
+
+class KsecFinding(BaseModel):
+    """Where one PLO's domain should sit, possibly several of K/S/E/C.
+
+    `current` and `agrees` are computed in code from the PLO's Needs; only
+    `suggested` and `reason_th` come from the reviewer. Plain `str` lists, not a
+    Literal: a stored row must stay readable if the vocabulary ever moves (the
+    `soft_flags` lesson).
+    """
+
+    plo_id: str
+    current: list[str]
+    suggested: list[str]
+    agrees: bool
+    reason_th: str = ""
+
+
+class BloomFinding(BaseModel):
+    plo_id: str
+    declared: BloomLevel
+    suggested_level: BloomLevel | None = None
+    reason_th: str = ""
+
+
+class PLOSetReview(BaseModel):
+    """The advisory review of one program's PLO set — see stages/plo_review.py.
+
+    `plo_fingerprint` is the set it was made from; a review whose fingerprint no
+    longer matches the stored PLOs is stale and is shown labelled as such.
+    """
+
+    program_id: str
+    plo_fingerprint: str
+    model: str
+    created_at: datetime
+    redundancies: list[RedundancyFinding] = Field(default_factory=list)
+    ksec: list[KsecFinding] = Field(default_factory=list)
+    bloom: list[BloomFinding] = Field(default_factory=list)
+    bloom_distribution_th: str = ""
+    summary_th: str = ""
+
+
 # ----------------------- Stage checkpoint ------------------------
 
 
