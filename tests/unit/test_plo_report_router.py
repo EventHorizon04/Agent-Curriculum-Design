@@ -78,7 +78,19 @@ def test_report_run_returns_the_full_report_payload():
 
     assert resp.status_code == 200
     body = resp.json()
-    assert set(body.keys()) == {"plos", "counts", "needs_by_id", "needs_not_synthesized"}
+    assert set(body.keys()) == {
+        "plos",
+        "counts",
+        "needs_by_id",
+        "needs_not_synthesized",
+        "review",
+        "review_stale",
+    }
+    # The set review is offline for every test (tests/conftest.py's autouse
+    # fixture), so this route runs it and gets nothing back — the same shape
+    # as before the review existed.
+    assert body["review"] is None
+    assert body["review_stale"] is False
 
     assert len(body["plos"]) == 1
     assert body["plos"][0]["plo_id"] == "PLO1"

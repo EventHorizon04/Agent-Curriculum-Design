@@ -98,6 +98,12 @@ async def stage_3_plo_synthesis(state: AgentState) -> AgentState:
     return await run(state)
 
 
+async def stage_4b_plo_review(state: AgentState) -> AgentState:
+    from curriculum_agent.stages.plo_review import run  # noqa: PLC0415
+
+    return await run(state)
+
+
 async def stage_5_plo_report(state: AgentState) -> AgentState:
     from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
 
@@ -222,6 +228,7 @@ def build_graph(
     g.add_node("review_needs_node", review_needs)
     g.add_node("plo_synthesis", stage_3_plo_synthesis)
     g.add_node("review_plos_node", review_plos)
+    g.add_node("plo_review", stage_4b_plo_review)
     g.add_node("plo_report", stage_5_plo_report)
     g.add_node("review_plo_report", review_plo_report)
 
@@ -233,7 +240,10 @@ def build_graph(
     g.add_edge("need_combination", "review_needs_node")
     g.add_edge("review_needs_node", "plo_synthesis")
     g.add_edge("plo_synthesis", "review_plos_node")
-    g.add_edge("review_plos_node", "plo_report")
+    # No interrupt of its own: the review and the report share the report's
+    # checkpoint (immutable rule 7's second exception).
+    g.add_edge("review_plos_node", "plo_review")
+    g.add_edge("plo_review", "plo_report")
     g.add_edge("plo_report", "review_plo_report")
     g.add_edge("review_plo_report", END)
 

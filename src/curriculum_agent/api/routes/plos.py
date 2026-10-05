@@ -7,10 +7,12 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from curriculum_agent.api.deps import require_api_key
+from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
     PLORepository,
+    PLOReviewRepository,
     ProgramRepository,
 )
 from curriculum_agent.exporters.excel_matrix import export_matrix_xlsx
@@ -20,6 +22,7 @@ from curriculum_agent.models import (
     BloomLevel,
     DesignerNoteRequest,
     Need,
+    PLOSetReview,
     SMARTCheck,
     StakeholderEvidence,
 )
@@ -55,6 +58,9 @@ class PLOReportResponse(BaseModel):
     # synthesis failed. Carried through for the same reason as `counts` — computing
     # it in the stage and dropping it at the route would hide the cap.
     needs_not_synthesized: list[str] = []
+    # The advisory set review shown beside the report (stages/plo_review.py).
+    review: PLOSetReview | None = None
+    review_stale: bool = False
 
 
 @router.get("/", response_model=list[PLO])
@@ -183,6 +189,7 @@ async def run_plo_synthesis(program_id: str, body: DesignerNoteRequest | None = 
 
 @router.post("/report/run", response_model=PLOReportResponse)
 async def run_plo_report(program_id: str) -> PLOReportResponse:
+    from curriculum_agent.stages import plo_review  # noqa: PLC0415
     from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
 
     plos = await _repo.list_by_program(program_id)
@@ -196,6 +203,7 @@ async def run_plo_report(program_id: str) -> PLOReportResponse:
         "program_id": program_id,
         "plos": [p.model_dump(mode="json") for p in plos],
     }
+    state = await plo_review.run(state)
     result_state = await run(state)
     report = result_state["report"]
     return PLOReportResponse(
@@ -203,7 +211,45 @@ async def run_plo_report(program_id: str) -> PLOReportResponse:
         counts=report["counts"],
         needs_by_id={k: Need.model_validate(v) for k, v in report["needs_by_id"].items()},
         needs_not_synthesized=report["needs_not_synthesized"],
+        review=report["review"],
+        review_stale=report["review_stale"],
     )
+
+
+class PLOReviewResponse(BaseModel):
+    review: PLOSetReview | None
+    stale: bool
+
+
+@router.get("/review", response_model=PLOReviewResponse)
+async def get_plo_review(program_id: str) -> PLOReviewResponse:
+    from curriculum_agent.stages.plo_review import is_stale  # noqa: PLC0415
+
+    plos = await _repo.list_by_program(program_id)
+    review = await PLOReviewRepository().get(program_id)
+    return PLOReviewResponse(review=review, stale=review is not None and is_stale(review, plos))
+
+
+@router.post("/review/run", response_model=PLOReviewResponse)
+async def run_plo_review(program_id: str) -> PLOReviewResponse:
+    from curriculum_agent.stages import plo_review  # noqa: PLC0415
+
+    plos = await _repo.list_by_program(program_id)
+    if not plos:
+        raise HTTPException(
+            status_code=422, detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"
+        )
+    if not settings.plo_review_provider:
+        raise HTTPException(
+            status_code=503, detail="ปิดการตรวจชุด PLO อยู่ (ตั้ง PLO_REVIEW_PROVIDER ไว้ว่าง)"
+        )
+    try:
+        review = await plo_review.fresh_review(program_id, plos)
+    except plo_review.ReviewAlreadyRunning as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if review is None:
+        raise HTTPException(status_code=503, detail="ตรวจชุด PLO ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
+    return PLOReviewResponse(review=review, stale=False)
 
 
 class MergeNeedsRequest(DesignerNoteRequest):
