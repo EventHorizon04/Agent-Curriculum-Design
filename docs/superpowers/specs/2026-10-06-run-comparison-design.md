@@ -105,8 +105,9 @@ all three kinds, and every reference is rewritten through it:
 `e4b6d19a3f72`.
 
 The review's `plo_fingerprint` hashes `source_need_ids`, so the copied review
-would read as stale. The copy recomputes it with `plo_review.plo_fingerprint`
-over the copied PLOs and stores that.
+would read as stale. When the source review is current (its fingerprint equals
+the source PLOs'), the copy recomputes it over the copied PLOs; a stale source
+review keeps its old fingerprint and so stays stale in the copy.
 
 ### Transaction
 
@@ -132,6 +133,12 @@ rather than silently dropped.
   `ProgramCreateRequest`, so a client cannot set it.
 - `ProgramSummary.copied_from: str | None = None`, so the list page can say
   "สำเนาของ program-2".
+- `PUT /programs/{id}` rebuilds metadata from `ProgramCreateRequest`, which has
+  no `copied_from`; it carries the existing value over so editing a copy keeps
+  its provenance.
+- The copy route seeds the copy's `{program_id}` LangGraph thread with its
+  metadata exactly as `create_program` does, so every path that works on a new
+  program works on a copy. No checkpoint rows are copied.
 - Deleting a copy uses the existing `delete_cascade`. Source and copy share no
   rows, so neither delete reaches the other.
 
