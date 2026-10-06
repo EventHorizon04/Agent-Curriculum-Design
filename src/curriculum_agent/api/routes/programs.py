@@ -8,9 +8,11 @@ from loguru import logger
 from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.deps import require_api_key
+from curriculum_agent.data.program_copy import copy_program
 from curriculum_agent.data.repositories import ProgramRepository, SessionRepository
 from curriculum_agent.graph import discard_thread
 from curriculum_agent.models import ProgramCreateRequest, ProgramMetadata, ProgramSummary
+from curriculum_agent.stages.plo_synthesis import is_synthesis_running
 
 router = APIRouter()
 
@@ -72,6 +74,61 @@ async def create_program(req: ProgramCreateRequest, request: Request) -> Program
         as_node=START,
     )
     return metadata
+
+
+async def _generate_copy_id(source_id: str, repo: ProgramRepository) -> str:
+    """`{source}-run-{n}`, smallest n >= 1 not taken. A copy of a copy nests
+    (`program-2-run-1-run-1`) — accepted, the rule stays one line."""
+    n = 1
+    while await repo.exists(f"{source_id}-run-{n}"):
+        n += 1
+    return f"{source_id}-run-{n}"
+
+
+@router.post(
+    "/{program_id}/copy",
+    response_model=ProgramMetadata,
+    dependencies=[Depends(require_api_key)],
+)
+async def copy_program_route(program_id: str, request: Request) -> ProgramMetadata:
+    """Copy a program with everything it owns, so one run survives the next.
+
+    Refused while the source has a synthesis run in flight: synthesis deletes
+    and then inserts, so a copy taken mid-run would hold half a set.
+    need_combination has no such guard, so a copy taken during it is not
+    prevented.
+    """
+    repo = ProgramRepository()
+    if not await repo.exists(program_id):
+        raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
+    if is_synthesis_running(program_id):
+        raise HTTPException(
+            status_code=409,
+            detail="หลักสูตรนี้กำลังสังเคราะห์ PLO อยู่ — รอให้เสร็จก่อนจึงคัดลอก",
+        )
+
+    for _ in range(_MAX_ID_ATTEMPTS):
+        new_id = await _generate_copy_id(program_id, repo)
+        try:
+            copied = await copy_program(program_id, new_id)
+        except IntegrityError:
+            logger.warning(f"program_id '{new_id}' taken concurrently, retrying")
+            continue
+        if not copied:
+            raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
+        metadata = await repo.get(new_id)
+        if metadata is None:  # pragma: no cover - just committed
+            raise HTTPException(status_code=500, detail="คัดลอกแล้วแต่อ่านกลับไม่ได้")
+        # Seed the copy's own thread the way create_program does, so every path
+        # that works on a new program works on a copy.
+        graph = request.app.state.graph
+        await graph.aupdate_state(
+            {"configurable": {"thread_id": new_id}},
+            {"program_id": new_id, "metadata": metadata.model_dump(mode="json")},
+            as_node=START,
+        )
+        return metadata
+    raise HTTPException(status_code=409, detail="สร้างรหัสสำเนาไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
 
 
 @router.get("/", response_model=list[ProgramSummary])

@@ -27,6 +27,8 @@ from datetime import datetime
 from typing import Any, TypeVar
 
 from loguru import logger
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from curriculum_agent.data.orm import (
     Base,
@@ -37,6 +39,7 @@ from curriculum_agent.data.orm import (
     ProgramTable,
     SkillTable,
 )
+from curriculum_agent.data.postgres import AsyncSessionLocal
 from curriculum_agent.data.repositories import _row_to_dict
 from curriculum_agent.models import PLO
 from curriculum_agent.stages.plo_review import plo_fingerprint
@@ -136,3 +139,53 @@ def build_copy(
     return ProgramRows(
         program=program, evidence=evidence, skills=skills, needs=needs, plos=plos, review=review
     )
+
+
+async def load_rows(session: AsyncSession, program_id: str) -> ProgramRows | None:
+    program = await session.get(ProgramTable, program_id)
+    if program is None:
+        return None
+
+    async def _all(table: type[_Row], column: Any) -> list[_Row]:
+        return list(
+            (await session.execute(select(table).where(column == program_id))).scalars().all()
+        )
+
+    return ProgramRows(
+        program=program,
+        evidence=await _all(EvidenceTable, EvidenceTable.program_id),
+        skills=await _all(SkillTable, SkillTable.program_id),
+        needs=await _all(NeedTable, NeedTable.program_id),
+        plos=await _all(PLOTable, PLOTable.program_id),
+        review=await session.get(PLOReviewTable, program_id),
+    )
+
+
+async def copy_program(source_id: str, new_id: str, *, now: datetime | None = None) -> bool:
+    """Copy `source_id` to `new_id` in one session. False if the source is gone.
+
+    One commit at the end, so a failure anywhere leaves nothing behind. A flush
+    after each group puts the parent rows in before the rows whose foreign keys
+    point at them; the ORM declares no relationships to order them otherwise.
+    An IntegrityError on the program row (id taken concurrently) propagates for
+    the route to retry under the next id.
+    """
+    async with AsyncSessionLocal() as session:
+        src = await load_rows(session, source_id)
+        if src is None:
+            return False
+        copy = build_copy(src, new_id, now=now or datetime.utcnow())
+        session.add(copy.program)
+        await session.flush()
+        for group in (copy.evidence, copy.skills, copy.needs, copy.plos):
+            session.add_all(group)
+            await session.flush()
+        if copy.review is not None:
+            session.add(copy.review)
+        await session.commit()
+    logger.info(
+        f"program copy: {source_id} -> {new_id} ({len(copy.evidence)} evidence, "
+        f"{len(copy.skills)} skills, {len(copy.needs)} Needs, {len(copy.plos)} PLOs, "
+        f"review={'yes' if copy.review is not None else 'no'})"
+    )
+    return True
