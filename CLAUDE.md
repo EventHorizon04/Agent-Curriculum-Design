@@ -593,6 +593,18 @@ tests/integration/     ← LLM mocked, full stages
   the model can only claim them. A review is reused while the PLO set's
   fingerprint is unchanged and shown labelled stale once it moves; one that did
   not run produces no findings.
+- **A program copy re-keys every evidence, skill and Need id; the validator
+  switch skips only the agent.** `POST /programs/{id}/copy` (`data/program_copy.py`)
+  exists so one synthesis run survives the next. `evidence_id`, `skill_id` and
+  `need_id` are global single-column keys, so the copy mints fresh uuids and
+  `remap_ids` rewrites every value equal to an old id — reference columns and
+  JSONB alike; `plo_id` is kept, since a PLO is `(program_id, plo_id)`. Rows are
+  cloned from the table's columns, so a new column is copied by default. A
+  review current for the source is re-fingerprinted to stay current; a stale
+  one stays stale. `copied_from` is on `ProgramMetadata`, not the create request,
+  and `PUT` carries it over. `POST /plos/run` with `run_validation=false` gives
+  `ValidationReason.SKIPPED` — distinct from `.env`'s `DISABLED`, which wins —
+  and `hard_failures` still runs: immutable rule 5 is untouched.
 - **A checkpoint thread has to be dropped explicitly.** LangGraph's rows live in
   their own `langgraph` schema with no foreign key back to `programs`, so
   `delete_cascade` cannot reach them — and a suspended checkpoint holds a full

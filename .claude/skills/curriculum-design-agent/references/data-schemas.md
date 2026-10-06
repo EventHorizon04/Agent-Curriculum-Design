@@ -48,11 +48,14 @@ class ProgramMetadata(BaseModel):
     program_objectives_th: list[str] = []
     program_goals_th: list[str] = []
     created_at: datetime
+    copied_from: str | None = None  # set only by POST /programs/{id}/copy; not a foreign key
 ```
 
 **The institution's own direction is not metadata.** `vision_th`, `mission_th`, `philosophy_th`, `institutional_identity_th`, and `student_identity_th` were fields here and are gone — along with `build_institutional_evidence`, which converted them into evidence rows at intake. The designer now records those statements directly at stage 2 as `StakeholderEvidence` with `stakeholder_type=INSTITUTIONAL_DIRECTION` (`classification="requirement"`, derived in code like every other type). One home for a statement, not two, and the evidence trail works the same way for the institution's voice as for any other stakeholder's. Whether the program covered it at all is a program-level check in `plo_synthesis.run`, not a field's presence.
 
 `isced_code` is validated against the ISCED-F 2013 taxonomy (`data/isced.py`) on `ProgramCreateRequest` only — `ProgramMetadata` overrides that validator to a no-op so a persisted row whose code later left the taxonomy still deserializes. Intake has no input for it, no LLM suggestion, and no document upload.
+
+**`copied_from` is set only by `POST /programs/{id}/copy`.** It is nullable, carries the source `program_id` as a plain string with no foreign-key constraint (the source may itself be deleted later), and is not a field on `ProgramCreateRequest` — a client cannot set it when creating a program, only the copy route writes it.
 
 **`program_id` comes from `field`.** With no program name to slug, `_generate_program_id` slugs the field of study and appends `-2`, `-3`, … on collision. `_slugify` keeps ASCII only, so a Thai field yields `program`, `program-2`, … — readable ids are a nice-to-have, uniqueness is not. Anything showing a program to a human should fall back through name → field → id; `ProgramSummary` carries `field` and `faculty` for exactly that.
 
