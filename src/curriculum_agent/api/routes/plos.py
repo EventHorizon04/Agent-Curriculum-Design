@@ -122,6 +122,27 @@ async def export_plo_mko2(program_id: str) -> dict[str, Any]:
     )
 
 
+class ValidationStatusResponse(BaseModel):
+    enabled: bool
+    model: str
+
+
+@router.get("/validation", response_model=ValidationStatusResponse)
+async def get_validation_status(program_id: str) -> ValidationStatusResponse:
+    """Whether the SMART validation agent can run at all — `.env` decides.
+
+    The synthesis page uses it to disable its per-run checkbox, with a reason,
+    when `VALIDATION_PROVIDER` is empty: the request can only switch the agent
+    off, never on.
+    """
+    if await ProgramRepository().get(program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    enabled = bool(settings.validation_provider)
+    return ValidationStatusResponse(
+        enabled=enabled, model=settings.validation_model if enabled else ""
+    )
+
+
 @router.get("/{plo_id}/trace", response_model=PLOTrace)
 async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     plos = await _repo.list_by_program(program_id)
@@ -156,8 +177,17 @@ async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     )
 
 
+class PLOSynthesisRunRequest(DesignerNoteRequest):
+    """`POST /plos/run` body. `run_validation=False` skips the SMART validation
+    agent for this run only; the pure-code gate still runs."""
+
+    run_validation: bool = True
+
+
 @router.post("/run", response_model=list[PLO])
-async def run_plo_synthesis(program_id: str, body: DesignerNoteRequest | None = None) -> list[PLO]:
+async def run_plo_synthesis(
+    program_id: str, body: PLOSynthesisRunRequest | None = None
+) -> list[PLO]:
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
         SynthesisAlreadyRunning,
         run,
@@ -181,6 +211,8 @@ async def run_plo_synthesis(program_id: str, body: DesignerNoteRequest | None = 
     }
     if body is not None and body.note_th:
         state["designer_note"] = body.note_th
+    if body is not None and not body.run_validation:
+        state["run_validation"] = False
 
     try:
         result_state = await run(state)

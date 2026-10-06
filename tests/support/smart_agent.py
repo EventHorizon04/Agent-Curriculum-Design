@@ -77,11 +77,19 @@ class ScriptedAgent:
     def __init__(self, *verdicts: Any) -> None:
         self._verdicts = list(verdicts)
         self.calls: list[tuple[Any, Any]] = []
+        self.enabled_flags: list[bool] = []
 
     async def __call__(
-        self, draft: Any, ctx: Any, metadata: Any, *, need_statements_th: Any = ()
+        self,
+        draft: Any,
+        ctx: Any,
+        metadata: Any,
+        *,
+        need_statements_th: Any = (),
+        enabled: bool = True,
     ) -> SmartAgentResult:
         self.calls.append((draft, ctx))
+        self.enabled_flags.append(enabled)
         index = min(len(self.calls) - 1, len(self._verdicts) - 1)
         chosen = self._verdicts[index] if self._verdicts else None
         if chosen is None:

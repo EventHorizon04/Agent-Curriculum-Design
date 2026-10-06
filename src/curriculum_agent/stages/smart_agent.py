@@ -203,6 +203,7 @@ class ValidationReason(StrEnum):
     MALFORMED = "malformed"
     DEADLINE = "deadline"
     DISABLED = "disabled"
+    SKIPPED = "skipped"
 
 
 class ValidationToolName(StrEnum):
@@ -431,6 +432,8 @@ async def run_smart_agent(
     draft: Any,
     ctx: ValidationContext,
     metadata: ProgramMetadata,
+    *,
+    enabled: bool = True,
 ) -> SmartAgentResult:
     """Validate one draft, repairing through the synthesis slot when asked.
 
@@ -442,6 +445,9 @@ async def run_smart_agent(
     `get_need` will serve, so the prompt cannot advertise a Need the tool would
     refuse. A parallel argument could disagree with it, and the version that
     passed statements without their ids left `get_need` uncallable.
+
+    `enabled=False` is the per-run switch (`POST /plos/run`, `run_validation`):
+    it skips the agent for this run only, without touching `.env`.
     """
     # The kill switch. Not `and not settings.llm_provider`: that field is a
     # Literal with no empty member, so the second half could never be true and
@@ -452,6 +458,13 @@ async def run_smart_agent(
         return code_only_result(
             draft, ValidationReason.DISABLED, "ไม่ได้ตรวจ (ปิดการใช้ validation agent)"
         )
+
+    # The per-run switch (POST /plos/run, run_validation=false). Checked after
+    # the .env kill switch on purpose: a request can turn the agent off for one
+    # run, never on when no endpoint is configured. Distinct from DISABLED so a
+    # stored PLO says which of the two produced its code-only verdict.
+    if not enabled:
+        return code_only_result(draft, ValidationReason.SKIPPED, "ไม่ได้ตรวจ (ปิดการตรวจในรอบนี้)")
 
     try:
         async with asyncio.timeout(settings.validation_timeout_seconds):

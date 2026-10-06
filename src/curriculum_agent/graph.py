@@ -64,6 +64,10 @@ class AgentState(TypedDict, total=False):
     # is only required when two concurrent nodes write the same key.
     designer_note: str
 
+    # Per-run switch for the SMART validation agent (POST /plos/run). Absent
+    # means validate; only the REST route ever sets it, and only to False.
+    run_validation: bool
+
 
 # --------------------------- Stage nodes -------------------------
 

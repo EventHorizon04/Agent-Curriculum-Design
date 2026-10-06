@@ -335,8 +335,12 @@ async def validate_and_build(
     siblings: Sequence[SiblingSummary] = (),
     pending_need_statements_th: Sequence[str] = (),
     evidence_index: EvidenceIndex | None = None,
+    run_validation: bool = True,
 ) -> PLO | None:
     """Run one draft past the validation agent, then judge it in pure code.
+
+    `run_validation=False` is the per-run switch (`POST /plos/run`): it skips
+    the agent for this run only. The pure-code gate below still runs either way.
 
     **The last word is the code gate, always.** `hard_failures` runs on the
     final statement whatever way the agent exited — finished, out of budget,
@@ -364,7 +368,7 @@ async def validate_and_build(
         evidence_index=evidence_index,
         budget=ToolBudget(),
     )
-    result = await run_smart_agent(draft, ctx, metadata)
+    result = await run_smart_agent(draft, ctx, metadata, enabled=run_validation)
 
     # The authoritative gate. Not the agent's reading of it — the same pure
     # function, on the statement that will actually ship.
@@ -533,6 +537,9 @@ async def _run(state: AgentState) -> AgentState:
         raise ValueError("AgentState missing 'metadata' — cannot run PLO synthesis stage")
     metadata = ProgramMetadata.model_validate(metadata_dict)
     note_th = state.get("designer_note")
+    run_validation = state.get("run_validation", True)
+    if not run_validation:
+        logger.info("plo_synthesis: validation agent skipped for this run (run_validation=false)")
 
     need_dicts = state.get("needs")
     if need_dicts is None:
@@ -687,6 +694,7 @@ async def _run(state: AgentState) -> AgentState:
                     # duplicate the validator will faithfully discover.
                     siblings=[s for s in all_siblings if s.plo_id != slot.plo_id],
                     evidence_index=evidence_index,
+                    run_validation=run_validation,
                 )
             )
             for slot, d in produced
