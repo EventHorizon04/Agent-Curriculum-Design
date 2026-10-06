@@ -244,3 +244,69 @@ def test_a_stale_review_stays_stale_in_the_copy() -> None:
 def test_no_review_means_no_review() -> None:
     copy = build_copy(_source(), "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
     assert copy.review is None
+
+
+def test_plain_columns_are_not_remapped_by_a_coincidental_id_match() -> None:
+    """evidence_id is client-supplied with no format check (StakeholderEvidence.
+    evidence_id: str), so an id like "employer" can equal another column's
+    plain value. Only the named reference columns and JSONB columns are
+    remapped; stakeholder_type and source_stakeholder_type are plain String
+    columns and must survive untouched even when an id happens to match them.
+    """
+    program = ProgramTable(
+        program_id="program-2",
+        name_th="",
+        name_en="",
+        field="การท่องเที่ยว",
+        degree_level="bachelor",
+        duration_years=4,
+        faculty="คณะ",
+        university="มหาวิทยาลัย",
+        scope_th="",
+        program_goals_th=[],
+        program_objectives_th=[],
+        created_at=datetime(2026, 9, 1),
+        copied_from=None,
+    )
+    evidence = [
+        EvidenceTable(
+            evidence_id="employer",
+            program_id="program-2",
+            stakeholder_type="employer",
+            source_name="โรงแรม",
+            raw_text_th="ต้องการพนักงานที่สื่อสารภาษาอังกฤษได้",
+            collected_at=datetime(2026, 9, 1),
+            classification="general",
+            extra_metadata={},
+        )
+    ]
+    skills = [
+        SkillTable(
+            skill_id="sk-1",
+            program_id="program-2",
+            skill_name_th="การสื่อสารภาษาอังกฤษ",
+            ksec_category="S",
+            bloom_level="apply",
+            evidence_span_th="สื่อสารภาษาอังกฤษได้",
+            source_evidence_id="employer",
+            source_stakeholder_type="employer",
+            classification="want",
+            is_field_relevant=True,
+            is_graduate_capability=True,
+            extraction_method="llm",
+            confidence=0.9,
+            importance_score=0.5,
+        )
+    ]
+    src = ProgramRows(
+        program=program, evidence=evidence, skills=skills, needs=[], plos=[], review=None
+    )
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+
+    new_evidence_id = copy.evidence[0].evidence_id
+    assert new_evidence_id != "employer"
+    # Plain String columns: left verbatim even though they equal the old id.
+    assert copy.evidence[0].stakeholder_type == "employer"
+    assert copy.skills[0].source_stakeholder_type == "employer"
+    # The reference column: rewritten to the new evidence id.
+    assert copy.skills[0].source_evidence_id == new_evidence_id

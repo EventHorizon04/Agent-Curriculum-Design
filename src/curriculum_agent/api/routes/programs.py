@@ -112,6 +112,12 @@ async def copy_program_route(program_id: str, request: Request) -> ProgramMetada
         try:
             copied = await copy_program(program_id, new_id)
         except IntegrityError:
+            # Only an id collision is worth retrying under the next id; any
+            # other IntegrityError (e.g. a stale FK inside the copy) would
+            # just fail the same way again, and retrying it into a 409 would
+            # misreport it as a name clash.
+            if not await repo.exists(new_id):
+                raise
             logger.warning(f"program_id '{new_id}' taken concurrently, retrying")
             continue
         if not copied:

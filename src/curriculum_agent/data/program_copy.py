@@ -5,11 +5,18 @@ comparison spec, docs/superpowers/specs/2026-10-06-run-comparison-design.md).
 
 evidence_id, skill_id and need_id are single-column, global primary keys, so a
 copy cannot reuse them; plo_id is per program since migration e4b6d19a3f72 and
-is kept. One old->new map covers the three id kinds, and `remap_ids` rewrites
-every value in every column that exactly equals an old id — the named
-reference columns and the JSONB blobs alike, so a column that starts carrying
-an id later is covered without a change here. Free text that merely contains
-an id is left alone.
+is kept. One old->new map covers the three id kinds. `_clone` runs `remap_ids`
+only over the named reference columns (`source_evidence_id`,
+`member_skill_ids`, `source_evidence_ids`, `source_need_ids`) and over every
+JSONB column — not over every column — because a client-supplied id like
+`evidence_id` carries no format check and can coincidentally equal a plain
+column's value (a stakeholder_type of "employer", say): remapping every
+column would silently rewrite that column too. A JSONB column that starts
+carrying an id later is still covered without a change here; a new plain
+column is not, and does not need to be, since a plain column never held an id
+in the first place. Free text that merely contains an id is left alone. Each
+row's own primary key (evidence_id / skill_id / need_id) is set explicitly via
+an override at the call site rather than through this column scan.
 
 Rows are cloned column by column from the table definition, so a column added
 later is copied by default rather than silently dropped.
@@ -28,6 +35,7 @@ from typing import Any, TypeVar
 
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from curriculum_agent.data.orm import (
@@ -78,8 +86,28 @@ def remap_ids(value: Any, id_map: Mapping[str, str]) -> Any:
     return value
 
 
+# The columns that carry an old->new id reference wherever they occur. Every
+# JSONB column is remapped too (detected from the table definition, not listed
+# by name here); every other column is copied verbatim — see the module
+# docstring for why a plain column must not go through remap_ids.
+_REFERENCE_COLUMNS = frozenset(
+    {"source_evidence_id", "member_skill_ids", "source_evidence_ids", "source_need_ids"}
+)
+
+
+def _remappable_columns(table_cls: type[_Row]) -> frozenset[str]:
+    return frozenset(
+        c.key
+        for c in table_cls.__table__.columns
+        if c.key in _REFERENCE_COLUMNS or isinstance(c.type, JSONB)
+    )
+
+
 def _clone(row: _Row, id_map: Mapping[str, str], **overrides: Any) -> _Row:
-    data = {k: remap_ids(v, id_map) for k, v in _row_to_dict(row).items()}
+    remappable = _remappable_columns(type(row))
+    data = {
+        k: (remap_ids(v, id_map) if k in remappable else v) for k, v in _row_to_dict(row).items()
+    }
     data.update(overrides)
     return type(row)(**data)
 
@@ -119,9 +147,16 @@ def build_copy(
         created_at=now,
         copied_from=src.program.program_id,
     )
-    evidence = [_clone(e, id_map, program_id=new_id) for e in src.evidence]
-    skills = [_clone(s, id_map, program_id=new_id) for s in src.skills]
-    needs = [_clone(n, id_map, program_id=new_id) for n in src.needs]
+    # Each row's own primary key is an id in `id_map` too, but it is not one of
+    # the remapped columns (it is neither a named reference column nor JSONB —
+    # see _clone), so it is set explicitly here rather than relying on the
+    # column scan to catch it.
+    evidence = [
+        _clone(e, id_map, program_id=new_id, evidence_id=id_map[e.evidence_id])
+        for e in src.evidence
+    ]
+    skills = [_clone(s, id_map, program_id=new_id, skill_id=id_map[s.skill_id]) for s in src.skills]
+    needs = [_clone(n, id_map, program_id=new_id, need_id=id_map[n.need_id]) for n in src.needs]
     plos = [_clone(p, id_map, program_id=new_id) for p in src.plos]
 
     review: PLOReviewTable | None = None
@@ -171,6 +206,11 @@ async def copy_program(source_id: str, new_id: str, *, now: datetime | None = No
     the route to retry under the next id.
     """
     async with AsyncSessionLocal() as session:
+        # need_combination deletes then inserts in two separate commits, so the
+        # five SELECTs in load_rows under READ COMMITTED could land between
+        # them and copy an inconsistent set. REPEATABLE READ pins the whole
+        # read to one snapshot.
+        await session.connection(execution_options={"isolation_level": "REPEATABLE READ"})
         src = await load_rows(session, source_id)
         if src is None:
             return False

@@ -101,6 +101,23 @@ def test_copy_retries_with_the_next_id_on_a_collision(env) -> None:  # noqa: ANN
     assert calls == ["program-2-run-1", "program-2-run-2"]
 
 
+def test_copy_does_not_retry_an_integrity_error_that_is_not_an_id_collision(
+    env,  # noqa: ANN001
+) -> None:
+    """An IntegrityError can come from something other than new_id already
+    being taken (e.g. a stale FK inside the copy). Retrying it under the next
+    id just repeats the same failure and an eventual 409 would misreport it as
+    a name clash; it must propagate instead of being swallowed into a retry."""
+
+    async def always_fails(source_id: str, new_id: str, **_: object) -> bool:
+        raise IntegrityError("insert", {}, Exception("not a collision"))
+
+    env["copy"].side_effect = always_fails
+    with pytest.raises(IntegrityError):
+        client.post("/programs/program-2/copy")
+    assert env["copy"].await_count == 1
+
+
 def test_copy_requires_the_api_key(env, monkeypatch: pytest.MonkeyPatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
     assert client.post("/programs/program-2/copy").status_code == 401
@@ -167,6 +184,36 @@ async def test_copy_program_commits_nothing_when_an_insert_fails(
     ):
         await pc.copy_program("program-2", "program-2-run-1")
     session.commit.assert_not_awaited()
+
+
+async def test_copy_program_sets_repeatable_read_before_loading_the_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """need_combination deletes then inserts in two commits under READ
+    COMMITTED, so reading the five tables across separate SELECTs could land
+    between them and copy an inconsistent set. The session's isolation level
+    has to be raised before the first read, not after."""
+    session = AsyncMock()
+    session.add_all = MagicMock()
+    session.add = MagicMock()
+    built = pc.ProgramRows(
+        program=MagicMock(), evidence=[], skills=[], needs=[], plos=[], review=None
+    )
+    load_rows = AsyncMock(return_value=MagicMock())
+    monkeypatch.setattr(pc, "load_rows", load_rows)
+    monkeypatch.setattr(pc, "build_copy", MagicMock(return_value=built))
+
+    manager = MagicMock()
+    manager.attach_mock(session.connection, "connection")
+    manager.attach_mock(load_rows, "load_rows")
+
+    with patch.object(pc, "AsyncSessionLocal", return_value=_session_ctx(session)):
+        await pc.copy_program("program-2", "program-2-run-1", now=datetime(2026, 10, 6))
+
+    assert [c[0] for c in manager.mock_calls] == ["connection", "load_rows"]
+    session.connection.assert_awaited_once_with(
+        execution_options={"isolation_level": "REPEATABLE READ"}
+    )
 
 
 async def test_copy_program_returns_false_when_the_source_is_gone(
