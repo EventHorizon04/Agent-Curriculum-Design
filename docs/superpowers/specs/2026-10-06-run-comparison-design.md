@@ -110,7 +110,7 @@ over the copied PLOs and stores that.
 
 ### Transaction
 
-The whole copy runs in one `get_session()` transaction: rows are read from the
+The whole copy runs in one `AsyncSessionLocal()` session (`async with session.begin()`): rows are read from the
 source and the new rows added in the same session, committed once. Any failure
 rolls back and leaves nothing behind. Insert order respects the FKs: program,
 evidence, skills, needs, PLOs, review.
