@@ -43,6 +43,9 @@ class ProgramTable(Base):
     subject_benchmark_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
     program_objectives_th: Mapped[list[str]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime)
+    # Set only by POST /programs/{id}/copy. Not a ForeignKey: deleting the
+    # source program must not reach its copies.
+    copied_from: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class EvidenceTable(Base):

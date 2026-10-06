@@ -151,6 +151,7 @@ class ProgramRepository:
                     has_plos=p.program_id in with_plos,
                 ),
                 session_status=(latest[p.program_id].status if p.program_id in latest else None),
+                copied_from=p.copied_from,
             )
             for p in prog_rows
         ]

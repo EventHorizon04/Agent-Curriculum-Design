@@ -185,6 +185,9 @@ class ProgramCreateRequest(BaseModel):
 class ProgramMetadata(ProgramCreateRequest):
     program_id: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    # Which program this one was copied from (POST /programs/{id}/copy). On the
+    # entity, not on ProgramCreateRequest, so a client cannot set it.
+    copied_from: str | None = None
 
     # Entity model deserializes persisted rows verbatim, including any future
     # legacy code no longer in the taxonomy; input-time membership enforcement
@@ -213,6 +216,7 @@ class ProgramSummary(BaseModel):
     created_at: datetime
     current_stage: str
     session_status: str | None = None
+    copied_from: str | None = None
 
 
 # --------------------------- Stage 1 -----------------------------

@@ -118,6 +118,10 @@ async def update_program(
     updated = ProgramMetadata(
         program_id=program_id,
         created_at=existing.created_at,
+        # req is a ProgramCreateRequest — it has no copied_from field — so the
+        # existing value has to be carried over explicitly or a PUT would erase
+        # which program this one was copied from.
+        copied_from=existing.copied_from,
         **req.model_dump(),
     )
     await repo.upsert(updated)
