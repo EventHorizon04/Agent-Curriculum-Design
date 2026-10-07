@@ -379,7 +379,10 @@ async def test_needs_run_passes_program_field_into_extraction_prompt(
 
 
 async def test_plos_run_carries_the_note_into_the_stage_state(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     seen: dict[str, object] = {}
 
@@ -393,13 +396,16 @@ async def test_plos_run_carries_the_note_into_the_stage_state(
     )
     with patch("curriculum_agent.stages.plo_synthesis.run", new=fake_run):
         response = await client.post("/programs/cs-test/plos/run", json={"note_th": NOTE})
+        await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
     assert seen["designer_note"] == NOTE
 
 
 async def test_plos_run_still_works_with_no_body_at_all(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     seen: dict[str, object] = {}
 
@@ -413,8 +419,8 @@ async def test_plos_run_still_works_with_no_body_at_all(
     )
     with patch("curriculum_agent.stages.plo_synthesis.run", new=fake_run):
         response = await client.post("/programs/cs-test/plos/run")
+        await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
     assert "designer_note" not in seen
 
 

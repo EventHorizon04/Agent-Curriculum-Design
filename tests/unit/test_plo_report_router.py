@@ -54,7 +54,7 @@ def test_report_run_422_when_no_plos():
     assert resp.status_code == 422
 
 
-def test_report_run_returns_the_full_report_payload():
+def test_report_run_returns_the_full_report_payload(jobs_store, spawned):
     """The route used to return a bare `list[PLO]`, discarding the `counts` and
     `needs_by_id` plo_report.py assembles alongside it — the report's only
     consumers (a future drill-down page) had no route to read them from. This
@@ -75,9 +75,13 @@ def test_report_run_returns_the_full_report_payload():
     ):
         mock_repo.list_by_program = AsyncMock(return_value=[plo])
         resp = client.post("/programs/p1/plos/report/run")
+        # The report is assembled by the job body, inside the patches above.
+        assert resp.status_code == 202
+        spawned.drain()
 
-    assert resp.status_code == 200
-    body = resp.json()
+    job = jobs_store.rows[resp.json()["job_id"]]
+    assert job.status == "succeeded", job.error_th
+    body = job.result
     assert set(body.keys()) == {
         "plos",
         "counts",

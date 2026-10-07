@@ -18,6 +18,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.stages import plo_synthesis as ps_module
 from curriculum_agent.stages.need_grouping import PROVIDER_MARKER_TH, REVIEW_MARKER_TH
+from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 client = TestClient(app)
 
@@ -478,7 +479,9 @@ def test_put_leaves_the_provenance_alone_when_the_text_did_not_change(
     assert resp.json()["smart_validated_by"] == "agent"
 
 
-def test_revalidate_rejudges_the_stored_statement(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_revalidate_rejudges_the_stored_statement(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
     """The only way a hand-edited statement gets a verdict. It re-judges what is
     stored rather than drafting anything new — the designer's sentence is the
     input, and no synthesis call happens unless the validator asks for one."""
@@ -505,12 +508,19 @@ def test_revalidate_rejudges_the_stored_statement(monkeypatch: pytest.MonkeyPatc
         "curriculum_agent.stages.plo_synthesis.validate_and_build", side_effect=fake_validate
     ):
         resp = client.post("/programs/cs-test/plos/PLO1/revalidate")
+        # The judging is a job body: nothing has been judged or stored yet, and the
+        # body has to run inside the patch above.
+        assert resp.status_code == 202, resp.text
+        assert seen == {}
+        assert insert.await_count == 0
+        spawned.drain()
 
-    assert resp.status_code == 200, resp.text
+    job = jobs_store.rows[resp.json()["job_id"]]
+    assert job.status == "succeeded", job.error_th
     assert seen["statement_th"] == stale.statement_th
     # Its siblings are the other stored outcomes, never itself.
     assert seen["sibling_ids"] == ["PLO2"]
-    body = resp.json()
+    body = job.result
     assert body["smart_validated_by"] == "agent"
     assert body["version"] == stale.version + 1
     assert insert.await_count == 1

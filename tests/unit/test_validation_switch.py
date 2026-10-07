@@ -23,6 +23,7 @@ from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetad
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages import smart_agent as sa
 from curriculum_agent.stages.smart_agent_tools import ToolBudget, ValidationContext
+from tests.support.jobs import InMemoryJobs, SpawnRecorder
 from tests.support.smart_agent import set_agent
 
 client = TestClient(app)
@@ -215,18 +216,31 @@ def _route_env(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     return run
 
 
-def test_run_route_puts_the_switch_in_state_only_when_off(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_route_puts_the_switch_in_state_only_when_off(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
     run = _route_env(monkeypatch)
 
     resp = client.post("/programs/cs-test/plos/run", json={"run_validation": False})
-    assert resp.status_code == 200
+    assert resp.status_code == 202
+    assert resp.json()["params"]["run_validation"] is False
+    spawned.drain()
     assert run.await_args.args[0]["run_validation"] is False
 
-    assert client.post("/programs/cs-test/plos/run", json={}).status_code == 200
+    # A finished job frees the program, so the next run is accepted.
+    resp = client.post("/programs/cs-test/plos/run", json={})
+    assert resp.status_code == 202
+    assert resp.json()["params"]["run_validation"] is True
+    spawned.drain()
     assert "run_validation" not in run.await_args.args[0]
 
-    assert client.post("/programs/cs-test/plos/run").status_code == 200
+    resp = client.post("/programs/cs-test/plos/run")
+    assert resp.status_code == 202
+    assert resp.json()["params"]["run_validation"] is True
+    spawned.drain()
     assert "run_validation" not in run.await_args.args[0]
+    assert run.await_count == 3
+    assert all(job.status == "succeeded" for job in jobs_store.rows.values())
 
 
 def test_validation_status_reports_on_and_off(monkeypatch: pytest.MonkeyPatch) -> None:

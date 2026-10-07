@@ -9,9 +9,10 @@ from fastapi.testclient import TestClient
 from curriculum_agent.api.routes.plos import router
 from curriculum_agent.config import settings
 from curriculum_agent.graph import DESIGNER_STAGES, REVIEW_NODE_STAGE, build_graph
-from curriculum_agent.models import PLO, BloomLevel, PLOSetReview, SMARTCheck
+from curriculum_agent.models import PLO, BloomLevel, JobInfo, PLOSetReview, SMARTCheck
 from curriculum_agent.stages import plo_report
 from curriculum_agent.stages.plo_review import ReviewAlreadyRunning, plo_fingerprint
+from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 app = FastAPI()
 app.include_router(router, prefix="/programs/{program_id}/plos")
@@ -29,6 +30,14 @@ _PLO = PLO(
     source_evidence_ids=["e1"],
     rationale_th="เหตุผล",
 )
+
+
+def _run_job(resp, jobs_store: InMemoryJobs, spawned: SpawnRecorder) -> JobInfo:
+    """The report and review routes answer 202 and do their work in a job body.
+    Run it - inside the caller's patches, so it sees them - and hand back the job."""
+    assert resp.status_code == 202, resp.text
+    spawned.drain()
+    return jobs_store.rows[resp.json()["job_id"]]
 
 
 def _review(fingerprint: str) -> PLOSetReview:
@@ -93,7 +102,7 @@ async def test_a_report_without_a_review_says_so() -> None:
 # ------------------------------ routes ------------------------------
 
 
-def test_report_route_runs_the_review_first() -> None:
+def test_report_route_runs_the_review_first(jobs_store, spawned) -> None:
     review_run = AsyncMock(
         side_effect=lambda s: {
             **s,
@@ -110,15 +119,16 @@ def test_report_route_runs_the_review_first() -> None:
         needs.return_value.list_by_program = AsyncMock(return_value=[])
         plos_repo.return_value.bulk_insert = AsyncMock()
         resp = client.post("/programs/p1/plos/report/run")
-    assert resp.status_code == 200
-    body = resp.json()
+        job = _run_job(resp, jobs_store, spawned)
+    assert job.status == "succeeded", job.error_th
+    body = job.result
     assert body["review"]["summary_th"] == "ดีแล้ว"
     assert body["review_stale"] is False
     assert body["review_enabled"] is False  # conftest kill switch
     review_run.assert_awaited_once()
 
 
-def test_report_route_re_reads_the_plos_after_the_review_call() -> None:
+def test_report_route_re_reads_the_plos_after_the_review_call(jobs_store, spawned) -> None:
     """The review call can run for up to plo_review_timeout_seconds (180s) —
     long enough for a PUT edit, a merge, or a re-synthesis to land on this
     program while it is in flight. The route must persist and report what is
@@ -143,9 +153,10 @@ def test_report_route_re_reads_the_plos_after_the_review_call() -> None:
         bulk_insert = AsyncMock()
         plos_repo.return_value.bulk_insert = bulk_insert
         resp = client.post("/programs/p1/plos/report/run")
-    assert resp.status_code == 200
+        job = _run_job(resp, jobs_store, spawned)
+    assert job.status == "succeeded", job.error_th
     assert repo.list_by_program.await_count == 2
-    body = resp.json()
+    body = job.result
     assert [p["statement_th"] for p in body["plos"]] == ["แปลเอกสารราชการ"]
     inserted = bulk_insert.await_args.args[0]
     assert [p.statement_th for p in inserted] == ["แปลเอกสารราชการ"]
@@ -154,7 +165,9 @@ def test_report_route_re_reads_the_plos_after_the_review_call() -> None:
     assert body["review_stale"] is True
 
 
-def test_report_route_422_when_the_re_read_finds_nothing() -> None:
+def test_report_job_fails_when_the_re_read_finds_nothing(jobs_store, spawned) -> None:
+    """The precondition read found PLOs, so the request is accepted; the re-read
+    after the review found none, so the job fails with the 422's own text."""
     review_run = AsyncMock(side_effect=lambda s: {**s, "plo_review": None})
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
@@ -162,10 +175,14 @@ def test_report_route_422_when_the_re_read_finds_nothing() -> None:
     ):
         repo.list_by_program = AsyncMock(side_effect=[[_PLO], []])
         resp = client.post("/programs/p1/plos/report/run")
-    assert resp.status_code == 422
+        job = _run_job(resp, jobs_store, spawned)
+    assert job.status == "failed"
+    assert job.error_th == "ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"
 
 
-def test_report_route_review_enabled_true_when_the_slot_is_on(monkeypatch) -> None:
+def test_report_route_review_enabled_true_when_the_slot_is_on(
+    monkeypatch, jobs_store, spawned
+) -> None:
     monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
     review_run = AsyncMock(side_effect=lambda s: {**s, "plo_review": None})
     with (
@@ -178,7 +195,9 @@ def test_report_route_review_enabled_true_when_the_slot_is_on(monkeypatch) -> No
         needs.return_value.list_by_program = AsyncMock(return_value=[])
         plos_repo.return_value.bulk_insert = AsyncMock()
         resp = client.post("/programs/p1/plos/report/run")
-    assert resp.json()["review_enabled"] is True
+        job = _run_job(resp, jobs_store, spawned)
+    assert job.status == "succeeded", job.error_th
+    assert job.result["review_enabled"] is True
 
 
 def test_get_review_reports_staleness() -> None:
@@ -247,17 +266,50 @@ def test_review_run_503_when_switched_off() -> None:
     assert resp.status_code == 503
 
 
-def test_review_run_503_when_the_review_failed(monkeypatch) -> None:
+def test_review_run_job_fails_when_the_review_failed(monkeypatch, jobs_store, spawned) -> None:
     monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch("curriculum_agent.stages.plo_review.fresh_review", AsyncMock(return_value=None)),
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
-        assert client.post("/programs/p1/plos/review/run").status_code == 503
+        job = _run_job(client.post("/programs/p1/plos/review/run"), jobs_store, spawned)
+    assert job.status == "failed"
+    assert job.error_th == "ตรวจชุด PLO ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง"
 
 
-def test_review_run_409_while_one_is_in_flight(monkeypatch) -> None:
+def test_review_run_409_while_a_job_is_running_on_the_program(
+    monkeypatch, jobs_store, spawned
+) -> None:
+    """The refusal a second review used to get from the stage's own guard is now
+    the job rule's: one active writer per program, answered before any work."""
+    monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
+    jobs_store.rows["already"] = JobInfo(
+        job_id="already",
+        program_id="p1",
+        kind="plo_review",
+        status="running",
+        created_at=datetime(2026, 10, 8, 3, 0),
+    )
+    fresh = AsyncMock(return_value=_review(plo_fingerprint([_PLO])))
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.stages.plo_review.fresh_review", fresh),
+    ):
+        repo.list_by_program = AsyncMock(return_value=[_PLO])
+        resp = client.post("/programs/p1/plos/review/run")
+    assert resp.status_code == 409
+    assert isinstance(resp.json()["detail"], str)
+    assert list(jobs_store.rows) == ["already"]
+    assert spawned.coros == []
+    fresh.assert_not_awaited()
+
+
+def test_review_run_job_fails_with_the_stage_message_when_its_own_guard_fires(
+    monkeypatch, jobs_store, spawned
+) -> None:
+    """Should the stage's single-flight guard ever fire inside a job, it is that
+    job's failure - with the stage's own Thai message - not a request error."""
     monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
@@ -267,10 +319,12 @@ def test_review_run_409_while_one_is_in_flight(monkeypatch) -> None:
         ),
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
-        assert client.post("/programs/p1/plos/review/run").status_code == 409
+        job = _run_job(client.post("/programs/p1/plos/review/run"), jobs_store, spawned)
+    assert job.status == "failed"
+    assert job.error_th == "กำลังตรวจ"
 
 
-def test_review_run_returns_the_fresh_review(monkeypatch) -> None:
+def test_review_run_returns_the_fresh_review(monkeypatch, jobs_store, spawned) -> None:
     monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
     fresh = _review(plo_fingerprint([_PLO]))
     with (
@@ -279,13 +333,16 @@ def test_review_run_returns_the_fresh_review(monkeypatch) -> None:
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
         resp = client.post("/programs/p1/plos/review/run")
-    assert resp.status_code == 200
-    body = resp.json()
+        job = _run_job(resp, jobs_store, spawned)
+    assert job.status == "succeeded", job.error_th
+    body = job.result
     assert body["review"]["summary_th"] == "ดีแล้ว" and body["stale"] is False
     assert body["review_enabled"] is True
 
 
-def test_review_run_reports_staleness_from_the_set_read_after_the_call(monkeypatch) -> None:
+def test_review_run_reports_staleness_from_the_set_read_after_the_call(
+    monkeypatch, jobs_store, spawned
+) -> None:
     """fresh_review answers the call it made against the PLOs it was handed, but
     the stale flag must reflect whatever is stored by the time the route
     answers — a merge or an edit could have landed while the (up to 180s) call
@@ -300,5 +357,6 @@ def test_review_run_reports_staleness_from_the_set_read_after_the_call(monkeypat
     ):
         repo.list_by_program = AsyncMock(side_effect=[[_PLO], [plo_b]])
         resp = client.post("/programs/p1/plos/review/run")
-    assert resp.status_code == 200
-    assert resp.json()["stale"] is True
+        job = _run_job(resp, jobs_store, spawned)
+    assert job.status == "succeeded", job.error_th
+    assert job.result["stale"] is True

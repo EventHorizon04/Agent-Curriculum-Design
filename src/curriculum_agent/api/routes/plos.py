@@ -7,6 +7,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from curriculum_agent.api.deps import require_api_key
+from curriculum_agent.api.jobs import start_job_or_409
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
@@ -21,6 +22,7 @@ from curriculum_agent.models import (
     PLO,
     BloomLevel,
     DesignerNoteRequest,
+    JobInfo,
     Need,
     PLOSetReview,
     SMARTCheck,
@@ -184,14 +186,15 @@ class PLOSynthesisRunRequest(DesignerNoteRequest):
     run_validation: bool = True
 
 
-@router.post("/run", response_model=list[PLO])
-async def run_plo_synthesis(
-    program_id: str, body: PLOSynthesisRunRequest | None = None
-) -> list[PLO]:
-    from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
-        SynthesisAlreadyRunning,
-        run,
-    )
+@router.post("/run", response_model=JobInfo, status_code=202)
+async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None = None) -> JobInfo:
+    """Synthesize the program's PLOs from its stored Needs. Answers 202; the
+    result (a `list[PLO]`) arrives through `GET /jobs`.
+
+    A second run on the same program is refused by the job rule (409) before the
+    stage's own single-flight guard is reached.
+    """
+    from curriculum_agent.stages.plo_synthesis import run  # noqa: PLC0415
 
     metadata = await ProgramRepository().get(program_id)
     if metadata is None:
@@ -214,17 +217,25 @@ async def run_plo_synthesis(
     if body is not None and not body.run_validation:
         state["run_validation"] = False
 
-    try:
+    async def work() -> list[PLO]:
         result_state = await run(state)
-    except SynthesisAlreadyRunning as exc:
-        # Same program, a run already in flight — refuse rather than let a
-        # second run's delete/insert interleave with the first's.
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return [PLO.model_validate(p) for p in result_state.get("plos", [])]
+        return [PLO.model_validate(p) for p in result_state.get("plos", [])]
+
+    return await start_job_or_409(
+        program_id,
+        "plo_synthesis",
+        {
+            "note_th": body.note_th if body else None,
+            "run_validation": body.run_validation if body else True,
+        },
+        work,
+    )
 
 
-@router.post("/report/run", response_model=PLOReportResponse)
-async def run_plo_report(program_id: str) -> PLOReportResponse:
+@router.post("/report/run", response_model=JobInfo, status_code=202)
+async def run_plo_report(program_id: str) -> JobInfo:
+    """Review the PLO set, then assemble the report. Answers 202; the result (a
+    `PLOReportResponse`) arrives through `GET /jobs`."""
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
     from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
 
@@ -235,36 +246,40 @@ async def run_plo_report(program_id: str) -> PLOReportResponse:
             detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
         )
 
-    state: AgentState = {
+    snapshot_state: AgentState = {
         "program_id": program_id,
         "plos": [p.model_dump(mode="json") for p in plos],
     }
-    state = await plo_review.run(state)
-    # plo_review.run is an LLM call up to plo_review_timeout_seconds (180s) —
-    # long enough for a PUT edit, a merge, or a re-synthesis to land on this
-    # program while it was in flight. Re-read rather than reuse the snapshot
-    # taken above: plo_report.run persists whatever is in state["plos"]
-    # (PLORepository.bulk_insert), and persisting the old snapshot would revert
-    # that change. review_stale is computed by plo_report against the set it
-    # actually persists, not against the one the review call saw.
-    plos = await _repo.list_by_program(program_id)
-    if not plos:
-        raise HTTPException(
-            status_code=422,
-            detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
+
+    async def work() -> PLOReportResponse:
+        state = await plo_review.run(snapshot_state)
+        # plo_review.run is an LLM call up to plo_review_timeout_seconds (180s) —
+        # long enough for a PUT edit, a merge, or a re-synthesis to land on this
+        # program while it was in flight. Re-read rather than reuse the snapshot
+        # taken above: plo_report.run persists whatever is in state["plos"]
+        # (PLORepository.bulk_insert), and persisting the old snapshot would revert
+        # that change. review_stale is computed by plo_report against the set it
+        # actually persists, not against the one the review call saw.
+        current = await _repo.list_by_program(program_id)
+        if not current:
+            raise HTTPException(
+                status_code=422,
+                detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
+            )
+        state["plos"] = [p.model_dump(mode="json") for p in current]
+        result_state = await run(state)
+        report = result_state["report"]
+        return PLOReportResponse(
+            plos=[PLO.model_validate(p) for p in report["plos"]],
+            counts=report["counts"],
+            needs_by_id={k: Need.model_validate(v) for k, v in report["needs_by_id"].items()},
+            needs_not_synthesized=report["needs_not_synthesized"],
+            review=report["review"],
+            review_stale=report["review_stale"],
+            review_enabled=bool(settings.plo_review_provider),
         )
-    state["plos"] = [p.model_dump(mode="json") for p in plos]
-    result_state = await run(state)
-    report = result_state["report"]
-    return PLOReportResponse(
-        plos=[PLO.model_validate(p) for p in report["plos"]],
-        counts=report["counts"],
-        needs_by_id={k: Need.model_validate(v) for k, v in report["needs_by_id"].items()},
-        needs_not_synthesized=report["needs_not_synthesized"],
-        review=report["review"],
-        review_stale=report["review_stale"],
-        review_enabled=bool(settings.plo_review_provider),
-    )
+
+    return await start_job_or_409(program_id, "plo_report", {}, work)
 
 
 class PLOReviewResponse(BaseModel):
@@ -298,8 +313,15 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
     )
 
 
-@router.post("/review/run", response_model=PLOReviewResponse)
-async def run_plo_review(program_id: str) -> PLOReviewResponse:
+@router.post("/review/run", response_model=JobInfo, status_code=202)
+async def run_plo_review(program_id: str) -> JobInfo:
+    """Run the advisory set review afresh. Answers 202; the result (a
+    `PLOReviewResponse`) arrives through `GET /jobs`.
+
+    The switched-off 503 stays on the request: whether the slot can run at all is
+    known before any job exists, so a designer who asks for a disabled feature is
+    told so rather than shown a job that fails.
+    """
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
 
     plos = await _repo.list_by_program(program_id)
@@ -311,20 +333,24 @@ async def run_plo_review(program_id: str) -> PLOReviewResponse:
         raise HTTPException(
             status_code=503, detail="ปิดการตรวจชุด PLO อยู่ (ตั้ง PLO_REVIEW_PROVIDER ไว้ว่าง)"
         )
-    try:
-        review = await plo_review.fresh_review(program_id, plos)
-    except plo_review.ReviewAlreadyRunning as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    if review is None:
-        raise HTTPException(status_code=503, detail="ตรวจชุด PLO ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
-    # fresh_review's call can run for up to plo_review_timeout_seconds (180s);
-    # re-read rather than reuse `plos` so staleness is judged against whatever
-    # landed on this program while the call was in flight, not the snapshot
-    # from before it started.
-    plos_now = await _repo.list_by_program(program_id)
-    return PLOReviewResponse(
-        review=review, stale=plo_review.is_stale(review, plos_now), review_enabled=True
-    )
+
+    async def work() -> PLOReviewResponse:
+        try:
+            review = await plo_review.fresh_review(program_id, plos)
+        except plo_review.ReviewAlreadyRunning as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        if review is None:
+            raise HTTPException(status_code=503, detail="ตรวจชุด PLO ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
+        # fresh_review's call can run for up to plo_review_timeout_seconds (180s);
+        # re-read rather than reuse `plos` so staleness is judged against whatever
+        # landed on this program while the call was in flight, not the snapshot
+        # from before it started.
+        plos_now = await _repo.list_by_program(program_id)
+        return PLOReviewResponse(
+            review=review, stale=plo_review.is_stale(review, plos_now), review_enabled=True
+        )
+
+    return await start_job_or_409(program_id, "plo_review", {}, work)
 
 
 class MergeNeedsRequest(DesignerNoteRequest):
@@ -593,9 +619,15 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
     return updated
 
 
-@router.post("/{plo_id}/revalidate", response_model=PLO, dependencies=[Depends(require_api_key)])
-async def revalidate_plo(program_id: str, plo_id: str) -> PLO:
+@router.post(
+    "/{plo_id}/revalidate",
+    response_model=JobInfo,
+    status_code=202,
+    dependencies=[Depends(require_api_key)],
+)
+async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
     """Re-run the SMART validation agent over a stored PLO's own statement.
+    Answers 202; the result (the revalidated `PLO`) arrives through `GET /jobs`.
 
     The only way a hand-edited statement gets a verdict, and what the "ต้องแก้
     ด้วยมือ" badge should link to. It re-judges what is stored rather than
@@ -639,21 +671,26 @@ async def revalidate_plo(program_id: str, plo_id: str) -> PLO:
         rationale_th=match.rationale_th,
         distinctive_feature_th=match.distinctive_feature_th,
     )
-    revalidated = await validate_and_build(
-        draft,
-        metadata=program,
-        needs=cited,
-        program_id=program_id,
-        plo_id=plo_id,
-        known_need_ids={n.need_id for n in all_needs},
-        siblings=[SiblingSummary.from_plo(p) for p in stored if p.plo_id != plo_id],
-    )
-    if revalidated is None:
-        raise HTTPException(status_code=502, detail="ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่")
 
-    updated = revalidated.model_copy(update={"version": match.version + 1})
-    await _repo.bulk_insert([updated])
-    logger.info(
-        f"Revalidated {plo_id}: escalated={updated.smart_escalated} by={updated.smart_validated_by}"
-    )
-    return updated
+    async def work() -> PLO:
+        revalidated = await validate_and_build(
+            draft,
+            metadata=program,
+            needs=cited,
+            program_id=program_id,
+            plo_id=plo_id,
+            known_need_ids={n.need_id for n in all_needs},
+            siblings=[SiblingSummary.from_plo(p) for p in stored if p.plo_id != plo_id],
+        )
+        if revalidated is None:
+            raise HTTPException(status_code=502, detail="ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่")
+
+        updated = revalidated.model_copy(update={"version": match.version + 1})
+        await _repo.bulk_insert([updated])
+        logger.info(
+            f"Revalidated {plo_id}: escalated={updated.smart_escalated} "
+            f"by={updated.smart_validated_by}"
+        )
+        return updated
+
+    return await start_job_or_409(program_id, "plo_revalidate", {"plo_id": plo_id}, work)

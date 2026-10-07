@@ -15,6 +15,7 @@ the other.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
@@ -23,8 +24,9 @@ from fastapi.testclient import TestClient
 from curriculum_agent.api.main import app
 from curriculum_agent.api.routes import plos as plos_route
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetadata
+from curriculum_agent.models import BloomLevel, JobInfo, KSECCategory, Need, ProgramMetadata
 from curriculum_agent.stages import plo_synthesis as ps
+from tests.support.jobs import InMemoryJobs, SpawnRecorder
 from tests.support.smart_agent import set_soft_judge
 
 client = TestClient(app)
@@ -193,26 +195,59 @@ async def test_the_slot_is_freed_after_a_run_that_raises(
     assert len(result["plos"]) == 1
 
 
-def test_the_route_answers_409_with_the_thai_detail_when_the_stage_is_busy(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """`POST /programs/{id}/plos/run` must translate the stage's refusal into a
-    409 the frontend's existing `response.data.detail` handling already shows —
-    no frontend change needed."""
+def _route_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_META))
     monkeypatch.setattr(
         plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1")])
     )
 
-    async def busy(state: AgentState) -> AgentState:
-        raise ps.SynthesisAlreadyRunning(
-            "กำลังสังเคราะห์ PLO ของโปรแกรม 'cs-test' อยู่ — รอให้รอบเดิมเสร็จก่อน"
-        )
 
-    monkeypatch.setattr(ps, "run", busy)
+def test_the_route_answers_409_with_the_thai_detail_when_a_job_is_running(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    """`POST /programs/{id}/plos/run` is refused by the job rule while another job
+    holds the program: a 409 whose detail is a plain Thai string, which the
+    frontend's existing `response.data.detail` handling already shows. The stage
+    is never reached."""
+    _route_env(monkeypatch)
+    run = AsyncMock()
+    monkeypatch.setattr(ps, "run", run)
+    jobs_store.rows["already"] = JobInfo(
+        job_id="already",
+        program_id="cs-test",
+        kind="plo_synthesis",
+        status="running",
+        created_at=datetime(2026, 10, 8, 3, 0),
+    )
 
     response = client.post("/programs/cs-test/plos/run")
 
     assert response.status_code == 409
-    assert "กำลังสังเคราะห์ PLO" in response.json()["detail"]
-    assert "cs-test" in response.json()["detail"]
+    assert "สังเคราะห์ PLO" in response.json()["detail"]
+    assert list(jobs_store.rows) == ["already"]
+    assert spawned.coros == []
+    run.assert_not_awaited()
+
+
+def test_the_stages_own_refusal_inside_a_job_fails_that_job_with_the_thai_detail(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    """The stage's guard still covers the graph path and anything that reaches
+    `ps.run` without a job. Should it fire inside a job it is that job's failure,
+    carrying the stage's own message — the route no longer maps it to a 409."""
+    _route_env(monkeypatch)
+    message = "กำลังสังเคราะห์ PLO ของโปรแกรม 'cs-test' อยู่ — รอให้รอบเดิมเสร็จก่อน"
+
+    async def busy(state: AgentState) -> AgentState:
+        raise ps.SynthesisAlreadyRunning(message)
+
+    monkeypatch.setattr(ps, "run", busy)
+
+    response = client.post("/programs/cs-test/plos/run")
+    assert response.status_code == 202
+    spawned.drain()
+
+    job = jobs_store.rows[response.json()["job_id"]]
+    assert job.status == "failed"
+    assert job.error_th == message
+    assert "cs-test" in job.error_th
