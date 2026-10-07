@@ -2,10 +2,11 @@ import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
 import RunProgress, { LoadingLine } from '../components/RunProgress'
-import { PLO_SYNTHESIS_PLAN } from '../constants/runPlans'
+import { PLO_SYNTHESIS_PLAN, PLO_SYNTHESIS_CODE_ONLY_PLAN } from '../constants/runPlans'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import DesignerNote from './components/DesignerNote'
+import ValidationToggle, { type ValidationStatus } from './components/ValidationToggle'
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
@@ -61,6 +62,29 @@ export default function PloSynthesis() {
   const [running, setRunning] = useState(false)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
+  const [runValidation, setRunValidation] = useState(true)
+  const [validation, setValidation] = useState<ValidationStatus | null>(null)
+  // What the next run will actually do: the system switch wins over the box.
+  const agentWillRun = validation?.enabled !== false && runValidation
+
+  // Read once per program. A failed read leaves the status unknown rather than
+  // "off": the box stays usable, and the backend still refuses to run an agent
+  // its own settings disable.
+  useEffect(() => {
+    if (!programId) return
+    let cancelled = false
+    api
+      .get<ValidationStatus>(`/programs/${programId}/plos/validation`)
+      .then((res) => {
+        if (!cancelled) setValidation(res.data)
+      })
+      .catch(() => {
+        if (!cancelled) setValidation(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [programId])
 
   const fetchPlos = useCallback(async () => {
     if (!programId) return
@@ -87,6 +111,7 @@ export default function PloSynthesis() {
     try {
       const res = await api.post<PLO[]>(`/programs/${programId}/plos/run`, {
         note_th: note.trim() || null,
+        run_validation: agentWillRun,
       })
       setPlos(res.data)
     } catch (err: unknown) {
@@ -95,7 +120,7 @@ export default function PloSynthesis() {
     } finally {
       setRunning(false)
     }
-  }, [programId, note])
+  }, [programId, note, agentWillRun])
 
   useEffect(() => { fetchPlos() }, [fetchPlos])
 
@@ -162,17 +187,18 @@ export default function PloSynthesis() {
       {loading ? (
         <LoadingLine />
       ) : running ? (
-        <RunProgress plan={PLO_SYNTHESIS_PLAN} />
+        <RunProgress plan={agentWillRun ? PLO_SYNTHESIS_PLAN : PLO_SYNTHESIS_CODE_ONLY_PLAN} />
       ) : plos.length === 0 ? (
         <div className="panel border-dashed px-6 py-12 text-center">
           <p className="font-display mb-1 text-lg text-graphite">ยังไม่มี PLO</p>
           <p className="mb-6 text-sm text-pencil">กดปุ่มด้านล่างเพื่อให้ AI สังเคราะห์ PLO จาก skill clusters</p>
           <div className="mx-auto mb-2 max-w-md">
             <DesignerNote value={note} onChange={setNote} />
+            <ValidationToggle checked={runValidation} onChange={setRunValidation} status={validation} />
           </div>
           <button
             onClick={runSynthesis}
-            className="btn btn-primary"
+            className="btn btn-primary mt-3"
           >
             สังเคราะห์ PLO
           </button>
@@ -180,6 +206,14 @@ export default function PloSynthesis() {
       ) : (
         <>
           <DesignerNote value={note} onChange={setNote} disabled={running} />
+          <div className="mb-4">
+            <ValidationToggle
+              checked={runValidation}
+              onChange={setRunValidation}
+              status={validation}
+              disabled={running}
+            />
+          </div>
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2 text-sm text-pencil">
               <span className="data">{plos.length} PLOs</span>
@@ -188,7 +222,7 @@ export default function PloSynthesis() {
               </span>
               {unjudgedCount > 0 && (
                 <span className="chip chip-marker">
-                  รอตรวจซ้ำ {unjudgedCount}
+                  ยังไม่ได้ตรวจด้วยผู้ตรวจ {unjudgedCount}
                 </span>
               )}
               <button
@@ -459,10 +493,22 @@ function PLOCard({
                 failed" and "no validator has judged this as written" are
                 different facts, and without this the page would attribute a
                 diagnosis to something that never ran. */}
-            {needsAttention(p.smart_validated_by) && (
-              <span className="chip chip-marker whitespace-normal">
-                {VALIDATED_BY_TH[p.smart_validated_by]}
+            {/* code_only covers three different causes — this run skipped the
+                agent, .env disables it, the endpoint failed — and only the
+                diagnosis says which, so the badge quotes it instead of guessing. */}
+            {p.smart_validated_by === 'code_only' ? (
+              <span
+                className="chip chip-marker cursor-help"
+                title={p.smart_diagnosis_th ?? VALIDATED_BY_TH.code_only}
+              >
+                ไม่ได้ตรวจ
               </span>
+            ) : (
+              needsAttention(p.smart_validated_by) && (
+                <span className="chip chip-marker whitespace-normal">
+                  {VALIDATED_BY_TH[p.smart_validated_by]}
+                </span>
+              )
             )}
           </div>
           {/* The soft findings carry a reason each; the flat flag list is the
@@ -572,7 +618,13 @@ function PLOCard({
           {/* The instruction a designer acts on, so it gets its own block. */}
           {p.smart_diagnosis_th && (
             <div className="notice notice-warn mt-2">
-              <p className="mb-0.5 text-xs font-semibold">ข้อวินิจฉัยจากผู้ตรวจ SMART</p>
+              {/* A code_only diagnosis is the reason nothing judged this, not
+                  a judgement — titled as one, it reads as the agent's opinion. */}
+              <p className="mb-0.5 text-xs font-semibold">
+                {p.smart_validated_by === 'code_only'
+                  ? 'ตรวจด้วยกฎพื้นฐานเท่านั้น'
+                  : 'ข้อวินิจฉัยจากผู้ตรวจ SMART'}
+              </p>
               <p className="text-xs leading-relaxed">{p.smart_diagnosis_th}</p>
             </div>
           )}

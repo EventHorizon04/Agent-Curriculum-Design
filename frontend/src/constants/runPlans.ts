@@ -50,6 +50,19 @@ export const PLO_SYNTHESIS_PLAN: RunPlan = {
   typical: [180, 600],
 }
 
+/** The same run with the validation agent switched off for this run, or
+ *  disabled in `.env`: drafting and the pure-code gate only. */
+export const PLO_SYNTHESIS_CODE_ONLY_PLAN: RunPlan = {
+  title: 'กำลังสังเคราะห์ PLO (ไม่ใช้ผู้ตรวจ SMART)',
+  steps: [
+    PLO_SYNTHESIS_PLAN.steps[0],
+    PLO_SYNTHESIS_PLAN.steps[1],
+    PLO_SYNTHESIS_PLAN.steps[2],
+    'ข้อที่ไม่ผ่านกฎพื้นฐานถูกเก็บไว้ให้แก้ด้วยมือ — ไม่มีรอบสั่งแก้จากผู้ตรวจ',
+  ],
+  typical: [60, 240],
+}
+
 export const PLO_REPORT_PLAN: RunPlan = {
   title: 'กำลังสร้างรายงาน PLO',
   steps: [

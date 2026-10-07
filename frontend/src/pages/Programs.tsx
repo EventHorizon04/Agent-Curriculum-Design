@@ -15,6 +15,10 @@ interface ProgramSummary {
   created_at: string
   current_stage: string | null
   session_status: string | null
+  /** The program this one was copied from — set only by POST /{id}/copy. Not a
+   *  foreign key: the source may since have been deleted, so it is shown as
+   *  the id it is, never looked up. */
+  copied_from: string | null
 }
 
 /** Programs created before intake dropped the name field still have one; the
@@ -43,6 +47,11 @@ export default function Programs() {
   // pending state when the list re-renders.
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const [copyingId, setCopyingId] = useState<string | null>(null)
+  // A failed copy is reported on the row it was asked of, not at the top of a
+  // list that may be long; a successful one marks the row it produced.
+  const [copyError, setCopyError] = useState<{ id: string; message: string } | null>(null)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
   const { programId, setProgramId } = useProgram()
   const navigate = useNavigate()
 
@@ -93,6 +102,33 @@ export default function Programs() {
     }
   }
 
+  /** A copy is a snapshot for comparing runs: the next synthesis on either
+   *  program leaves the other untouched. It is not selected, because the
+   *  designer copying a program usually means to keep working on the one they
+   *  had — the new row is marked instead, with a way to open it. */
+  const copyProgram = async (p: ProgramSummary) => {
+    setCopyingId(p.program_id)
+    setCopyError(null)
+    setCopiedId(null)
+    try {
+      const res = await api.post<{ program_id: string }>(`/programs/${p.program_id}/copy`)
+      await load()
+      setCopiedId(res.data.program_id)
+    } catch (err: unknown) {
+      // The 409s carry Thai detail meant to be shown as-is (synthesis in
+      // flight, id retries exhausted).
+      const axiosErr = err as { response?: { data?: { detail?: string } } }
+      setCopyError({
+        id: p.program_id,
+        message: axiosErr.response?.data?.detail ?? 'คัดลอกหลักสูตรไม่สำเร็จ',
+      })
+    } finally {
+      setCopyingId(null)
+    }
+  }
+
+  const copied = copiedId ? programs.find((p) => p.program_id === copiedId) : undefined
+
   return (
     <div>
       <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
@@ -134,6 +170,23 @@ export default function Programs() {
         </div>
       )}
 
+      {copied && (
+        <div className="notice notice-info mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <span>
+            คัดลอก <span className="data">{copied.copied_from}</span> เป็น{' '}
+            <span className="data font-semibold">{copied.program_id}</span> แล้ว — หลักฐาน ทักษะ
+            Need และ PLO ไปด้วยทั้งหมด ประวัติการรันไม่ได้คัดลอก
+          </span>
+          <button
+            type="button"
+            onClick={() => openProgram(copied)}
+            className="font-medium underline underline-offset-2"
+          >
+            เปิดสำเนา →
+          </button>
+        </div>
+      )}
+
       {!loading && !error && programs.length > 0 && (
         <div className="panel overflow-x-auto">
         <table className="table min-w-[40rem]">
@@ -163,6 +216,7 @@ export default function Programs() {
                   // is the only thing saying which curriculum the stage pages
                   // will open on.
                   p.program_id === programId ? 'bg-stamp-wash/60 hover:bg-stamp-wash' : '',
+                  p.program_id === copiedId ? 'bg-marker-wash/70 hover:bg-marker-wash' : '',
                 ].join(' ')}
               >
                 <td>
@@ -176,12 +230,20 @@ export default function Programs() {
                       {p.program_id === programId && (
                         <span className="chip chip-stamp">เลือกอยู่</span>
                       )}
+                      {p.program_id === copiedId && (
+                        <span className="chip chip-marker">เพิ่งคัดลอก</span>
+                      )}
                     </span>
                     <span className="data block text-xs text-lead">
                       {[p.faculty, p.name_en].filter(Boolean).join(' · ')}
                       {(p.faculty || p.name_en) && ' · '}
                       {p.program_id}
                     </span>
+                    {p.copied_from && (
+                      <span className="block text-xs text-pencil">
+                        สำเนาของ <span className="data">{p.copied_from}</span>
+                      </span>
+                    )}
                   </button>
                 </td>
                 <td className="whitespace-nowrap">{DEGREE_LABELS[p.degree_level] ?? p.degree_level}</td>
@@ -226,15 +288,31 @@ export default function Programs() {
                       </button>
                     </span>
                   ) : (
-                    /* Padded on purpose: the hit area used to be the two glyphs
-                       of the label and nothing more. */
-                    <button
-                      type="button"
-                      onClick={() => setPendingId(p.program_id)}
-                      className="btn btn-sm btn-danger-quiet"
-                    >
-                      ลบ
-                    </button>
+                    <span className="inline-flex items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => copyProgram(p)}
+                        disabled={copyingId !== null}
+                        title="คัดลอกหลักสูตรนี้พร้อมหลักฐาน ทักษะ Need และ PLO — ใช้เก็บผลรอบนี้ไว้เทียบกับรอบถัดไป"
+                        className="btn btn-sm btn-quiet"
+                      >
+                        {copyingId === p.program_id ? 'กำลังคัดลอก...' : 'คัดลอก'}
+                      </button>
+                      {/* Padded on purpose: the hit area used to be the two
+                          glyphs of the label and nothing more. */}
+                      <button
+                        type="button"
+                        onClick={() => setPendingId(p.program_id)}
+                        className="btn btn-sm btn-danger-quiet"
+                      >
+                        ลบ
+                      </button>
+                    </span>
+                  )}
+                  {copyError?.id === p.program_id && (
+                    <p className="mt-1 max-w-xs text-left text-xs whitespace-normal text-mandate" role="alert">
+                      {copyError.message}
+                    </p>
                   )}
                 </td>
               </tr>

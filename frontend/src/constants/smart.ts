@@ -53,7 +53,9 @@ export function findingLabel(code: string): string {
 /** What each provenance value means to a designer, and how it should read. */
 export const VALIDATED_BY_TH: Record<ValidatedBy, string> = {
   agent: 'ตรวจด้วยผู้ตรวจ SMART แล้ว',
-  code_only: 'ตรวจด้วยกฎพื้นฐานเท่านั้น — ผู้ตรวจไม่ตอบ',
+  // Three causes share this value (skipped this run, disabled in .env, endpoint
+  // failed); `smart_diagnosis_th` says which, so this line must not pick one.
+  code_only: 'ตรวจด้วยกฎพื้นฐานเท่านั้น — ไม่ได้ผ่านผู้ตรวจ SMART',
   stale: 'แก้ข้อความแล้ว ยังไม่ได้ตรวจซ้ำ',
   legacy: 'ตรวจก่อนมีผู้ตรวจ SMART',
 }
