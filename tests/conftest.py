@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterator
 from unittest.mock import AsyncMock
 
 if sys.platform == "win32":
@@ -25,6 +26,7 @@ from curriculum_agent.models import (
     ProgramMetadata,
     SMARTCheck,
 )
+from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 SMART_PASS = SMARTCheck(specific=True, measurable=True, achievable=True, relevant=True, timely=True)
 SMART_FAIL = SMARTCheck(
@@ -90,6 +92,28 @@ def _plo_review_offline(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(settings, "plo_review_provider", "")
     monkeypatch.setattr(plo_review, "PLOReviewRepository", _NoStoredReview)
+
+
+@pytest.fixture(autouse=True)
+def jobs_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[InMemoryJobs]:
+    """Every test runs jobs against memory and records spawned bodies instead
+    of starting tasks. No running graph session unless a test says so."""
+    from curriculum_agent.api import jobs as jobs_mod  # noqa: PLC0415
+
+    store = InMemoryJobs()
+    recorder = SpawnRecorder()
+    monkeypatch.setattr(jobs_mod, "JobRepository", lambda: store)
+    monkeypatch.setattr(jobs_mod, "spawn", recorder)
+    monkeypatch.setattr(jobs_mod, "_running_session", AsyncMock(return_value=False))
+    jobs_mod._LOCKS.clear()
+    store.recorder = recorder  # type: ignore[attr-defined]
+    yield store
+    recorder.close()
+
+
+@pytest.fixture
+def spawned(jobs_store: InMemoryJobs) -> SpawnRecorder:
+    return jobs_store.recorder  # type: ignore[attr-defined, no-any-return]
 
 
 @pytest.fixture

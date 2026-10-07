@@ -12,6 +12,7 @@ from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from loguru import logger
 
 from curriculum_agent.api.routes import evidence, needs, plos, programs, sessions
+from curriculum_agent.api.routes import jobs as jobs_routes
 from curriculum_agent.api.static import mount_frontend
 from curriculum_agent.config import settings
 from curriculum_agent.graph import build_graph
@@ -63,6 +64,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.graph = build_graph(checkpointer=saver)
         logger.info("Graph compiled with AsyncPostgresSaver")
 
+        from curriculum_agent.api.jobs import sweep_orphaned_jobs
+
+        try:
+            await sweep_orphaned_jobs()
+        except Exception as exc:
+            logger.warning(f"jobs: startup sweep failed: {exc}")
+
         from curriculum_agent.llm import warmup_models
 
         try:
@@ -91,6 +99,7 @@ app.include_router(evidence.router, prefix="/programs/{program_id}/evidence", ta
 app.include_router(needs.router, prefix="/programs/{program_id}/needs", tags=["needs"])
 app.include_router(plos.router, prefix="/programs/{program_id}/plos", tags=["plos"])
 app.include_router(sessions.router, prefix="/programs/{program_id}/sessions", tags=["sessions"])
+app.include_router(jobs_routes.router, prefix="/programs/{program_id}/jobs", tags=["jobs"])
 
 
 @app.get("/health")
