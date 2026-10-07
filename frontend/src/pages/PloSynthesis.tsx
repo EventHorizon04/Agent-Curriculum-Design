@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
-import RunProgress, { LoadingLine } from '../components/RunProgress'
+import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { PLO_SYNTHESIS_PLAN, PLO_SYNTHESIS_CODE_ONLY_PLAN } from '../constants/runPlans'
 import { useProgram } from '../hooks/useProgram'
+import { useJobs } from '../hooks/useProgramJobs'
 import api from '../api/client'
+import { startJob, type JobKind } from '../api/jobs'
 import DesignerNote from './components/DesignerNote'
 import ValidationToggle, { type ValidationStatus } from './components/ValidationToggle'
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
@@ -53,19 +55,41 @@ interface NeedListItem {
   statement_th: string
 }
 
+/** The jobs this page owns: the synthesis run, and the SMART re-check of one
+ *  outcome. Both write PLO rows, so both reload the list when they succeed. */
+const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate']
+
 export default function PloSynthesis() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
   const [needs, setNeeds] = useState<NeedListItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
-  const [running, setRunning] = useState(false)
+  // Between a click and the job being known, and during the synchronous merge.
+  const [starting, setStarting] = useState(false)
+  const [merging, setMerging] = useState(false)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [runValidation, setRunValidation] = useState(true)
   const [validation, setValidation] = useState<ValidationStatus | null>(null)
   // What the next run will actually do: the system switch wins over the box.
   const agentWillRun = validation?.enabled !== false && runValidation
+
+  const { running, latestOf, started, refresh } = useJobs()
+  // `running` is any job of this program; `mine` is one this page shows.
+  const mine = running && PAGE_KINDS.includes(running.kind) ? running : null
+  const synthesis = mine?.kind === 'plo_synthesis' ? mine : null
+  const revalidatingId =
+    mine?.kind === 'plo_revalidate' && typeof mine.params.plo_id === 'string' ? mine.params.plo_id : null
+  const last = latestOf(PAGE_KINDS)
+  // Any job of the program blocks every start button, not just this page's
+  // kinds: the backend allows one writer per program, merging included.
+  const busy = running !== null || starting || merging
+
+  // When the list was last asked for. Set when a load *starts*: one that began
+  // before a job finished may have read the rows it replaced. Infinity until the
+  // first load starts, so nothing counts as newer than a load not yet made.
+  const loadedAt = useRef(Number.POSITIVE_INFINITY)
 
   // Read once per program. A failed read leaves the status unknown rather than
   // "off": the box stays usable, and the backend still refuses to run an agent
@@ -86,43 +110,89 @@ export default function PloSynthesis() {
     }
   }, [programId])
 
-  const fetchPlos = useCallback(async () => {
-    if (!programId) return
-    setLoading(true)
-    setError('')
-    try {
-      const [ploRes, needRes] = await Promise.all([
-        api.get<PLO[]>(`/programs/${programId}/plos/`),
-        api.get<NeedListItem[]>(`/programs/${programId}/needs/`),
-      ])
-      setPlos(ploRes.data)
-      setNeeds(needRes.data)
-    } catch {
-      setError('โหลด PLO ไม่สำเร็จ')
-    } finally {
-      setLoading(false)
-    }
-  }, [programId])
+  /** `quiet` reloads behind the list that is showing instead of replacing it
+   *  with the loading line: a re-check changes one outcome, and swapping the
+   *  whole list out would close every open trace and drop an edit in progress. */
+  const fetchPlos = useCallback(
+    async (quiet = false) => {
+      if (!programId) return
+      loadedAt.current = Date.now()
+      if (!quiet) setLoading(true)
+      setError('')
+      try {
+        const [ploRes, needRes] = await Promise.all([
+          api.get<PLO[]>(`/programs/${programId}/plos/`),
+          api.get<NeedListItem[]>(`/programs/${programId}/needs/`),
+        ])
+        setPlos(ploRes.data)
+        setNeeds(needRes.data)
+      } catch {
+        setError('โหลด PLO ไม่สำเร็จ')
+      } finally {
+        if (!quiet) setLoading(false)
+      }
+    },
+    [programId],
+  )
 
+  // Starting a run only records the job; the PLOs arrive in the table and are
+  // read by the reload below when it succeeds.
   const runSynthesis = useCallback(async () => {
     if (!programId) return
-    setRunning(true)
+    setStarting(true)
     setError('')
     try {
-      const res = await api.post<PLO[]>(`/programs/${programId}/plos/run`, {
-        note_th: note.trim() || null,
-        run_validation: agentWillRun,
-      })
-      setPlos(res.data)
+      started(
+        await startJob(`/programs/${programId}/plos/run`, {
+          note_th: note.trim() || null,
+          run_validation: agentWillRun,
+        }),
+      )
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'รัน PLO Synthesis ไม่สำเร็จ')
+      const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
+      setError(res?.data?.detail ?? 'รัน PLO Synthesis ไม่สำเร็จ')
+      // A 409 means a job this page has not heard of is running: read the list
+      // now so the buttons say so too.
+      if (res?.status === 409) void refresh()
     } finally {
-      setRunning(false)
+      setStarting(false)
     }
-  }, [programId, note, agentWillRun])
+  }, [programId, note, agentWillRun, started, refresh])
+
+  const revalidate = useCallback(
+    async (ploId: string) => {
+      if (!programId) return
+      setStarting(true)
+      setError('')
+      try {
+        started(await startJob(`/programs/${programId}/plos/${ploId}/revalidate`))
+      } catch (err: unknown) {
+        const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
+        setError(res?.data?.detail ?? 'ตรวจ SMART ซ้ำไม่สำเร็จ')
+        if (res?.status === 409) void refresh()
+      } finally {
+        setStarting(false)
+      }
+    },
+    [programId, started, refresh],
+  )
 
   useEffect(() => { fetchPlos() }, [fetchPlos])
+
+  // Reload when this page's latest job has succeeded since the list was asked
+  // for. Keyed on the finish time alone (0 unless the latest job succeeded):
+  // the job objects get a new identity on every poll, and an effect keyed on
+  // them would reload every two seconds.
+  // A layout effect, not a passive one: when the job's result arrives the run
+  // screen is replaced in the same commit, and a passive effect would let the
+  // browser paint the previous data (or the empty state, with a live start
+  // button) for a moment before the reload put the loading line up.
+  const finishedAt =
+    last?.status === 'succeeded' && last.finished_at ? Date.parse(last.finished_at) : 0
+  const quietReload = last?.kind === 'plo_revalidate'
+  useLayoutEffect(() => {
+    if (finishedAt > loadedAt.current) void fetchPlos(quietReload)
+  }, [finishedAt, quietReload, fetchPlos])
 
   const handleUpdate = (updated: PLO) =>
     setPlos(prev => prev.map(p => (p.plo_id === updated.plo_id ? updated : p)))
@@ -136,9 +206,11 @@ export default function PloSynthesis() {
     })
   }
 
+  // Still synchronous — it is not one of the background jobs — but it is a
+  // writer like them, so a 409 here means the program already has one running.
   const mergeSelected = async () => {
-    if (selected.size < 2 || !programId) return
-    setRunning(true)
+    if (selected.size < 2 || !programId || busy) return
+    setMerging(true)
     setError('')
     try {
       await api.post(`/programs/${programId}/plos/from-needs`, {
@@ -148,10 +220,11 @@ export default function PloSynthesis() {
       setSelected(new Set())
       await fetchPlos()
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'รวม Need เป็น PLO เดียวไม่สำเร็จ')
+      const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
+      setError(res?.data?.detail ?? 'รวม Need เป็น PLO เดียวไม่สำเร็จ')
+      if (res?.status === 409) void refresh()
     } finally {
-      setRunning(false)
+      setMerging(false)
     }
   }
 
@@ -183,11 +256,30 @@ export default function PloSynthesis() {
       {error && (
         <div className="notice notice-error mb-6">{error}</div>
       )}
+      {last?.status === 'failed' && (
+        <div className="mb-6">
+          <RunFailure
+            job={last}
+            subject={typeof last.params.plo_id === 'string' ? last.params.plo_id : undefined}
+          />
+        </div>
+      )}
 
-      {loading ? (
-        <LoadingLine />
-      ) : running ? (
+      {/* A run in progress comes before the loading line: what a load would
+          show is about to be replaced, and a page opened mid-run should say so
+          at once rather than after its own read finishes. */}
+      {synthesis ? (
+        // The plan is what the job was asked to do, not what the checkbox says
+        // now: a page opened mid-run has a checkbox nobody touched.
+        <RunProgress
+          key={synthesis.job_id}
+          plan={synthesis.params.run_validation !== false ? PLO_SYNTHESIS_PLAN : PLO_SYNTHESIS_CODE_ONLY_PLAN}
+          since={Date.parse(synthesis.created_at)}
+        />
+      ) : merging ? (
         <RunProgress plan={agentWillRun ? PLO_SYNTHESIS_PLAN : PLO_SYNTHESIS_CODE_ONLY_PLAN} />
+      ) : loading ? (
+        <LoadingLine />
       ) : plos.length === 0 ? (
         <div className="panel border-dashed px-6 py-12 text-center">
           <p className="font-display mb-1 text-lg text-graphite">ยังไม่มี PLO</p>
@@ -198,6 +290,7 @@ export default function PloSynthesis() {
           </div>
           <button
             onClick={runSynthesis}
+            disabled={busy}
             className="btn btn-primary mt-3"
           >
             สังเคราะห์ PLO
@@ -205,13 +298,13 @@ export default function PloSynthesis() {
         </div>
       ) : (
         <>
-          <DesignerNote value={note} onChange={setNote} disabled={running} />
+          <DesignerNote value={note} onChange={setNote} disabled={busy} />
           <div className="mb-4">
             <ValidationToggle
               checked={runValidation}
               onChange={setRunValidation}
               status={validation}
-              disabled={running}
+              disabled={busy}
             />
           </div>
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -227,7 +320,7 @@ export default function PloSynthesis() {
               )}
               <button
                 onClick={runSynthesis}
-                disabled={running}
+                disabled={busy}
                 className="btn btn-sm btn-quiet"
               >
                 สังเคราะห์ใหม่
@@ -236,7 +329,15 @@ export default function PloSynthesis() {
           </div>
           <div className="space-y-4">
             {plos.map(p => (
-              <PLOCard key={p.plo_id} plo={p} programId={programId} onUpdate={handleUpdate} />
+              <PLOCard
+                key={p.plo_id}
+                plo={p}
+                programId={programId}
+                onUpdate={handleUpdate}
+                busy={busy}
+                revalidating={revalidatingId === p.plo_id}
+                onRevalidate={() => revalidate(p.plo_id)}
+              />
             ))}
           </div>
 
@@ -275,7 +376,7 @@ export default function PloSynthesis() {
               </div>
               <button
                 onClick={mergeSelected}
-                disabled={selected.size < 2 || running}
+                disabled={selected.size < 2 || busy}
                 className="btn btn-primary"
               >
                 รวมเป็น PLO เดียว ({selected.size})
@@ -290,10 +391,10 @@ export default function PloSynthesis() {
           report page is there to show. */}
       <NextStageLink
         from="plo_synthesis"
-        ready={Boolean(programId) && plos.length > 0 && !running}
+        ready={Boolean(programId) && plos.length > 0 && mine === null && !merging}
         blockedReason={
-          running
-            ? 'รอให้สังเคราะห์ PLO เสร็จก่อน — รายงานต้องอ่านจาก PLO ชุดนี้'
+          mine !== null || merging
+            ? 'รอให้งานที่กำลังทำเสร็จก่อน — รายงานต้องอ่านจาก PLO ชุดนี้'
             : 'ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน'
         }
       />
@@ -395,16 +496,23 @@ function PLOCard({
   plo: p,
   programId,
   onUpdate,
+  busy,
+  revalidating,
+  onRevalidate,
 }: {
   plo: PLO
   programId: string
   onUpdate: (plo: PLO) => void
+  /** The program has a writer running, whatever it is; nothing here may start another. */
+  busy: boolean
+  /** The SMART re-check of *this* outcome is the job that is running. */
+  revalidating: boolean
+  onRevalidate: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState<PLO>(p)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
-  const [revalidating, setRevalidating] = useState(false)
   const [traceOpen, setTraceOpen] = useState(false)
 
   const smartPassed = SMART_KEYS.every(k => p.smart_check[k] === true)
@@ -434,20 +542,6 @@ function PLOCard({
   // read like an escalation. Finding codes lead with their SMART letter.
   const hardFailed = p.smart_escalated || hardFindings.length > 0
   const hardLetters = new Set(hardFindings.map(f => f.criterion.charAt(0)))
-
-  async function handleRevalidate() {
-    setRevalidating(true)
-    setSaveError('')
-    try {
-      const res = await api.post<PLO>(`/programs/${programId}/plos/${p.plo_id}/revalidate`)
-      onUpdate(res.data)
-    } catch (err) {
-      const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
-      setSaveError(detail ?? 'ตรวจ SMART ซ้ำไม่สำเร็จ')
-    } finally {
-      setRevalidating(false)
-    }
-  }
 
   return (
     <div
@@ -571,10 +665,11 @@ function PLOCard({
             </button>
             {/* Without this the `stale` state is a dead end: PUT deliberately
                 does not re-run the gate, so this is how an edited statement
-                gets a verdict. */}
+                gets a verdict. It is a background job: the page owns starting
+                it, and says which outcome's re-check is the one running. */}
             <button
-              onClick={handleRevalidate}
-              disabled={revalidating}
+              onClick={onRevalidate}
+              disabled={busy}
               className="btn btn-sm btn-secondary"
             >
               {revalidating ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}

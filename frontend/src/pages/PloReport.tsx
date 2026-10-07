@@ -1,9 +1,11 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
-import RunProgress, { LoadingLine } from '../components/RunProgress'
+import { useJobs } from '../hooks/useProgramJobs'
+import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { PLO_REPORT_PLAN } from '../constants/runPlans'
 import api from '../api/client'
+import { startJob, type JobKind } from '../api/jobs'
 import { ksecLabel, stakeholderLabel, classStyle, isRequirementStakeholder } from '../constants/stakeholder'
 import { VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
@@ -52,11 +54,11 @@ interface ReportCounts {
   code_only: number
 }
 
-interface PLOReportResponse {
-  plos: PLO[]
-  counts: ReportCounts
-  needs_by_id: Record<string, NeedSummary>
-}
+/** The job kinds whose outcome this page reports. Only the report run is shown
+ *  as a run here: the set review has no button on this page, so a review job is
+ *  here for its failure to be seen, not to be started or waited on. */
+const REPORT_KIND: JobKind[] = ['plo_report']
+const PAGE_KINDS: JobKind[] = ['plo_report', 'plo_review']
 
 interface TraceNeed {
   need_id: string
@@ -226,20 +228,34 @@ export default function PloReport() {
     stale: 0,
     code_only: 0,
   })
-  // Derived, not read off the response: `fetchData` and `runReport` populate the
-  // page by different routes, and a count that only one of them set would read as
-  // "nothing was cut" on the other. Same rule the report stage applies server-side.
+  // Derived, not read off a response: the counts come from the stored PLOs the
+  // page loaded, so a count only one source set would read as "nothing was cut"
+  // on the other. Same rule the report stage applies server-side.
   const unusedNeeds = useMemo(() => {
     const cited = new Set(plos.flatMap((p) => p.source_need_ids))
     return Object.values(needsById).filter((n) => !cited.has(n.need_id))
   }, [plos, needsById])
   const [exporting, setExporting] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [running, setRunning] = useState(false)
+  const [starting, setStarting] = useState(false)
   const [error, setError] = useState('')
+
+  const { running, latestOf, started, refresh } = useJobs()
+  // `running` is any job of this program; `mine` is the report run this page shows.
+  const mine = running?.kind === 'plo_report' ? running : null
+  const last = latestOf(PAGE_KINDS)
+  // Any job of the program blocks the start button: one writer per program.
+  const busy = running !== null || starting
+
+  // When the data on screen was last asked for. Set when a load *starts*: one
+  // that began before a job finished may have read the rows it replaced.
+  // Infinity until the first load starts, so nothing counts as newer than a
+  // load that has not been made.
+  const loadedAt = useRef(Number.POSITIVE_INFINITY)
 
   const fetchData = useCallback(async () => {
     if (!programId) return
+    loadedAt.current = Date.now()
     setLoading(true)
     setError('')
     try {
@@ -257,22 +273,25 @@ export default function PloReport() {
     }
   }, [programId])
 
+  // The report is a background job: starting it only records it. The page has
+  // its own read of the stored PLOs and Needs, so when the job succeeds it
+  // reloads them below rather than drawing from the job's result.
   const runReport = useCallback(async () => {
     if (!programId) return
-    setRunning(true)
+    setStarting(true)
     setError('')
     try {
-      const res = await api.post<PLOReportResponse>(`/programs/${programId}/plos/report/run`)
-      setPlos(res.data.plos)
-      setCounts(res.data.counts)
-      setNeedsById(res.data.needs_by_id)
+      started(await startJob(`/programs/${programId}/plos/report/run`))
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setError(msg ?? 'สร้างรายงานไม่สำเร็จ')
+      const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
+      setError(res?.data?.detail ?? 'สร้างรายงานไม่สำเร็จ')
+      // A 409 means a job this page has not heard of is running: read the list
+      // now so the button says so too.
+      if (res?.status === 409) void refresh()
     } finally {
-      setRunning(false)
+      setStarting(false)
     }
-  }, [programId])
+  }, [programId, started, refresh])
 
   // Fetched as a blob through the api client rather than linked with a plain
   // anchor, so a 422 or 501 surfaces as an error message here instead of
@@ -302,6 +321,22 @@ export default function PloReport() {
     fetchData()
   }, [fetchData])
 
+  // Reload when the latest report run has succeeded since the data was asked
+  // for. Keyed on the finish time alone (0 unless that job succeeded): the job
+  // objects get a new identity on every poll, and an effect keyed on them would
+  // reload every two seconds. A set review changes nothing this page draws, so
+  // only the report run counts.
+  // A layout effect, not a passive one: when the job's result arrives the run
+  // screen is replaced in the same commit, and a passive effect would let the
+  // browser paint the previous data (or the empty state, with a live start
+  // button) for a moment before the reload put the loading line up.
+  const lastReport = latestOf(REPORT_KIND)
+  const finishedAt =
+    lastReport?.status === 'succeeded' && lastReport.finished_at ? Date.parse(lastReport.finished_at) : 0
+  useLayoutEffect(() => {
+    if (finishedAt > loadedAt.current) void fetchData()
+  }, [finishedAt, fetchData])
+
   if (!programId) {
     return (
       <div className="py-16 text-center">
@@ -324,11 +359,15 @@ export default function PloReport() {
       </header>
 
       {error && <p className="notice notice-error">{error}</p>}
+      {last?.status === 'failed' && <RunFailure job={last} />}
 
-      {loading ? (
+      {/* A run in progress comes before the loading line: what a load would
+          show is about to be replaced, and a page opened mid-run should say so
+          at once rather than after its own read finishes. */}
+      {mine ? (
+        <RunProgress key={mine.job_id} plan={PLO_REPORT_PLAN} since={Date.parse(mine.created_at)} />
+      ) : loading ? (
         <LoadingLine />
-      ) : running ? (
-        <RunProgress plan={PLO_REPORT_PLAN} />
       ) : plos.length === 0 ? (
         <div className="panel px-6 py-12 text-center">
           <p className="record text-lg">ยังไม่มี PLO ให้รายงาน</p>
@@ -337,7 +376,7 @@ export default function PloReport() {
             ให้กลับไปที่ขั้นที่ 4 ก่อน
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-            <button onClick={runReport} className="btn btn-primary">
+            <button onClick={runReport} disabled={busy} className="btn btn-primary">
               สร้างรายงาน
             </button>
             <Link to="/plo-synthesis" className="link text-sm">
@@ -369,7 +408,7 @@ export default function PloReport() {
             )}
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <button onClick={runReport} className="btn btn-secondary btn-sm">
+              <button onClick={runReport} disabled={busy} className="btn btn-secondary btn-sm">
                 สร้างใหม่
               </button>
               <button

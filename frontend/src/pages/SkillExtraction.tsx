@@ -1,10 +1,12 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
-import RunProgress, { LoadingLine } from '../components/RunProgress'
+import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { SKILL_RUN_PLANS } from '../constants/runPlans'
 import { useProgram } from '../hooks/useProgram'
+import { useJobs } from '../hooks/useProgramJobs'
 import api from '../api/client'
+import { startJob, type JobInfo, type JobKind } from '../api/jobs'
 import SkillsByStakeholder, {
   type EvidenceMeta,
   type SkillRow,
@@ -24,20 +26,59 @@ const RUN_PATH: Record<RunKind, string> = {
   needs: 'combine/run',
 }
 
+/** The jobs this page owns, and which run each one is. Which run is on screen
+ *  is read off the job, not remembered by the page that clicked: a page opened
+ *  mid-run, or after a reload, never clicked anything. */
+const RUN_OF_KIND: Partial<Record<JobKind, RunKind>> = {
+  needs_pipeline: 'all',
+  skill_extraction: 'skills',
+  need_combination: 'needs',
+}
+const PAGE_KINDS: JobKind[] = ['needs_pipeline', 'skill_extraction', 'need_combination']
+/** Only an extraction pass can drop a skill for being ungrounded, so a
+ *  combine-only run must not reset the count the last extraction reported. */
+const EXTRACTION_KINDS: JobKind[] = ['needs_pipeline', 'skill_extraction']
+
+/** `dropped_ungrounded_count` off a finished extraction job's result; 0 when
+ *  there is no such job or its run did not finish. */
+function droppedCountOf(job: JobInfo | null): number {
+  if (job?.status !== 'succeeded') return 0
+  const n = (job.result as { dropped_ungrounded_count?: unknown } | null)?.dropped_ungrounded_count
+  return typeof n === 'number' ? n : 0
+}
+
 export default function SkillExtraction() {
   const { programId } = useProgram()
   const [tab, setTab] = useState<'skills' | 'needs'>('skills')
   const [skills, setSkills] = useState<SkillRow[]>([])
   const [needs, setNeeds] = useState<NeedRow[]>([])
   const [evidenceById, setEvidenceById] = useState<Record<string, EvidenceMeta>>({})
-  const [droppedCount, setDroppedCount] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [running, setRunning] = useState<RunKind | null>(null)
+  const [starting, setStarting] = useState(false)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
 
+  const { running, latestOf, started, refresh } = useJobs()
+  // `running` is any job of this program; `mine` is one this page shows.
+  const mine = running && PAGE_KINDS.includes(running.kind) ? running : null
+  const runKind = mine ? (RUN_OF_KIND[mine.kind] ?? null) : null
+  const last = latestOf(PAGE_KINDS)
+  const droppedCount = droppedCountOf(latestOf(EXTRACTION_KINDS))
+  // Any job of the program blocks every start button here, not just this page's
+  // kinds: the backend allows one writer per program. `starting` covers the gap
+  // between the click and the job being known, so a second click cannot be
+  // refused with a 409 about the run it has just started.
+  const busy = running !== null || starting
+
+  // When the data on screen was last asked for. Set when a load *starts*: a
+  // load that began before a job finished may have read the rows it replaced,
+  // and one that began after has read them. Infinity until the first load
+  // starts, so nothing counts as newer than a load that has not happened yet.
+  const loadedAt = useRef(Number.POSITIVE_INFINITY)
+
   const fetchAll = useCallback(async () => {
     if (!programId) return
+    loadedAt.current = Date.now()
     setLoading(true)
     setError('')
     try {
@@ -67,31 +108,47 @@ export default function SkillExtraction() {
     }
   }, [programId])
 
+  // The run is a background job: starting it only records it. Its result lands
+  // in the tables, and the reload below picks it up when the job succeeds.
   const runStage = useCallback(
     async (kind: RunKind) => {
       if (!programId) return
-      setRunning(kind)
+      setStarting(true)
       setError('')
       try {
-        const res = await api.post<{ dropped_ungrounded_count: number }>(
-          `/programs/${programId}/needs/${RUN_PATH[kind]}`,
-          { note_th: note.trim() || null },
+        started(
+          await startJob(`/programs/${programId}/needs/${RUN_PATH[kind]}`, {
+            note_th: note.trim() || null,
+          }),
         )
-        // Only an extraction pass can drop a skill for being ungrounded, so a
-        // combine-only run must not reset the count the last extraction reported.
-        if (kind !== 'needs') setDroppedCount(res.data.dropped_ungrounded_count)
-        await fetchAll()
       } catch (err: unknown) {
-        const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-        setError(msg ?? 'รัน Stage 3 ไม่สำเร็จ')
+        const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
+        setError(res?.data?.detail ?? 'รัน Stage 3 ไม่สำเร็จ')
+        // A 409 means a job this page has not heard of is running (another tab,
+        // or a session): read the list now so the buttons say so too.
+        if (res?.status === 409) void refresh()
       } finally {
-        setRunning(null)
+        setStarting(false)
       }
     },
-    [programId, note, fetchAll],
+    [programId, note, started, refresh],
   )
 
   useEffect(() => { fetchAll() }, [fetchAll])
+
+  // Reload when this page's latest job has succeeded since the data was asked
+  // for. Keyed on the finish time alone (0 unless the latest job succeeded):
+  // the job objects get a new identity on every poll, and an effect keyed on
+  // them would reload every two seconds.
+  // A layout effect, not a passive one: when the job's result arrives the run
+  // screen is replaced in the same commit, and a passive effect would let the
+  // browser paint the previous data (or the empty state, with a live start
+  // button) for a moment before the reload put the loading line up.
+  const finishedAt =
+    last?.status === 'succeeded' && last.finished_at ? Date.parse(last.finished_at) : 0
+  useLayoutEffect(() => {
+    if (finishedAt > loadedAt.current) void fetchAll()
+  }, [finishedAt, fetchAll])
 
   /**
    * Needs left behind by an older set of skills.
@@ -172,11 +229,19 @@ export default function SkillExtraction() {
       {error && (
         <div className="notice notice-error mb-6">{error}</div>
       )}
+      {last?.status === 'failed' && (
+        <div className="mb-6">
+          <RunFailure job={last} />
+        </div>
+      )}
 
-      {loading ? (
+      {/* A run in progress comes before the loading line: what a load would
+          show is about to be replaced, and a page opened mid-run should say so
+          at once rather than after its own read finishes. */}
+      {mine && runKind ? (
+        <RunProgress key={mine.job_id} plan={SKILL_RUN_PLANS[runKind]} since={Date.parse(mine.created_at)} />
+      ) : loading ? (
         <LoadingLine />
-      ) : running ? (
-        <RunProgress plan={SKILL_RUN_PLANS[running]} />
       ) : !hasData ? (
         <div className="panel border-dashed px-6 py-12 text-center">
           <p className="font-display mb-1 text-lg text-graphite">ยังไม่มีทักษะที่สกัดได้</p>
@@ -186,6 +251,7 @@ export default function SkillExtraction() {
           </div>
           <button
             onClick={() => runStage('all')}
+            disabled={busy}
             className="btn btn-primary"
           >
             สกัดทักษะและรวม Need
@@ -193,7 +259,7 @@ export default function SkillExtraction() {
         </div>
       ) : (
         <>
-          <DesignerNote value={note} onChange={setNote} disabled={running !== null} />
+          <DesignerNote value={note} onChange={setNote} disabled={busy} />
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-wrap items-center gap-1">
               {/* Two entry points, not one: re-extracting is the expensive
@@ -201,7 +267,7 @@ export default function SkillExtraction() {
                   what is already on record. */}
               <button
                 onClick={() => runStage('skills')}
-                disabled={running !== null}
+                disabled={busy}
                 title="สกัดทักษะจาก evidence ใหม่ (ไม่แตะ Need ที่มีอยู่)"
                 className="btn btn-sm btn-secondary"
               >
@@ -210,7 +276,7 @@ export default function SkillExtraction() {
               <span className="text-xs text-lead" aria-hidden="true">·</span>
               <button
                 onClick={() => runStage('needs')}
-                disabled={running !== null}
+                disabled={busy}
                 title="รวมทักษะที่มีอยู่เป็น Need ใหม่ (ไม่สกัดทักษะซ้ำ)"
                 className="btn btn-sm btn-secondary"
               >
@@ -256,7 +322,7 @@ export default function SkillExtraction() {
                   </span>
                   <button
                     onClick={() => runStage('needs')}
-                    disabled={running !== null}
+                    disabled={busy}
                     className="btn btn-sm btn-secondary"
                   >
                     รวม Need ใหม่
@@ -320,9 +386,9 @@ export default function SkillExtraction() {
           has not produced what the next stage needs. */}
       <NextStageLink
         from="skill_extraction"
-        ready={Boolean(programId) && needs.length > 0 && running === null}
+        ready={Boolean(programId) && needs.length > 0 && mine === null}
         blockedReason={
-          running !== null
+          mine !== null
             ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ PLO ต้องอ่านจาก Need ชุดนี้'
             : 'ยังไม่มี Need — รันสกัดทักษะและรวม Need ให้เสร็จก่อน'
         }

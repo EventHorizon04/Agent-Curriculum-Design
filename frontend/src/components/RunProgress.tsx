@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
+import type { JobInfo } from '../api/jobs'
 
 /**
  * What a designer sees while a stage runs.
  *
- * The run endpoints answer once, at the end — there is no progress stream — so
- * this page cannot say how far along the run is, and it does not pretend to:
- * no percentage, and the step list says what the stage does rather than which
- * step it is on. What it can say honestly is how long it has been running and
- * how long a run of this kind usually takes, and that is what a designer
- * staring at it needs to decide whether to wait, or whether something is wrong.
+ * A run is a background job and there is no progress stream, so this page cannot
+ * say how far along it is, and it does not pretend to: no percentage, and the
+ * step list says what the stage does rather than which step it is on. What it can
+ * say honestly is how long it has been running and how long a run of this kind
+ * usually takes, and that is what a designer staring at it needs to decide
+ * whether to wait, or whether something is wrong. The clock counts from the
+ * job's own start (`since`), so a page opened mid-run reads the same as the one
+ * that started it.
  */
 export interface RunPlan {
   title: string
@@ -30,9 +33,11 @@ function formatSpan(seconds: number): string {
   return `${minutes} นาที`
 }
 
-/** Seconds since mount, ticking once a second. */
+/** Seconds since `since` (epoch ms; mount time when omitted), ticking once a
+ *  second. Read once: a different run is a different element (the callers key
+ *  this by job id), not a moved start. */
 function useElapsed(since?: number): number {
-  const [start] = useState(() => since ?? Date.now())
+  const [start] = useState(() => (since !== undefined && Number.isFinite(since) ? since : Date.now()))
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
@@ -41,8 +46,8 @@ function useElapsed(since?: number): number {
   return Math.max(0, Math.floor((now - start) / 1000))
 }
 
-export default function RunProgress({ plan }: { plan: RunPlan }) {
-  const elapsed = useElapsed()
+export default function RunProgress({ plan, since }: { plan: RunPlan; since?: number }) {
+  const elapsed = useElapsed(since)
   const [min, max] = plan.typical
   // The scale runs a third past the usual maximum, so a run that is merely
   // slow still has somewhere on the bar to be.
@@ -112,6 +117,33 @@ export default function RunProgress({ plan }: { plan: RunPlan }) {
         </div>
       </div>
     </section>
+  )
+}
+
+/**
+ * How the latest background run of a page ended, when it ended badly.
+ *
+ * Drawn from the job record, not from anything the page watched happen, so it is
+ * still on screen after the designer has gone to another page and come back, or
+ * reloaded: a failure that only showed to whoever was looking at the moment it
+ * happened would be gone by the time anyone checked. It stays until a newer run
+ * of the page's kinds replaces it as the latest.
+ */
+export function RunFailure({ job, subject }: { job: JobInfo; subject?: string }) {
+  const at = job.finished_at ? new Date(job.finished_at) : null
+  const time =
+    at && !Number.isNaN(at.getTime())
+      ? at.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+      : ''
+  return (
+    <div className="notice notice-error" role="alert">
+      <p className="font-medium">
+        {job.label_th || 'งานเบื้องหลัง'}
+        {subject && ` ${subject}`} ไม่สำเร็จ
+        {time && <span className="font-normal"> · เมื่อ {time}</span>}
+      </p>
+      {job.error_th && <p className="mt-0.5">{job.error_th}</p>}
+    </div>
   )
 }
 
