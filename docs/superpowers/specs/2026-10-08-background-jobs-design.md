@@ -35,13 +35,14 @@ Long-running routes that become jobs (7):
 | `POST /programs/{id}/needs/skills/run` | `skill_extraction` | SkillExtraction |
 | `POST /programs/{id}/needs/combine/run` | `need_combination` | SkillExtraction |
 | `POST /programs/{id}/plos/run` | `plo_synthesis` | PloSynthesis |
-| `POST /programs/{id}/plos/review/run` | `plo_review` | PloReport |
+| `POST /programs/{id}/plos/review/run` | `plo_review` | none today (no page calls it yet) |
 | `POST /programs/{id}/plos/report/run` | `plo_report` | PloReport |
 | `POST /programs/{id}/plos/{plo_id}/revalidate` | `plo_revalidate` | PloSynthesis |
 
-Unchanged: every GET, `PUT`, `DELETE`, `POST /plos/from-needs` (one draft, but
-see "Out of scope"), `POST /programs/` and `/copy`, the evidence SSE stream,
-and the graph path (`/sessions`, already backgrounded).
+Still synchronous: every GET, `PUT`, `DELETE`, `POST /plos/from-needs` (one
+draft, but see "Out of scope"), `POST /programs/` and `/copy`, the evidence SSE
+stream, and the graph path (`/sessions`, already backgrounded). Four of these
+gain a 409 while the program is busy (section 2).
 
 ## 1. Data — `jobs` table (new migration)
 
@@ -57,7 +58,13 @@ and the graph path (`/sessions`, already backgrounded).
 | `created_at` | DateTime | |
 | `finished_at` | DateTime, nullable | |
 
-Pydantic `JobInfo` mirrors it (`result: Any | None`). `JobRepository`
+Pydantic `JobInfo` mirrors it (`result: Any | None`) and adds `label_th`
+(the Thai name of the kind, from one backend table `JOB_KIND_LABEL_TH`, so the
+409 text and every page say the same thing). **Timestamps go out as UTC with
+an explicit offset** (`+00:00`): the columns stay naive UTC like every other
+table here, but a naive ISO string is read by the browser as *local* time —
+the Pipeline page already shows session times 7 hours off this way — and
+`RunProgress` will compute elapsed time from `created_at`. `JobRepository`
 (repository pattern): `insert`, `get`, `list_by_program(active_only)`,
 `finish(job_id, status, result=None, error_th=None)`,
 `fail_all_running(message) -> int`, `delete_by_program`.
@@ -69,18 +76,33 @@ Pydantic `JobInfo` mirrors it (`result: Any | None`). `JobRepository`
 
 `async def start_job(program_id, kind, params, work: Callable[[], Awaitable[BaseModel]]) -> JobInfo`
 
-1. **One active job per program.** If `JobRepository` has a `running` job for
-   the program, raise `JobConflict(running_job)`; routes answer **409** with a
-   Thai detail naming the running kind ("หลักสูตรนี้มีงาน <kind label> กำลังทำอยู่
-   — รอให้เสร็จก่อน") and the running `JobInfo` in the body. Reason: every stage
-   deletes then rewrites tables the next stage reads, so any two runs on one
-   program can interleave. The check-then-insert race is closed in process by
-   an `asyncio.Lock` per program around check+insert (single uvicorn process is
-   the deployment); the existing `_SYNTHESIS_IN_FLIGHT` / `_REVIEW_IN_FLIGHT`
-   guards stay as a second layer.
-2. Insert the row as `running`, then `asyncio.create_task(_run(...))`, keeping
-   a strong reference in a module-level set until the task ends (a bare
-   `create_task` can be garbage-collected mid-run).
+1. **One active writer per program.** `start_job` refuses with
+   `JobConflict` when the program has a `running` job **or a `running` graph
+   session** (`sessions.status == "running"`): the graph runs the same stages
+   and writes the same tables, so a session and a job on one program interleave
+   exactly like two jobs. Routes answer **409** with `detail` a plain Thai
+   string ("หลักสูตรนี้มีงาน <label_th> กำลังทำอยู่ — รอให้เสร็จก่อน", or
+   "…กำลังรัน pipeline อยู่…" for a session) — a string, because every page reads
+   `response.data.detail` as text; the running job itself is found through
+   `GET /jobs?active=true`. Reason for the rule: every stage deletes then
+   rewrites tables the next stage reads. The check-then-insert race is closed
+   in process by an `asyncio.Lock` per program around check+insert (single
+   uvicorn process is the deployment); the existing `_SYNTHESIS_IN_FLIGHT` /
+   `_REVIEW_IN_FLIGHT` guards stay as a second layer. One consequence,
+   accepted: two `revalidate` jobs on one program run one after the other,
+   not together.
+   The same check (one helper, `program_busy(program_id) -> str | None`
+   returning the Thai reason) guards the synchronous writers that would
+   interleave with a job: `POST /sessions/` and `POST /sessions/{id}/approve`
+   (they start or resume the graph), `POST /plos/from-needs` (writes PLOs),
+   and `POST /programs/{id}/copy` (reads a half-written set) — each answers 409.
+2. Insert the row as `running`, then hand `_run(...)` to `spawn(coro)`, a
+   one-line module function that calls `asyncio.create_task` and keeps a strong
+   reference in a module-level set until the task ends (a bare `create_task`
+   can be garbage-collected mid-run). `spawn` is the seam tests patch: under
+   `TestClient` each request runs on a short-lived portal loop, so a real task
+   would be abandoned when the request returns — route tests replace `spawn`
+   with a recorder, and runner tests (pytest-asyncio) await `_run` directly.
 3. `_run` awaits `work()`. Success → `finish(succeeded, result=<model_dump json>)`.
    Exception → `finish(failed, error_th=...)` and `logger.error`. The error text:
    an `HTTPException` raised inside `work` uses its `detail`; `asyncio.TimeoutError`
@@ -96,10 +118,10 @@ Pydantic `JobInfo` mirrors it (`result: Any | None`). `JobRepository`
 Existing timeouts (`asyncio.wait_for(..., 300)` in the needs routes, the
 review's 180 s) move inside `work` unchanged.
 
-`POST /programs/{id}/copy` replaces its `is_synthesis_running` check with "the
-program has a running job" (409 with the same detail), which also closes the
-copy-during-need_combination gap the run-comparison spec documented.
-`is_synthesis_running` stays (used by nothing else → delete it if unused).
+`POST /programs/{id}/copy` replaces its `is_synthesis_running` check with
+`program_busy`, which also closes the copy-during-need_combination gap the
+run-comparison spec documented. `is_synthesis_running` then has no caller and
+is deleted with its test.
 
 ## 3. API
 
@@ -129,21 +151,32 @@ Implemented in this plan by subagents (the frontend session is closed).
 
 - `api/jobs.ts`: `JobInfo` type, `startJob(path, body)` (POST, expects 202),
   `getJob`, `listActiveJobs`.
-- `hooks/useProgramJobs.ts`: fetch `GET /jobs?active=true` on mount and on
-  `programId` change; while any job is running, poll every 2 s; when a job it
-  saw running is no longer active, fetch it once by id and expose its final
-  state (`succeeded` + `result`, or `failed` + `error_th`). Stops polling when
-  nothing runs; resumes when a page starts a job. One instance per program,
-  shared through a context provider mounted in `StageLayout`, so every stage
-  page and the layout read the same state.
-- Each stage page (SkillExtraction, PloSynthesis, PloReport):
+- `hooks/useProgramJobs.ts`: reads `GET /jobs` (latest 20) on mount and on
+  `programId` change; while any job is running, polls every 2 s; stops when
+  nothing runs; resumes when a page starts a job. It exposes the running job
+  (if any) and **the latest job of each kind** — state derived from the
+  server's list, never from transitions the page happened to witness, so a
+  run that finished while the browser was closed or on another tab is
+  reported the same as one watched to the end. One instance per program,
+  shared through a context provider mounted in `StageLayout` (the layout route
+  wraps every page, `Programs` and `Pipeline` included, and stays mounted
+  across navigation; it already knows `programId` from `useProgram`).
+- Each stage page (SkillExtraction, PloSynthesis):
   - start = `startJob(...)` then tell the hook; no awaiting the result;
-  - "running" = the hook says a job of this page's kind is active (not a local
-    flag), so it survives navigation and refresh; `RunProgress` renders from it;
-  - on that job's `succeeded`: refetch the page data (or use `result`); on
-    `failed`: show `error_th` in the page's existing error slot;
-  - a 409 shows its Thai detail; start buttons are disabled while any job of
-    the program runs.
+  - "running" = the hook's running job is of this page's kind (not a local
+    flag), so it survives navigation and refresh; `RunProgress` gets
+    `since = Date.parse(job.created_at)` so elapsed time is real, not since mount;
+  - when the latest job of this page's kind becomes `succeeded` with a
+    `finished_at` newer than the page's last load, refetch the page data; its
+    `result` supplies what the old response carried beyond the stored rows
+    (e.g. `dropped_ungrounded_count`, warnings);
+  - when the latest job of this page's kind is `failed`, show its `error_th`
+    and finish time in the page's error slot, until a newer job of that kind
+    succeeds;
+  - a 409 shows its Thai detail; every start button (and the PLO merge
+    button) is disabled while the program has a running job.
+- PloReport: `report/run` becomes a job the same way. A button for
+  `review/run` is not added here (no page has one today).
 - `StageLayout`: one line visible on every stage page while a job runs —
   "กำลังทำงาน: <Thai kind label> · เริ่ม <time>" with a link to the page that
   owns it.
@@ -161,10 +194,12 @@ Backend (pytest, mocked sessions — no real-DB fixture exists):
   message); a running job makes a second `start_job` raise `JobConflict`; the
   task reference is released when it ends; restart sweep calls
   `fail_all_running`.
-- routes: each of the seven returns 202 + `JobInfo`, still returns its old
-  404/422 synchronously without creating a job, and 409 when a job runs;
-  `GET /jobs` and `/jobs/{id}` (404 on another program's job); copy answers 409
-  while a job runs.
+- routes (`spawn` patched): each of the seven returns 202 + `JobInfo`, still
+  returns its old 404/422 synchronously without creating a job, and 409 when a
+  job or a running session holds the program; `GET /jobs` and `/jobs/{id}`
+  (404 on another program's job); `POST /sessions/`, `/approve`,
+  `/plos/from-needs` and `/copy` answer 409 while a job runs.
+- `JobInfo` timestamps serialize with `+00:00`.
 - `delete_cascade` deletes jobs.
 
 Live (controller): migrate, start the backend, run `POST /plos/report/run` on
@@ -185,3 +220,8 @@ Skill `references/data-schemas.md`: `JobInfo` / `jobs`.
   100 s on the tunnel — a follow-up if it does).
 - Pruning old job rows (bounded by use; `delete_cascade` removes them with the
   program).
+- Other writers during a job — `PUT`/`DELETE` of a PLO, adding or deleting
+  evidence, the evidence classify stream — behave as they do today.
+- Fixing the Pipeline page's 7-hour session time (same naive-UTC cause; noted
+  here because the jobs work found it).
+- A "re-run the set review" button on PloReport.
