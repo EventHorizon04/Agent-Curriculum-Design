@@ -360,6 +360,35 @@ LangGraph's interrupt mechanism saves a `StageCheckpoint` and waits. The React U
 
 Note: `skill_extraction` and `need_combination` are separate graph nodes but share one checkpoint, placed after `need_combination` — the designer reviews raw extracted skills and the distilled Needs together in one review, not at two separate boundaries. Every other stage boundary gets its own checkpoint.
 
+## Cross-stage: background jobs
+
+```python
+JobKind = Literal[
+    "needs_pipeline", "skill_extraction", "need_combination",
+    "plo_synthesis", "plo_review", "plo_report", "plo_revalidate",
+]
+JobStatus = Literal["running", "succeeded", "failed"]
+
+class JobInfo(BaseModel):
+    """A background stage run as the API reports it (api/jobs.py)."""
+    job_id: str
+    program_id: str
+    kind: JobKind
+    label_th: str = ""        # filled by the API from the kind, not stored
+    status: JobStatus
+    params: dict = {}         # what the run was started with (note_th, plo_id, ...)
+    result: Any | None = None # the body the route used to return synchronously
+    error_th: str | None = None  # Thai reason, set when status == "failed"
+    created_at: datetime
+    finished_at: datetime | None = None
+```
+
+The seven long run routes answer 202 with a `JobInfo` instead of holding the request open; the stage's own output (`NeedRunResult`, `SkillRunResult`, `list[PLO]`, `PLOReportResponse`, the review response, the revalidated `PLO`) lands in `result` once `status` is `succeeded`. The page reads `GET /programs/{id}/jobs` (`?active=true` for running only) and `GET /programs/{id}/jobs/{job_id}`.
+
+`jobs` is one row per run (`job_id` primary key, FK to `programs.program_id`), `kind` and `status` as plain strings, `params` and `result` as JSONB. Its datetimes are naive UTC like every other table's; `JobInfo` adds `+00:00` only when serialised to JSON, so a browser does not read them as local time.
+
+**One writer per program.** A `running` job, or a graph session whose status is `running`, blocks every other job and the synchronous writers (`POST /sessions/`, `/approve`, `/plos/from-needs`, `/copy`) with a 409 whose `detail` is a Thai string. Rows still `running` after a restart belong to a dead process and are marked `failed` at startup. A job is an operational record, not an OBE artifact: it carries no evidence trail and nothing downstream reads it.
+
 ## Versioning
 
 PLOs are mutable objects under designer review. Use this versioning approach:
