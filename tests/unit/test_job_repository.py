@@ -9,7 +9,11 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from curriculum_agent.data.orm import JobTable
-from curriculum_agent.data.repositories import JobRepository, ProgramRepository
+from curriculum_agent.data.repositories import (
+    JobRepository,
+    ProgramRepository,
+    SessionRepository,
+)
 from curriculum_agent.models import JobInfo
 
 
@@ -150,6 +154,35 @@ async def test_fail_all_running_returns_the_swept_count_and_commits_once() -> No
     assert len(executed) == 1
     assert executed[0].startswith("UPDATE jobs")
     assert "jobs.status" in executed[0]
+
+
+async def test_session_fail_all_running_filters_on_running_and_commits_once() -> None:
+    """The startup sweep's session half: a graph run is an in-process task, so a
+    `running` row after a restart has no owner."""
+    session = AsyncMock()
+    executed: list[tuple[str, dict[str, object]]] = []
+
+    async def execute(stmt):  # noqa: ANN001, ANN202
+        compiled = stmt.compile()
+        executed.append((str(compiled), compiled.params))
+        result = MagicMock()
+        result.rowcount = 3
+        return result
+
+    session.execute = execute
+    with patch(
+        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_session_ctx(session)
+    ):
+        assert await SessionRepository().fail_all_running("เซิร์ฟเวอร์รีสตาร์ท") == 3
+    session.commit.assert_awaited_once()
+    assert len(executed) == 1
+    sql, params = executed[0]
+    assert sql.startswith("UPDATE sessions SET")
+    assert "WHERE sessions.status = " in sql
+    assert params["status_1"] == "running"
+    assert params["status"] == "failed"
+    assert params["suspended_message"] == "เซิร์ฟเวอร์รีสตาร์ท"
+    assert isinstance(params["updated_at"], datetime)
 
 
 async def test_list_by_program_active_only_filters_on_running() -> None:

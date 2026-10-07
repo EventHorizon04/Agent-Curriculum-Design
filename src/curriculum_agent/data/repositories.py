@@ -573,6 +573,24 @@ class SessionRepository:
             row.updated_at = datetime.utcnow()
             await db.commit()
 
+    async def fail_all_running(self, message: str) -> int:
+        """Startup sweep: a graph run is an in-process task, so a session still
+        `running` belongs to a dead process. Writes the message to the same
+        column `set_status` does."""
+        async with AsyncSessionLocal() as db:
+            result = cast(
+                CursorResult[Any],
+                await db.execute(
+                    update(SessionTable)
+                    .where(SessionTable.status == "running")
+                    .values(
+                        status="failed", suspended_message=message, updated_at=datetime.utcnow()
+                    )
+                ),
+            )
+            await db.commit()
+            return result.rowcount
+
     async def delete(self, program_id: str, session_id: str) -> bool:
         """Delete one session row, scoped to its program.
 

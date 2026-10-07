@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 if sys.platform == "win32":
     # Block `import magic` (python-magic) on Windows. Under Git Bash the PATH
@@ -105,6 +105,10 @@ def jobs_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[InMemoryJobs]:
     monkeypatch.setattr(jobs_mod, "JobRepository", lambda: store)
     monkeypatch.setattr(jobs_mod, "spawn", recorder)
     monkeypatch.setattr(jobs_mod, "_running_session", AsyncMock(return_value=False))
+    # The startup sweep also fails orphaned graph sessions; no test reaches the DB.
+    no_sessions = MagicMock()
+    no_sessions.fail_all_running = AsyncMock(return_value=0)
+    monkeypatch.setattr(jobs_mod, "SessionRepository", lambda: no_sessions)
     jobs_mod._LOCKS.clear()
     store.recorder = recorder  # type: ignore[attr-defined]
     yield store

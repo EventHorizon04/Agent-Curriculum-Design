@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
@@ -72,6 +72,26 @@ async def test_failure_records_a_readable_error(
     done = jobs_store.rows[job.job_id]
     assert done.status == "failed"
     assert expected in (done.error_th or "")
+
+
+@pytest.mark.parametrize("returned", [None, {"n": 3}])
+async def test_a_result_that_cannot_be_dumped_fails_the_job_instead_of_escaping(
+    returned: object, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    """A dump failure used to sit in the try's `else:` and escape: the job stayed
+    `running` for ever and locked its program."""
+
+    async def not_a_model() -> _Out:
+        return returned  # type: ignore[return-value]
+
+    job = await jobs.start_job("p", "plo_report", {}, not_a_model)
+    await spawned.coros.pop(0)  # must not raise
+    done = jobs_store.rows[job.job_id]
+    assert done.status == "failed"
+    assert done.error_th
+    assert done.finished_at is not None
+    # and the program is free again
+    await jobs.start_job("p", "plo_report", {}, _ok)
 
 
 async def test_a_running_job_refuses_a_second(
@@ -146,6 +166,35 @@ async def test_the_sweep_fails_orphans_with_the_restart_message(
     assert swept.error_th == jobs.RESTART_MESSAGE_TH
     # and the program is free again
     await jobs.start_job("p", "plo_report", {}, _ok)
+
+
+async def test_the_sweep_also_fails_orphaned_graph_sessions(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A graph run is an in-process task too: one left `running` by a dead
+    process would block its program for ever, with no UI route able to end it."""
+    await jobs.start_job("p", "plo_report", {}, _ok)
+    sessions = MagicMock()
+    sessions.fail_all_running = AsyncMock(return_value=2)
+    monkeypatch.setattr(jobs, "SessionRepository", lambda: sessions)
+    assert await jobs.sweep_orphaned_jobs() == 3
+    sessions.fail_all_running.assert_awaited_once_with(jobs.RESTART_MESSAGE_TH)
+
+
+async def test_program_lock_is_the_lock_start_job_takes(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    """Synchronous writers hold the same per-program lock, so a job cannot start
+    between their busy-check and their write."""
+    async with jobs.program_lock("p"):
+        task = asyncio.create_task(jobs.start_job("p", "plo_report", {}, _ok))
+        await asyncio.sleep(0.01)
+        assert not task.done()
+        assert jobs_store.rows == {}
+        async with jobs.program_lock("q"):  # another program is not held up
+            pass
+    await task
+    assert len(jobs_store.rows) == 1
 
 
 async def test_program_busy_reports_job_session_or_none(

@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from collections.abc import Awaitable, Callable, Coroutine, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Coroutine, Sequence
+from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Any
 
@@ -35,6 +36,7 @@ __all__ = [
     "JobConflict",
     "JobRepository",
     "program_busy",
+    "program_lock",
     "spawn",
     "start_job",
     "start_job_or_409",
@@ -61,6 +63,13 @@ class JobConflict(Exception):
     def __init__(self, detail_th: str) -> None:
         super().__init__(detail_th)
         self.detail_th = detail_th
+
+
+@asynccontextmanager
+async def program_lock(program_id: str) -> AsyncIterator[None]:
+    """Synchronous writers hold this around their busy-check and their short write."""
+    async with _LOCKS.setdefault(program_id, asyncio.Lock()):
+        yield
 
 
 def with_label(job: JobInfo) -> JobInfo:
@@ -114,13 +123,13 @@ async def _run(
 ) -> None:
     repo = JobRepository()
     try:
-        value = await work()
+        # The dump is inside the try: a work() that returns something that is not
+        # a model would otherwise escape here and leave the job `running` for ever.
+        outcome: dict[str, Any] = {"status": "succeeded", "result": _dump(await work())}
+        logger.info(f"job {job_id} ({kind}) succeeded")
     except Exception as exc:  # noqa: BLE001 - every failure becomes the job's error
         logger.error(f"job {job_id} ({kind}) failed: {exc!r}")
-        outcome: dict[str, Any] = {"status": "failed", "error_th": _error_th(exc)}
-    else:
-        outcome = {"status": "succeeded", "result": _dump(value)}
-        logger.info(f"job {job_id} ({kind}) succeeded")
+        outcome = {"status": "failed", "error_th": _error_th(exc)}
     try:
         status = outcome.pop("status")
         if not await repo.finish(job_id, status, **outcome):
@@ -135,8 +144,7 @@ async def start_job(
     params: dict[str, Any],
     work: Callable[[], Awaitable[BaseModel | Sequence[BaseModel]]],
 ) -> JobInfo:
-    lock = _LOCKS.setdefault(program_id, asyncio.Lock())
-    async with lock:
+    async with program_lock(program_id):
         reason = await program_busy(program_id)
         if reason is not None:
             raise JobConflict(reason)
@@ -167,8 +175,14 @@ async def start_job_or_409(
 
 
 async def sweep_orphaned_jobs() -> int:
-    """At startup: a job still `running` was owned by a process that is gone."""
-    n = await JobRepository().fail_all_running(RESTART_MESSAGE_TH)
-    if n:
-        logger.warning(f"jobs: marked {n} orphaned running job(s) failed at startup")
-    return n
+    """At startup: a job or graph session still `running` was owned by a process
+    that is gone. Both block their program until swept."""
+    jobs_swept = await JobRepository().fail_all_running(RESTART_MESSAGE_TH)
+    if jobs_swept:
+        logger.warning(f"jobs: marked {jobs_swept} orphaned running job(s) failed at startup")
+    sessions_swept = await SessionRepository().fail_all_running(RESTART_MESSAGE_TH)
+    if sessions_swept:
+        logger.warning(
+            f"jobs: marked {sessions_swept} orphaned running session(s) failed at startup"
+        )
+    return jobs_swept + sessions_swept
