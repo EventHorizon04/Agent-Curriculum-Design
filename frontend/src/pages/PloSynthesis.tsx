@@ -56,8 +56,13 @@ interface NeedListItem {
 }
 
 /** The jobs this page owns: the synthesis run, and the SMART re-check of one
- *  outcome. Both write PLO rows, so both reload the list when they succeed. */
+ *  outcome. They are what it shows as running and what its failure notice is
+ *  about. */
 const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate']
+/** The jobs that change what this page lists, whichever page started them: the
+ *  PLOs it shows are written by the first two, the Needs it offers for merging
+ *  by the last two. */
+const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate', 'needs_pipeline', 'need_combination']
 
 export default function PloSynthesis() {
   const { programId } = useProgram()
@@ -86,10 +91,12 @@ export default function PloSynthesis() {
   // kinds: the backend allows one writer per program, merging included.
   const busy = running !== null || starting || merging
 
-  // When the list was last asked for. Set when a load *starts*: one that began
-  // before a job finished may have read the rows it replaced. Infinity until the
-  // first load starts, so nothing counts as newer than a load not yet made.
-  const loadedAt = useRef(Number.POSITIVE_INFINITY)
+  // Ids of the jobs this page has seen running while it is mounted: the one its
+  // own start handed back, and whichever job the shared list shows running. A
+  // reload is owed when one of them is later seen to have succeeded. Nothing is
+  // compared against a clock — the server's and the browser's may disagree — and
+  // a job that finished before the page mounted is covered by the mount load.
+  const watching = useRef(new Set<string>())
 
   // Read once per program. A failed read leaves the status unknown rather than
   // "off": the box stays usable, and the backend still refuses to run an agent
@@ -116,7 +123,6 @@ export default function PloSynthesis() {
   const fetchPlos = useCallback(
     async (quiet = false) => {
       if (!programId) return
-      loadedAt.current = Date.now()
       if (!quiet) setLoading(true)
       setError('')
       try {
@@ -142,12 +148,12 @@ export default function PloSynthesis() {
     setStarting(true)
     setError('')
     try {
-      started(
-        await startJob(`/programs/${programId}/plos/run`, {
-          note_th: note.trim() || null,
-          run_validation: agentWillRun,
-        }),
-      )
+      const job = await startJob(`/programs/${programId}/plos/run`, {
+        note_th: note.trim() || null,
+        run_validation: agentWillRun,
+      })
+      watching.current.add(job.job_id)
+      started(job)
     } catch (err: unknown) {
       const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
       setError(res?.data?.detail ?? 'รัน PLO Synthesis ไม่สำเร็จ')
@@ -165,7 +171,9 @@ export default function PloSynthesis() {
       setStarting(true)
       setError('')
       try {
-        started(await startJob(`/programs/${programId}/plos/${ploId}/revalidate`))
+        const job = await startJob(`/programs/${programId}/plos/${ploId}/revalidate`)
+        watching.current.add(job.job_id)
+        started(job)
       } catch (err: unknown) {
         const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
         setError(res?.data?.detail ?? 'ตรวจ SMART ซ้ำไม่สำเร็จ')
@@ -179,20 +187,32 @@ export default function PloSynthesis() {
 
   useEffect(() => { fetchPlos() }, [fetchPlos])
 
-  // Reload when this page's latest job has succeeded since the list was asked
-  // for. Keyed on the finish time alone (0 unless the latest job succeeded):
-  // the job objects get a new identity on every poll, and an effect keyed on
-  // them would reload every two seconds.
-  // A layout effect, not a passive one: when the job's result arrives the run
-  // screen is replaced in the same commit, and a passive effect would let the
-  // browser paint the previous data (or the empty state, with a live start
-  // button) for a moment before the reload put the loading line up.
-  const finishedAt =
-    last?.status === 'succeeded' && last.finished_at ? Date.parse(last.finished_at) : 0
-  const quietReload = last?.kind === 'plo_revalidate'
+  // Reload once when a job this page watched running is seen to have succeeded,
+  // whichever page started it. The effects are keyed on ids and strings —
+  // primitives — because the job objects get a new identity on every poll, and
+  // an effect keyed on them would reload every two seconds. Layout effects, not
+  // passive ones: when the result arrives the run screen is replaced in the same
+  // commit, and a passive effect would let the browser paint the previous data
+  // (or the empty state, with a live start button) for a moment before the
+  // reload put the loading line up.
+  const reloadLatest = latestOf(RELOAD_KINDS)
+  const reloadId = reloadLatest?.job_id ?? ''
+  const reloadStatus = reloadLatest?.status ?? ''
+  // A re-check changes one outcome, so it reloads behind the list on screen.
+  const reloadQuiet = reloadLatest?.kind === 'plo_revalidate'
+  const runningId = running && RELOAD_KINDS.includes(running.kind) ? running.job_id : ''
+  // Another program's jobs are not this one's to reload for.
   useLayoutEffect(() => {
-    if (finishedAt > loadedAt.current) void fetchPlos(quietReload)
-  }, [finishedAt, quietReload, fetchPlos])
+    watching.current.clear()
+  }, [programId])
+  useLayoutEffect(() => {
+    if (runningId) watching.current.add(runningId)
+  }, [runningId])
+  useLayoutEffect(() => {
+    // Forgotten as soon as it has ended, whichever way: a failed job changed no rows.
+    if (reloadStatus === 'running' || !watching.current.delete(reloadId)) return
+    if (reloadStatus === 'succeeded') void fetchPlos(reloadQuiet)
+  }, [reloadId, reloadStatus, reloadQuiet, fetchPlos])
 
   const handleUpdate = (updated: PLO) =>
     setPlos(prev => prev.map(p => (p.plo_id === updated.plo_id ? updated : p)))

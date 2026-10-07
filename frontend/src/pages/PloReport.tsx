@@ -57,8 +57,19 @@ interface ReportCounts {
 /** The job kinds whose outcome this page reports. Only the report run is shown
  *  as a run here: the set review has no button on this page, so a review job is
  *  here for its failure to be seen, not to be started or waited on. */
-const REPORT_KIND: JobKind[] = ['plo_report']
 const PAGE_KINDS: JobKind[] = ['plo_report', 'plo_review']
+/** The jobs that change what this page draws, whichever page started them: the
+ *  report is a reading of the PLOs and the Needs, so a synthesis, a re-check, or
+ *  a new set of Needs all leave it showing a set that no longer exists. A set
+ *  review changes none of it. */
+const RELOAD_KINDS: JobKind[] = [
+  'plo_report',
+  'plo_synthesis',
+  'plo_revalidate',
+  'needs_pipeline',
+  'skill_extraction',
+  'need_combination',
+]
 
 interface TraceNeed {
   need_id: string
@@ -247,15 +258,15 @@ export default function PloReport() {
   // Any job of the program blocks the start button: one writer per program.
   const busy = running !== null || starting
 
-  // When the data on screen was last asked for. Set when a load *starts*: one
-  // that began before a job finished may have read the rows it replaced.
-  // Infinity until the first load starts, so nothing counts as newer than a
-  // load that has not been made.
-  const loadedAt = useRef(Number.POSITIVE_INFINITY)
+  // Ids of the jobs this page has seen running while it is mounted: the one its
+  // own start handed back, and whichever job the shared list shows running. A
+  // reload is owed when one of them is later seen to have succeeded. Nothing is
+  // compared against a clock — the server's and the browser's may disagree — and
+  // a job that finished before the page mounted is covered by the mount load.
+  const watching = useRef(new Set<string>())
 
   const fetchData = useCallback(async () => {
     if (!programId) return
-    loadedAt.current = Date.now()
     setLoading(true)
     setError('')
     try {
@@ -281,7 +292,9 @@ export default function PloReport() {
     setStarting(true)
     setError('')
     try {
-      started(await startJob(`/programs/${programId}/plos/report/run`))
+      const job = await startJob(`/programs/${programId}/plos/report/run`)
+      watching.current.add(job.job_id)
+      started(job)
     } catch (err: unknown) {
       const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
       setError(res?.data?.detail ?? 'สร้างรายงานไม่สำเร็จ')
@@ -321,21 +334,30 @@ export default function PloReport() {
     fetchData()
   }, [fetchData])
 
-  // Reload when the latest report run has succeeded since the data was asked
-  // for. Keyed on the finish time alone (0 unless that job succeeded): the job
-  // objects get a new identity on every poll, and an effect keyed on them would
-  // reload every two seconds. A set review changes nothing this page draws, so
-  // only the report run counts.
-  // A layout effect, not a passive one: when the job's result arrives the run
-  // screen is replaced in the same commit, and a passive effect would let the
-  // browser paint the previous data (or the empty state, with a live start
-  // button) for a moment before the reload put the loading line up.
-  const lastReport = latestOf(REPORT_KIND)
-  const finishedAt =
-    lastReport?.status === 'succeeded' && lastReport.finished_at ? Date.parse(lastReport.finished_at) : 0
+  // Reload once when a job this page watched running is seen to have succeeded,
+  // whichever page started it. The effects are keyed on ids and a status —
+  // primitives — because the job objects get a new identity on every poll, and
+  // an effect keyed on them would reload every two seconds. Layout effects, not
+  // passive ones: when the result arrives the run screen is replaced in the same
+  // commit, and a passive effect would let the browser paint the previous data
+  // (or the empty state, with a live start button) for a moment before the
+  // reload put the loading line up.
+  const reloadLatest = latestOf(RELOAD_KINDS)
+  const reloadId = reloadLatest?.job_id ?? ''
+  const reloadStatus = reloadLatest?.status ?? ''
+  const runningId = running && RELOAD_KINDS.includes(running.kind) ? running.job_id : ''
+  // Another program's jobs are not this one's to reload for.
   useLayoutEffect(() => {
-    if (finishedAt > loadedAt.current) void fetchData()
-  }, [finishedAt, fetchData])
+    watching.current.clear()
+  }, [programId])
+  useLayoutEffect(() => {
+    if (runningId) watching.current.add(runningId)
+  }, [runningId])
+  useLayoutEffect(() => {
+    // Forgotten as soon as it has ended, whichever way: a failed job changed no rows.
+    if (reloadStatus === 'running' || !watching.current.delete(reloadId)) return
+    if (reloadStatus === 'succeeded') void fetchData()
+  }, [reloadId, reloadStatus, fetchData])
 
   if (!programId) {
     return (

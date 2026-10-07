@@ -70,15 +70,15 @@ export default function SkillExtraction() {
   // refused with a 409 about the run it has just started.
   const busy = running !== null || starting
 
-  // When the data on screen was last asked for. Set when a load *starts*: a
-  // load that began before a job finished may have read the rows it replaced,
-  // and one that began after has read them. Infinity until the first load
-  // starts, so nothing counts as newer than a load that has not happened yet.
-  const loadedAt = useRef(Number.POSITIVE_INFINITY)
+  // Ids of the jobs this page has seen running while it is mounted: the one its
+  // own start handed back, and whichever job the shared list shows running. A
+  // reload is owed when one of them is later seen to have succeeded. Nothing is
+  // compared against a clock — the server's and the browser's may disagree — and
+  // a job that finished before the page mounted is covered by the mount load.
+  const watching = useRef(new Set<string>())
 
   const fetchAll = useCallback(async () => {
     if (!programId) return
-    loadedAt.current = Date.now()
     setLoading(true)
     setError('')
     try {
@@ -116,11 +116,11 @@ export default function SkillExtraction() {
       setStarting(true)
       setError('')
       try {
-        started(
-          await startJob(`/programs/${programId}/needs/${RUN_PATH[kind]}`, {
-            note_th: note.trim() || null,
-          }),
-        )
+        const job = await startJob(`/programs/${programId}/needs/${RUN_PATH[kind]}`, {
+          note_th: note.trim() || null,
+        })
+        watching.current.add(job.job_id)
+        started(job)
       } catch (err: unknown) {
         const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
         setError(res?.data?.detail ?? 'รัน Stage 3 ไม่สำเร็จ')
@@ -136,19 +136,28 @@ export default function SkillExtraction() {
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
-  // Reload when this page's latest job has succeeded since the data was asked
-  // for. Keyed on the finish time alone (0 unless the latest job succeeded):
-  // the job objects get a new identity on every poll, and an effect keyed on
-  // them would reload every two seconds.
-  // A layout effect, not a passive one: when the job's result arrives the run
-  // screen is replaced in the same commit, and a passive effect would let the
-  // browser paint the previous data (or the empty state, with a live start
-  // button) for a moment before the reload put the loading line up.
-  const finishedAt =
-    last?.status === 'succeeded' && last.finished_at ? Date.parse(last.finished_at) : 0
+  // Reload once when a job this page watched running is seen to have succeeded.
+  // The effects are keyed on ids and a status — primitives — because the job
+  // objects get a new identity on every poll, and an effect keyed on them would
+  // reload every two seconds. Layout effects, not passive ones: when the result
+  // arrives the run screen is replaced in the same commit, and a passive effect
+  // would let the browser paint the previous data (or the empty state, with a
+  // live start button) for a moment before the reload put the loading line up.
+  const runningId = running && PAGE_KINDS.includes(running.kind) ? running.job_id : ''
+  const lastId = last?.job_id ?? ''
+  const lastStatus = last?.status ?? ''
+  // Another program's jobs are not this one's to reload for.
   useLayoutEffect(() => {
-    if (finishedAt > loadedAt.current) void fetchAll()
-  }, [finishedAt, fetchAll])
+    watching.current.clear()
+  }, [programId])
+  useLayoutEffect(() => {
+    if (runningId) watching.current.add(runningId)
+  }, [runningId])
+  useLayoutEffect(() => {
+    // Forgotten as soon as it has ended, whichever way: a failed job changed no rows.
+    if (lastStatus === 'running' || !watching.current.delete(lastId)) return
+    if (lastStatus === 'succeeded') void fetchAll()
+  }, [lastId, lastStatus, fetchAll])
 
   /**
    * Needs left behind by an older set of skills.
