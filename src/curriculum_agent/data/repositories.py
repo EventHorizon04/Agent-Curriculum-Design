@@ -11,6 +11,7 @@ from curriculum_agent.data.orm import (
     Base,
     CheckpointTable,
     EvidenceTable,
+    JobTable,
     LLMCacheTable,
     NeedTable,
     PLOReviewTable,
@@ -24,6 +25,8 @@ from curriculum_agent.graph import stage_reached
 from curriculum_agent.models import (
     PLO,
     ExtractedSkill,
+    JobInfo,
+    JobStatus,
     Need,
     PLOSetReview,
     ProgramMetadata,
@@ -161,7 +164,7 @@ class ProgramRepository:
 
         Deletes skills before evidence because SkillTable.source_evidence_id
         is a FK into EvidenceTable. Returns False (no-op) if program_id
-        doesn't exist — the seven prior deletes affect zero rows either way.
+        doesn't exist — the eight prior deletes affect zero rows either way.
         """
         async with AsyncSessionLocal() as session:
             await session.execute(delete(SkillTable).where(SkillTable.program_id == program_id))
@@ -174,6 +177,7 @@ class ProgramRepository:
                 delete(CheckpointTable).where(CheckpointTable.program_id == program_id)
             )
             await session.execute(delete(SessionTable).where(SessionTable.program_id == program_id))
+            await session.execute(delete(JobTable).where(JobTable.program_id == program_id))
             await session.execute(
                 delete(EvidenceTable).where(EvidenceTable.program_id == program_id)
             )
@@ -600,6 +604,72 @@ class SessionRepository:
             row.suspended_message = message
             row.updated_at = datetime.utcnow()
             await db.commit()
+
+
+class JobRepository:
+    """Background stage runs (api/jobs.py). `label_th` is not stored; the
+    runner fills it on the way out."""
+
+    async def insert(self, job: JobInfo) -> None:
+        async with AsyncSessionLocal() as session:
+            data = job.model_dump(exclude={"label_th"})
+            session.add(JobTable(**data))
+            await session.commit()
+
+    async def get(self, job_id: str) -> JobInfo | None:
+        async with AsyncSessionLocal() as session:
+            row = await session.get(JobTable, job_id)
+            return None if row is None else JobInfo.model_validate(_row_to_dict(row))
+
+    async def list_by_program(
+        self, program_id: str, *, active_only: bool = False, limit: int = 20
+    ) -> list[JobInfo]:
+        async with AsyncSessionLocal() as session:
+            stmt = select(JobTable).where(JobTable.program_id == program_id)
+            if active_only:
+                stmt = stmt.where(JobTable.status == "running")
+            stmt = stmt.order_by(JobTable.created_at.desc()).limit(limit)
+            rows = (await session.execute(stmt)).scalars().all()
+            return [JobInfo.model_validate(_row_to_dict(r)) for r in rows]
+
+    async def find_running(self, program_id: str) -> JobInfo | None:
+        running = await self.list_by_program(program_id, active_only=True, limit=1)
+        return running[0] if running else None
+
+    async def finish(
+        self,
+        job_id: str,
+        status: JobStatus,
+        *,
+        result: Any | None = None,
+        error_th: str | None = None,
+    ) -> bool:
+        """Record the outcome. False when the row is gone (program deleted
+        while the job ran) — never raises for that."""
+        async with AsyncSessionLocal() as session:
+            row = await session.get(JobTable, job_id)
+            if row is None:
+                return False
+            row.status = status
+            row.result = result
+            row.error_th = error_th
+            row.finished_at = datetime.utcnow()
+            await session.commit()
+            return True
+
+    async def fail_all_running(self, message: str) -> int:
+        """Startup sweep: a job still `running` belongs to a dead process."""
+        async with AsyncSessionLocal() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(JobTable)
+                    .where(JobTable.status == "running")
+                    .values(status="failed", error_th=message, finished_at=datetime.utcnow())
+                ),
+            )
+            await session.commit()
+            return result.rowcount
 
 
 # The two callers that write to llm_cache, as stored in LLMCacheTable.kind.

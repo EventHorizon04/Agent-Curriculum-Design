@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
 
 from curriculum_agent.data.isced import get_detailed_field
 
@@ -619,6 +619,47 @@ class SessionInfo(BaseModel):
     suspended_message: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+# ----------------------- Background jobs -------------------------
+
+JobKind = Literal[
+    "needs_pipeline",
+    "skill_extraction",
+    "need_combination",
+    "plo_synthesis",
+    "plo_review",
+    "plo_report",
+    "plo_revalidate",
+]
+JobStatus = Literal["running", "succeeded", "failed"]
+
+
+class JobInfo(BaseModel):
+    """A background stage run as the API reports it (api/jobs.py)."""
+
+    job_id: str
+    program_id: str
+    kind: JobKind
+    label_th: str = ""
+    status: JobStatus
+    params: dict[str, Any] = Field(default_factory=dict)
+    result: Any | None = None
+    error_th: str | None = None
+    created_at: datetime
+    finished_at: datetime | None = None
+
+    # Stored naive UTC like every table here; sent with its offset, because a
+    # browser reads a naive ISO string as local time. JSON only: a python-mode
+    # dump (JobRepository.insert) must keep the datetime, since a DateTime
+    # column rejects an ISO string.
+    @field_serializer("created_at", "finished_at", when_used="json")
+    def _utc(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
 
 
 # ------------------ Cross-stage designer note --------------------

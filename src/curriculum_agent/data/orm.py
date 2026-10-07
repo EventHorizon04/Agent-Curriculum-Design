@@ -166,6 +166,24 @@ class PLOReviewTable(Base):
     review: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
+class JobTable(Base):
+    """A background stage run (api/jobs.py). `result` is the JSON body the
+    route used to return synchronously; `error_th` is what the designer reads
+    when it failed. String kind/status, not PG enums (project convention)."""
+
+    __tablename__ = "jobs"
+
+    job_id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
+    kind: Mapped[str] = mapped_column(String(32))
+    status: Mapped[str] = mapped_column(String(16))
+    params: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    result: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
+    error_th: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class CheckpointTable(Base):
     __tablename__ = "checkpoints"
 
