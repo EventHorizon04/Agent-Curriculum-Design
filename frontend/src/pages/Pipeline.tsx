@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
+import { SESSION_STATUS_LABELS, STAGES } from '../constants/stages'
 
 type SessionStatus = 'running' | 'suspended' | 'completed' | 'rejected' | 'failed'
 
@@ -15,46 +17,57 @@ interface Session {
   updated_at: string
 }
 
-const STAGE_ORDER = [
-  { key: 'intake', label: 'Intake' },
-  { key: 'stakeholder_needs', label: 'Stakeholder' },
-  { key: 'skill_extraction', label: 'Skills' },
-  { key: 'plo_synthesis', label: 'PLOs' },
-  { key: 'plo_report', label: 'PLO Report' },
-]
-
-const STAGE_PATHS: Record<string, string> = {
-  intake: '/',
-  stakeholder_needs: '/stakeholder-needs',
-  skill_extraction: '/skill-extraction',
-  plo_synthesis: '/plo-synthesis',
-  plo_report: '/plo-report',
+/** The graph's interrupt messages are English and fixed (graph.py), and each
+ *  one belongs to exactly one checkpoint — so the page says it in Thai from the
+ *  stage the session stopped at, and keeps the original for anything it does
+ *  not recognise. */
+const CHECKPOINT_TH: Record<string, string> = {
+  stakeholder_needs: 'รวบรวมหลักฐานเสร็จแล้ว — ตรวจการจำแนกหลักฐานก่อนสกัดทักษะ',
+  skill_extraction: 'สกัดทักษะและรวม Need เสร็จแล้ว — ตรวจทักษะและ Need ก่อนสังเคราะห์ PLO',
+  plo_synthesis: 'สังเคราะห์ PLO เสร็จแล้ว — ตรวจและแก้ PLO ก่อนสร้างรายงาน',
+  plo_report: 'สร้างรายงาน PLO เสร็จแล้ว — ตรวจรายงานก่อนส่งออก',
 }
 
-const STATUS_COLOR: Record<SessionStatus, string> = {
-  running: '#2563eb',
-  suspended: '#d97706',
-  completed: '#16a34a',
-  rejected: '#dc2626',
-  failed: '#9333ea',
+// A finished, rejected or failed run is a terminal state a person (or the run)
+// produced and reads as a stamp; a run waiting on the designer is the pending
+// stamp; a run still in flight is only a label.
+const STATUS_CLASS: Record<SessionStatus, string> = {
+  running: 'chip chip-neutral',
+  suspended: 'stamp stamp-pending',
+  completed: 'stamp',
+  rejected: 'stamp stamp-mandate',
+  failed: 'stamp stamp-mandate',
 }
 
-function stageIcon(
-  stageKey: string,
-  session: Session,
-): { icon: string; color: string; clickable: boolean } {
-  const currentIdx = STAGE_ORDER.findIndex((s) => s.key === session.current_stage)
-  const thisIdx = STAGE_ORDER.findIndex((s) => s.key === stageKey)
+type StepState = 'done' | 'running' | 'waiting' | 'rejected' | 'ahead'
 
-  if (session.status === 'rejected' && stageKey === session.current_stage)
-    return { icon: '✗', color: '#dc2626', clickable: false }
-  if (stageKey === session.current_stage && session.status === 'suspended')
-    return { icon: '⏸', color: '#d97706', clickable: false }
-  if (stageKey === session.current_stage && session.status === 'running')
-    return { icon: '▶', color: '#2563eb', clickable: false }
-  if (session.status === 'completed' || thisIdx < currentIdx)
-    return { icon: '✓', color: '#16a34a', clickable: true }
-  return { icon: '·', color: '#9ca3af', clickable: false }
+function stepState(stageKey: string, session: Session): StepState {
+  const currentIdx = STAGES.findIndex((s) => s.key === session.current_stage)
+  const thisIdx = STAGES.findIndex((s) => s.key === stageKey)
+
+  if (session.status === 'rejected' && stageKey === session.current_stage) return 'rejected'
+  if (stageKey === session.current_stage && session.status === 'suspended') return 'waiting'
+  if (stageKey === session.current_stage && session.status === 'running') return 'running'
+  if (session.status === 'completed' || thisIdx < currentIdx) return 'done'
+  return 'ahead'
+}
+
+const STEP_TITLE: Record<StepState, string> = {
+  done: 'ผ่านแล้ว',
+  running: 'กำลังทำงาน',
+  waiting: 'รอตรวจสอบ',
+  rejected: 'ถูกปฏิเสธที่ขั้นนี้',
+  ahead: 'ยังไม่ถึง',
+}
+
+/** Same marks as the rail — ● done, ◐ waiting on the designer, ○ not reached —
+ *  plus the moving dial for the stage that is running right now. */
+function StepMark({ state }: { state: StepState }) {
+  if (state === 'running') return <span className="run-dial h-3 w-3" aria-hidden="true" />
+  if (state === 'rejected')
+    return <span className="map-mark border-mandate bg-mandate" aria-hidden="true" />
+  const variant = state === 'done' ? 'passed' : state === 'waiting' ? 'current' : 'ahead'
+  return <span className={`map-mark map-mark-${variant}`} aria-hidden="true" />
 }
 
 function SessionCard({
@@ -69,6 +82,7 @@ function SessionCard({
   const [loading, setLoading] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [error, setError] = useState('')
+  const reviewRoute = STAGES.find((s) => s.key === session.current_stage)?.route
 
   async function doAction(action: 'approve' | 'reject') {
     setLoading(true)
@@ -97,42 +111,25 @@ function SessionCard({
       onAction()
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } }
-      setError(axiosErr.response?.data?.detail ?? 'ลบ session ไม่สำเร็จ')
+      setError(axiosErr.response?.data?.detail ?? 'ลบประวัติการรันไม่สำเร็จ')
     } finally {
       setLoading(false)
     }
   }
 
   return (
-    <div
-      style={{
-        border: '1px solid #e5e7eb',
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 12,
-        background: '#fff',
-      }}
-    >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <span style={{ fontWeight: 600, fontSize: 13 }}>
-            Session {session.session_id.slice(0, 8)}
+    <div className="panel mb-3 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+        <div className="min-w-0">
+          <span className="text-sm font-semibold text-graphite">
+            การรัน <span className="data">{session.session_id.slice(0, 8)}</span>
           </span>
-          <span style={{ marginLeft: 8, fontSize: 12, color: '#6b7280' }}>
+          <span className="data ml-2 text-xs text-pencil">
             {new Date(session.created_at).toLocaleString('th-TH')}
           </span>
         </div>
-        <span
-          style={{
-            fontSize: 12,
-            fontWeight: 600,
-            color: STATUS_COLOR[session.status],
-            background: STATUS_COLOR[session.status] + '18',
-            borderRadius: 6,
-            padding: '2px 8px',
-          }}
-        >
-          {session.status.toUpperCase()}
+        <span className={STATUS_CLASS[session.status]}>
+          {SESSION_STATUS_LABELS[session.status] ?? session.status}
         </span>
       </div>
 
@@ -142,79 +139,97 @@ function SessionCard({
           in the server log, while the same precondition hit from a stage page
           answers with it in Thai. */}
       {session.suspended_message && session.status === 'suspended' && (
-        <p style={{ margin: '8px 0 4px', fontSize: 12, color: '#92400e' }}>
-          ⏸ {session.suspended_message}
-        </p>
+        <div className="notice notice-warn mt-3 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+          <span title={session.suspended_message}>
+            {(session.current_stage && CHECKPOINT_TH[session.current_stage]) ||
+              session.suspended_message}
+          </span>
+          {reviewRoute && (
+            <Link to={reviewRoute} className="font-medium underline underline-offset-2">
+              ไปตรวจที่หน้านี้ →
+            </Link>
+          )}
+        </div>
       )}
 
       {session.suspended_message && session.status === 'failed' && (
-        <p style={{ margin: '8px 0 4px', fontSize: 12, color: '#b91c1c' }}>
-          ✕ {session.suspended_message}
+        <p className="notice notice-error mt-3">{session.suspended_message}</p>
+      )}
+
+      {/* Stages already passed are links to their page; the rest are not,
+          because there is nothing there to review yet. */}
+      <ol className="mt-4 flex flex-wrap items-center gap-x-1 gap-y-2">
+        {STAGES.map((stage, i) => {
+          const state = stepState(stage.key, session)
+          const body = (
+            <>
+              <StepMark state={state} />
+              <span className="data text-[0.6875rem] text-lead">{stage.ordinal}</span>
+              <span>{stage.label}</span>
+              <span className="sr-only"> — {STEP_TITLE[state]}</span>
+            </>
+          )
+          const tone =
+            state === 'rejected'
+              ? 'text-mandate'
+              : state === 'ahead'
+                ? 'text-lead'
+                : 'text-graphite'
+          const pill = 'flex items-center gap-1.5 rounded-[3px] px-1.5 py-0.5 text-[0.8125rem] whitespace-nowrap'
+          return (
+            <li key={stage.key} className="flex items-center gap-1">
+              {state === 'done' ? (
+                <Link
+                  to={stage.route}
+                  title={STEP_TITLE[state]}
+                  className={`${pill} ${tone} hover:bg-sunk hover:underline hover:underline-offset-2`}
+                >
+                  {body}
+                </Link>
+              ) : (
+                <span
+                  title={STEP_TITLE[state]}
+                  className={[
+                    pill,
+                    tone,
+                    state === 'running' || state === 'waiting' ? 'bg-sunk font-semibold' : '',
+                  ].join(' ')}
+                >
+                  {body}
+                </span>
+              )}
+              {i < STAGES.length - 1 && (
+                <span className="text-hair-strong" aria-hidden="true">
+                  —
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ol>
+
+      {session.status === 'running' && (
+        <p className="mt-3 flex items-center gap-2 text-xs text-pencil" role="status">
+          <span className="run-dial h-3 w-3" aria-hidden="true" />
+          กำลังทำงาน — หน้านี้อัปเดตเองทุก 2 วินาที และจะหยุดรอให้ตรวจเมื่อถึง checkpoint ถัดไป
         </p>
       )}
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 10 }}>
-        {STAGE_ORDER.map((stage, i) => {
-          const { icon, color, clickable } = stageIcon(stage.key, session)
-          return [
-            <span
-              key={stage.key}
-              title={stage.label}
-              style={{
-                fontSize: 13,
-                color,
-                fontWeight: 600,
-                cursor: clickable ? 'pointer' : 'default',
-                textDecoration: clickable ? 'underline' : 'none',
-              }}
-              onClick={() => {
-                if (clickable) window.location.href = STAGE_PATHS[stage.key]
-              }}
-            >
-              {icon} {stage.label}
-            </span>,
-            i < STAGE_ORDER.length - 1 && (
-              <span key={`arrow-${stage.key}`} style={{ color: '#d1d5db' }}>
-                →
-              </span>
-            ),
-          ]
-        })}
-      </div>
-
       {session.status === 'suspended' && (
-        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+        <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={() => doAction('approve')}
             disabled={loading}
-            style={{
-              padding: '6px 16px',
-              background: '#16a34a',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: 13,
-            }}
+            className="btn btn-sm btn-primary"
           >
-            Approve
+            อนุมัติ ไปขั้นถัดไป
           </button>
           <button
             onClick={() => doAction('reject')}
             disabled={loading}
-            style={{
-              padding: '6px 16px',
-              background: '#dc2626',
-              color: '#fff',
-              border: 'none',
-              borderRadius: 6,
-              cursor: 'pointer',
-              fontWeight: 600,
-              fontSize: 13,
-            }}
+            className="btn btn-sm btn-danger"
           >
-            Reject
+            ปฏิเสธ หยุดการรันนี้
           </button>
         </div>
       )}
@@ -227,51 +242,24 @@ function SessionCard({
           because deleting the row does not stop the background task that is
           still writing stage output and status back. */}
       {session.status !== 'running' && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            marginTop: 12,
-            paddingTop: 10,
-            borderTop: '1px solid #f3f4f6',
-          }}
-        >
-          {error && <span style={{ fontSize: 12, color: '#b91c1c' }}>{error}</span>}
+        <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-hair pt-2.5">
+          {error && <span className="text-xs text-mandate">{error}</span>}
           {confirmingDelete ? (
             <>
-              <span style={{ fontSize: 12, color: '#6b7280' }}>
+              <span className="text-xs text-mandate">
                 ลบประวัติการรันนี้ถาวร รวมถึง checkpoint ที่ค้างอยู่ — กู้คืนไม่ได้
               </span>
               <button
                 onClick={doDelete}
                 disabled={loading}
-                style={{
-                  marginLeft: 'auto',
-                  padding: '4px 12px',
-                  background: '#dc2626',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  fontSize: 12,
-                }}
+                className="btn btn-sm btn-danger ml-auto"
               >
                 {loading ? 'กำลังลบ...' : 'ยืนยันลบ'}
               </button>
               <button
                 onClick={() => setConfirmingDelete(false)}
                 disabled={loading}
-                style={{
-                  padding: '4px 12px',
-                  background: 'transparent',
-                  color: '#6b7280',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: 6,
-                  cursor: 'pointer',
-                  fontSize: 12,
-                }}
+                className="btn btn-sm btn-secondary"
               >
                 ยกเลิก
               </button>
@@ -279,16 +267,7 @@ function SessionCard({
           ) : (
             <button
               onClick={() => setConfirmingDelete(true)}
-              style={{
-                marginLeft: 'auto',
-                padding: '4px 10px',
-                background: 'transparent',
-                color: '#9ca3af',
-                border: 'none',
-                borderRadius: 6,
-                cursor: 'pointer',
-                fontSize: 12,
-              }}
+              className="btn btn-sm btn-danger-quiet ml-auto"
             >
               ลบประวัติ
             </button>
@@ -337,6 +316,13 @@ export default function Pipeline() {
     }, 2000)
   }
 
+  // A run already in flight when the page opens (started from another tab, or
+  // before a reload) has to be followed too, not only one started here.
+  useEffect(() => {
+    if (sessions.some((s) => s.status === 'running') && !pollRef.current) startPolling()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessions])
+
   useEffect(() => {
     fetchSessions()
     return () => {
@@ -380,7 +366,7 @@ export default function Pipeline() {
       // to carry the reason, so the page was the only place it could appear and
       // the button simply did nothing.
       const axiosErr = err as { response?: { data?: { detail?: string } } }
-      setStartError(axiosErr.response?.data?.detail ?? 'เริ่ม session ไม่สำเร็จ')
+      setStartError(axiosErr.response?.data?.detail ?? 'เริ่มการรันไม่สำเร็จ')
     } finally {
       setStarting(false)
     }
@@ -393,8 +379,11 @@ export default function Pipeline() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 700 }}>Pipeline Runs</h2>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="eyebrow">ทุกขั้นต่อเนื่อง</p>
+          <h1 className="page-title">รันทั้งชุด</h1>
+        </div>
         <button
           onClick={handleNewRun}
           disabled={starting || !programId || evidenceCount === 0}
@@ -403,43 +392,44 @@ export default function Pipeline() {
               ? 'ยังไม่มีหลักฐาน — ขั้นแรกของ pipeline อ่านจากตาราง evidence'
               : undefined
           }
-          style={{
-            padding: '8px 18px',
-            background: starting || !programId || evidenceCount === 0 ? '#e5e7eb' : '#2563eb',
-            color: starting || !programId || evidenceCount === 0 ? '#9ca3af' : '#fff',
-            border: 'none',
-            borderRadius: 8,
-            cursor: starting || !programId || evidenceCount === 0 ? 'not-allowed' : 'pointer',
-            fontWeight: 600,
-            fontSize: 13,
-          }}
+          className="btn btn-primary"
         >
-          {starting ? 'Starting…' : '+ New Run'}
+          {starting ? 'กำลังเริ่ม…' : '+ เริ่มรันใหม่'}
         </button>
       </div>
 
       {!programId && (
-        <p style={{ color: '#dc2626', fontSize: 13 }}>ยังไม่มี program — ไปที่ Intake ก่อน</p>
+        <p className="notice notice-error">
+          ยังไม่ได้เลือกหลักสูตร —{' '}
+          <Link to="/" className="font-medium underline underline-offset-2">
+            เลือกจากรายการหลักสูตร
+          </Link>
+        </p>
       )}
 
       {/* The refusal stage 1 would raise, said before the run instead of after
           it. Same rule, same wording as the stage itself — a program with no
           evidence has nothing for the pipeline to classify. */}
       {programId && evidenceCount === 0 && (
-        <p style={{ color: '#b45309', fontSize: 13, marginBottom: 12 }}>
+        <p className="notice notice-warn mb-3">
           ยังไม่มีหลักฐานในหลักสูตรนี้ — pipeline ขั้นแรกอ่านจากตาราง evidence จึงยังเริ่มไม่ได้{' '}
-          <a href="/stakeholder-needs" style={{ color: '#2563eb', textDecoration: 'underline' }}>
+          <Link to="/stakeholder-needs" className="link">
             ไปเพิ่มหลักฐาน
-          </a>
+          </Link>
         </p>
       )}
 
       {startError && (
-        <p style={{ color: '#b91c1c', fontSize: 13, marginBottom: 12 }}>{startError}</p>
+        <p className="notice notice-error mb-3">{startError}</p>
       )}
 
       {sessions.length === 0 && programId && (
-        <p style={{ color: '#6b7280', fontSize: 13 }}>ยังไม่มี session — กด + New Run</p>
+        <div className="panel border-dashed px-6 py-10 text-center">
+          <p className="font-display text-lg text-graphite">ยังไม่เคยรันทั้งชุด</p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-pencil">
+            กด “เริ่มรันใหม่” ระบบจะรันทีละขั้นและหยุดรอให้ตรวจที่ทุก checkpoint
+          </p>
+        </div>
       )}
 
       {sessions.map((s) => (

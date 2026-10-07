@@ -3,59 +3,85 @@
 /* ---------------------------------------------------------------------------
    Design tokens.
 
-   Two voices, because the tool has two jobs. THE RECORD is what the program is
-   — evidence, statements, approved outcomes — and it is set on a light field in
-   a Thai serif, the register of the document this work ends up as. THE
-   INSTRUMENT is the chrome around it — gates, states, identifiers — dark,
-   terse, monospaced. Nothing is coloured for emphasis alone.
+   The subject is a document a faculty submits to MHESI, and every token comes
+   from the desk that document is made on. Photocopy paper for the ground, a
+   white sheet for anything the designer reads, graphite for text — and three
+   inks, each with exactly one meaning:
+
+   - STAMP (rubber-stamp violet): the designer's act. Primary actions, approved
+     checkpoints, a passed check. Every approval in a Thai office is a stamp,
+     and every stage boundary here is a human approving.
+   - MANDATE (seal red): what cannot be argued with. สภาวิชาชีพ and the
+     `requirement` class, blocking errors, destructive actions.
+   - MARKER (highlighter yellow): what a reviewer should look at. Quoted
+     evidence spans, warnings, soft SMART flags.
+
+   Nothing else is coloured, except the KSEC categories, which are categorical
+   data and get muted hues that never compete with the three inks.
 --------------------------------------------------------------------------- */
 @theme {
-  /* Ground of the instrument. Desaturated blue-green rather than black: it sits
-     next to a light field all day, and true black vibrates against it. */
-  --color-ink: #16232b;
-  --color-ink-raised: #24373f;
-  --color-ink-line: #35505a;
+  --color-paper: #eff1f4;
+  --color-sheet: #ffffff;
+  --color-sunk: #f6f7f9;
+  --color-hair: #dcdee6;
+  --color-hair-strong: #c3c6d3;
 
-  /* The record's paper. Cool and faintly green — deliberately not the warm
-     cream that every other tool of this shape reaches for. */
-  --color-field: #f2f4f1;
-  --color-card: #ffffff;
-  --color-rule: #ccd5cf;
+  --color-graphite: #22232b;
+  --color-pencil: #5f6176;
+  --color-lead: #9496a8;
 
-  --color-body: #1d2b30;
-  --color-mute: #64777d;
-  --color-faint: #93a4a6;
+  --color-stamp: #4a3c8e;
+  --color-stamp-deep: #362b6d;
+  --color-stamp-wash: #ecebf6;
 
-  /* The one accent, and it means one thing: a mandate. สภาวิชาชีพ speaks with
-     legal force, and it is the only voice that buys the 30% block in
-     demand_score — so it is the only voice that gets a colour. Blocking states
-     borrow it because they carry the same "you cannot proceed past this"
-     weight. Everything else earns emphasis through weight and position. */
-  --color-seal: #a3302a;
-  --color-seal-soft: #f0e0dd;
+  --color-mandate: #a8261f;
+  --color-mandate-deep: #841b15;
+  --color-mandate-wash: #f8e7e5;
 
-  --font-record: "Noto Serif Thai", Georgia, serif;
-  --font-ui: "IBM Plex Sans Thai", "Segoe UI", system-ui, sans-serif;
-  --font-data: "IBM Plex Mono", ui-monospace, monospace;
+  --color-marker: #f4e27a;
+  --color-marker-wash: #fbf5d2;
+  --color-marker-ink: #6e5400;
 
-  --rail-width: 17rem;
+  /* KSEC — categorical, deliberately low-chroma. */
+  --color-k: #2f5872;
+  --color-k-wash: #e5eef4;
+  --color-s: #3b6a4c;
+  --color-s-wash: #e6f0e9;
+  --color-ec: #6a4c73;
+  --color-ec-wash: #f0e8f2;
+  --color-e: #7c4150;
+  --color-e-wash: #f5e7eb;
+  --color-c: #7a5a2a;
+  --color-c-wash: #f4ece0;
+
+  /* Trirong for page titles only — looped, academic, the register of a
+     university seal. Sarabun for the record: it is the Google release of
+     TH Sarabun New, the face every มคอ.2 is typed in, so a PLO reads here the
+     way MHESI will read it. Anuphan for the interface. Chakra Petch for
+     labels, identifiers and figures — it carries Thai, which a monospace
+     face does not. */
+  --font-display: "Trirong", "Noto Serif Thai", Georgia, serif;
+  --font-record: "Sarabun", "TH Sarabun New", "Noto Sans Thai", sans-serif;
+  --font-ui: "Anuphan", "Noto Sans Thai", "Segoe UI", system-ui, sans-serif;
+  --font-label: "Chakra Petch", "Anuphan", ui-monospace, monospace;
+
+  --rail-width: 16.5rem;
 }
 
-/* Thai stacks vowels above and tone marks above those; the leading that suits
-   Latin clips them into the line before. Every Thai-bearing surface in this app
-   inherits from here. */
 @layer base {
   html {
     -webkit-text-size-adjust: 100%;
   }
 
+  /* Thai stacks vowels and tone marks above the line; Latin leading clips
+     them. Every Thai-bearing surface inherits this. */
   body {
     margin: 0;
-    background: var(--color-field);
-    color: var(--color-body);
+    background: var(--color-paper);
+    color: var(--color-graphite);
     font-family: var(--font-ui);
     font-size: 0.9375rem;
-    line-height: 1.75;
+    line-height: 1.7;
     -webkit-font-smoothing: antialiased;
   }
 
@@ -66,34 +92,281 @@
     text-wrap: balance;
   }
 
-  /* Keyboard focus is never removed, only restyled — the rail is dark and the
-     field is light, so each gets a ring it can actually be seen against. */
+  ::selection {
+    background: var(--color-marker);
+    color: var(--color-graphite);
+  }
+
+  /* Keyboard focus is restyled, never removed. */
   :focus-visible {
-    outline: 2px solid var(--color-seal);
+    outline: 2px solid var(--color-stamp);
     outline-offset: 2px;
     border-radius: 2px;
   }
+}
 
-  .on-ink :focus-visible {
-    outline-color: #8fd6c8;
+@layer components {
+  /* --- Headings ----------------------------------------------------------- */
+  .page-title {
+    font-family: var(--font-display);
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--color-graphite);
+  }
+
+  .section-title {
+    font-family: var(--font-ui);
+    font-size: 1.0625rem;
+    font-weight: 600;
+    color: var(--color-graphite);
+  }
+
+  .eyebrow {
+    font-family: var(--font-label);
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    color: var(--color-pencil);
+  }
+
+  /* --- Surfaces ----------------------------------------------------------- */
+  .panel {
+    background: var(--color-sheet);
+    border: 1px solid var(--color-hair);
+    border-radius: 4px;
+  }
+
+  /* --- Buttons ------------------------------------------------------------ */
+  .btn {
+    @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[3px] px-3.5 py-2 text-sm font-medium leading-snug transition-colors disabled:cursor-not-allowed disabled:opacity-45;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1 text-xs;
+  }
+  .btn-primary {
+    @apply bg-stamp text-white hover:bg-stamp-deep;
+  }
+  .btn-secondary {
+    @apply border border-hair-strong bg-sheet text-graphite hover:border-pencil hover:bg-sunk;
+  }
+  .btn-quiet {
+    @apply text-pencil hover:bg-sunk hover:text-graphite;
+  }
+  .btn-danger {
+    @apply bg-mandate text-white hover:bg-mandate-deep;
+  }
+  .btn-danger-quiet {
+    @apply text-mandate hover:bg-mandate-wash;
+  }
+
+  .link {
+    @apply text-stamp underline decoration-stamp/35 underline-offset-[3px] hover:decoration-stamp;
+  }
+
+  /* --- Form fields -------------------------------------------------------- */
+  .field-label {
+    @apply mb-1 block text-sm font-medium text-graphite;
+  }
+  .field-hint {
+    @apply mt-1 text-xs leading-relaxed text-pencil;
+  }
+  .input {
+    @apply w-full rounded-[3px] border border-hair-strong bg-sheet px-3 py-2 text-sm text-graphite transition-colors placeholder:text-lead hover:border-pencil focus:border-stamp focus:outline-none focus:ring-2 focus:ring-stamp/20 disabled:bg-sunk disabled:text-lead;
+  }
+
+  /* --- Chips -------------------------------------------------------------- */
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-[2px] px-1.5 py-px text-xs leading-5 font-medium whitespace-nowrap;
+    font-family: var(--font-label);
+  }
+  .chip-neutral {
+    @apply bg-sunk text-pencil ring-1 ring-hair ring-inset;
+  }
+  .chip-stamp {
+    @apply bg-stamp-wash text-stamp;
+  }
+  .chip-mandate {
+    @apply bg-mandate-wash text-mandate;
+  }
+  .chip-marker {
+    @apply bg-marker-wash text-marker-ink;
+  }
+
+  /* --- Notices: what went wrong, what to look at, what to know ------------ */
+  .notice {
+    @apply rounded-[3px] border-l-[3px] px-3.5 py-2.5 text-sm leading-relaxed;
+  }
+  .notice-error {
+    @apply border-mandate bg-mandate-wash text-mandate-deep;
+  }
+  .notice-warn {
+    @apply border-marker bg-marker-wash text-marker-ink;
+  }
+  .notice-info {
+    @apply border-stamp/40 bg-stamp-wash text-stamp-deep;
+  }
+
+  /* --- Tables ------------------------------------------------------------- */
+  .table {
+    @apply w-full border-collapse text-sm;
+  }
+  .table th {
+    @apply border-b border-hair-strong px-3 py-2 text-left align-bottom text-xs font-medium text-pencil;
+    font-family: var(--font-label);
+  }
+  .table td {
+    @apply border-b border-hair px-3 py-2.5 align-top;
+  }
+
+  /* --- The record --------------------------------------------------------- */
+  /* A PLO statement, a Need, an evidence excerpt: text that ends up in the
+     document, set the way the document sets it. Sarabun runs small on the
+     body, so the record steps up a size. */
+  .record {
+    font-family: var(--font-record);
+    font-size: 1.0625rem;
+    line-height: 1.75;
+    color: var(--color-graphite);
+  }
+
+  /* A quoted evidence span, drawn as a highlighter stroke rather than a box:
+     slightly shorter than the line, slightly ragged at the ends. */
+  .marker {
+    background-image: linear-gradient(
+      100deg,
+      transparent 0.2em,
+      var(--color-marker) 0.4em,
+      var(--color-marker) calc(100% - 0.4em),
+      transparent calc(100% - 0.2em)
+    );
+    background-size: 100% 62%;
+    background-position: 0 72%;
+    background-repeat: no-repeat;
+    padding: 0 0.15em;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+  }
+
+  /* --- The stamp ---------------------------------------------------------- */
+  /* The signature. A checkpoint is a human approving, and in the office this
+     document comes from, approval is a rubber stamp: a double-ruled frame,
+     ink that multiplies into the paper, set a degree or two off square. Used
+     only for terminal states a person produced — never for decoration. */
+  .stamp {
+    @apply inline-flex items-center gap-1.5 rounded-[3px] px-2 py-0.5 text-xs font-semibold whitespace-nowrap;
+    font-family: var(--font-label);
+    letter-spacing: 0.06em;
+    color: var(--color-stamp);
+    border: 3px double currentColor;
+    transform: rotate(-2deg);
+    mix-blend-mode: multiply;
+    opacity: 0.92;
+  }
+  .stamp-mandate {
+    color: var(--color-mandate);
+  }
+  .stamp-pending {
+    color: var(--color-marker-ink);
+    border-style: dashed;
+    border-width: 1.5px;
+    transform: none;
+  }
+
+  /* --- Mapping marks ● ◐ ○ ------------------------------------------------ */
+  /* The dots of the มคอ.2 curriculum-mapping matrix, where ● is primary
+     responsibility and ○ secondary. Here they say how far a program has got:
+     ● passed, ◐ the stage it is at, ○ not yet reached. */
+  .map-mark {
+    @apply inline-block h-3 w-3 shrink-0 rounded-full border-[1.5px] border-stamp;
+  }
+  .map-mark-passed {
+    background: var(--color-stamp);
+  }
+  .map-mark-current {
+    background: linear-gradient(90deg, var(--color-stamp) 50%, transparent 50%);
+  }
+  .map-mark-ahead {
+    border-color: var(--color-lead);
+    background: var(--color-paper);
+  }
+}
+
+/* --- The run dial ----------------------------------------------------------
+   The mapping mark, in motion: ink fills the circle clockwise (○ → ●), then an
+   eraser chases it round (● → ○). It replaces a spinner because a spinner
+   says "a computer is busy", and what is happening here is the program's next
+   column of the matrix being filled in. */
+@property --dial-from {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+@property --dial-fill {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@layer components {
+  .run-dial {
+    display: inline-block;
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    border-radius: 9999px;
+    border: 1.5px solid var(--color-stamp);
+    background: conic-gradient(
+      from var(--dial-from),
+      var(--color-stamp) 0 var(--dial-fill),
+      transparent var(--dial-fill)
+    );
+    animation: dial-ink 2.6s cubic-bezier(0.55, 0.1, 0.45, 0.9) infinite;
+  }
+  .run-dial-lg {
+    width: 3.25rem;
+    height: 3.25rem;
+    border-width: 2.5px;
+  }
+}
+
+@keyframes dial-ink {
+  0% {
+    --dial-from: 0deg;
+    --dial-fill: 0deg;
+  }
+  50% {
+    --dial-from: 0deg;
+    --dial-fill: 360deg;
+  }
+  100% {
+    --dial-from: 360deg;
+    --dial-fill: 0deg;
+  }
+}
+
+/* Indeterminate track under the typical-duration scale. */
+@keyframes run-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(250%);
   }
 }
 
 @layer utilities {
-  /* Identifiers this system is full of — program slugs, PLO1, N-003, 0.7412.
-     Tabular figures so a column of scores lines up on the decimal. */
-  .data {
-    font-family: var(--font-data);
-    font-feature-settings: "tnum";
-    letter-spacing: -0.01em;
+  .animate-run-sweep {
+    animation: run-sweep 1.8s ease-in-out infinite;
   }
+}
 
-  .eyebrow {
-    font-family: var(--font-data);
-    font-size: 0.6875rem;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--color-faint);
+@layer utilities {
+  /* Identifiers and figures — program slugs, PLO1, N-003, 0.7412. */
+  .data {
+    font-family: var(--font-label);
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
   }
 }
 
@@ -104,5 +377,15 @@
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+
+  /* Without motion the dial would end on an empty circle; hold it at ◐. */
+  .run-dial {
+    animation: none;
+    --dial-fill: 180deg;
+  }
+  .animate-run-sweep {
+    animation: none;
+    opacity: 0;
   }
 }

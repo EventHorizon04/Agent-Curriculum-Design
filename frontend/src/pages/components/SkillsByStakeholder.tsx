@@ -93,13 +93,13 @@ export default function SkillsByStakeholder({
   const toggle = (skillId: string) => setExpanded(prev => (prev === skillId ? null : skillId))
 
   if (skills.length === 0) {
-    return <p className="py-8 text-center text-sm text-gray-400">ยังไม่มีทักษะที่สกัดได้</p>
+    return <p className="py-8 text-center text-sm text-lead">ยังไม่มีทักษะที่สกัดได้</p>
   }
 
   return (
     <div className="space-y-6">
       {droppedCount > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+        <div className="notice notice-warn">
           ทิ้งไป {droppedCount} ทักษะ (ข้อความที่ยกอ้างไม่ตรงกับ evidence)
         </div>
       )}
@@ -107,9 +107,9 @@ export default function SkillsByStakeholder({
       {sections.map(section => (
         <section key={section.label}>
           <div className="mb-2 flex items-center gap-3">
-            <h2 className="text-sm font-semibold text-gray-700">{section.label}</h2>
-            <div className="h-px flex-1 bg-gray-200" />
-            <span className="text-xs text-gray-500">{section.total} ทักษะ</span>
+            <h2 className="section-title">{section.label}</h2>
+            <div className="h-px flex-1 bg-hair-strong" />
+            <span className="data text-xs text-pencil">{section.total} ทักษะ</span>
           </div>
 
           <div className="space-y-3">
@@ -117,18 +117,18 @@ export default function SkillsByStakeholder({
               return (
                 <div
                   key={bucket.type}
-                  className="overflow-hidden rounded-lg border border-gray-200 bg-white"
+                  className="panel overflow-hidden"
                 >
-                  <div className="flex items-center gap-2 border-b border-gray-100 bg-gray-50 px-3 py-2">
-                    <span className="text-sm font-medium text-gray-800">
+                  <div className="flex items-center gap-2 border-b border-hair bg-sunk px-3 py-2">
+                    <span className="text-sm font-medium text-graphite">
                       {stakeholderLabel(bucket.type)}
                     </span>
-                    <span className="ml-auto text-xs text-gray-500">
+                    <span className="data ml-auto text-xs text-pencil">
                       {bucket.skills.length} ทักษะ
                     </span>
                   </div>
 
-                  <ul className="divide-y divide-gray-100">
+                  <ul className="divide-y divide-hair">
                     {bucket.skills.map(skill => {
                       const open = expanded === skill.skill_id
                       const evidence = evidenceById[skill.source_evidence_id]
@@ -139,12 +139,14 @@ export default function SkillsByStakeholder({
                               type="button"
                               onClick={() => toggle(skill.skill_id)}
                               aria-expanded={open}
-                              className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-gray-50 focus:outline-none focus-visible:bg-blue-50 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-500"
+                              className={`flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-sunk focus-visible:outline-offset-[-2px] ${
+                                open ? 'bg-stamp-wash/60' : ''
+                              }`}
                             >
-                              <span className="flex-1 text-sm text-gray-800">
+                              <span className="min-w-0 flex-1 text-sm text-graphite">
                                 {skill.skill_name_th}
                                 {skill.skill_name_en && (
-                                  <span className="ml-2 text-xs italic text-gray-400">
+                                  <span className="ml-2 text-xs italic text-lead">
                                     {skill.skill_name_en}
                                   </span>
                                 )}
@@ -152,12 +154,12 @@ export default function SkillsByStakeholder({
                             </button>
                           </li>
                           {open && (
-                            <li className="bg-gray-50 px-3 py-2">
-                              <p className="text-xs text-gray-500">ข้อความที่ยกอ้างจาก evidence:</p>
-                              <blockquote className="mt-1 border-l-2 border-gray-300 pl-2 text-xs text-gray-700">
-                                {skill.evidence_span_th}
+                            <li className="bg-sunk px-3 py-2.5">
+                              <p className="eyebrow">ข้อความที่ยกอ้างจาก evidence:</p>
+                              <blockquote className="record mt-1 border-l-2 border-hair-strong pl-3">
+                                <span className="marker">{skill.evidence_span_th}</span>
                               </blockquote>
-                              <p className="mt-1 text-xs text-gray-400">
+                              <p className="mt-1 text-xs text-pencil">
                                 จาก: {evidence?.source_name ?? skill.source_evidence_id}
                               </p>
                             </li>

@@ -91,11 +91,11 @@ export default function NeedCard({ programId, need }: { programId: string; need:
   }
 
   return (
-    <div className="rounded-lg border border-gray-200 bg-white p-4">
-      <div className="flex items-start gap-2">
+    <div className="panel p-4">
+      <div className="flex flex-wrap items-start gap-2">
         <p
-          className={`flex-1 text-sm font-medium leading-relaxed ${
-            fallback ? 'text-gray-500 italic' : 'text-gray-800'
+          className={`record min-w-0 flex-1 basis-64 ${
+            fallback ? 'italic text-pencil' : ''
           }`}
         >
           {/* The marker comes off the sentence because the badge beside it now
@@ -104,80 +104,80 @@ export default function NeedCard({ programId, need }: { programId: string; need:
           {withoutMarker(need.statement_th)}
         </p>
         {fallback && (
-          <span className="shrink-0 rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-900">
+          <span className="chip chip-marker shrink-0">
             {FALLBACK_LABEL_TH[fallback]}
           </span>
         )}
         {verdict !== 'in_scope' && (
           <span
             title={scopeCountsTh(need)}
-            className="shrink-0 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-medium text-rose-800"
+            className="chip chip-mandate shrink-0"
           >
             {SCOPE_REASON_TH[verdict]}
           </span>
         )}
         {need.is_optional && (
-          <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-800">
+          <span className="chip chip-neutral shrink-0">
             เสริม
           </span>
         )}
       </div>
       {fallback && (
-        <p className="mt-2 rounded border-l-2 border-orange-300 bg-orange-50 px-2 py-1.5 text-xs leading-relaxed text-orange-900">
+        <p className="notice notice-warn mt-2 text-xs">
           {FALLBACK_ACTION_TH[fallback]}
         </p>
       )}
       {need.rationale_th && (
-        <p className="mt-2 text-xs leading-relaxed text-gray-500">
-          <span className="font-semibold text-gray-400">เหตุผลการจัดกลุ่ม (คำอธิบายของโมเดล): </span>
+        <p className="mt-2 border-l-2 border-hair pl-2.5 text-xs leading-relaxed text-pencil">
+          <span className="eyebrow mr-1">เหตุผลการจัดกลุ่ม (คำอธิบายของโมเดล): </span>
           {need.rationale_th}
         </p>
       )}
-      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-gray-600">
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-pencil">
         {need.source_stakeholder_types.map(t => (
-          <span key={t} className="rounded bg-gray-100 px-1.5 py-0.5 text-gray-700">
+          <span key={t} className="chip chip-neutral">
             {stakeholderLabel(t)}
           </span>
         ))}
-        <span title="จำนวนครั้งที่ถูกกล่าวถึง">Freq {need.freq}</span>
-        <span title={DEMAND_SCORE_TITLE_TH}>
+        <span title="จำนวนครั้งที่ถูกกล่าวถึง" className="data">Freq {need.freq}</span>
+        <span title={DEMAND_SCORE_TITLE_TH} className="data">
           {DEMAND_LABEL_TH} {demandPercent(need.demand_score)}
         </span>
         <button
           onClick={toggle}
           aria-expanded={open}
-          className="ml-auto text-blue-600 hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+          className="link ml-auto"
         >
           {open ? 'ซ่อนที่มา' : 'ดูที่มา'}
         </button>
       </div>
       {open && (
-        <div className="mt-3 space-y-2 border-t border-gray-100 pt-3 text-xs">
-          {error && <p className="text-red-600">{error}</p>}
-          {!trace && !error && <p className="text-gray-400">กำลังโหลด...</p>}
+        <div className="mt-3 space-y-2 border-t border-hair pt-3 text-xs">
+          {error && <p className="text-mandate">{error}</p>}
+          {!trace && !error && <p className="text-lead">กำลังโหลด...</p>}
           {trace && (
             <>
               <div>
-                <p className="font-semibold text-gray-500">ทักษะในกลุ่ม ({trace.skills.length})</p>
-                <ul className="mt-1 list-disc pl-4 text-gray-700">
+                <p className="eyebrow">ทักษะในกลุ่ม ({trace.skills.length})</p>
+                <ul className="mt-1 list-disc pl-4 text-graphite">
                   {trace.skills.map(s => (
                     <li key={s.skill_id}>
                       {s.skill_name_th}
                       {s.is_field_relevant === false && (
-                        <span className="ml-1.5 text-rose-700">นอกสาขา</span>
+                        <span className="chip chip-mandate ml-1.5">นอกสาขา</span>
                       )}
                       {s.is_graduate_capability === false && (
-                        <span className="ml-1.5 text-rose-700">ไม่ใช่สมรรถนะบัณฑิต</span>
+                        <span className="chip chip-mandate ml-1.5">ไม่ใช่สมรรถนะบัณฑิต</span>
                       )}
                     </li>
                   ))}
                 </ul>
               </div>
               <div>
-                <p className="font-semibold text-gray-500">
+                <p className="eyebrow">
                   Evidence ({trace.evidence.length})
                 </p>
-                <ul className="mt-1 list-disc pl-4 text-gray-700">
+                <ul className="mt-1 list-disc pl-4 text-graphite">
                   {trace.evidence.map(e => (
                     <li key={e.evidence_id}>{e.source_name}</li>
                   ))}

@@ -199,47 +199,48 @@ export default function StakeholderNeeds() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto text-left space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6 text-left">
       <div>
-        <h1 className="text-2xl font-bold text-gray-800">ขั้นตอนที่ 2 — หลักฐานผู้มีส่วนได้ส่วนเสีย</h1>
-        <p className="text-gray-500 text-sm mt-1">
+        <p className="eyebrow">ขั้นที่ 2</p>
+        <h1 className="page-title">หลักฐานผู้มีส่วนได้ส่วนเสีย</h1>
+        <p className="mt-1 text-sm text-pencil">
           เพิ่มหลักฐานจากแหล่งต่างๆ เพื่อใช้ในการสังเคราะห์ PLO
         </p>
       </div>
 
       {!programId ? (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-          <p className="text-sm text-amber-800 mb-3">
+        <div className="notice notice-warn">
+          <p className="mb-3">
             ยังไม่ได้เลือกหลักสูตร —{' '}
-            <button onClick={() => navigate('/')} className="underline font-medium">
+            <button onClick={() => navigate('/')} className="font-medium underline underline-offset-2">
               ไปที่ขั้นตอนที่ 1
             </button>{' '}
             หรือระบุรหัสหลักสูตรที่นี่
           </p>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <input
               value={pidInput} onChange={e => setPidInput(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && handleSetProgram()}
               placeholder="รหัสหลักสูตร เช่น cs-2025"
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="input min-w-0 flex-1 py-1.5"
             />
             <button
               onClick={handleSetProgram}
-              className="bg-blue-600 hover:bg-blue-700 text-white text-sm px-4 py-1.5 rounded-lg transition-colors"
+              className="btn btn-primary py-1.5"
             >
               ยืนยัน
             </button>
           </div>
         </div>
       ) : (
-        <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-2.5 flex items-center justify-between">
-          <span className="text-sm text-blue-700">
-            หลักสูตร: <strong>{programId}</strong>
-            <span className="text-blue-400 ml-2">— พบ {items.length} หลักฐาน</span>
+        <div className="panel flex flex-wrap items-center justify-between gap-2 bg-sunk px-4 py-2.5">
+          <span className="text-sm text-graphite">
+            หลักสูตร: <strong className="data">{programId}</strong>
+            <span className="ml-2 text-pencil">— พบ <span className="data">{items.length}</span> หลักฐาน</span>
           </span>
           <button
             onClick={() => { setProgramId(''); setItems([]) }}
-            className="text-xs text-blue-400 hover:text-blue-700 transition-colors"
+            className="btn btn-sm btn-quiet"
           >
             เปลี่ยน
           </button>
@@ -247,30 +248,30 @@ export default function StakeholderNeeds() {
       )}
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 text-sm flex justify-between">
+        <div className="notice notice-error flex justify-between gap-4">
           <span>{error}</span>
           <button onClick={() => setError('')} className="ml-4 opacity-60 hover:opacity-100">✕</button>
         </div>
       )}
       {success && (
-        <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-3 text-sm flex justify-between">
+        <div className="notice notice-info flex justify-between gap-4">
           <span>✓ {success}</span>
           <button onClick={() => setSuccess('')} className="ml-4 opacity-60 hover:opacity-100">✕</button>
         </div>
       )}
 
       {programId && (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h2 className="text-base font-semibold text-gray-700 mb-4">เพิ่มหลักฐานใหม่</h2>
+        <div className="panel p-4 sm:p-6">
+          <h2 className="section-title mb-4">เพิ่มหลักฐานใหม่</h2>
           <form onSubmit={handleFormSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="field-label">
                   ประเภทผู้มีส่วนได้ส่วนเสีย
                 </label>
                 <select
                   value={stakeholderType} onChange={e => setStakeholderType(e.target.value)}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input"
                 >
                   {STAKEHOLDER_GROUPS.map(g => (
                     <optgroup key={g.label} label={g.label}>
@@ -282,48 +283,48 @@ export default function StakeholderNeeds() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">แหล่งที่มา *</label>
+                <label className="field-label">แหล่งที่มา *</label>
                 <input
                   value={sourceName} onChange={e => setSourceName(e.target.value)}
                   placeholder="บริษัท ABC / ผู้ประกอบการ XYZ"
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="input"
                 />
               </div>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
+              <label className="field-label">
                 ข้อความหลักฐาน (ภาษาไทย) *
               </label>
               <textarea
                 value={rawText} onChange={e => setRawText(e.target.value)}
                 rows={4}
                 placeholder="วางข้อความที่ได้จากการสัมภาษณ์ แบบสอบถาม หรือเอกสาร..."
-                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                className="input resize-none"
               />
             </div>
 
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
               <button
                 type="submit" disabled={submitting}
-                className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-sm font-medium px-5 py-2 rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed"
+                className="btn btn-primary"
               >
                 {submitting ? 'กำลังบันทึก...' : 'เพิ่มหลักฐาน'}
               </button>
 
-              <div className="h-4 w-px bg-gray-200" />
+              <div className="h-4 w-px bg-hair" />
 
               {!pendingFile ? (
-                <label className="flex items-center gap-2 text-sm text-gray-500 hover:text-blue-600 cursor-pointer transition-colors group">
+                <label className="group flex cursor-pointer items-center gap-2 text-sm text-pencil transition-colors hover:text-stamp">
                   <svg
-                    className="w-4 h-4 group-hover:text-blue-600"
+                    className="h-4 w-4 group-hover:text-stamp"
                     fill="none" stroke="currentColor" viewBox="0 0 24 24"
                   >
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
                       d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                   อัปโหลดเอกสาร
-                  <span className="text-xs text-gray-400">(.txt, .md, .csv)</span>
+                  <span className="data text-xs text-lead">(.txt, .md, .csv)</span>
                   <input
                     ref={fileRef} type="file" accept=".txt,.md,.csv"
                     onChange={handleFileSelect} className="hidden"
@@ -332,23 +333,23 @@ export default function StakeholderNeeds() {
               ) : (
                 <div className="flex flex-col gap-1.5">
                   <div className="flex items-center gap-3">
-                    <span className="text-sm text-gray-600 truncate max-w-[200px]">
+                    <span className="max-w-[200px] truncate text-sm text-graphite">
                       📄 {pendingFile.name}
                     </span>
                     <button
                       type="button" onClick={handleCancelFile}
-                      className="text-xs text-gray-500 hover:text-gray-700 underline cursor-pointer"
+                      className="btn btn-sm btn-quiet"
                     >
                       ยกเลิก
                     </button>
                     <button
                       type="button" onClick={handleConfirmUpload} disabled={submitting}
-                      className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-medium px-3 py-1 rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed"
+                      className="btn btn-sm btn-primary"
                     >
                       {submitting ? 'กำลังอัปโหลด...' : 'อัปโหลด'}
                     </button>
                   </div>
-                  {fileError && <p className="text-xs text-red-600">{fileError}</p>}
+                  {fileError && <p className="text-xs text-mandate">{fileError}</p>}
                 </div>
               )}
             </div>
@@ -358,17 +359,17 @@ export default function StakeholderNeeds() {
 
       {programId && (
         <div>
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-base font-semibold text-gray-700">หลักฐานทั้งหมด</h2>
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h2 className="section-title">หลักฐานทั้งหมด</h2>
             {items.some(i => i.classification === 'unclassified') && (
               <button
                 onClick={handleClassify}
                 disabled={classifying}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white text-sm font-medium px-4 py-1.5 rounded-lg transition-colors disabled:cursor-not-allowed"
+                className="btn btn-secondary py-1.5"
               >
                 {classifying ? (
                   <>
-                    <svg className="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                    <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
                     </svg>
@@ -379,23 +380,23 @@ export default function StakeholderNeeds() {
             )}
           </div>
           {classifying && classifyProgress && (
-            <div className="mb-3 bg-indigo-50 border border-indigo-100 rounded-lg px-4 py-3">
-              <div className="flex justify-between text-xs text-indigo-700 mb-1.5">
+            <div className="panel mb-3 bg-sunk px-4 py-3">
+              <div className="mb-1.5 flex justify-between gap-3 text-xs text-pencil">
                 <span>กำลังจำแนก: <strong>{classifyProgress.source_name}</strong></span>
-                <span>{classifyProgress.index}/{classifyProgress.total}</span>
+                <span className="data">{classifyProgress.index}/{classifyProgress.total}</span>
               </div>
-              <div className="h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+              <div className="h-1.5 overflow-hidden rounded-[2px] bg-hair">
                 <div
-                  className="h-full bg-indigo-500 rounded-full transition-all duration-300"
+                  className="h-full rounded-[2px] bg-stamp transition-all duration-300"
                   style={{ width: `${(classifyProgress.index / classifyProgress.total) * 100}%` }}
                 />
               </div>
             </div>
           )}
           {loadingList ? (
-            <div className="text-center text-gray-400 py-8 text-sm">กำลังโหลด...</div>
+            <div className="py-8 text-center text-sm text-pencil">กำลังโหลด...</div>
           ) : items.length === 0 ? (
-            <div className="text-center text-gray-400 py-10 text-sm bg-white rounded-xl border border-gray-100">
+            <div className="panel border-dashed py-10 text-center text-sm text-pencil">
               ยังไม่มีหลักฐาน — เพิ่มหลักฐานด้านบน
             </div>
           ) : (
@@ -406,34 +407,34 @@ export default function StakeholderNeeds() {
                 return (
                   <details
                     key={item.evidence_id}
-                    className="bg-white rounded-lg border border-gray-100 shadow-sm group open:shadow-md transition-shadow"
+                    className="panel group transition-colors open:border-hair-strong"
                   >
-                    <summary className="flex items-center justify-between px-4 py-3 cursor-pointer list-none select-none">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-medium text-gray-700 text-sm shrink-0">{typeLabel}</span>
-                        <span className="text-gray-300">—</span>
-                        <span className="text-gray-600 text-sm truncate">{item.source_name}</span>
+                    <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 select-none hover:bg-sunk">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="shrink-0 text-sm font-medium text-graphite">{typeLabel}</span>
+                        <span className="text-lead">—</span>
+                        <span className="truncate text-sm text-pencil">{item.source_name}</span>
                       </div>
-                      <div className="flex items-center gap-2 shrink-0 ml-3">
+                      <div className="flex shrink-0 items-center gap-2">
                         <button
                           type="button"
                           onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteClick(item.evidence_id) }}
-                          className={`text-xs font-medium px-2 py-0.5 rounded-full transition-colors cursor-pointer ${
+                          className={`btn btn-sm ${
                             confirmingDeleteId === item.evidence_id
-                              ? 'bg-red-600 text-white hover:bg-red-700'
-                              : 'text-red-400 hover:bg-red-50 hover:text-red-600'
+                              ? 'btn-danger'
+                              : 'btn-danger-quiet'
                           }`}
                         >
                           {confirmingDeleteId === item.evidence_id ? 'ยืนยันลบ?' : 'ลบ'}
                         </button>
-                        <span className={`text-xs font-medium px-2.5 py-0.5 rounded-full ${cs.cls}`}>
+                        <span className={`chip ${cs.cls}`}>
                           {cs.label}
                         </span>
                       </div>
                     </summary>
-                    <div className="px-4 pb-4 pt-2 border-t border-gray-50">
-                      <p className="text-sm text-gray-600 whitespace-pre-wrap leading-relaxed">{item.raw_text_th}</p>
-                      <p className="text-xs text-gray-300 mt-3 font-mono">{item.evidence_id}</p>
+                    <div className="border-t border-hair px-4 pt-3 pb-4">
+                      <p className="record whitespace-pre-wrap">{item.raw_text_th}</p>
+                      <p className="data mt-3 text-xs text-lead">{item.evidence_id}</p>
                     </div>
                   </details>
                 )

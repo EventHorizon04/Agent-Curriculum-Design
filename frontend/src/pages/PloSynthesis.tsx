@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
+import RunProgress, { LoadingLine } from '../components/RunProgress'
+import { PLO_SYNTHESIS_PLAN } from '../constants/runPlans'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import DesignerNote from './components/DesignerNote'
@@ -130,9 +132,9 @@ export default function PloSynthesis() {
 
   if (!programId) {
     return (
-      <div className="max-w-2xl mx-auto py-16 text-center">
-        <p className="text-gray-500 mb-4">ยังไม่ได้เลือกโปรแกรม</p>
-        <Link to="/" className="text-blue-600 hover:underline">ไปหน้า Intake</Link>
+      <div className="panel mx-auto max-w-2xl border-dashed px-6 py-12 text-center">
+        <p className="mb-3 text-pencil">ยังไม่ได้เลือกโปรแกรม</p>
+        <Link to="/" className="link">ไปหน้า Intake</Link>
       </div>
     )
   }
@@ -145,60 +147,56 @@ export default function PloSynthesis() {
   const unjudgedCount = plos.filter(p => needsAttention(p.smart_validated_by)).length
 
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4">
+    <div>
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Stage 4: PLO Synthesis</h1>
-        <p className="text-gray-500 text-sm">ตรวจสอบและแก้ไข Program Learning Outcomes ที่ AI สังเคราะห์</p>
-        <p className="text-xs text-gray-400 mt-1 font-mono">{programId}</p>
+        <p className="eyebrow">ขั้นที่ 4</p>
+        <h1 className="page-title">สังเคราะห์ PLO</h1>
+        <p className="mt-1 text-sm text-pencil">ตรวจสอบและแก้ไข Program Learning Outcomes ที่ AI สังเคราะห์</p>
+        <p className="data mt-1 text-xs text-lead">{programId}</p>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-red-700 text-sm">{error}</div>
+        <div className="notice notice-error mb-6">{error}</div>
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-400">กำลังโหลด...</div>
+        <LoadingLine />
       ) : running ? (
-        <div className="text-center py-20">
-          <div className="text-4xl mb-4 animate-spin">⚙️</div>
-          <p className="text-gray-600 font-medium mb-1">กำลังสังเคราะห์ PLO...</p>
-          <p className="text-gray-400 text-sm">ร่าง PLO ทุกข้อ แล้วให้ผู้ตรวจ SMART ตรวจทั้งชุด อาจใช้เวลา 3-10 นาที</p>
-        </div>
+        <RunProgress plan={PLO_SYNTHESIS_PLAN} />
       ) : plos.length === 0 ? (
-        <div className="text-center py-20">
-          <div className="text-5xl mb-4">🎯</div>
-          <p className="text-gray-500 text-lg font-medium mb-1">ยังไม่มี PLO</p>
-          <p className="text-gray-400 text-sm mb-6">กดปุ่มด้านล่างเพื่อให้ AI สังเคราะห์ PLO จาก skill clusters</p>
+        <div className="panel border-dashed px-6 py-12 text-center">
+          <p className="font-display mb-1 text-lg text-graphite">ยังไม่มี PLO</p>
+          <p className="mb-6 text-sm text-pencil">กดปุ่มด้านล่างเพื่อให้ AI สังเคราะห์ PLO จาก skill clusters</p>
           <div className="mx-auto mb-2 max-w-md">
             <DesignerNote value={note} onChange={setNote} />
           </div>
           <button
             onClick={runSynthesis}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-medium transition-colors"
+            className="btn btn-primary"
           >
-            Run PLO Synthesis
+            สังเคราะห์ PLO
           </button>
         </div>
       ) : (
         <>
           <DesignerNote value={note} onChange={setNote} disabled={running} />
-          <div className="flex justify-between items-center mb-5">
-            <div className="flex items-center gap-4 text-sm text-gray-500">
-              <span>{plos.length} PLOs</span>
-              <span className={`font-medium ${smartPassCount === plos.length ? 'text-green-600' : 'text-amber-600'}`}>
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-pencil">
+              <span className="data">{plos.length} PLOs</span>
+              <span className={`chip ${smartPassCount === plos.length ? 'chip-stamp' : 'chip-marker'}`}>
                 SMART ผ่าน {smartPassCount}/{plos.length}
               </span>
               {unjudgedCount > 0 && (
-                <span className="font-medium text-orange-600">
+                <span className="chip chip-marker">
                   รอตรวจซ้ำ {unjudgedCount}
                 </span>
               )}
               <button
                 onClick={runSynthesis}
                 disabled={running}
-                className="text-xs text-gray-400 hover:text-blue-600 underline disabled:opacity-50"
+                className="btn btn-sm btn-quiet"
               >
-                Re-run
+                สังเคราะห์ใหม่
               </button>
             </div>
           </div>
@@ -209,38 +207,42 @@ export default function PloSynthesis() {
           </div>
 
           {needs.length >= 2 && (
-            <div className="mt-8 rounded-xl border border-gray-200 bg-gray-50/60 p-5">
-              <h2 className="text-sm font-semibold text-gray-700 mb-1">
+            <div className="panel mt-8 bg-sunk p-5">
+              <h2 className="section-title mb-1">
                 รวม Need หลายรายการเป็น PLO เดียว
               </h2>
-              <p className="text-xs text-gray-500 mb-3">
+              <p className="mb-3 text-xs text-pencil">
                 เลือก Need ตั้งแต่ 2 รายการที่ต้องการให้ AI สังเคราะห์รวมเป็น PLO เดียว
               </p>
               {note.trim() && (
-                <p className="mb-3 rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs text-gray-500">
-                  ใช้หมายเหตุด้านบน: <span className="text-gray-700">{note.trim()}</span>
+                <p className="notice notice-info mb-3 text-xs">
+                  ใช้หมายเหตุด้านบน: <span className="text-graphite">{note.trim()}</span>
                 </p>
               )}
               <div className="space-y-2 mb-4">
                 {needs.map(n => (
                   <label
                     key={n.need_id}
-                    className="flex items-start gap-2 rounded-lg border border-gray-200 bg-white p-3"
+                    className={`flex cursor-pointer items-start gap-2.5 rounded-[3px] border p-3 transition-colors ${
+                      selected.has(n.need_id)
+                        ? 'border-stamp bg-stamp-wash'
+                        : 'border-hair bg-sheet hover:border-hair-strong'
+                    }`}
                   >
                     <input
                       type="checkbox"
                       checked={selected.has(n.need_id)}
                       onChange={() => toggleNeed(n.need_id)}
-                      className="mt-1"
+                      className="mt-1.5 accent-stamp"
                     />
-                    <span className="text-sm text-gray-800">{n.statement_th}</span>
+                    <span className="record text-base">{n.statement_th}</span>
                   </label>
                 ))}
               </div>
               <button
                 onClick={mergeSelected}
                 disabled={selected.size < 2 || running}
-                className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white disabled:bg-gray-300"
+                className="btn btn-primary"
               >
                 รวมเป็น PLO เดียว ({selected.size})
               </button>
@@ -254,8 +256,12 @@ export default function PloSynthesis() {
           report page is there to show. */}
       <NextStageLink
         from="plo_synthesis"
-        ready={Boolean(programId) && plos.length > 0}
-        blockedReason="ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน"
+        ready={Boolean(programId) && plos.length > 0 && !running}
+        blockedReason={
+          running
+            ? 'รอให้สังเคราะห์ PLO เสร็จก่อน — รายงานต้องอ่านจาก PLO ชุดนี้'
+            : 'ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน'
+        }
       />
     </div>
   )
@@ -273,16 +279,16 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
       .finally(() => setLoading(false))
   }, [programId, ploId])
 
-  if (loading) return <div className="py-4 text-center text-sm text-gray-400">กำลังโหลด trace...</div>
-  if (error) return <div className="py-3 text-sm text-red-600">{error}</div>
+  if (loading) return <div className="py-4 text-center text-sm text-pencil">กำลังโหลด trace...</div>
+  if (error) return <div className="notice notice-error mt-3">{error}</div>
   if (!trace) return null
 
   const stale = trace.missing_need_ids.length + trace.missing_evidence_ids.length > 0
 
   return (
-    <div className="mt-4 pt-4 border-t border-gray-100 space-y-4">
+    <div className="mt-4 space-y-4 border-t border-hair pt-4">
       {stale && (
-        <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-3 py-2.5 text-sm">
+        <div className="notice notice-warn">
           <p className="font-medium">PLO นี้อ้างข้อมูลที่ไม่มีอยู่แล้ว</p>
           <p className="text-xs mt-1 leading-relaxed">
             หาย {trace.missing_need_ids.length} Need
@@ -296,28 +302,28 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
 
       {/* Needs */}
       <div>
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-          Needs ({trace.clusters.length})
+        <h4 className="eyebrow mb-2">
+          Needs (<span className="data">{trace.clusters.length}</span>)
         </h4>
         <div className="space-y-2">
           {trace.clusters.map(c => (
-            <div key={c.need_id} className="bg-gray-50 rounded-lg px-3 py-2.5 border border-gray-100">
+            <div key={c.need_id} className="rounded-[3px] border border-hair bg-sunk px-3 py-2.5">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-800 leading-snug">{c.statement_th}</p>
+                  <p className="record text-base">{c.statement_th}</p>
                   {c.statement_en && (
-                    <p className="text-xs text-gray-400 italic">{c.statement_en}</p>
+                    <p className="text-xs italic text-pencil">{c.statement_en}</p>
                   )}
                 </div>
                 <span
                   title={DEMAND_SCORE_TITLE_TH}
-                  className="shrink-0 text-xs font-mono bg-white border border-gray-200 rounded px-1.5 py-0.5 text-gray-600"
+                  className="chip chip-neutral data shrink-0 bg-sheet"
                 >
                   {demandPercent(c.demand_score)}
                 </span>
               </div>
-              <p className="text-xs text-gray-400 mt-1.5">
-                {c.source_evidence_ids.length} evidence · {ksecLabel(c.ksec_category)} · {c.bloom_level}
+              <p className="mt-1.5 text-xs text-pencil">
+                <span className="data">{c.source_evidence_ids.length}</span> evidence · {ksecLabel(c.ksec_category)} · {c.bloom_level}
               </p>
             </div>
           ))}
@@ -326,22 +332,22 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
 
       {/* Evidence */}
       <div>
-        <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-          Evidence ({trace.evidence.length})
+        <h4 className="eyebrow mb-2">
+          Evidence (<span className="data">{trace.evidence.length}</span>)
         </h4>
         <div className="space-y-2">
           {trace.evidence.map(e => (
-            <div key={e.evidence_id} className="bg-white rounded-lg px-3 py-2.5 border border-gray-100">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-gray-700">{e.source_name}</span>
-                <span className="text-xs text-gray-400">{stakeholderLabel(e.stakeholder_type)}</span>
-                <span className={`ml-auto text-xs px-2 py-0.5 rounded-full font-medium ${classStyle(e.classification).cls}`}>
+            <div key={e.evidence_id} className="rounded-[3px] border border-hair bg-sheet px-3 py-2.5">
+              <div className="mb-1 flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-graphite">{e.source_name}</span>
+                <span className="text-xs text-pencil">{stakeholderLabel(e.stakeholder_type)}</span>
+                <span className={`chip ml-auto ${classStyle(e.classification).cls}`}>
                   {classStyle(e.classification).label}
                 </span>
               </div>
-              <p className="text-xs text-gray-600 leading-relaxed line-clamp-3">{e.raw_text_th}</p>
+              <p className="line-clamp-3 text-xs leading-relaxed text-graphite">{e.raw_text_th}</p>
               {e.classification_rationale_th && (
-                <p className="text-xs text-gray-400 mt-1 italic">{e.classification_rationale_th}</p>
+                <p className="mt-1 text-xs italic text-pencil">{e.classification_rationale_th}</p>
               )}
             </div>
           ))}
@@ -389,6 +395,11 @@ function PLOCard({
   const findings = p.smart_check.findings ?? []
   const hardFindings = findings.filter(f => f.severity === 'hard')
   const softFindings = findings.filter(f => f.severity === 'soft')
+  // Presentation only: which ink a failed criterion takes. A hard failure is
+  // mandate red and a soft verdict is marker, so a set of soft flags does not
+  // read like an escalation. Finding codes lead with their SMART letter.
+  const hardFailed = p.smart_escalated || hardFindings.length > 0
+  const hardLetters = new Set(hardFindings.map(f => f.criterion.charAt(0)))
 
   async function handleRevalidate() {
     setRevalidating(true)
@@ -405,19 +416,23 @@ function PLOCard({
   }
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+    <div
+      className={`panel p-4 sm:p-5 ${
+        p.smart_escalated ? 'border-mandate border-l-4' : ''
+      }`}
+    >
       {/* Header */}
-      <div className="flex items-start gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-2">
-            <span className="text-xs font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded">
+            <span className="data text-sm font-semibold text-graphite">
               {p.plo_id}
             </span>
-            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 font-medium">
+            <span className="chip chip-neutral">
               {BLOOM_LABEL[p.bloom_level] ?? p.bloom_level}
             </span>
-            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-              smartPassed ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+            <span className={`chip ${
+              smartPassed ? 'chip-stamp' : hardFailed ? 'chip-mandate' : 'chip-marker'
             }`}>
               SMART {smartPassed ? '✓' : '✗'}
             </span>
@@ -427,16 +442,16 @@ function PLOCard({
                 counted against different rules (only core PLOs sit inside the
                 6-10 band), which is the first thing a designer checks. */}
             <span
-              className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+              className={`chip ${
                 p.is_optional
-                  ? 'bg-amber-100 text-amber-700'
-                  : 'bg-indigo-100 text-indigo-700'
+                  ? 'border border-dashed border-hair-strong bg-sheet text-pencil'
+                  : 'chip-neutral font-semibold text-graphite'
               }`}
             >
               {p.is_optional ? 'เสริม' : 'หลัก'}
             </span>
             {p.smart_escalated && (
-              <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+              <span className="chip bg-mandate font-semibold whitespace-normal text-sheet">
                 ไม่ผ่าน SMART หลังแก้ {p.smart_retry_count} รอบ — ต้องแก้ด้วยมือ
               </span>
             )}
@@ -445,7 +460,7 @@ function PLOCard({
                 different facts, and without this the page would attribute a
                 diagnosis to something that never ran. */}
             {needsAttention(p.smart_validated_by) && (
-              <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-medium text-orange-800">
+              <span className="chip chip-marker whitespace-normal">
                 {VALIDATED_BY_TH[p.smart_validated_by]}
               </span>
             )}
@@ -455,16 +470,16 @@ function PLOCard({
           {softFindings.length > 0 ? (
             <div className="mt-1 mb-2 space-y-1">
               {softFindings.map(f => (
-                <p key={f.criterion} className="rounded-lg bg-yellow-50 px-3 py-1.5 text-xs text-yellow-900 border border-yellow-100">
+                <p key={f.criterion} className="notice notice-warn py-1.5 text-xs">
                   <span className="font-medium">{findingLabel(f.criterion)}</span>
-                  {f.note_th && <span className="text-yellow-700"> — {f.note_th}</span>}
+                  {f.note_th && <span> — {f.note_th}</span>}
                 </p>
               ))}
             </div>
           ) : p.soft_flags?.length > 0 ? (
             <div className="mt-1 mb-2 flex flex-wrap gap-1">
               {p.soft_flags.map(f => (
-                <span key={f} className="rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800">
+                <span key={f} className="chip chip-marker">
                   {findingLabel(f)}
                 </span>
               ))}
@@ -482,17 +497,17 @@ function PLOCard({
             />
           ) : (
             <div>
-              <p className="text-gray-900 font-medium leading-relaxed">{p.statement_th}</p>
+              <p className="record">{p.statement_th}</p>
               {p.statement_en && (
-                <p className="text-gray-400 text-sm mt-1 italic">{p.statement_en}</p>
+                <p className="mt-1 text-sm italic text-pencil">{p.statement_en}</p>
               )}
-              <div className="mt-2 text-sm text-gray-600">
-                <span className="font-medium text-gray-700">กริยา:</span>{' '}
-                <span className="bg-gray-50 px-1.5 py-0.5 rounded text-gray-800">{p.action_verb_th}</span>
+              <div className="mt-2 text-sm text-pencil">
+                <span className="font-medium text-graphite">กริยา:</span>{' '}
+                <span className="rounded-[2px] bg-sunk px-1.5 py-0.5 text-graphite ring-1 ring-hair ring-inset">{p.action_verb_th}</span>
               </div>
-              <p className="text-gray-500 text-sm mt-2 leading-relaxed">{p.rationale_th}</p>
+              <p className="mt-2 text-sm leading-relaxed text-pencil">{p.rationale_th}</p>
               {p.distinctive_feature_th && (
-                <p className="text-indigo-600 text-sm mt-1">
+                <p className="mt-1 text-sm text-graphite">
                   <span className="font-medium">จุดเด่น:</span> {p.distinctive_feature_th}
                 </p>
               )}
@@ -501,10 +516,10 @@ function PLOCard({
         </div>
 
         {!editing && (
-          <div className="shrink-0 flex flex-col gap-1.5">
+          <div className="flex shrink-0 flex-row flex-wrap gap-1.5 sm:flex-col">
             <button
               onClick={() => setEditing(true)}
-              className="text-sm border border-gray-200 px-3 py-1.5 rounded-lg hover:bg-gray-50 text-gray-600 transition-colors"
+              className="btn btn-sm btn-secondary"
             >
               แก้ไข
             </button>
@@ -514,7 +529,7 @@ function PLOCard({
             <button
               onClick={handleRevalidate}
               disabled={revalidating}
-              className="text-xs border border-blue-200 px-3 py-1.5 rounded-lg hover:bg-blue-50 text-blue-600 transition-colors disabled:opacity-50"
+              className="btn btn-sm btn-secondary"
             >
               {revalidating ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
             </button>
@@ -529,10 +544,12 @@ function PLOCard({
             {SMART_KEYS.map(k => (
               <span
                 key={k}
-                className={`text-xs px-2.5 py-1 rounded-md font-medium ${
+                className={`chip px-2 py-0.5 ${
                   p.smart_check[k] === true
-                    ? 'bg-green-50 text-green-700 border border-green-200'
-                    : 'bg-red-50 text-red-700 border border-red-200'
+                    ? 'chip-stamp'
+                    : hardLetters.has(k.charAt(0).toUpperCase())
+                      ? 'chip-mandate'
+                      : 'chip-marker'
                 }`}
               >
                 {p.smart_check[k] ? '✓' : '✗'} {SMART_LABEL_TH[k] ?? k}
@@ -545,22 +562,22 @@ function PLOCard({
           {hardFindings.length > 0 && (
             <div className="mt-2 space-y-1">
               {hardFindings.map(f => (
-                <p key={f.criterion} className="rounded-lg bg-red-50 px-3 py-1.5 text-xs text-red-900 border border-red-100">
-                  <span className="font-medium">{findingLabel(f.criterion)}</span>
-                  {f.note_th && <span className="text-red-700"> — {f.note_th}</span>}
+                <p key={f.criterion} className="notice notice-error py-1.5 text-xs">
+                  <span className="font-semibold">{findingLabel(f.criterion)}</span>
+                  {f.note_th && <span> — {f.note_th}</span>}
                 </p>
               ))}
             </div>
           )}
           {/* The instruction a designer acts on, so it gets its own block. */}
           {p.smart_diagnosis_th && (
-            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-              <p className="text-xs font-medium text-amber-900 mb-0.5">ข้อวินิจฉัยจากผู้ตรวจ SMART</p>
-              <p className="text-xs text-amber-800 leading-relaxed">{p.smart_diagnosis_th}</p>
+            <div className="notice notice-warn mt-2">
+              <p className="mb-0.5 text-xs font-semibold">ข้อวินิจฉัยจากผู้ตรวจ SMART</p>
+              <p className="text-xs leading-relaxed">{p.smart_diagnosis_th}</p>
             </div>
           )}
           {!p.smart_diagnosis_th && p.smart_check.notes_th && (
-            <p className="mt-2 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
+            <p className="notice notice-warn mt-2 text-xs">
               {p.smart_check.notes_th}
             </p>
           )}
@@ -570,16 +587,17 @@ function PLOCard({
       {/* Footer meta + trace toggle */}
       {!editing && (
         <>
-          <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-4 text-xs text-gray-400">
-            <span>{p.source_need_ids.length} needs</span>
-            <span>{p.source_evidence_ids.length} evidence</span>
+          <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-hair pt-3 text-xs text-pencil">
+            <span className="data">{p.source_need_ids.length} needs</span>
+            <span className="data">{p.source_evidence_ids.length} evidence</span>
             <button
               onClick={() => setTraceOpen(v => !v)}
-              className="ml-auto text-xs text-blue-500 hover:text-blue-700 font-medium transition-colors flex items-center gap-1"
+              aria-expanded={traceOpen}
+              className="btn btn-sm btn-quiet ml-auto text-stamp"
             >
               {traceOpen ? '▲ ซ่อน Trace' : '▼ ดู Trace'}
             </button>
-            <span className="text-gray-300">v{p.version}</span>
+            <span className="data text-lead">v{p.version}</span>
           </div>
           {traceOpen && <TracePanel programId={programId} ploId={p.plo_id} />}
         </>
@@ -606,50 +624,50 @@ function EditForm({
   return (
     <div className="space-y-3 mt-1">
       <div>
-        <label className="block text-xs font-semibold text-gray-600 mb-1">
-          Statement (Thai) <span className="text-red-500">*</span>
+        <label className="field-label">
+          Statement (Thai) <span className="text-mandate">*</span>
         </label>
         <textarea
-          className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+          className="input record resize-none"
           rows={3}
           value={draft.statement_th}
           onChange={e => setDraft(d => ({ ...d, statement_th: e.target.value }))}
         />
-        <p className="text-xs text-gray-400 mt-0.5">ห้ามใช้คำ: รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก</p>
+        <p className="field-hint">ห้ามใช้คำ: รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก</p>
       </div>
       <div>
-        <label className="block text-xs font-semibold text-gray-600 mb-1">Action Verb (Thai)</label>
+        <label className="field-label">Action Verb (Thai)</label>
         <input
-          className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+          className="input"
           value={draft.action_verb_th}
           onChange={e => setDraft(d => ({ ...d, action_verb_th: e.target.value }))}
         />
       </div>
       <div>
-        <label className="block text-xs font-semibold text-gray-600 mb-1">Rationale (Thai)</label>
+        <label className="field-label">Rationale (Thai)</label>
         <textarea
-          className="w-full border border-gray-300 rounded-lg p-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"
+          className="input resize-none"
           rows={2}
           value={draft.rationale_th}
           onChange={e => setDraft(d => ({ ...d, rationale_th: e.target.value }))}
         />
       </div>
       {saveError && (
-        <p className="text-red-600 text-xs bg-red-50 rounded-lg px-3 py-2 border border-red-200">
+        <p className="notice notice-error text-xs">
           {saveError}
         </p>
       )}
-      <div className="flex gap-2 pt-1">
+      <div className="flex flex-wrap gap-2 pt-1">
         <button
           onClick={onSave}
           disabled={saving}
-          className="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 font-medium transition-colors"
+          className="btn btn-sm btn-primary"
         >
           {saving ? 'กำลังบันทึก...' : 'บันทึก'}
         </button>
         <button
           onClick={onCancel}
-          className="border border-gray-300 px-4 py-1.5 rounded-lg text-sm hover:bg-gray-50 text-gray-600 transition-colors"
+          className="btn btn-sm btn-secondary"
         >
           ยกเลิก
         </button>

@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
+import RunProgress, { LoadingLine } from '../components/RunProgress'
+import { PLO_REPORT_PLAN } from '../constants/runPlans'
 import api from '../api/client'
 import { ksecLabel, stakeholderLabel, classStyle, isRequirementStakeholder } from '../constants/stakeholder'
 import { VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
@@ -129,7 +131,7 @@ function countsFrom(plos: PLO[]): ReportCounts {
 
 /** A hairline tag. The letter is the code — K, S, EC carry their own meaning and
  *  a colour per category would only add five hues that mean nothing to a reader
- *  who has not memorised the key. Colour on this page means "mandate" alone. */
+ *  who has not memorised the key. Colour on a tag means "mandate" alone. */
 function Tag({
   children,
   mono = false,
@@ -137,17 +139,12 @@ function Tag({
 }: {
   children: React.ReactNode
   mono?: boolean
-  // `seal` is the record's red — reserved for what the designer has to read, not
-  // for anything merely notable.
-  tone?: 'plain' | 'seal'
+  // `mandate` is the record's red — reserved for what the designer has to read,
+  // not for anything merely notable.
+  tone?: 'plain' | 'mandate'
 }) {
-  const toned =
-    tone === 'seal' ? 'border-seal bg-seal-soft text-seal' : 'border-rule text-mute'
-  return (
-    <span className={`rounded-sm border px-1.5 py-px text-xs ${toned} ${mono ? 'data' : ''}`}>
-      {children}
-    </span>
-  )
+  const toned = tone === 'mandate' ? 'chip-mandate' : 'chip-neutral'
+  return <span className={`chip ${toned} ${mono ? 'data' : ''}`}>{children}</span>
 }
 
 /**
@@ -163,19 +160,21 @@ function PolicyBand({ core, optional }: { core: number; optional: number }) {
   const outside = short || over
 
   return (
-    <section className="border-b border-rule pb-6" aria-labelledby="band-heading">
+    <section className="panel px-5 py-5" aria-labelledby="band-heading">
       <h2 id="band-heading" className="eyebrow">
         PLO หลัก
       </h2>
 
-      <p className="mt-1 flex items-baseline gap-2">
-        <span className="data text-3xl leading-none text-body">{core}</span>
-        <span className="text-sm text-mute">
+      <p className="mt-1 flex flex-wrap items-baseline gap-2">
+        <span className={`data text-3xl leading-none ${outside ? 'text-mandate' : 'text-graphite'}`}>
+          {core}
+        </span>
+        <span className="text-sm text-pencil">
           {outside ? (
-            <span className="text-seal">
+            <span className="font-medium text-mandate">
               {short
                 ? `ต่ำกว่าเกณฑ์ ${MIN_CORE} ข้อ — เพิ่มอีก ${MIN_CORE - core} ข้อ`
-                : `เกินเพดาน ${MAX_CORE} ข้อ`}
+                : `เกินจำนวนสูงสุด ${MAX_CORE} ข้อ`}
             </span>
           ) : (
             `อยู่ในเกณฑ์ ${MIN_CORE}–${MAX_CORE} ข้อ`
@@ -185,29 +184,29 @@ function PolicyBand({ core, optional }: { core: number; optional: number }) {
 
       <div className="relative mt-4 h-8 max-w-md" aria-hidden="true">
         {/* Full scale, then the legal band drawn on top of it. */}
-        <span className="absolute top-3 h-px w-full bg-rule" />
+        <span className="absolute top-3 h-px w-full bg-hair-strong" />
         <span
-          className="absolute top-3 h-px bg-body"
+          className="absolute top-[11px] h-[3px] bg-stamp"
           style={{ left: pct(MIN_CORE), width: pct(MAX_CORE - MIN_CORE) }}
         />
         {[MIN_CORE, MAX_CORE].map((n) => (
           <span key={n} className="absolute top-0" style={{ left: pct(n) }}>
-            <span className="block h-6 w-px -translate-x-1/2 bg-rule" />
-            <span className="data absolute left-0 top-6 -translate-x-1/2 text-[0.6875rem] text-faint">
+            <span className="block h-6 w-px -translate-x-1/2 bg-hair-strong" />
+            <span className="data absolute left-0 top-6 -translate-x-1/2 text-[0.6875rem] text-lead">
               {n}
             </span>
           </span>
         ))}
         <span
           className={`absolute top-3 block h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rotate-45 ${
-            outside ? 'bg-seal' : 'bg-body'
+            outside ? 'bg-mandate' : 'bg-stamp-deep'
           }`}
           style={{ left: pct(core) }}
         />
       </div>
 
       {optional > 0 && (
-        <p className="mt-2 text-xs text-mute">
+        <p className="mt-2 text-xs text-pencil">
           อีก {optional} ข้อเป็น PLO เสริม ซึ่งอยู่นอกเกณฑ์นี้
         </p>
       )}
@@ -306,8 +305,8 @@ export default function PloReport() {
   if (!programId) {
     return (
       <div className="py-16 text-center">
-        <p className="mb-3 text-mute">ยังไม่ได้เลือกหลักสูตร</p>
-        <Link to="/" className="text-seal underline underline-offset-2">
+        <p className="mb-3 text-pencil">ยังไม่ได้เลือกหลักสูตร</p>
+        <Link to="/" className="link">
           เลือกจากรายการหลักสูตร
         </Link>
       </div>
@@ -317,37 +316,31 @@ export default function PloReport() {
   return (
     <div className="space-y-6">
       <header>
-        <h1 className="font-record text-2xl leading-tight text-body">รายงาน PLO</h1>
-        <p className="mt-1 text-sm text-mute">
+        <p className="eyebrow">ขั้นที่ 5</p>
+        <h1 className="page-title">รายงาน PLO</h1>
+        <p className="mt-1 text-sm text-pencil">
           ผลลัพธ์การเรียนรู้ทั้งชุด พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
         </p>
       </header>
 
-      {error && (
-        <p className="border-l-2 border-seal bg-seal-soft px-3 py-2 text-sm text-seal">{error}</p>
-      )}
+      {error && <p className="notice notice-error">{error}</p>}
 
       {loading ? (
-        <p className="py-16 text-center text-sm text-faint">กำลังโหลด…</p>
+        <LoadingLine />
       ) : running ? (
-        <p className="py-16 text-center text-sm text-mute">
-          กำลังสร้างรายงาน — รวบรวม PLO และย้อนรอยหลักฐาน
-        </p>
+        <RunProgress plan={PLO_REPORT_PLAN} />
       ) : plos.length === 0 ? (
-        <div className="border border-rule bg-card px-6 py-12 text-center">
-          <p className="font-record text-lg text-body">ยังไม่มี PLO ให้รายงาน</p>
-          <p className="mx-auto mt-2 max-w-md text-sm text-mute">
+        <div className="panel px-6 py-12 text-center">
+          <p className="record text-lg">ยังไม่มี PLO ให้รายงาน</p>
+          <p className="mx-auto mt-2 max-w-md text-sm text-pencil">
             รายงานประกอบขึ้นจาก PLO ที่สังเคราะห์ไว้แล้ว ถ้ายังไม่ได้สังเคราะห์
             ให้กลับไปที่ขั้นที่ 4 ก่อน
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-            <button
-              onClick={runReport}
-              className="bg-ink px-4 py-2 text-sm text-field transition-colors hover:bg-ink-raised"
-            >
+            <button onClick={runReport} className="btn btn-primary">
               สร้างรายงาน
             </button>
-            <Link to="/plo-synthesis" className="text-sm text-mute underline underline-offset-2">
+            <Link to="/plo-synthesis" className="link text-sm">
               ไปสังเคราะห์ PLO
             </Link>
           </div>
@@ -358,41 +351,38 @@ export default function PloReport() {
 
           {/* Only what needs acting on. The set's size is the band's job, and
               repeating it here as a total would be the third place it appears. */}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
             {counts.escalated > 0 && (
-              <span className="text-seal">
+              <span className="chip chip-mandate">
                 <span className="data">{counts.escalated}</span> ข้อไม่ผ่าน SMART
               </span>
             )}
             {counts.stale + counts.code_only > 0 && (
-              <span className="text-mute">
+              <span className="chip chip-marker">
                 <span className="data">{counts.stale + counts.code_only}</span> ข้อยังไม่ได้ตรวจตามข้อความปัจจุบัน
               </span>
             )}
             {unusedNeeds.length > 0 && (
-              <a href="#unused-needs" className="text-mute underline underline-offset-2">
+              <a href="#unused-needs" className="link text-sm">
                 <span className="data">{unusedNeeds.length}</span> Need ไม่ได้ใช้
               </a>
             )}
 
-            <div className="ml-auto flex items-center gap-2">
-              <button
-                onClick={runReport}
-                className="border border-rule px-3 py-1.5 text-sm text-mute transition-colors hover:border-body hover:text-body"
-              >
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              <button onClick={runReport} className="btn btn-secondary btn-sm">
                 สร้างใหม่
               </button>
               <button
                 onClick={exportMatrix}
                 disabled={exporting}
-                className="bg-ink px-3 py-1.5 text-sm text-field transition-colors hover:bg-ink-raised disabled:opacity-40"
+                className="btn btn-primary btn-sm"
               >
                 {exporting ? 'กำลังส่งออก…' : 'ส่งออก Excel'}
               </button>
             </div>
           </div>
 
-          <ol className="border-t border-rule">
+          <ol className="panel divide-y divide-hair">
             {plos.map((p) => (
               <PloRow key={p.plo_id} plo={p} programId={programId} needsById={needsById} />
             ))}
@@ -401,15 +391,15 @@ export default function PloReport() {
           {/* The CHECO and มคอ.2 exporters are stubs whose routes answer 501.
               Named as not-yet-available rather than rendered as dead buttons, so
               the designer plans around them instead of clicking to find out. */}
-          <p className="text-xs text-faint">
+          <p className="text-xs text-lead">
             ส่งออก CHECO และ มคอ.2 ยังไม่เปิดใช้
           </p>
 
           {unusedNeeds.length > 0 && <UnusedNeeds needs={unusedNeeds} programId={programId} />}
 
-          <p className="border-t border-rule pt-4 text-sm text-mute">
+          <p className="border-t border-hair pt-4 text-sm text-pencil">
             ตรวจเสร็จแล้ว อนุมัติและปิด session ได้ที่{' '}
-            <Link to="/pipeline" className="text-body underline underline-offset-2">
+            <Link to="/pipeline" className="link">
               รันทั้งชุด
             </Link>
           </p>
@@ -433,13 +423,13 @@ function UnusedNeeds({ needs, programId }: { needs: NeedSummary[]; programId: st
   const guarded = ordered.filter((n) => exclusionReason(n) !== 'lost_on_demand')
 
   return (
-    <section id="unused-needs" className="border-t border-rule pt-5">
-      <h2 className="eyebrow">Need ที่ไม่ได้เป็น PLO</h2>
-      <p className="mt-1 text-sm text-mute">
-        เพดาน PLO หลักคือ {MAX_CORE} ข้อ เรียงตาม demand score — Need เหล่านี้ยังเก็บไว้
+    <section id="unused-needs" className="border-t border-hair pt-5">
+      <h2 className="section-title">Need ที่ไม่ได้เป็น PLO</h2>
+      <p className="mt-1 text-sm text-pencil">
+        PLO หลักมีได้ไม่เกิน {MAX_CORE} ข้อ เลือกจาก demand score สูงสุด — Need เหล่านี้ยังเก็บไว้
         พร้อมหลักฐานเดิม แต่ไม่ได้ถูกแปลงเป็นผลลัพธ์การเรียนรู้
       </p>
-      <ul className="mt-3 border-t border-rule">
+      <ul className="mt-3 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
         {ordered.map((n) => (
           <UnusedNeedRow key={n.need_id} need={n} programId={programId} />
         ))}
@@ -463,12 +453,12 @@ function UnusedNeedRow({ need: n, programId }: { need: NeedSummary; programId: s
   const mandated = guarded && n.source_stakeholder_types?.includes('professional_council')
 
   return (
-    <li className="border-b border-rule py-2.5">
+    <li className="px-4 py-2.5">
       <div className="flex items-baseline gap-3 text-sm">
-        <span className="data shrink-0 text-xs text-faint">{n.need_id}</span>
-        <span className="min-w-0 flex-1 text-body">{n.statement_th ?? '—'}</span>
+        <span className="data shrink-0 text-xs text-lead">{n.need_id}</span>
+        <span className="min-w-0 flex-1 text-pencil">{n.statement_th ?? '—'}</span>
         {n.demand_score !== undefined && (
-          <span className="data shrink-0 text-xs text-mute" title={DEMAND_SCORE_TITLE_TH}>
+          <span className="data shrink-0 text-xs text-pencil" title={DEMAND_SCORE_TITLE_TH}>
             {demandPercent(n.demand_score)}
           </span>
         )}
@@ -477,10 +467,10 @@ function UnusedNeedRow({ need: n, programId }: { need: NeedSummary; programId: s
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
         {guarded ? (
           <>
-            <Tag tone="seal">{SCOPE_REASON_TH[reason]}</Tag>
-            {mandated && <Tag tone="seal">สภาวิชาชีพระบุไว้</Tag>}
+            <Tag tone="mandate">{SCOPE_REASON_TH[reason]}</Tag>
+            {mandated && <Tag tone="mandate">สภาวิชาชีพระบุไว้</Tag>}
             {total !== undefined && passed !== undefined && (
-              <span className="data text-xs text-mute" title={scopeCountsTh(n)}>
+              <span className="data text-xs text-pencil" title={scopeCountsTh(n)}>
                 สมาชิกผ่าน {passed}/{total}
               </span>
             )}
@@ -490,13 +480,17 @@ function UnusedNeedRow({ need: n, programId }: { need: NeedSummary; programId: s
             <button
               onClick={() => setOpen((v) => !v)}
               aria-expanded={open}
-              className="text-xs text-mute underline underline-offset-2 transition-colors hover:text-body"
+              className="link text-xs"
             >
               {open ? 'ซ่อนทักษะที่ทำให้ถูกกัน' : 'ดูทักษะที่ทำให้ถูกกัน'}
             </button>
           </>
         ) : (
-          <Tag>แพ้เพดาน</Tag>
+          <span
+            title={`ผ่านเกณฑ์ขอบเขตแล้ว แต่ demand score ต่ำกว่า Need ${MAX_CORE_PLOS} ข้อที่ถูกเลือกไปเขียนเป็น PLO หลัก — ยังเลือกไปรวมเป็น PLO ได้ที่หน้าสังเคราะห์ PLO`}
+          >
+            <Tag>ไม่ติด {MAX_CORE_PLOS} อันดับแรก</Tag>
+          </span>
         )}
       </div>
 
@@ -518,19 +512,21 @@ function GuardedNeedDetail({ programId, needId }: { programId: string; needId: s
       .catch(() => setError('โหลดทักษะไม่สำเร็จ ลองเปิดใหม่อีกครั้ง'))
   }, [programId, needId])
 
-  if (error) return <p className="mt-2 text-xs text-seal">{error}</p>
-  if (!trace) return <p className="mt-2 text-xs text-faint">กำลังโหลด…</p>
+  if (error) return <p className="mt-2 text-xs text-mandate">{error}</p>
+  if (!trace) return <p className="mt-2 text-xs text-lead">กำลังโหลด…</p>
 
   return (
-    <ul className="mt-2 space-y-2 border-l border-rule pl-3">
+    <ul className="mt-2 space-y-2 border-l-2 border-hair-strong pl-3">
       {trace.skills.map((s) => (
         <li key={s.skill_id} className="text-xs">
           <div className="flex flex-wrap items-baseline gap-x-2">
-            <span className="text-body">{s.skill_name_th}</span>
-            {!s.is_field_relevant && <span className="text-seal">นอกสาขา</span>}
-            {!s.is_graduate_capability && <span className="text-seal">ไม่ใช่สมรรถนะบัณฑิต</span>}
+            <span className="text-graphite">{s.skill_name_th}</span>
+            {!s.is_field_relevant && <span className="text-mandate">นอกสาขา</span>}
+            {!s.is_graduate_capability && <span className="text-mandate">ไม่ใช่สมรรถนะบัณฑิต</span>}
           </div>
-          <p className="mt-0.5 text-faint">“{s.evidence_span_th}”</p>
+          <p className="record mt-0.5 text-sm">
+            “<span className="marker">{s.evidence_span_th}</span>”
+          </p>
         </li>
       ))}
     </ul>
@@ -542,22 +538,22 @@ function GuardedNeedDetail({ programId, needId }: { programId: string; needId: s
  *  same instruction n times. */
 function ScopeRerunNote({ count }: { count: number }) {
   return (
-    <div className="mt-4 border-l-2 border-seal bg-field px-3 py-2.5 text-sm text-mute">
+    <div className="notice notice-warn mt-4">
       <p>
         <span className="data">{count}</span> Need ถูกกันเพราะอยู่นอกขอบเขตของหลักสูตร
         ทุกใบยังเก็บไว้ครบและกู้กลับได้
       </p>
       <p className="mt-1.5">
-        <span className="text-body">ถ้าตัดสินผิด:</span> แก้ “ขอบเขตของหลักสูตร” ที่หน้า{' '}
-        <Link to="/intake" className="underline underline-offset-2 hover:text-body">
+        <span className="font-medium">ถ้าตัดสินผิด:</span> แก้ “ขอบเขตของหลักสูตร” ที่หน้า{' '}
+        <Link to="/intake" className="link">
           Intake
         </Link>{' '}
-        แล้วรัน <span className="text-body">สกัดทักษะ</span> ใหม่ทั้งโปรแกรม — Need
+        แล้วรัน <span className="font-medium">สกัดทักษะ</span> ใหม่ทั้งโปรแกรม — Need
         จะถูกสร้างใหม่ตามไปเอง (ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ)
       </p>
       <p className="mt-1.5">
-        <span className="text-body">ถ้าตัดสินถูกแต่ยังอยากได้:</span> เลือกมันที่หน้า{' '}
-        <Link to="/plo-synthesis" className="underline underline-offset-2 hover:text-body">
+        <span className="font-medium">ถ้าตัดสินถูกแต่ยังอยากได้:</span> เลือกมันที่หน้า{' '}
+        <Link to="/plo-synthesis" className="link">
           PLO Synthesis
         </Link>{' '}
         แล้วกด “รวมเป็น PLO เดียว” — ตรงนั้นไม่กัน
@@ -590,20 +586,28 @@ function PloRow({
   const softFindings = findings.filter((f) => f.severity === 'soft')
 
   return (
-    <li className="border-b border-rule py-5">
-      <div className="flex items-baseline gap-3">
-        <span className="data w-16 shrink-0 text-sm text-faint">{p.plo_id}</span>
+    <li
+      className={`px-4 py-5 sm:px-5 ${p.smart_escalated ? 'border-l-[3px] border-l-mandate' : ''}`}
+    >
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-baseline sm:gap-3">
+        <span
+          className={`data w-16 shrink-0 text-sm font-semibold ${
+            p.smart_escalated ? 'text-mandate' : 'text-stamp'
+          }`}
+        >
+          {p.plo_id}
+        </span>
         <div className="min-w-0 flex-1">
           {/* The statement is the record — the sentence that ends up in มคอ.2 —
               so it is the one thing on this page set in the document's voice. */}
-          <p className="font-record text-[1.0625rem] leading-relaxed text-body">{p.statement_th}</p>
-          {p.statement_en && <p className="mt-1 text-sm text-faint">{p.statement_en}</p>}
+          <p className="record">{p.statement_th}</p>
+          {p.statement_en && <p className="mt-1 text-sm text-lead">{p.statement_en}</p>}
 
           {p.smart_escalated && (
-            <p className="mt-2 border-l-2 border-seal bg-seal-soft px-3 py-1.5 text-sm text-seal">
+            <p className="notice notice-error mt-2 font-medium">
               ไม่ผ่าน SMART หลังแก้อัตโนมัติ {p.smart_retry_count} รอบ — ต้องแก้ข้อความเอง
               {hardFindings.length > 0 && (
-                <span className="block mt-0.5 text-[0.8125rem]">
+                <span className="mt-0.5 block text-[0.8125rem] font-normal">
                   {hardFindings.map((f) => findingLabel(f.criterion)).join(' · ')}
                 </span>
               )}
@@ -611,37 +615,39 @@ function PloRow({
           )}
 
           {needsAttention(p.smart_validated_by) && (
-            <p className="mt-2 text-sm text-mute">{VALIDATED_BY_TH[p.smart_validated_by]}</p>
+            <p className="notice notice-warn mt-2">{VALIDATED_BY_TH[p.smart_validated_by]}</p>
           )}
 
           {/* The reason per criterion, with the flat flag list as the fallback
               for rows written before findings existed. */}
           {softFindings.length > 0 ? (
-            <ul className="mt-2 space-y-0.5">
+            <ul className="mt-2 space-y-1">
               {softFindings.map((f) => (
-                <li key={f.criterion} className="text-sm text-mute">
-                  ข้อสังเกต — {findingLabel(f.criterion)}
-                  {f.note_th && <span className="text-faint"> · {f.note_th}</span>}
+                <li key={f.criterion} className="text-sm text-marker-ink">
+                  <span className="chip chip-marker mr-1.5">ข้อสังเกต</span>
+                  {findingLabel(f.criterion)}
+                  {f.note_th && <span className="text-pencil"> · {f.note_th}</span>}
                 </li>
               ))}
             </ul>
           ) : p.soft_flags.length > 0 ? (
-            <ul className="mt-2 space-y-0.5">
+            <ul className="mt-2 space-y-1">
               {p.soft_flags.map((f) => (
-                <li key={f} className="text-sm text-mute">
-                  ข้อสังเกต — {findingLabel(f)}
+                <li key={f} className="text-sm text-marker-ink">
+                  <span className="chip chip-marker mr-1.5">ข้อสังเกต</span>
+                  {findingLabel(f)}
                 </li>
               ))}
             </ul>
           ) : null}
 
           {p.smart_diagnosis_th && (
-            <p className="mt-2 border-l-2 border-mute px-3 py-1.5 text-sm text-mute">
-              <span className="text-body">ข้อวินิจฉัย</span> — {p.smart_diagnosis_th}
+            <p className="mt-2 border-l-2 border-hair-strong bg-sunk px-3 py-1.5 text-sm text-pencil">
+              <span className="font-medium text-graphite">ข้อวินิจฉัย</span> — {p.smart_diagnosis_th}
             </p>
           )}
 
-          {p.rationale_th && <p className="mt-2 text-sm text-mute">{p.rationale_th}</p>}
+          {p.rationale_th && <p className="mt-2 text-sm text-pencil">{p.rationale_th}</p>}
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <Tag mono>{BLOOM_LABEL[p.bloom_level] ?? p.bloom_level}</Tag>
@@ -655,7 +661,7 @@ function PloRow({
             <button
               onClick={() => setTraceOpen((v) => !v)}
               aria-expanded={traceOpen}
-              className="ml-auto text-sm text-mute underline underline-offset-2 transition-colors hover:text-body"
+              className="btn btn-quiet btn-sm ml-auto"
             >
               {traceOpen
                 ? 'ซ่อนที่มา'
@@ -688,32 +694,32 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
       .finally(() => setLoading(false))
   }, [programId, ploId])
 
-  if (loading) return <p className="mt-3 text-sm text-faint">กำลังโหลดที่มา…</p>
-  if (error) return <p className="mt-3 text-sm text-seal">{error}</p>
+  if (loading) return <p className="mt-3 text-sm text-lead">กำลังโหลดที่มา…</p>
+  if (error) return <p className="notice notice-error mt-3">{error}</p>
   if (!trace) return null
 
   return (
-    <div className="mt-4 border-l border-rule pl-4">
+    <div className="mt-4 border-l-2 border-stamp/40 pl-4">
       <h3 className="eyebrow">ความต้องการของตลาด</h3>
       <ul className="mt-2 space-y-3">
         {trace.clusters.map((c) => (
           <li key={c.need_id}>
             <div className="flex items-baseline gap-3">
-              <p className="min-w-0 flex-1 text-sm leading-relaxed text-body">{c.statement_th}</p>
-              <span className="data shrink-0 text-xs text-mute" title={DEMAND_SCORE_TITLE_TH}>
+              <p className="record min-w-0 flex-1 text-base">{c.statement_th}</p>
+              <span className="data shrink-0 text-xs text-pencil" title={DEMAND_SCORE_TITLE_TH}>
                 {demandPercent(c.demand_score)}
               </span>
             </div>
             {c.rationale_th && (
-              <p className="mt-1 text-xs leading-relaxed text-mute">
-                <span className="text-faint">เหตุผลการจัดกลุ่ม (คำอธิบายของโมเดล): </span>
+              <p className="mt-1 text-xs leading-relaxed text-pencil">
+                <span className="text-lead">เหตุผลการจัดกลุ่ม (คำอธิบายของโมเดล): </span>
                 {c.rationale_th}
               </p>
             )}
-            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-faint">
-              <span className="data">{c.need_id}</span>
+            <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-lead">
+              <span className="data text-graphite">{c.need_id}</span>
               <span>{ksecLabel(c.ksec_category)}</span>
-              <span>{c.bloom_level}</span>
+              <span className="data">{c.bloom_level}</span>
               <span>หลักฐาน {c.source_evidence_ids.length} ชิ้น</span>
             </p>
           </li>
@@ -723,17 +729,19 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
       <h3 className="eyebrow mt-5">หลักฐาน</h3>
       <ul className="mt-2 space-y-3">
         {trace.evidence.map((e) => (
-          <li key={e.evidence_id}>
+          <li key={e.evidence_id} className="rounded-[3px] border border-hair bg-sunk px-3 py-2">
             <p className="flex flex-wrap items-baseline gap-2 text-xs">
-              <span className="text-body">{e.source_name}</span>
+              <span className="font-medium text-graphite">{e.source_name}</span>
               {/* สภาวิชาชีพ and the institution's own direction are the voices
                   that bind the program, and binding is what colour means here. */}
-              <span className={isRequirementStakeholder(e.stakeholder_type) ? 'text-seal' : 'text-mute'}>
+              <span
+                className={`chip ${isRequirementStakeholder(e.stakeholder_type) ? 'chip-mandate' : 'chip-neutral'}`}
+              >
                 {stakeholderLabel(e.stakeholder_type)}
               </span>
-              <span className="text-faint">{classStyle(e.classification).label}</span>
+              <span className="text-lead">{classStyle(e.classification).label}</span>
             </p>
-            <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-mute">{e.raw_text_th}</p>
+            <p className="record mt-1 line-clamp-3 text-sm text-pencil">{e.raw_text_th}</p>
           </li>
         ))}
       </ul>

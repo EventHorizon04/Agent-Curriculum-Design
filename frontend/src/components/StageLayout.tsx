@@ -35,21 +35,29 @@ const GATE_TITLE: Record<GateState, string> = {
   ahead: 'ยังไม่ถึง',
 }
 
-/** The gate on the rail. Three states, told apart by fill rather than by colour
- *  — colour in this interface means "mandate", and a gate is not one. */
+/** The gate on the rail, drawn as a mark from the มคอ.2 curriculum-mapping
+ *  matrix: ● passed, ◐ the stage the program is at, ○ not reached. Told apart
+ *  by fill, so the state survives greyscale printing and colour blindness. */
 function GateMark({ state }: { state: GateState }) {
-  const base = 'block h-2.5 w-2.5 rotate-45 transition-colors'
-  const skin =
-    state === 'current'
-      ? 'bg-field'
-      : state === 'passed'
-        ? 'border border-field/70'
-        : 'border border-dashed border-field/25'
   return (
     <span className="relative z-10 flex h-6 w-6 shrink-0 items-center justify-center">
-      <span className={`${base} ${skin}`} aria-hidden="true" />
+      <span className={`map-mark map-mark-${state}`} aria-hidden="true" />
       <span className="sr-only">{GATE_TITLE[state]}</span>
     </span>
+  )
+}
+
+/** The legend the matrix itself carries, so the marks explain themselves. */
+function GateLegend() {
+  return (
+    <ul className="hidden gap-3 px-6 text-[0.6875rem] text-pencil lg:flex" aria-hidden="true">
+      {(['passed', 'current', 'ahead'] as const).map((state) => (
+        <li key={state} className="flex items-center gap-1.5">
+          <span className={`map-mark map-mark-${state} h-2.5 w-2.5`} />
+          {GATE_TITLE[state]}
+        </li>
+      ))}
+    </ul>
   )
 }
 
@@ -60,32 +68,28 @@ function SharedGate({ stage }: { stage: StageDef }) {
   if (!stage.engineStages) return null
   return (
     <div className="mt-1 hidden pl-6 lg:block">
-      <div className="relative border-l border-ink-line pl-3">
-        <span
-          className="absolute -left-[3px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-field/60"
-          aria-hidden="true"
-        />
+      <div className="ml-2 border-l border-dashed border-hair-strong pl-3">
         <ul className="space-y-0.5">
           {stage.engineStages.map((name) => (
-            <li key={name} className="text-xs leading-snug text-field/45">
+            <li key={name} className="text-xs leading-snug text-pencil">
               {name}
             </li>
           ))}
         </ul>
       </div>
-      <p className="mt-1.5 pl-3 text-xs leading-snug text-field/35">{stage.gateNote}</p>
+      <p className="mt-1 ml-2 pl-3 text-[0.6875rem] leading-snug text-lead">{stage.gateNote}</p>
     </div>
   )
 }
 
 function StageRail({ reached }: { reached: number }) {
   return (
-    <ol className="relative flex gap-1 overflow-x-auto px-3 lg:block lg:space-y-1 lg:overflow-visible lg:px-3">
+    <ol className="relative flex gap-1 overflow-x-auto px-3 [scrollbar-width:none] lg:block lg:space-y-1 lg:overflow-visible lg:px-3">
       {/* The rail itself: one continuous line every gate sits on. Hidden on
           small screens, where the stages scroll sideways and a vertical line
           would be a lie about the layout. */}
       <span
-        className="absolute left-[1.5rem] top-3 bottom-3 hidden w-px bg-ink-line lg:block"
+        className="absolute left-[1.5rem] top-4 bottom-4 hidden w-px bg-hair-strong lg:block"
         aria-hidden="true"
       />
       {STAGES.map((stage) => {
@@ -96,8 +100,8 @@ function StageRail({ reached }: { reached: number }) {
               to={stage.route}
               className={({ isActive }) =>
                 [
-                  'group flex items-start gap-2 rounded-sm py-1.5 pr-2 transition-colors lg:gap-3',
-                  isActive ? 'bg-ink-raised' : 'hover:bg-ink-raised/60',
+                  'group flex items-start gap-2 rounded-[3px] py-1.5 pr-2 transition-colors lg:gap-3',
+                  isActive ? 'bg-sheet shadow-[0_0_0_1px_var(--color-hair)]' : 'hover:bg-sheet/60',
                 ].join(' ')
               }
             >
@@ -106,13 +110,14 @@ function StageRail({ reached }: { reached: number }) {
                   <GateMark state={state} />
                   <span className="min-w-0">
                     <span className="flex items-baseline gap-2">
-                      <span className="data text-[0.6875rem] text-field/40">
+                      <span className="data text-[0.6875rem] text-lead">
                         {String(stage.ordinal).padStart(2, '0')}
                       </span>
                       <span
                         className={[
                           'truncate text-sm leading-snug lg:whitespace-normal',
-                          state === 'ahead' ? 'text-field/55' : 'text-field/90',
+                          isActive ? 'font-semibold' : '',
+                          !isActive && state === 'ahead' ? 'text-pencil' : 'text-graphite',
                         ].join(' ')}
                       >
                         {stage.label}
@@ -122,7 +127,7 @@ function StageRail({ reached }: { reached: number }) {
                         five stages in a day, after which a summary under every
                         row is permanent noise competing with the gates. */}
                     {isActive && (
-                      <span className="mt-0.5 hidden text-xs leading-snug text-field/45 lg:block">
+                      <span className="mt-0.5 hidden text-xs leading-snug text-pencil lg:block">
                         {stage.summary}
                       </span>
                     )}
@@ -145,13 +150,17 @@ function RailLink({ to, label, note }: { to: string; label: string; note: string
       end={to === '/'}
       className={({ isActive }) =>
         [
-          'block rounded-sm px-3 py-1.5 text-sm transition-colors',
-          isActive ? 'bg-ink-raised text-field' : 'text-field/70 hover:bg-ink-raised/60',
+          'block rounded-[3px] px-3 py-1.5 text-sm text-graphite transition-colors',
+          isActive
+            ? 'bg-sheet font-semibold shadow-[0_0_0_1px_var(--color-hair)]'
+            : 'hover:bg-sheet/60',
         ].join(' ')
       }
     >
       {label}
-      <span className="mt-0.5 hidden text-xs leading-snug text-field/45 lg:block">{note}</span>
+      <span className="mt-0.5 hidden text-xs font-normal leading-snug text-pencil lg:block">
+        {note}
+      </span>
     </NavLink>
   )
 }
@@ -176,13 +185,13 @@ function ProgramBar({
   // way back to it and a bar that dropped it entirely would hide that.
   if (creating) {
     return (
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule bg-card px-6 py-3 lg:px-10">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-hair bg-sheet px-4 py-3 sm:px-6 lg:px-10">
         <div className="min-w-0">
           <p className="eyebrow">กำลังสร้างหลักสูตรใหม่</p>
-          <p className="font-record text-lg leading-tight text-mute">ยังไม่บันทึก</p>
+          <p className="font-display text-lg leading-tight text-pencil">ยังไม่บันทึก</p>
         </div>
         {programId && (
-          <span className="ml-auto text-xs text-faint">
+          <span className="ml-auto text-xs text-pencil">
             หลักสูตรที่เลือกไว้: <span className="data">{programId}</span>
           </span>
         )}
@@ -192,10 +201,10 @@ function ProgramBar({
 
   if (!programId) {
     return (
-      <div className="border-b border-rule bg-card px-6 py-3 lg:px-10">
-        <p className="text-sm text-mute">
+      <div className="border-b border-hair bg-sheet px-4 py-3 sm:px-6 lg:px-10">
+        <p className="text-sm text-pencil">
           ยังไม่ได้เลือกหลักสูตร{' '}
-          <NavLink to="/" className="text-seal underline underline-offset-2">
+          <NavLink to="/" className="link">
             เลือกจากรายการหลักสูตร
           </NavLink>
         </p>
@@ -207,7 +216,7 @@ function ProgramBar({
   const awaiting = status === 'suspended'
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule bg-card px-6 py-3 lg:px-10">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-hair bg-sheet px-4 py-3 sm:px-6 lg:px-10">
       <div className="min-w-0">
         {/* Labelled, because the name alone is just a string: a designer with
             two curricula open in two tabs cannot tell which one this is. */}
@@ -215,18 +224,26 @@ function ProgramBar({
         <div className="flex flex-wrap items-baseline gap-x-3">
           {/* Deliberately not an h1 — the page below owns that. This is chrome
               naming the working context, not the heading of the document. */}
-          <p className="font-record text-lg leading-tight text-body">
+          <p className="font-display text-lg leading-tight font-semibold text-graphite">
             {program?.name_th || program?.field || programId}
           </p>
-          <span className="data text-xs text-faint">{programId}</span>
-          {program?.faculty && <span className="text-xs text-mute">{program.faculty}</span>}
+          {program?.faculty && <span className="text-xs text-pencil">{program.faculty}</span>}
+          <span className="data text-xs text-lead">{programId}</span>
         </div>
       </div>
       {status && (
+        // A finished run is a person's approval and reads as a stamp; a run
+        // waiting on the designer is the thing on the page to look at.
         <span
           className={[
-            'ml-auto rounded-sm px-1.5 py-0.5 text-xs',
-            awaiting ? 'bg-seal-soft text-seal' : 'text-mute',
+            'ml-auto',
+            status === 'completed'
+              ? 'stamp'
+              : status === 'rejected' || status === 'failed'
+                ? 'stamp stamp-mandate'
+                : awaiting
+                  ? 'stamp stamp-pending'
+                  : 'chip chip-neutral',
           ].join(' ')}
         >
           {SESSION_STATUS_LABELS[status] ?? status}
@@ -281,17 +298,23 @@ export default function StageLayout() {
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
-      <nav className="on-ink w-full shrink-0 bg-ink py-4 lg:sticky lg:top-0 lg:h-screen lg:w-[var(--rail-width)] lg:overflow-y-auto lg:py-6">
-        <div className="px-6 pb-4 lg:px-6">
-          <p className="eyebrow">MHESI · OBE</p>
-          <p className="font-record mt-0.5 text-base leading-tight text-field">
+      {/* The rail sits on the paper, not on a dark slab: it is the margin of
+          the document, closed off by a double rule like a ruled form's. */}
+      <nav className="w-full shrink-0 border-b border-hair py-4 lg:sticky lg:top-0 lg:h-screen lg:w-[var(--rail-width)] lg:overflow-y-auto lg:border-b-0 lg:border-r-[3px] lg:border-double lg:border-r-hair-strong lg:py-7">
+        <div className="px-4 pb-4 sm:px-6">
+          <p className="eyebrow">OBE · มาตรฐาน อว.</p>
+          <p className="font-display mt-0.5 text-xl leading-tight font-semibold text-graphite">
             ออกแบบหลักสูตร
           </p>
         </div>
 
         <StageRail reached={reached} />
 
-        <div className="mt-4 space-y-0.5 border-t border-ink-line px-3 pt-4">
+        <div className="mt-3">
+          <GateLegend />
+        </div>
+
+        <div className="mt-4 space-y-0.5 border-t border-hair px-3 pt-4">
           <RailLink to="/" label="หลักสูตรทั้งหมด" note="เลือกหลักสูตรที่จะทำงานด้วย" />
           <RailLink to="/pipeline" label="รันทั้งชุด" note="รันต่อเนื่องและอนุมัติทีละขั้น" />
         </div>
@@ -299,7 +322,7 @@ export default function StageLayout() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {!picking && <ProgramBar program={program} programId={programId} creating={creating} />}
-        <main className="flex-1 px-6 py-8 lg:px-10">
+        <main className="flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
           <div className="mx-auto max-w-5xl">
             <Outlet />
           </div>

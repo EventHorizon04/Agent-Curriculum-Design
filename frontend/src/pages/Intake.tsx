@@ -154,29 +154,30 @@ export default function Intake() {
   }
 
   return (
-    <div className="max-w-3xl mx-auto text-left">
+    <div className="mx-auto max-w-3xl text-left">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">ขั้นตอนที่ 1 — ข้อมูลหลักสูตร</h1>
-        <p className="text-gray-500 text-sm mt-1">
+        <p className="eyebrow">ขั้นที่ 1</p>
+        <h1 className="page-title">ข้อมูลหลักสูตร</h1>
+        <p className="mt-1 text-sm text-pencil">
           {editing
             ? 'ข้อมูลของหลักสูตรที่กำลังทำอยู่ — แก้ไขแล้วกดบันทึกได้'
             : 'กรอกข้อมูลพื้นฐานของหลักสูตรเพื่อเริ่มกระบวนการออกแบบ OBE'}
         </p>
-        <p className="mt-1 text-xs text-gray-500">
+        <p className="mt-1 text-xs text-pencil">
           วิสัยทัศน์ พันธกิจ และอัตลักษณ์ ให้บันทึกเป็นหลักฐานที่หน้า Stakeholder Needs
           (ประเภท "วิสัยทัศน์/พันธกิจ/อัตลักษณ์")
         </p>
         {programId && (
           <div className="mt-2 flex flex-wrap items-center gap-3">
-            <span className="inline-flex items-center gap-2 rounded-full border border-blue-100 bg-blue-50 px-3 py-1 text-xs font-medium text-blue-700">
-              <span className="h-1.5 w-1.5 rounded-full bg-blue-500"></span>
+            <span className="chip chip-stamp">
+              <span className="h-1.5 w-1.5 rounded-full bg-stamp"></span>
               {editing ? `กำลังแก้ไข: ${programId}` : `หลักสูตรปัจจุบัน: ${programId}`}
             </span>
             {editing ? (
               <button
                 type="button"
                 onClick={startNewProgram}
-                className="cursor-pointer text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+                className="link cursor-pointer text-xs"
               >
                 สร้างหลักสูตรใหม่แทน
               </button>
@@ -184,7 +185,7 @@ export default function Intake() {
               <button
                 type="button"
                 onClick={() => setCreating(false)}
-                className="cursor-pointer text-xs text-gray-500 underline underline-offset-2 hover:text-gray-700"
+                className="link cursor-pointer text-xs"
               >
                 กลับไปแก้ไข {programId}
               </button>
@@ -194,19 +195,19 @@ export default function Intake() {
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-3 mb-4 text-sm">
+        <div className="notice notice-error mb-4">
           {error}
         </div>
       )}
       {success && (
-        <div className="mb-4 flex items-center justify-between gap-4 rounded-lg border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+        <div className="notice notice-info mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <span>✓ {success}</span>
           {/* After an edit the next step is whichever stage the change
               invalidated, so the page does not pretend to know it. */}
           {!editing && (
             <button
               onClick={() => navigate('/stakeholder-needs')}
-              className="ml-4 font-medium underline hover:text-green-900"
+              className="font-medium underline underline-offset-2 hover:text-stamp"
             >
               ไปที่หน้าหลักฐาน →
             </button>
@@ -214,7 +215,7 @@ export default function Intake() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 space-y-5">
+      <form onSubmit={handleSubmit} className="panel space-y-5 p-4 sm:p-6">
         <Field
           label="มหาวิทยาลัย / สถาบัน *"
           hint="หน่วยงานใหญ่สุด"
@@ -237,31 +238,31 @@ export default function Intake() {
         />
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
+          <label className="field-label">
             ขอบเขตของหลักสูตร (ไม่บังคับ)
           </label>
           <textarea
             name="scope_th" rows={3} value={form.scope_th} onChange={handleChange}
             placeholder="หลักสูตรนี้ครอบคลุม… (แจกแจง 3-4 รายการ)"
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="input"
           />
-          <ul className="mt-1 space-y-0.5 text-xs text-gray-500">
+          <ul className="field-hint space-y-0.5">
             {SCOPE_HINTS.map(hint => (
               <li key={hint}>{hint}</li>
             ))}
           </ul>
         </div>
 
-        <hr className="border-gray-100" />
+        <hr className="border-hair" />
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">ระดับปริญญา</label>
+            <label className="field-label">ระดับปริญญา</label>
             <select
               name="degree_level"
               value={form.degree_level}
               onChange={handleChange}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="input"
             >
               {DEGREE_OPTIONS.map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
@@ -269,18 +270,18 @@ export default function Intake() {
             </select>
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">จำนวนปีการศึกษา</label>
+            <label className="field-label">จำนวนปีการศึกษา</label>
             <input
               type="number" name="duration_years" min={1} max={8}
               value={form.duration_years} onChange={handleChange}
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="input"
             />
           </div>
         </div>
 
         <button
           type="submit" disabled={loading}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white font-medium rounded-lg py-2.5 text-sm transition-colors cursor-pointer disabled:cursor-not-allowed"
+          className="btn btn-primary w-full py-2.5"
         >
           {loading
             ? 'กำลังบันทึก...'
@@ -314,13 +315,13 @@ function Field({
 }) {
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">
+      <label className="field-label">
         {label}
-        {hint && <span className="text-gray-400 font-normal ml-2">— {hint}</span>}
+        {hint && <span className="ml-2 font-normal text-lead">— {hint}</span>}
       </label>
       <input
         type="text" name={name} value={value} onChange={onChange} placeholder={placeholder}
-        className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+        className="input"
       />
     </div>
   )

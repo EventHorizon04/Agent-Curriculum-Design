@@ -65,24 +65,26 @@ export const KSEC_LABEL: Record<string, string> = {
 }
 
 export const KSEC_COLOR: Record<string, string> = {
-  K: 'bg-sky-100 text-sky-800',
-  S: 'bg-emerald-100 text-emerald-800',
-  EC: 'bg-violet-100 text-violet-800',
-  E: 'bg-rose-100 text-rose-800',
-  C: 'bg-amber-100 text-amber-800',
+  K: 'bg-k-wash text-k',
+  S: 'bg-s-wash text-s',
+  EC: 'bg-ec-wash text-ec',
+  E: 'bg-e-wash text-e',
+  C: 'bg-c-wash text-c',
 }
 
 export const ksecLabel = (value: string): string => KSEC_LABEL[value] ?? value
 export const ksecColor = (value: string): string =>
-  KSEC_COLOR[value] ?? 'bg-gray-100 text-gray-600'
+  KSEC_COLOR[value] ?? 'bg-sunk text-pencil'
 
-// Evidence carries requirement/general; a skill carries all four.
+// Evidence carries requirement/general; a skill carries all four. The colours
+// follow the three inks in index.css: a requirement is a mandate, a need is
+// what the designer acts on, a want is flagged for a second look.
 export const CLASS_STYLE: Record<string, { label: string; cls: string }> = {
-  requirement: { label: 'ข้อกำหนด', cls: 'bg-blue-100 text-blue-700' },
-  need: { label: 'ความต้องการ', cls: 'bg-green-100 text-green-700' },
-  want: { label: 'ความปรารถนา', cls: 'bg-yellow-100 text-yellow-700' },
-  general: { label: 'ทั่วไป', cls: 'bg-slate-100 text-slate-600' },
-  unclassified: { label: 'ยังไม่จำแนก', cls: 'bg-gray-100 text-gray-500' },
+  requirement: { label: 'ข้อกำหนด', cls: 'bg-mandate-wash text-mandate' },
+  need: { label: 'ความต้องการ', cls: 'bg-stamp-wash text-stamp' },
+  want: { label: 'ความปรารถนา', cls: 'bg-marker-wash text-marker-ink' },
+  general: { label: 'ทั่วไป', cls: 'bg-sunk text-pencil' },
+  unclassified: { label: 'ยังไม่จำแนก', cls: 'bg-sunk text-lead' },
 }
 
 export const classStyle = (value: string): { label: string; cls: string } =>

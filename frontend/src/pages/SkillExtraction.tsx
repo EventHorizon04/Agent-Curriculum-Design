@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
+import RunProgress, { LoadingLine } from '../components/RunProgress'
+import { SKILL_RUN_PLANS } from '../constants/runPlans'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import SkillsByStakeholder, {
@@ -20,12 +22,6 @@ const RUN_PATH: Record<RunKind, string> = {
   all: 'run',
   skills: 'skills/run',
   needs: 'combine/run',
-}
-
-const RUN_LABEL: Record<RunKind, string> = {
-  all: 'กำลังสกัดทักษะและรวม Need...',
-  skills: 'กำลังสกัดทักษะจาก evidence...',
-  needs: 'กำลังรวมทักษะเป็น Need...',
 }
 
 export default function SkillExtraction() {
@@ -153,9 +149,9 @@ export default function SkillExtraction() {
 
   if (!programId) {
     return (
-      <div className="max-w-2xl mx-auto py-16 text-center">
-        <p className="text-gray-500 mb-4">ยังไม่ได้เลือกโปรแกรม</p>
-        <Link to="/" className="text-blue-600 hover:underline">ไปหน้า Intake</Link>
+      <div className="mx-auto max-w-2xl py-16 text-center">
+        <p className="mb-4 text-pencil">ยังไม่ได้เลือกโปรแกรม</p>
+        <Link to="/" className="link">ไปหน้า Intake</Link>
       </div>
     )
   }
@@ -163,51 +159,43 @@ export default function SkillExtraction() {
   const hasData = skills.length > 0 || needs.length > 0
 
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4">
+    <div className="max-w-4xl">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900 mb-1">Stage 3: Skill Extraction</h1>
-        <p className="text-gray-500 text-sm">
+        <p className="eyebrow">ขั้นที่ 3</p>
+        <h1 className="page-title mb-1">สกัดทักษะและรวมเป็น Need</h1>
+        <p className="text-sm text-pencil">
           ทักษะดิบที่สกัดจาก evidence และ Need ที่กลั่นจากทักษะเหล่านั้น
         </p>
-        <p className="text-xs text-gray-400 mt-1 font-mono">{programId}</p>
+        <p className="data mt-1 text-xs text-lead">{programId}</p>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 text-red-700 text-sm">{error}</div>
+        <div className="notice notice-error mb-6">{error}</div>
       )}
 
       {loading ? (
-        <div className="text-center py-16 text-gray-400">กำลังโหลด...</div>
+        <LoadingLine />
       ) : running ? (
-        <div className="text-center py-20">
-          <div className="text-4xl mb-4 animate-spin">⚙️</div>
-          <p className="text-gray-600 font-medium mb-1">{RUN_LABEL[running]}</p>
-          <p className="text-gray-400 text-sm">
-            {running === 'needs'
-              ? 'อาจใช้เวลาราวหนึ่งนาที'
-              : 'อาจใช้เวลา 1-5 นาที ขึ้นกับจำนวน evidence'}
-          </p>
-        </div>
+        <RunProgress plan={SKILL_RUN_PLANS[running]} />
       ) : !hasData ? (
-        <div className="text-center py-20">
-          <div className="text-5xl mb-4">🔍</div>
-          <p className="text-gray-500 text-lg font-medium mb-1">ยังไม่มีทักษะที่สกัดได้</p>
-          <p className="text-gray-400 text-sm mb-6">กดปุ่มด้านล่างเพื่อสกัดทักษะจาก evidence ที่มีอยู่</p>
+        <div className="panel border-dashed px-6 py-12 text-center">
+          <p className="font-display mb-1 text-lg text-graphite">ยังไม่มีทักษะที่สกัดได้</p>
+          <p className="mb-6 text-sm text-pencil">กดปุ่มด้านล่างเพื่อสกัดทักษะจาก evidence ที่มีอยู่</p>
           <div className="mx-auto mb-2 max-w-md">
             <DesignerNote value={note} onChange={setNote} />
           </div>
           <button
             onClick={() => runStage('all')}
-            className="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-medium transition-colors"
+            className="btn btn-primary"
           >
-            Run Skill Extraction
+            สกัดทักษะและรวม Need
           </button>
         </div>
       ) : (
         <>
           <DesignerNote value={note} onChange={setNote} disabled={running !== null} />
-          <div className="flex justify-between items-center mb-5">
-            <div className="flex items-center gap-3">
+          <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-1">
               {/* Two entry points, not one: re-extracting is the expensive
                   per-evidence LLM pass, while re-combining only re-clusters
                   what is already on record. */}
@@ -215,23 +203,23 @@ export default function SkillExtraction() {
                 onClick={() => runStage('skills')}
                 disabled={running !== null}
                 title="สกัดทักษะจาก evidence ใหม่ (ไม่แตะ Need ที่มีอยู่)"
-                className="text-xs text-gray-400 hover:text-blue-600 underline disabled:opacity-50"
+                className="btn btn-sm btn-secondary"
               >
-                Re-run Skill
+                สกัดทักษะใหม่
               </button>
-              <span className="text-xs text-gray-300">·</span>
+              <span className="text-xs text-lead" aria-hidden="true">·</span>
               <button
                 onClick={() => runStage('needs')}
                 disabled={running !== null}
                 title="รวมทักษะที่มีอยู่เป็น Need ใหม่ (ไม่สกัดทักษะซ้ำ)"
-                className="text-xs text-gray-400 hover:text-blue-600 underline disabled:opacity-50"
+                className="btn btn-sm btn-secondary"
               >
-                Re-run Need
+                รวม Need ใหม่
               </button>
             </div>
           </div>
 
-          <div className="mb-4 flex gap-1 border-b border-gray-200">
+          <div className="mb-4 flex flex-wrap gap-1 border-b border-hair-strong">
             {([
               ['skills', `Skill ดิบ (${skills.length})`],
               ['needs', `Need (${needs.length})`],
@@ -239,10 +227,10 @@ export default function SkillExtraction() {
               <button
                 key={key}
                 onClick={() => setTab(key)}
-                className={`px-4 py-2 text-sm font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-t ${
+                className={`-mb-px rounded-t-[3px] px-4 py-2 text-sm font-medium transition-colors ${
                   tab === key
-                    ? 'border-b-2 border-blue-600 text-blue-700'
-                    : 'text-gray-500 hover:text-gray-700'
+                    ? 'border-b-2 border-stamp text-stamp'
+                    : 'border-b-2 border-transparent text-pencil hover:text-graphite'
                 }`}
               >
                 {label}
@@ -257,51 +245,51 @@ export default function SkillExtraction() {
               droppedCount={droppedCount}
             />
           ) : needs.length === 0 ? (
-            <p className="py-8 text-center text-sm text-gray-400">ยังไม่มี Need — รัน Skill Extraction ก่อน</p>
+            <p className="py-8 text-center text-sm text-lead">ยังไม่มี Need — รัน Skill Extraction ก่อน</p>
           ) : (
             <div className="space-y-3">
               {staleNeedCount > 0 && (
-                <div className="flex items-center gap-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                  <span className="flex-1">
-                    Need {staleNeedCount} รายการมาจากทักษะชุดก่อน — กด Re-run Need
+                <div className="notice notice-warn flex flex-wrap items-center gap-3">
+                  <span className="min-w-0 flex-1">
+                    Need {staleNeedCount} รายการมาจากทักษะชุดก่อน — กด “รวม Need ใหม่”
                     เพื่อรวมใหม่จากทักษะปัจจุบัน
                   </span>
                   <button
                     onClick={() => runStage('needs')}
                     disabled={running !== null}
-                    className="shrink-0 rounded bg-amber-600 px-2 py-1 font-medium text-white hover:bg-amber-700 disabled:opacity-50"
+                    className="btn btn-sm btn-secondary"
                   >
-                    Re-run Need
+                    รวม Need ใหม่
                   </button>
                 </div>
               )}
               {/* Placed above the guard notice, which explains what to do about
                   the Needs this count is missing. */}
               <div
-                className={`rounded-lg border px-3 py-2.5 text-xs leading-relaxed ${
+                className={`notice ${
                   coreOutlook.projected < MIN_CORE_PLOS
-                    ? 'border-amber-300 bg-amber-50 text-amber-900'
-                    : 'border-gray-200 bg-gray-50 text-gray-700'
+                    ? 'notice-warn'
+                    : 'border-hair-strong bg-sunk text-graphite'
                 }`}
               >
                 <p>
-                  จะได้ PLO หลัก <span className="font-semibold">{coreOutlook.projected}</span> ข้อ
+                  จะได้ PLO หลัก <span className="data font-semibold">{coreOutlook.projected}</span> ข้อ
                   {' '}· เกณฑ์ {MIN_CORE_PLOS}-{MAX_CORE_PLOS} ข้อ
                   {coreOutlook.projected < MIN_CORE_PLOS && ' — ต่ำกว่าเกณฑ์'}
                 </p>
-                <p className="mt-1 text-gray-600">
+                <p className="mt-1 text-xs opacity-85">
                   Need หลัก {coreOutlook.core} ข้อ
                   {coreOutlook.guarded > 0 && ` · ตัวกรองขอบเขตกันออก ${coreOutlook.guarded} ข้อ`}
                   {coreOutlook.core - coreOutlook.guarded > MAX_CORE_PLOS &&
-                    ` · เกินเพดาน ระบบใช้ ${MAX_CORE_PLOS} ข้อที่ demand สูงสุด`}
+                    ` · เกิน ${MAX_CORE_PLOS} ข้อ ระบบใช้เฉพาะ ${MAX_CORE_PLOS} ข้อที่ demand สูงสุด`}
                   {coreOutlook.unwritten > 0 &&
                     ` · เขียนไม่สำเร็จ ${coreOutlook.unwritten} ข้อ (นับรวมอยู่ด้วย)`}
                 </p>
               </div>
               {guardedNeedCount > 0 && (
-                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-xs leading-relaxed text-rose-900">
+                <div className="notice notice-error">
                   <p>
-                    <span className="font-semibold">{guardedNeedCount}</span> จาก {needs.length}{' '}
+                    <span className="data font-semibold">{guardedNeedCount}</span> จาก {needs.length}{' '}
                     ข้อจะไม่ถูกส่งต่อไป PLO synthesis เพราะอยู่นอกขอบเขตของหลักสูตร — ป้ายบนการ์ด
                     บอกเหตุผลรายใบ กด “ดูที่มา” เพื่อดูว่าทักษะตัวไหนทำให้ถูกกัน
                   </p>
@@ -310,7 +298,7 @@ export default function SkillExtraction() {
                     <Link to="/intake" className="underline underline-offset-2">
                       Intake
                     </Link>{' '}
-                    แล้วกด <span className="font-semibold">Re-run Skill</span> ด้านบน — ทั้งโปรแกรมถูกสกัดใหม่
+                    แล้วกด <span className="font-semibold">สกัดทักษะใหม่</span> ด้านบน — ทั้งโปรแกรมถูกสกัดใหม่
                     (ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ)
                   </p>
                   <p className="mt-1.5">
@@ -332,8 +320,12 @@ export default function SkillExtraction() {
           has not produced what the next stage needs. */}
       <NextStageLink
         from="skill_extraction"
-        ready={Boolean(programId) && needs.length > 0}
-        blockedReason="ยังไม่มี Need — รันสกัดทักษะและรวม Need ให้เสร็จก่อน"
+        ready={Boolean(programId) && needs.length > 0 && running === null}
+        blockedReason={
+          running !== null
+            ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ PLO ต้องอ่านจาก Need ชุดนี้'
+            : 'ยังไม่มี Need — รันสกัดทักษะและรวม Need ให้เสร็จก่อน'
+        }
       />
     </div>
   )

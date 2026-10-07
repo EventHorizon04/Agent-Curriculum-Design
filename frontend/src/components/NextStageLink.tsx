@@ -40,30 +40,26 @@ export default function NextStageLink({
   const label = `ดำเนินการต่อ → ขั้นที่ ${next.ordinal}: ${next.label}`
 
   return (
-    <div className="mt-8 flex flex-wrap items-center justify-between gap-3 border-t border-gray-200 pt-4">
-      <p className="text-xs text-gray-500">
-        ขั้นถัดไป — {next.summary}
-        {next.gateNote && <span className="text-gray-400"> · {next.gateNote}</span>}
+    <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t-[3px] border-double border-hair-strong pt-5">
+      <p className="text-xs text-pencil">
+        <span className="eyebrow mr-1.5">ขั้นถัดไป</span>
+        {next.summary}
+        {next.gateNote && <span className="text-lead"> · {next.gateNote}</span>}
       </p>
       {ready ? (
-        <Link
-          to={next.route}
-          className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-        >
+        <Link to={next.route} className="btn btn-primary max-w-full text-left">
           {label}
         </Link>
       ) : (
         <span
-          className="shrink-0 cursor-not-allowed rounded-lg bg-gray-100 px-4 py-2 text-sm font-medium text-gray-400"
+          className="btn max-w-full cursor-not-allowed border border-dashed border-hair-strong text-left text-lead"
           title={blockedReason}
           aria-disabled="true"
         >
           {label}
         </span>
       )}
-      {!ready && blockedReason && (
-        <p className="w-full text-xs text-amber-700">{blockedReason}</p>
-      )}
+      {!ready && blockedReason && <p className="notice notice-warn w-full">{blockedReason}</p>}
     </div>
   )
 }
