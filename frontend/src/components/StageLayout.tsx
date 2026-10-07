@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Link, NavLink, Outlet, useLocation } from 'react-router-dom'
 import api from '../api/client'
+import { JOB_PAGE } from '../api/jobs'
 import { isCreatingIntake } from '../constants/intakeMode'
+import { JobsProvider, useJobs } from '../hooks/useProgramJobs'
 import { useProgram } from '../hooks/useProgram'
 import { SESSION_STATUS_LABELS, STAGES, stageIndex, type StageDef } from '../constants/stages'
 
@@ -253,6 +255,45 @@ function ProgramBar({
   )
 }
 
+/** The time a job started, in the viewer's own clock — `created_at` carries an
+ *  explicit offset, so it is the instant the run began wherever it is read. */
+function startedAt(iso: string): string {
+  const at = new Date(iso)
+  if (Number.isNaN(at.getTime())) return ''
+  return at.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })
+}
+
+/** One line, on every page, while the program has a job running.
+ *
+ * A run outlives the page that started it — the designer can move to another
+ * stage, or reload — so without this the only sign that a program is busy is a
+ * 409 from the next thing they try. The dial is the same mark the run screen
+ * uses, so "something is being filled in" reads the same in both places. */
+function RunningJobLine({ pathname }: { pathname: string }) {
+  const { running } = useJobs()
+  if (!running) return null
+
+  const owner = JOB_PAGE[running.kind]?.path
+  const start = startedAt(running.created_at)
+  return (
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-hair bg-stamp-wash px-4 py-2 text-sm text-stamp-deep sm:px-6 lg:px-10"
+    >
+      <span className="run-dial" aria-hidden="true" />
+      <span>
+        กำลังทำงาน: {running.label_th || running.kind}
+        {start && ` · เริ่ม ${start}`}
+      </span>
+      {owner && owner !== pathname && (
+        <Link to={owner} className="link ml-auto">
+          ไปที่หน้างานนี้
+        </Link>
+      )}
+    </div>
+  )
+}
+
 export default function StageLayout() {
   const { programId } = useProgram()
   const [program, setProgram] = useState<ProgramRow | null>(null)
@@ -320,14 +361,23 @@ export default function StageLayout() {
         </div>
       </nav>
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        {!picking && <ProgramBar program={program} programId={programId} creating={creating} />}
-        <main className="flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
-          <div className="mx-auto max-w-5xl">
-            <Outlet />
-          </div>
-        </main>
-      </div>
+      {/* The provider wraps the whole column, so every page reads the same list
+          and a job one page starts is still polled after the designer leaves it.
+          It renders no element of its own. */}
+      <JobsProvider programId={programId}>
+        <div className="flex min-w-0 flex-1 flex-col">
+          {!picking && <ProgramBar program={program} programId={programId} creating={creating} />}
+          {/* Not on the program list or while a new program is being typed: in
+              both the stored id is not the program on the screen, and a line
+              about it would say a job is running on something not in view. */}
+          {!picking && !creating && <RunningJobLine pathname={pathname} />}
+          <main className="flex-1 px-4 py-8 sm:px-6 lg:px-10 lg:py-10">
+            <div className="mx-auto max-w-5xl">
+              <Outlet />
+            </div>
+          </main>
+        </div>
+      </JobsProvider>
     </div>
   )
 }

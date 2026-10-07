@@ -8,6 +8,7 @@
  * the wire shape, not the frontend's narrower interfaces — so a page that starts
  * reading another field finds it here the way it would on the real API.
  */
+import type { JobInfo } from '../api/jobs'
 import type { PLO } from '../types/plo'
 
 export type ScenarioName = 'empty' | 'checkpoint' | 'complete' | 'many'
@@ -134,10 +135,12 @@ export interface MockDb {
   needs: NeedRow[]
   plos: PloRow[]
   sessions: SessionRow[]
+  /** Background stage runs, oldest first — JobInfo as the API sends it. */
+  jobs: JobInfo[]
 }
 
 export function emptyDb(): MockDb {
-  return { programs: [], evidence: [], skills: [], needs: [], plos: [], sessions: [] }
+  return { programs: [], evidence: [], skills: [], needs: [], plos: [], sessions: [], jobs: [] }
 }
 
 // ----------------------------------------------------------------------------
@@ -164,7 +167,28 @@ function writeJson(key: string, value: unknown): void {
   }
 }
 
-let db: MockDb | null = readJson<MockDb>(DB_KEY)
+/** What a job still `running` in a stored db is ended with. Same text as the
+ *  backend's sweep_orphaned_jobs (api/jobs.py RESTART_MESSAGE_TH). */
+const RESTART_MESSAGE_TH = 'backend ถูกปิดระหว่างทำงาน — กดรันใหม่'
+
+/** A db read back from sessionStorage, brought up to date with this build. */
+function revive(stored: MockDb | null): MockDb | null {
+  if (!stored) return null
+  // A db stored by a build that predates jobs has no list.
+  const jobs = (stored as Partial<MockDb>).jobs ?? []
+  // A mock job runs on a timer in this page, and a reload ends the page with the
+  // timer — the mock's counterpart of the backend restarting under a running
+  // job, which the real sweep answers the same way: failed, with a reason.
+  for (const job of jobs) {
+    if (job.status !== 'running') continue
+    job.status = 'failed'
+    job.error_th = RESTART_MESSAGE_TH
+    job.finished_at = utcIso()
+  }
+  return { ...stored, jobs }
+}
+
+let db: MockDb | null = revive(readJson<MockDb>(DB_KEY))
 
 export function hasStoredDb(): boolean {
   return db !== null
@@ -249,6 +273,12 @@ export function consumeFailNextRun(): boolean {
 /** Naive UTC ISO, the way Pydantic serialises `datetime.utcnow()` values. */
 export function nowIso(): string {
   return new Date().toISOString().replace('Z', '')
+}
+
+/** UTC ISO with its offset, the way JobInfo sends its timestamps: a browser
+ *  reads a naive ISO string as local time, so jobs carry the `+00:00`. */
+export function utcIso(): string {
+  return new Date().toISOString().replace('Z', '+00:00')
 }
 
 export function clone<T>(value: T): T {

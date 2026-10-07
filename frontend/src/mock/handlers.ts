@@ -7,14 +7,18 @@
  * LLM, the mock substitutes the builders in scenarios.ts; the pure-code parts
  * (classification, demand, the SMART hard gate, the 6-10 band) are mirrored.
  */
+import type { JobInfo, JobKind } from '../api/jobs'
 import type { SMARTCheck, SmartFinding } from '../types/plo'
 import { MAX_CORE_PLOS } from '../constants/needPolicy'
 import {
+  clone,
   consumeFailNextRun,
   getControls,
   getDb,
   newId,
   nowIso,
+  saveDb,
+  utcIso,
   type EvidenceRow,
   type NeedRow,
   type PloRow,
@@ -61,10 +65,10 @@ export function pause(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve()
 }
 
-/** The error a run answers when "run ถัดไปล้มเหลว" is armed. An unhandled
- *  exception in the stage is a 500 on the real API; the detail is the mock's. */
-function runFailure(stage: string): MockResponse {
-  return detail(500, `mock: จำลองการรัน ${stage} ล้มเหลว — เรียกโมเดลไม่สำเร็จ (หมดเวลารอ 300 วินาที)`)
+/** What a run ends with when "run ถัดไปล้มเหลว" is armed: the job's `error_th`,
+ *  as the runner records an exception the stage raised. The text is the mock's. */
+function runFailureText(stage: string): string {
+  return `mock: จำลองการรัน ${stage} ล้มเหลว — เรียกโมเดลไม่สำเร็จ (หมดเวลารอ 300 วินาที)`
 }
 
 // ----------------------------------------------------------------------------
@@ -329,15 +333,111 @@ export function tickSessions(): void {
 }
 
 // ----------------------------------------------------------------------------
+// Background jobs (api/jobs.py)
+// ----------------------------------------------------------------------------
+
+/** JOB_KIND_LABEL_TH. */
+const JOB_LABEL_TH: Record<JobKind, string> = {
+  needs_pipeline: 'สกัดทักษะและรวมความต้องการ',
+  skill_extraction: 'สกัดทักษะ',
+  need_combination: 'รวมความต้องการ',
+  plo_synthesis: 'สังเคราะห์ PLO',
+  plo_review: 'ตรวจชุด PLO',
+  plo_report: 'ออกรายงาน PLO',
+  plo_revalidate: 'ตรวจ SMART ซ้ำ',
+}
+
+/** How long a job runs before it finishes. Short enough to click through, long
+ *  enough that the page is seen waiting and the 2-second poll sees it end. */
+function jobDuration(): number {
+  return getControls().latency ? between(1500, 3000) : 300
+}
+
+/** program_busy: why this program cannot take another writer, or null. One
+ *  active writer per program — a running job or a running graph session. The
+ *  synchronous writers (sessions, approve, merge, copy) ask it too. */
+function busyReason(pid: string): string | null {
+  const db = getDb()
+  const running = of(db.jobs, pid).find((j) => j.status === 'running')
+  if (running) {
+    return `หลักสูตรนี้มีงาน${JOB_LABEL_TH[running.kind] ?? running.kind}กำลังทำอยู่ — รอให้เสร็จก่อน`
+  }
+  if (of(db.sessions, pid).some((s) => s.status === 'running')) {
+    return 'หลักสูตรนี้กำลังรัน pipeline อยู่ — รอให้เสร็จก่อน'
+  }
+  return null
+}
+
+interface MockJob {
+  pid: string
+  kind: JobKind
+  params: Record<string, unknown>
+  /** The text the job fails with when "run ถัดไปล้มเหลว" is armed. */
+  failure: string
+  /** The route's old body, after its precondition checks: what the stage does
+   *  and what it answered. Runs when the job finishes, not when it starts. A
+   *  status of 400 or more is the job's failure, its detail the `error_th`. */
+  work: () => MockResponse
+}
+
+/** start_job: record a `running` job, answer 202 with it, and let it finish on
+ *  a timer. The caller has already done every synchronous check the route does
+ *  before a job exists; the one-writer rule is the last of them. */
+function startJob(spec: MockJob): MockResponse {
+  const busy = busyReason(spec.pid)
+  if (busy) return detail(409, busy)
+  // Consumed here, by the click that armed it, and spent by this job.
+  const doomed = consumeFailNextRun()
+  const job: JobInfo = {
+    job_id: newId(),
+    program_id: spec.pid,
+    kind: spec.kind,
+    label_th: JOB_LABEL_TH[spec.kind],
+    status: 'running',
+    params: spec.params,
+    result: null,
+    error_th: null,
+    created_at: utcIso(),
+    finished_at: null,
+  }
+  getDb().jobs.push(job)
+  const work = doomed ? () => detail(500, spec.failure) : spec.work
+  window.setTimeout(() => finishJob(job.job_id, work), jobDuration())
+  return ok(job, 202)
+}
+
+/** Runs the job's work and records the outcome. Looks the job up again rather
+ *  than holding the row: the panel's reset or a deleted program replaces the db
+ *  under a pending timer, and a job that is gone has nothing to finish. */
+function finishJob(jobId: string, work: () => MockResponse): void {
+  const job = getDb().jobs.find((j) => j.job_id === jobId)
+  if (!job || job.status !== 'running') return
+  let outcome: MockResponse
+  try {
+    outcome = work()
+  } catch (err) {
+    outcome = detail(500, err instanceof Error ? err.message : String(err))
+  }
+  job.finished_at = utcIso()
+  if (outcome.status < 400) {
+    job.status = 'succeeded'
+    // A snapshot, as the backend stores one: the result must not follow the rows
+    // it describes when a later edit changes them.
+    job.result = outcome.data === undefined ? null : clone(outcome.data)
+  } else {
+    const reason = (outcome.data as { detail?: unknown } | undefined)?.detail
+    job.status = 'failed'
+    job.error_th = typeof reason === 'string' ? reason : 'งานล้มเหลว'
+  }
+  saveDb()
+}
+
+// ----------------------------------------------------------------------------
 // The routes
 // ----------------------------------------------------------------------------
 
 export function buildRouter(): Router {
   const r = new Router()
-
-  /** SynthesisAlreadyRunning: one synthesis per program at a time. The copy
-   *  route reads it too, as the real one reads is_synthesis_running. */
-  const synthesisInFlight = new Set<string>()
 
   r.get('/health', () => ok({ status: 'ok' }))
 
@@ -387,9 +487,9 @@ export function buildRouter(): Router {
     const db = getDb()
     const source = findProgram(src)
     if (!source) return detail(404, 'ไม่พบหลักสูตรนี้')
-    if (synthesisInFlight.has(src)) {
-      return detail(409, 'หลักสูตรนี้กำลังสังเคราะห์ PLO อยู่ — รอให้เสร็จก่อนจึงคัดลอก')
-    }
+    // A copy taken mid-run would hold half a set: every stage deletes, then inserts.
+    const busy = busyReason(src)
+    if (busy) return detail(409, busy)
     let n = 1
     while (db.programs.some((p) => p.program_id === `${src}-run-${n}`)) n++
     const newPid = `${src}-run-${n}`
@@ -438,6 +538,7 @@ export function buildRouter(): Router {
     db.needs = db.needs.filter((r2) => r2.program_id !== pid)
     db.plos = db.plos.filter((r2) => r2.program_id !== pid)
     db.sessions = db.sessions.filter((r2) => r2.program_id !== pid)
+    db.jobs = db.jobs.filter((r2) => r2.program_id !== pid)
     return { status: 204 }
   })
 
@@ -514,53 +615,65 @@ export function buildRouter(): Router {
     return null
   }
 
-  r.post(
-    '/programs/:pid/needs/run',
-    (req) => {
-      const pid = req.params.pid
-      const refused = extractionPrecondition(pid)
-      if (refused) return refused
-      if (consumeFailNextRun()) return runFailure('skill_extraction')
-      const { skills, dropped } = extractSkills(pid, of(getDb().evidence, pid))
-      const needs = combineNeeds(pid, skills)
-      replaceRows('skills', pid, skills)
-      replaceRows('needs', pid, needs)
-      return ok({ needs, dropped_ungrounded_count: dropped })
-    },
-    'slow',
-  )
+  // The stage runs below answer 202 with a job, and what they used to answer is
+  // the job's `result`, written when it finishes. Each does its synchronous
+  // checks (404/422) first, as the real routes do before any job row exists.
 
-  r.post(
-    '/programs/:pid/needs/skills/run',
-    (req) => {
-      const pid = req.params.pid
-      const refused = extractionPrecondition(pid)
-      if (refused) return refused
-      if (consumeFailNextRun()) return runFailure('skill_extraction')
-      // Needs are left as they were, pointing at skill ids this run replaced.
-      const { skills, dropped } = extractSkills(pid, of(getDb().evidence, pid))
-      replaceRows('skills', pid, skills)
-      return ok({ skills, dropped_ungrounded_count: dropped })
-    },
-    'slow',
-  )
+  r.post('/programs/:pid/needs/run', (req) => {
+    const pid = req.params.pid
+    const refused = extractionPrecondition(pid)
+    if (refused) return refused
+    return startJob({
+      pid,
+      kind: 'needs_pipeline',
+      params: { note_th: body<{ note_th: string }>(req).note_th ?? null },
+      failure: runFailureText('skill_extraction'),
+      work: () => {
+        const { skills, dropped } = extractSkills(pid, of(getDb().evidence, pid))
+        const needs = combineNeeds(pid, skills)
+        replaceRows('skills', pid, skills)
+        replaceRows('needs', pid, needs)
+        return ok({ needs, dropped_ungrounded_count: dropped })
+      },
+    })
+  })
 
-  r.post(
-    '/programs/:pid/needs/combine/run',
-    (req) => {
-      const pid = req.params.pid
-      if (!findProgram(pid)) return detail(404, 'Program not found')
-      const skills = of(getDb().skills, pid)
-      if (!skills.length) {
-        return detail(422, 'ยังไม่มีทักษะที่สกัดไว้ กรุณารัน Skill Extraction ก่อน')
-      }
-      if (consumeFailNextRun()) return runFailure('need_combination')
-      const needs = combineNeeds(pid, skills)
-      replaceRows('needs', pid, needs)
-      return ok({ needs, dropped_ungrounded_count: 0 })
-    },
-    'slow',
-  )
+  r.post('/programs/:pid/needs/skills/run', (req) => {
+    const pid = req.params.pid
+    const refused = extractionPrecondition(pid)
+    if (refused) return refused
+    return startJob({
+      pid,
+      kind: 'skill_extraction',
+      params: { note_th: body<{ note_th: string }>(req).note_th ?? null },
+      failure: runFailureText('skill_extraction'),
+      work: () => {
+        // Needs are left as they were, pointing at skill ids this run replaced.
+        const { skills, dropped } = extractSkills(pid, of(getDb().evidence, pid))
+        replaceRows('skills', pid, skills)
+        return ok({ skills, dropped_ungrounded_count: dropped })
+      },
+    })
+  })
+
+  r.post('/programs/:pid/needs/combine/run', (req) => {
+    const pid = req.params.pid
+    if (!findProgram(pid)) return detail(404, 'Program not found')
+    if (!of(getDb().skills, pid).length) {
+      return detail(422, 'ยังไม่มีทักษะที่สกัดไว้ กรุณารัน Skill Extraction ก่อน')
+    }
+    return startJob({
+      pid,
+      kind: 'need_combination',
+      params: { note_th: body<{ note_th: string }>(req).note_th ?? null },
+      failure: runFailureText('need_combination'),
+      work: () => {
+        const needs = combineNeeds(pid, of(getDb().skills, pid))
+        replaceRows('needs', pid, needs)
+        return ok({ needs, dropped_ungrounded_count: 0 })
+      },
+    })
+  })
 
   // --- plos -----------------------------------------------------------------
 
@@ -611,29 +724,26 @@ export function buildRouter(): Router {
     return ok({ enabled, model: enabled ? 'z-ai/glm-5.3-flash' : '' })
   })
 
-  r.post(
-    '/programs/:pid/plos/run',
-    async (req) => {
-      const pid = req.params.pid
-      if (!findProgram(pid)) return detail(404, 'Program not found')
-      const needs = of(getDb().needs, pid)
-      if (!needs.length) {
-        return detail(422, 'ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน')
-      }
-      if (synthesisInFlight.has(pid)) {
-        return detail(409, `กำลังสังเคราะห์ PLO ของโปรแกรม '${pid}' อยู่ — รอให้รอบเดิมเสร็จก่อน`)
-      }
-      synthesisInFlight.add(pid)
-      try {
-        await pause(latencyFor('slow'))
-        if (consumeFailNextRun()) return runFailure('plo_synthesis')
+  r.post('/programs/:pid/plos/run', (req) => {
+    const pid = req.params.pid
+    if (!findProgram(pid)) return detail(404, 'Program not found')
+    if (!of(getDb().needs, pid).length) {
+      return detail(422, 'ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน')
+    }
+    const { note_th, run_validation } = body<{ note_th: string; run_validation: boolean }>(req)
+    return startJob({
+      pid,
+      kind: 'plo_synthesis',
+      params: { note_th: note_th ?? null, run_validation: run_validation ?? true },
+      failure: runFailureText('plo_synthesis'),
+      work: () => {
         const plos = synthesizePlos(pid, of(getDb().needs, pid), of(getDb().skills, pid))
         // The system switch wins over the request, as smart_agent orders them:
         // DISABLED is checked before SKIPPED, and both only skip the agent —
         // the pure-code verdict synthesizePlos already holds stays.
         const skip = !getControls().validationEnabled
           ? 'ไม่ได้ตรวจ (ปิดการใช้ validation agent)'
-          : body<{ run_validation: boolean }>(req).run_validation === false
+          : run_validation === false
             ? 'ไม่ได้ตรวจ (ปิดการตรวจในรอบนี้)'
             : null
         if (skip) {
@@ -658,43 +768,77 @@ export function buildRouter(): Router {
         }
         replaceRows('plos', pid, plos)
         return ok(plos)
-      } finally {
-        synthesisInFlight.delete(pid)
-      }
-    },
-    'self',
-  )
+      },
+    })
+  })
 
-  r.post(
-    '/programs/:pid/plos/report/run',
-    (req) => {
-      const pid = req.params.pid
-      const plos = sortPlos(of(getDb().plos, pid))
-      if (!plos.length) {
-        return detail(422, 'ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน')
-      }
-      if (consumeFailNextRun()) return runFailure('plo_report')
-      const needs = of(getDb().needs, pid)
-      const cited = new Set(plos.flatMap((p) => p.source_need_ids))
-      const notSynthesized = needs.map((n) => n.need_id).filter((id) => !cited.has(id))
-      const core = plos.filter((p) => !p.is_optional).length
-      return ok({
-        plos,
-        counts: {
-          total: plos.length,
-          core,
-          optional: plos.length - core,
-          escalated: plos.filter((p) => p.smart_escalated).length,
-          stale: plos.filter((p) => p.smart_validated_by === 'stale').length,
-          code_only: plos.filter((p) => p.smart_validated_by === 'code_only').length,
-          needs_not_synthesized: notSynthesized.length,
-        },
-        needs_by_id: Object.fromEntries(needs.map((n) => [n.need_id, n])),
-        needs_not_synthesized: notSynthesized,
-      })
-    },
-    'slow',
-  )
+  r.post('/programs/:pid/plos/report/run', (req) => {
+    const pid = req.params.pid
+    if (!of(getDb().plos, pid).length) {
+      return detail(422, 'ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน')
+    }
+    return startJob({
+      pid,
+      kind: 'plo_report',
+      params: {},
+      failure: runFailureText('plo_report'),
+      work: () => {
+        // Read when the job finishes, not when it starts: the report describes
+        // whatever the set is by then.
+        const plos = sortPlos(of(getDb().plos, pid))
+        const needs = of(getDb().needs, pid)
+        const cited = new Set(plos.flatMap((p) => p.source_need_ids))
+        const notSynthesized = needs.map((n) => n.need_id).filter((id) => !cited.has(id))
+        const core = plos.filter((p) => !p.is_optional).length
+        return ok({
+          plos,
+          counts: {
+            total: plos.length,
+            core,
+            optional: plos.length - core,
+            escalated: plos.filter((p) => p.smart_escalated).length,
+            stale: plos.filter((p) => p.smart_validated_by === 'stale').length,
+            code_only: plos.filter((p) => p.smart_validated_by === 'code_only').length,
+            needs_not_synthesized: notSynthesized.length,
+          },
+          needs_by_id: Object.fromEntries(needs.map((n) => [n.need_id, n])),
+          needs_not_synthesized: notSynthesized,
+        })
+      },
+    })
+  })
+
+  /** The advisory set review. No page reads it yet, so the mock does not
+   *  invent findings: it answers the PLOReviewResponse shape with an empty
+   *  review that says so. */
+  r.post('/programs/:pid/plos/review/run', (req) => {
+    const pid = req.params.pid
+    if (!of(getDb().plos, pid).length) {
+      return detail(422, 'ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน')
+    }
+    return startJob({
+      pid,
+      kind: 'plo_review',
+      params: {},
+      failure: runFailureText('plo_review'),
+      work: () =>
+        ok({
+          review: {
+            program_id: pid,
+            plo_fingerprint: 'mock',
+            model: 'mock',
+            created_at: nowIso(),
+            redundancies: [],
+            ksec: [],
+            bloom: [],
+            bloom_distribution_th: '',
+            summary_th: 'mock: ไม่ได้จำลองผลการตรวจชุด PLO',
+          },
+          stale: false,
+          review_enabled: true,
+        }),
+    })
+  })
 
   r.post(
     '/programs/:pid/plos/from-needs',
@@ -706,6 +850,8 @@ export function buildRouter(): Router {
         return invalid([{ loc: ['body', 'need_ids'], msg: 'List should have at least 2 items after validation, not ' + needIds.length, type: 'too_short' }])
       }
       if (!findProgram(pid)) return detail(404, 'ไม่พบหลักสูตรนี้')
+      const busy = busyReason(pid)
+      if (busy) return detail(409, busy)
       const db = getDb()
       const allNeeds = of(db.needs, pid)
       const byId = new Map(allNeeds.map((n) => [n.need_id, n]))
@@ -796,49 +942,75 @@ export function buildRouter(): Router {
     return ok(match)
   })
 
-  r.post(
-    '/programs/:pid/plos/:ploId/revalidate',
-    (req) => {
-      const pid = req.params.pid
-      if (!findProgram(pid)) return detail(404, 'Program not found')
-      const db = getDb()
-      const match = of(db.plos, pid).find((p) => p.plo_id === req.params.ploId)
-      if (!match) return detail(404, 'PLO not found')
-      const allNeeds = of(db.needs, pid)
-      const cited = allNeeds.filter((n) => match.source_need_ids.includes(n.need_id))
-      if (!cited.length) {
-        return detail(422, `PLO ${match.plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน`)
-      }
-      if (consumeFailNextRun()) return detail(502, 'ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่')
+  r.post('/programs/:pid/plos/:ploId/revalidate', (req) => {
+    const { pid, ploId } = req.params
+    if (!findProgram(pid)) return detail(404, 'Program not found')
+    const db = getDb()
+    const found = of(db.plos, pid).find((p) => p.plo_id === ploId)
+    if (!found) return detail(404, 'PLO not found')
+    const cited = of(db.needs, pid).filter((n) => found.source_need_ids.includes(n.need_id))
+    if (!cited.length) {
+      return detail(422, `PLO ${found.plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน`)
+    }
+    return startJob({
+      pid,
+      kind: 'plo_revalidate',
+      params: { plo_id: ploId },
+      failure: 'ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่',
+      work: () => {
+        // Read again when the job finishes: the PLO may have been edited, or
+        // the set re-synthesised, while it ran.
+        const now = getDb()
+        const match = of(now.plos, pid).find((p) => p.plo_id === ploId)
+        if (!match) return detail(404, 'PLO not found')
+        const allNeeds = of(now.needs, pid)
 
-      // Simplification: the agent's repairs are not simulated. A statement that
-      // still fails the code gate escalates after three spent repairs; one that
-      // passes it gets a clean agent verdict.
-      const statement = stripOutcomePrefix(match.statement_th)
-      const fails = hardFailures(statement, match.action_verb_th, match.source_need_ids, new Set(allNeeds.map((n) => n.need_id)))
-      const verdict: Partial<PloRow> = fails.length
-        ? {
-            smart_check: codeVerdict(fails),
-            soft_flags: [],
-            smart_escalated: true,
-            smart_retry_count: 3,
-            smart_validated_by: 'agent',
-            smart_diagnosis_th:
-              'ผู้ตรวจขอให้แก้สามรอบแล้วแต่ประโยคยังไม่ผ่านเกณฑ์บังคับ ต้องเขียนใหม่ด้วยมือตามข้อที่ไม่ผ่านด้านล่าง',
-          }
-        : {
-            smart_check: passingCheck(),
-            soft_flags: [],
-            smart_escalated: false,
-            smart_retry_count: 0,
-            smart_validated_by: 'agent',
-            smart_diagnosis_th: null,
-          }
-      Object.assign(match, { statement_th: statement, version: match.version + 1 }, verdict)
-      return ok(match)
-    },
-    'slow',
-  )
+        // Simplification: the agent's repairs are not simulated. A statement that
+        // still fails the code gate escalates after three spent repairs; one that
+        // passes it gets a clean agent verdict.
+        const statement = stripOutcomePrefix(match.statement_th)
+        const fails = hardFailures(statement, match.action_verb_th, match.source_need_ids, new Set(allNeeds.map((n) => n.need_id)))
+        const verdict: Partial<PloRow> = fails.length
+          ? {
+              smart_check: codeVerdict(fails),
+              soft_flags: [],
+              smart_escalated: true,
+              smart_retry_count: 3,
+              smart_validated_by: 'agent',
+              smart_diagnosis_th:
+                'ผู้ตรวจขอให้แก้สามรอบแล้วแต่ประโยคยังไม่ผ่านเกณฑ์บังคับ ต้องเขียนใหม่ด้วยมือตามข้อที่ไม่ผ่านด้านล่าง',
+            }
+          : {
+              smart_check: passingCheck(),
+              soft_flags: [],
+              smart_escalated: false,
+              smart_retry_count: 0,
+              smart_validated_by: 'agent',
+              smart_diagnosis_th: null,
+            }
+        Object.assign(match, { statement_th: statement, version: match.version + 1 }, verdict)
+        return ok(match)
+      },
+    })
+  })
+
+  // --- jobs -----------------------------------------------------------------
+
+  /** GET /programs/{id}/jobs — newest first, the latest 20; `active=true` keeps
+   *  only the running ones. The db holds them oldest first, so reverse a copy. */
+  r.get('/programs/:pid/jobs', (req) => {
+    const activeOnly = req.query.get('active') === 'true'
+    const rows = of(getDb().jobs, req.params.pid)
+      .filter((j) => !activeOnly || j.status === 'running')
+      .reverse()
+      .slice(0, 20)
+    return ok(rows)
+  })
+
+  r.get('/programs/:pid/jobs/:jid', (req) => {
+    const job = of(getDb().jobs, req.params.pid).find((j) => j.job_id === req.params.jid)
+    return job ? ok(job) : detail(404, 'ไม่พบงานนี้')
+  })
 
   // --- sessions -------------------------------------------------------------
 
@@ -859,6 +1031,8 @@ export function buildRouter(): Router {
         'ยังไม่มี evidence สำหรับหลักสูตรนี้ — เพิ่มหลักฐานที่ขั้น Stakeholder Needs ก่อนเริ่มรัน',
       )
     }
+    const busy = busyReason(pid)
+    if (busy) return detail(409, busy)
     const sessionId = newId()
     const now = nowIso()
     const row: SessionRow = {
@@ -890,6 +1064,9 @@ export function buildRouter(): Router {
     const s = findSession(req.params.pid, req.params.sid)
     if (!s) return detail(404, 'Session not found')
     if (s.status !== 'suspended') return detail(409, `Session is '${s.status}', not suspended`)
+    // The suspended session itself does not count as running; a job does.
+    const busy = busyReason(req.params.pid)
+    if (busy) return detail(409, busy)
     // set_status keeps current_stage and the message: a resumed run still names
     // the gate it came from until it reaches the next one.
     s.status = 'running'
