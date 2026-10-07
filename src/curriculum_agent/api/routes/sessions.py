@@ -11,6 +11,7 @@ from langgraph.types import Command
 from loguru import logger
 
 from curriculum_agent.api.deps import require_api_key
+from curriculum_agent.api.jobs import program_busy, program_lock
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     ProgramRepository,
@@ -100,7 +101,13 @@ async def create_session(
         created_at=now,
         updated_at=now,
     )
-    await SessionRepository().create(session)
+    # One active writer per program. The check and the row it protects share the
+    # program's lock with `start_job`: the `running` session is what blocks a job
+    # from starting, so a job cannot slip in between the two.
+    async with program_lock(program_id):
+        if (reason := await program_busy(program_id)) is not None:
+            raise HTTPException(status_code=409, detail=reason)
+        await SessionRepository().create(session)
 
     graph = request.app.state.graph
     config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
@@ -139,7 +146,13 @@ async def approve_session(
     if session.status != "suspended":
         raise HTTPException(status_code=409, detail=f"Session is '{session.status}', not suspended")
 
-    await repo.set_status(session_id, "running")
+    # The session being approved is `suspended`, so it does not count as a running
+    # one; a job or another running session on this program does. Same lock as
+    # `create_session`, for the same reason: `running` is what blocks a job.
+    async with program_lock(program_id):
+        if (reason := await program_busy(program_id)) is not None:
+            raise HTTPException(status_code=409, detail=reason)
+        await repo.set_status(session_id, "running")
     session = await repo.get(session_id)
     if session is None:
         # Session vanished between the status update and the re-read.

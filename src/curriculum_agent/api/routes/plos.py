@@ -7,7 +7,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.api.jobs import start_job_or_409
+from curriculum_agent.api.jobs import program_busy, start_job_or_409
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
@@ -388,6 +388,12 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     program = await ProgramRepository().get(program_id)
     if program is None:
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
+
+    # Checked without `program_lock`, unlike the other synchronous writers: the LLM
+    # call below would hold it for minutes and stall every `start_job` here. A job
+    # started after this check can still overlap the write — a known residual race.
+    if (reason := await program_busy(program_id)) is not None:
+        raise HTTPException(status_code=409, detail=reason)
 
     all_needs = await NeedRepository().list_by_program(program_id)
     by_id = {n.need_id: n for n in all_needs}

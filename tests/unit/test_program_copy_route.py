@@ -14,8 +14,8 @@ from curriculum_agent import config as cfg
 from curriculum_agent.api.main import app
 from curriculum_agent.api.routes import programs as programs_route
 from curriculum_agent.data import program_copy as pc
-from curriculum_agent.models import ProgramMetadata
-from curriculum_agent.stages import plo_synthesis as ps
+from curriculum_agent.models import JobInfo, ProgramMetadata
+from tests.support.jobs import InMemoryJobs
 
 client = TestClient(app)
 
@@ -46,7 +46,6 @@ def env(monkeypatch: pytest.MonkeyPatch) -> dict[str, AsyncMock]:
     # Restored by monkeypatch's own teardown, the same thing
     # test_api_programs.py gets from its `with patch.object(...)` blocks.
     monkeypatch.setattr(app.state, "graph", graph, raising=False)
-    ps._SYNTHESIS_IN_FLIGHT.clear()
     return {"copy": copy, "get": get, "taken": taken, "graph": graph}  # type: ignore[dict-item]
 
 
@@ -77,12 +76,17 @@ def test_copy_of_an_unknown_program_is_404(env) -> None:  # noqa: ANN001
     env["copy"].assert_not_awaited()
 
 
-def test_copy_while_synthesis_runs_is_409(env) -> None:  # noqa: ANN001
-    ps._SYNTHESIS_IN_FLIGHT.add("program-2")
-    try:
-        assert client.post("/programs/program-2/copy").status_code == 409
-    finally:
-        ps._SYNTHESIS_IN_FLIGHT.clear()
+def test_copy_while_a_job_runs_is_409(env, jobs_store: InMemoryJobs) -> None:  # noqa: ANN001
+    jobs_store.rows["j1"] = JobInfo(
+        job_id="j1",
+        program_id="program-2",
+        kind="plo_synthesis",
+        status="running",
+        created_at=datetime(2026, 10, 8, 3, 0),
+    )
+    response = client.post("/programs/program-2/copy")
+    assert response.status_code == 409
+    assert isinstance(response.json()["detail"], str)
     env["copy"].assert_not_awaited()
 
 

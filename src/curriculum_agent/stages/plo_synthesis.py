@@ -503,11 +503,6 @@ async def synthesize_from_needs(
 _SYNTHESIS_IN_FLIGHT: set[str] = set()
 
 
-def is_synthesis_running(program_id: str) -> bool:
-    """Whether this process has a synthesis run in flight for the program."""
-    return program_id in _SYNTHESIS_IN_FLIGHT
-
-
 class SynthesisAlreadyRunning(RuntimeError):
     """Raised by `run` when a program already has a synthesis run in flight."""
 
