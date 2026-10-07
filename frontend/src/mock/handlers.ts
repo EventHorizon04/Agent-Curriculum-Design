@@ -1,0 +1,957 @@
+/**
+ * Every endpoint the frontend calls, answered from the mock database.
+ *
+ * Each handler is written against its FastAPI route in
+ * src/curriculum_agent/api/routes/ — same status codes, same Thai `detail`
+ * where the route refuses, same response model. Where the real route calls an
+ * LLM, the mock substitutes the builders in scenarios.ts; the pure-code parts
+ * (classification, demand, the SMART hard gate, the 6-10 band) are mirrored.
+ */
+import type { SMARTCheck, SmartFinding } from '../types/plo'
+import { MAX_CORE_PLOS } from '../constants/needPolicy'
+import {
+  consumeFailNextRun,
+  getControls,
+  getDb,
+  newId,
+  nowIso,
+  type EvidenceRow,
+  type NeedRow,
+  type PloRow,
+  type ProgramRow,
+  type SessionRow,
+} from './db'
+import { Router, detail, ok, type MockRequest, type MockResponse } from './router'
+import {
+  BLOOM_LEVELS,
+  CHECKPOINTS,
+  INTERRUPT_MESSAGE,
+  STAKEHOLDER_TYPES,
+  classifyEvidence,
+  combineNeeds,
+  extractSkills,
+  formatPloId,
+  makePlo,
+  mergedPloSeed,
+  passingCheck,
+  sortNeeds,
+  sortPlos,
+  stripOutcomePrefix,
+  synthesizePlos,
+} from './scenarios'
+import { XLSX_TYPE, buildXlsx } from './xlsx'
+
+/** MIN_CORE_AFTER_MERGE in need_grouping.py. */
+const MIN_CORE_AFTER_MERGE = 4
+
+// ----------------------------------------------------------------------------
+// Latency
+// ----------------------------------------------------------------------------
+
+function between(min: number, max: number): number {
+  return Math.round(min + Math.random() * (max - min))
+}
+
+export function latencyFor(speed: 'normal' | 'slow'): number {
+  if (!getControls().latency) return 0
+  return speed === 'slow' ? between(2000, 4000) : between(300, 900)
+}
+
+export function pause(ms: number): Promise<void> {
+  return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve()
+}
+
+/** The error a run answers when "run ถัดไปล้มเหลว" is armed. An unhandled
+ *  exception in the stage is a 500 on the real API; the detail is the mock's. */
+function runFailure(stage: string): MockResponse {
+  return detail(500, `mock: จำลองการรัน ${stage} ล้มเหลว — เรียกโมเดลไม่สำเร็จ (หมดเวลารอ 300 วินาที)`)
+}
+
+// ----------------------------------------------------------------------------
+// Lookups
+// ----------------------------------------------------------------------------
+
+function findProgram(pid: string): ProgramRow | undefined {
+  return getDb().programs.find((p) => p.program_id === pid)
+}
+
+const of = <T extends { program_id: string }>(rows: T[], pid: string): T[] =>
+  rows.filter((r) => r.program_id === pid)
+
+function replaceRows(table: 'skills' | 'needs' | 'plos', pid: string, rows: { program_id: string }[]): void {
+  const db = getDb() as unknown as Record<string, { program_id: string }[]>
+  db[table] = [...db[table].filter((r) => r.program_id !== pid), ...rows]
+}
+
+function body<T>(req: MockRequest): Partial<T> {
+  return (req.body && typeof req.body === 'object' ? req.body : {}) as Partial<T>
+}
+
+/** FastAPI's 422 for a body that fails validation. */
+function invalid(errors: { loc: string[]; msg: string; type: string }[]): MockResponse {
+  return { status: 422, data: { detail: errors.map((e) => ({ ...e, input: null })) } }
+}
+
+// ----------------------------------------------------------------------------
+// Programs
+// ----------------------------------------------------------------------------
+
+/** graph.stage_reached: derived from what is stored, never recorded. */
+function stageReached(pid: string): string {
+  const db = getDb()
+  if (of(db.plos, pid).length) return 'plo_synthesis'
+  if (of(db.skills, pid).length || of(db.needs, pid).length) return 'skill_extraction'
+  if (of(db.evidence, pid).length) return 'stakeholder_needs'
+  return 'intake'
+}
+
+function latestSession(pid: string): SessionRow | undefined {
+  return of(getDb().sessions, pid).sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
+}
+
+function slugify(text: string): string {
+  return text.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'program'
+}
+
+const PROGRAM_FIELDS = [
+  'name_th',
+  'name_en',
+  'field',
+  'isced_code',
+  'degree_level',
+  'duration_years',
+  'faculty',
+  'university',
+  'scope_th',
+  'professional_council',
+  'accreditation_body',
+  'subject_benchmark_ref',
+  'program_objectives_th',
+  'program_goals_th',
+] as const
+
+/** ProgramCreateRequest, validated the way Pydantic would. */
+function parseProgram(req: MockRequest): Omit<ProgramRow, 'program_id' | 'created_at'> | MockResponse {
+  const b = body<ProgramRow>(req)
+  const errors: { loc: string[]; msg: string; type: string }[] = []
+  for (const key of ['field', 'faculty', 'university'] as const) {
+    if (typeof b[key] !== 'string') errors.push({ loc: ['body', key], msg: 'Field required', type: 'missing' })
+  }
+  if (!['bachelor', 'master', 'doctoral'].includes(String(b.degree_level))) {
+    errors.push({
+      loc: ['body', 'degree_level'],
+      msg: "Input should be 'bachelor', 'master' or 'doctoral'",
+      type: 'literal_error',
+    })
+  }
+  const years = Number(b.duration_years)
+  if (!Number.isInteger(years) || years < 1 || years > 8) {
+    errors.push({
+      loc: ['body', 'duration_years'],
+      msg: years < 1 ? 'Input should be greater than or equal to 1' : 'Input should be less than or equal to 8',
+      type: years < 1 ? 'greater_than_equal' : 'less_than_equal',
+    })
+  }
+  if (errors.length) return invalid(errors)
+  const out: Record<string, unknown> = {
+    name_th: '',
+    name_en: '',
+    isced_code: null,
+    scope_th: '',
+    professional_council: null,
+    accreditation_body: null,
+    subject_benchmark_ref: null,
+    program_objectives_th: [],
+    program_goals_th: [],
+  }
+  for (const key of PROGRAM_FIELDS) if (b[key] !== undefined) out[key] = b[key]
+  out.duration_years = years
+  return out as Omit<ProgramRow, 'program_id' | 'created_at'>
+}
+
+function isResponse(value: unknown): value is MockResponse {
+  return typeof value === 'object' && value !== null && 'status' in value && typeof (value as MockResponse).status === 'number'
+}
+
+// ----------------------------------------------------------------------------
+// SMART hard gate (smart_rules.hard_failures + smart_vocabulary)
+// ----------------------------------------------------------------------------
+
+const FORBIDDEN_WORDS = ['รู้', 'จำ', 'เข้าใจ', 'ซาบซึ้ง', 'ตระหนัก', 'ศรัทธา', 'รัก']
+const ALLOWED_COMPOUNDS = [
+  'รักษา', 'การรักษา', 'รักษาการ', 'อนุรักษ์',
+  'จำแนก', 'จำลอง', 'จำกัด', 'จำเป็น', 'จำนวน', 'จำหน่าย', 'จำเพาะ', 'ประจำ',
+  'ความรู้', 'เรียนรู้', 'รู้จัก', 'ผู้รู้', 'รู้เท่าทัน',
+]
+
+function forbiddenWordsIn(statement: string): string[] {
+  let masked = statement
+  for (const allowed of [...ALLOWED_COMPOUNDS].sort((a, b) => b.length - a.length)) {
+    masked = masked.split(allowed).join(' '.repeat(allowed.length))
+  }
+  return FORBIDDEN_WORDS.filter((w) => masked.includes(w))
+}
+
+const HARD_HINTS: Record<string, string> = {
+  S_verb:
+    'Specific ไม่ผ่าน: statement_th ต้องขึ้นต้นด้วย action_verb_th ซึ่งเป็นกริยาของผลลัพธ์หลัก ไม่ใช่กริยาในวลีรองอย่าง \'โดยใช้...\' หรือ \'เพื่อ...\' ถ้างานหลักของประโยคคือกริยาอื่น ให้เปลี่ยน action_verb_th เป็นกริยานั้น หรือเรียบเรียงประโยคใหม่',
+  S_multi_verb:
+    "Specific ไม่ผ่าน: action_verb_th ต้องเป็นกริยา Bloom เพียงตัวเดียว ใช้สองตัวได้เฉพาะเมื่ออยู่ระดับ Bloom เดียวกันหรือติดกัน เช่น 'ออกแบบและพัฒนา' (create ทั้งคู่) ใช้ได้ แต่ 'ออกแบบและดำเนินการ' (create กับ apply) ห่างกันเกินไป ให้เลือกตัวที่เป็นผลลัพธ์จริง",
+  M_forbidden:
+    'Measurable ไม่ผ่าน: ห้ามใช้คำ รู้ จำ เข้าใจ ซาบซึ้ง ตระหนัก ศรัทธา รัก ให้แทนด้วยกริยาที่สังเกตได้ เช่น อธิบาย วิเคราะห์ ออกแบบ (คำที่มีคำห้ามอยู่ข้างในแต่ใช้ได้ เช่น จำแนก จำลอง รักษา ความรู้ เรียนรู้)',
+  R_evidence:
+    'Relevant ไม่ผ่าน: source_need_ids ทุกรายการต้องอ้างอิง Need ที่มีอยู่จริง (ห้ามมี id ที่ไม่รู้จักแม้แต่รายการเดียว) และต้องมีอย่างน้อย 1 รายการ',
+}
+
+/** Simplification: S_multi_verb fires on any declared phrase joined by "และ".
+ *  The real check consults the Bloom table and passes adjacent levels. */
+function hardFailures(statement: string, verb: string, needIds: string[], known: Set<string>): string[] {
+  const fails: string[] = []
+  if (!verb || !stripOutcomePrefix(statement).startsWith(verb)) fails.push('S_verb')
+  if (/\S+และ\S+/.test(verb)) fails.push('S_multi_verb')
+  if (forbiddenWordsIn(statement).length) fails.push('M_forbidden')
+  if (!needIds.length || !needIds.every((id) => known.has(id))) fails.push('R_evidence')
+  return fails
+}
+
+function hardFindings(fails: string[]): SmartFinding[] {
+  return fails.map((code) => ({ criterion: code, severity: 'hard' as const, note_th: HARD_HINTS[code] }))
+}
+
+function codeVerdict(fails: string[]): SMARTCheck {
+  return {
+    specific: !fails.includes('S_verb') && !fails.includes('S_multi_verb'),
+    measurable: !fails.includes('M_forbidden'),
+    achievable: true,
+    relevant: !fails.includes('R_evidence'),
+    timely: true,
+    notes_th: null,
+    findings: hardFindings(fails),
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Sessions: the graph, simulated
+// ----------------------------------------------------------------------------
+
+function stepDuration(): number {
+  return getControls().latency ? between(3000, 4500) : 800
+}
+
+type SessionInfo = Pick<
+  SessionRow,
+  'session_id' | 'program_id' | 'thread_id' | 'status' | 'current_stage' | 'suspended_message' | 'created_at' | 'updated_at'
+>
+
+/** SessionInfo — the row without the simulation's bookkeeping. */
+function publicSession(s: SessionRow): SessionInfo {
+  return {
+    session_id: s.session_id,
+    program_id: s.program_id,
+    thread_id: s.thread_id,
+    status: s.status,
+    current_stage: s.current_stage,
+    suspended_message: s.suspended_message,
+    created_at: s.created_at,
+    updated_at: s.updated_at,
+  }
+}
+
+/** What one stage writes when a session runs it. Throws the stage's own error. */
+function runStageForSession(pid: string, stage: string): void {
+  const db = getDb()
+  switch (stage) {
+    case 'stakeholder_needs': {
+      const evidence = of(db.evidence, pid)
+      if (!evidence.length) {
+        throw new Error('ไม่มี evidence สำหรับโปรแกรมนี้ กรุณาเพิ่ม evidence ที่ขั้น Stakeholder Needs ก่อน')
+      }
+      for (const e of evidence) e.classification = classifyEvidence(e.stakeholder_type)
+      return
+    }
+    case 'skill_extraction': {
+      // skill_extraction and need_combination, back to back behind one gate.
+      const { skills } = extractSkills(pid, of(db.evidence, pid))
+      if (!skills.length) throw new Error('ไม่มีทักษะที่สกัดได้จาก evidence ของโปรแกรมนี้')
+      replaceRows('skills', pid, skills)
+      replaceRows('needs', pid, combineNeeds(pid, skills))
+      return
+    }
+    case 'plo_synthesis': {
+      const needs = of(db.needs, pid)
+      if (!needs.length) throw new Error('ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน')
+      replaceRows('plos', pid, synthesizePlos(pid, needs, of(db.skills, pid)))
+      return
+    }
+    case 'plo_report': {
+      if (!of(db.plos, pid).length) {
+        throw new Error(`PLO report: no PLOs for program '${pid}' — run PLO synthesis first`)
+      }
+      return
+    }
+  }
+}
+
+/**
+ * Advance every running session whose step is due. Called lazily before each
+ * request, so the Pipeline page's two-second poll is what moves a run along.
+ */
+export function tickSessions(): void {
+  const now = Date.now()
+  for (const s of getDb().sessions) {
+    if (s.status !== 'running' || s.due_at === null || s.due_at > now) continue
+    s.due_at = null
+    s.updated_at = nowIso()
+    const stage = CHECKPOINTS[s.target]
+    if (s.will_fail) {
+      s.will_fail = false
+      s.status = 'failed'
+      s.suspended_message = `mock: จำลองความล้มเหลว — ขั้น ${stage ?? 'plo_report'} เรียกโมเดลไม่สำเร็จ (หมดเวลารอผลตอบกลับ 300 วินาที)`
+      continue
+    }
+    if (stage === undefined) {
+      // Resumed past the last gate: the graph reaches END.
+      s.status = 'completed'
+      continue
+    }
+    try {
+      runStageForSession(s.program_id, stage)
+    } catch (err) {
+      s.status = 'failed'
+      s.suspended_message = err instanceof Error ? err.message : String(err)
+      continue
+    }
+    s.status = 'suspended'
+    s.current_stage = stage
+    s.suspended_message = INTERRUPT_MESSAGE[stage]
+    s.target += 1
+  }
+}
+
+// ----------------------------------------------------------------------------
+// The routes
+// ----------------------------------------------------------------------------
+
+export function buildRouter(): Router {
+  const r = new Router()
+
+  /** SynthesisAlreadyRunning: one synthesis per program at a time. The copy
+   *  route reads it too, as the real one reads is_synthesis_running. */
+  const synthesisInFlight = new Set<string>()
+
+  r.get('/health', () => ok({ status: 'ok' }))
+
+  // --- programs -------------------------------------------------------------
+
+  r.get('/programs', () => {
+    const rows = [...getDb().programs]
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .map((p) => ({
+        program_id: p.program_id,
+        name_th: p.name_th,
+        name_en: p.name_en,
+        field: p.field,
+        faculty: p.faculty,
+        degree_level: p.degree_level,
+        created_at: p.created_at,
+        current_stage: stageReached(p.program_id),
+        session_status: latestSession(p.program_id)?.status ?? null,
+        copied_from: p.copied_from ?? null,
+      }))
+    return ok(rows)
+  })
+
+  r.post('/programs', (req) => {
+    const parsed = parseProgram(req)
+    if (isResponse(parsed)) return parsed
+    const db = getDb()
+    const base = slugify(parsed.field)
+    let candidate = base
+    for (let n = 2; db.programs.some((p) => p.program_id === candidate); n++) candidate = `${base}-${n}`
+    const row: ProgramRow = { ...parsed, program_id: candidate, created_at: nowIso(), copied_from: null }
+    db.programs.push(row)
+    return ok(row)
+  })
+
+  r.get('/programs/:pid', (req) => {
+    const p = findProgram(req.params.pid)
+    return p ? ok({ ...p, copied_from: p.copied_from ?? null }) : detail(404, 'Program not found')
+  })
+
+  /** POST /programs/{id}/copy — data/program_copy.py. Every evidence, skill and
+   *  Need id is re-minted and every reference to one rewritten (the backend's
+   *  remap_ids); plo_id is kept, since a PLO is (program_id, plo_id). Sessions
+   *  are not copied, so the copy starts with no checkpoint. */
+  r.post('/programs/:pid/copy', (req) => {
+    const src = req.params.pid
+    const db = getDb()
+    const source = findProgram(src)
+    if (!source) return detail(404, 'ไม่พบหลักสูตรนี้')
+    if (synthesisInFlight.has(src)) {
+      return detail(409, 'หลักสูตรนี้กำลังสังเคราะห์ PLO อยู่ — รอให้เสร็จก่อนจึงคัดลอก')
+    }
+    let n = 1
+    while (db.programs.some((p) => p.program_id === `${src}-run-${n}`)) n++
+    const newPid = `${src}-run-${n}`
+
+    const idMap = new Map<string, string>()
+    for (const e of of(db.evidence, src)) idMap.set(e.evidence_id, newId())
+    for (const k of of(db.skills, src)) idMap.set(k.skill_id, newId())
+    for (const nd of of(db.needs, src)) idMap.set(nd.need_id, newId())
+    // Ids are uuids, so rewriting every string equal to an old id is exact.
+    const remap = <T,>(row: T): T => {
+      const walk = (v: unknown): unknown => {
+        if (typeof v === 'string') return idMap.get(v) ?? v
+        if (Array.isArray(v)) return v.map(walk)
+        if (v && typeof v === 'object') {
+          return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x)]))
+        }
+        return v
+      }
+      return { ...(walk(row) as T), program_id: newPid }
+    }
+    db.programs.push({ ...source, program_id: newPid, created_at: nowIso(), copied_from: src })
+    db.evidence.push(...of(db.evidence, src).map(remap))
+    db.skills.push(...of(db.skills, src).map(remap))
+    db.needs.push(...of(db.needs, src).map(remap))
+    db.plos.push(...of(db.plos, src).map(remap))
+    return ok(findProgram(newPid))
+  })
+
+  r.put('/programs/:pid', (req) => {
+    const existing = findProgram(req.params.pid)
+    if (!existing) return detail(404, 'ไม่พบหลักสูตรนี้')
+    const parsed = parseProgram(req)
+    if (isResponse(parsed)) return parsed
+    // The id never moves, even when the field it was slugged from does.
+    Object.assign(existing, parsed, { program_id: existing.program_id, created_at: existing.created_at })
+    return ok(existing)
+  })
+
+  r.delete('/programs/:pid', (req) => {
+    const pid = req.params.pid
+    const db = getDb()
+    if (!findProgram(pid)) return detail(404, 'ไม่พบหลักสูตรนี้')
+    db.programs = db.programs.filter((p) => p.program_id !== pid)
+    db.evidence = db.evidence.filter((r2) => r2.program_id !== pid)
+    db.skills = db.skills.filter((r2) => r2.program_id !== pid)
+    db.needs = db.needs.filter((r2) => r2.program_id !== pid)
+    db.plos = db.plos.filter((r2) => r2.program_id !== pid)
+    db.sessions = db.sessions.filter((r2) => r2.program_id !== pid)
+    return { status: 204 }
+  })
+
+  // --- evidence -------------------------------------------------------------
+
+  r.get('/programs/:pid/evidence', (req) => ok(of(getDb().evidence, req.params.pid)))
+
+  r.post('/programs/:pid/evidence', (req) => {
+    const b = body<EvidenceRow>(req)
+    const errors: { loc: string[]; msg: string; type: string }[] = []
+    for (const key of ['evidence_id', 'program_id', 'source_name', 'raw_text_th'] as const) {
+      if (typeof b[key] !== 'string') errors.push({ loc: ['body', key], msg: 'Field required', type: 'missing' })
+    }
+    if (!STAKEHOLDER_TYPES.includes(b.stakeholder_type as (typeof STAKEHOLDER_TYPES)[number])) {
+      errors.push({ loc: ['body', 'stakeholder_type'], msg: 'Input should be a valid StakeholderType', type: 'enum' })
+    }
+    if (errors.length) return invalid(errors)
+    // Stored under the body's program_id, as the route does; classification is
+    // the route's output, never its input.
+    const row: EvidenceRow = {
+      evidence_id: b.evidence_id as string,
+      program_id: b.program_id as string,
+      stakeholder_type: b.stakeholder_type as string,
+      source_name: b.source_name as string,
+      source_url: b.source_url ?? null,
+      raw_text_th: b.raw_text_th as string,
+      raw_text_en: b.raw_text_en ?? null,
+      collected_at: b.collected_at ?? nowIso(),
+      classification: classifyEvidence(b.stakeholder_type as string),
+      classification_rationale_th: b.classification_rationale_th ?? null,
+      metadata: b.metadata ?? {},
+    }
+    const db = getDb()
+    db.evidence = [...db.evidence.filter((e) => e.evidence_id !== row.evidence_id), row]
+    return ok(row)
+  })
+
+  r.delete('/programs/:pid/evidence/:eid', (req) => {
+    const { pid, eid } = req.params
+    const db = getDb()
+    // SkillTable.source_evidence_id is a foreign key into the evidence table.
+    if (db.skills.some((s) => s.source_evidence_id === eid)) {
+      return detail(409, 'ลบไม่ได้ — หลักฐานนี้ถูกใช้ในการสกัดทักษะแล้ว')
+    }
+    const before = db.evidence.length
+    db.evidence = db.evidence.filter((e) => !(e.program_id === pid && e.evidence_id === eid))
+    return db.evidence.length < before ? { status: 204 } : detail(404, 'ไม่พบหลักฐานนี้')
+  })
+
+  // --- needs ----------------------------------------------------------------
+
+  r.get('/programs/:pid/needs', (req) => ok(sortNeeds(of(getDb().needs, req.params.pid))))
+
+  r.get('/programs/:pid/needs/skills', (req) => ok(of(getDb().skills, req.params.pid)))
+
+  r.get('/programs/:pid/needs/:nid/trace', (req) => {
+    const db = getDb()
+    const need = of(db.needs, req.params.pid).find((n) => n.need_id === req.params.nid)
+    if (!need) return detail(404, 'Need not found')
+    const evidenceIds = new Set(need.source_evidence_ids)
+    return ok({
+      need,
+      skills: db.skills.filter((s) => need.member_skill_ids.includes(s.skill_id)),
+      evidence: of(db.evidence, req.params.pid).filter((e) => evidenceIds.has(e.evidence_id)),
+    })
+  })
+
+  /** _build_stage_state: program, then evidence. */
+  const extractionPrecondition = (pid: string): MockResponse | null => {
+    if (!findProgram(pid)) return detail(404, 'Program not found')
+    if (!of(getDb().evidence, pid).length) {
+      return detail(422, 'ไม่มี evidence สำหรับโปรแกรมนี้ กรุณาเพิ่ม evidence ก่อน')
+    }
+    return null
+  }
+
+  r.post(
+    '/programs/:pid/needs/run',
+    (req) => {
+      const pid = req.params.pid
+      const refused = extractionPrecondition(pid)
+      if (refused) return refused
+      if (consumeFailNextRun()) return runFailure('skill_extraction')
+      const { skills, dropped } = extractSkills(pid, of(getDb().evidence, pid))
+      const needs = combineNeeds(pid, skills)
+      replaceRows('skills', pid, skills)
+      replaceRows('needs', pid, needs)
+      return ok({ needs, dropped_ungrounded_count: dropped })
+    },
+    'slow',
+  )
+
+  r.post(
+    '/programs/:pid/needs/skills/run',
+    (req) => {
+      const pid = req.params.pid
+      const refused = extractionPrecondition(pid)
+      if (refused) return refused
+      if (consumeFailNextRun()) return runFailure('skill_extraction')
+      // Needs are left as they were, pointing at skill ids this run replaced.
+      const { skills, dropped } = extractSkills(pid, of(getDb().evidence, pid))
+      replaceRows('skills', pid, skills)
+      return ok({ skills, dropped_ungrounded_count: dropped })
+    },
+    'slow',
+  )
+
+  r.post(
+    '/programs/:pid/needs/combine/run',
+    (req) => {
+      const pid = req.params.pid
+      if (!findProgram(pid)) return detail(404, 'Program not found')
+      const skills = of(getDb().skills, pid)
+      if (!skills.length) {
+        return detail(422, 'ยังไม่มีทักษะที่สกัดไว้ กรุณารัน Skill Extraction ก่อน')
+      }
+      if (consumeFailNextRun()) return runFailure('need_combination')
+      const needs = combineNeeds(pid, skills)
+      replaceRows('needs', pid, needs)
+      return ok({ needs, dropped_ungrounded_count: 0 })
+    },
+    'slow',
+  )
+
+  // --- plos -----------------------------------------------------------------
+
+  r.get('/programs/:pid/plos', (req) => ok(sortPlos(of(getDb().plos, req.params.pid))))
+
+  r.get('/programs/:pid/plos/export/matrix.xlsx', (req) => {
+    const pid = req.params.pid
+    const plos = sortPlos(of(getDb().plos, pid))
+    if (!plos.length) {
+      return detail(422, 'ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน')
+    }
+    const needs = new Map(of(getDb().needs, pid).map((n) => [n.need_id, n]))
+    const rows = [
+      ['PLO', 'ข้อความ', 'Bloom', 'KSEC', 'ประเภท', 'SMART'],
+      ...plos.map((p) => [
+        p.plo_id,
+        p.statement_th,
+        p.bloom_level,
+        [...new Set(p.source_need_ids.map((id) => needs.get(id)?.ksec_category ?? '?'))].join(', '),
+        p.is_optional ? 'เสริม' : 'หลัก',
+        p.smart_escalated ? 'ต้องแก้ด้วยมือ' : 'ผ่าน',
+      ]),
+    ]
+    return { status: 200, data: buildXlsx('PLO (mock)', rows), contentType: XLSX_TYPE }
+  })
+
+  r.get('/programs/:pid/plos/:ploId/trace', (req) => {
+    const db = getDb()
+    const pid = req.params.pid
+    const plo = of(db.plos, pid).find((p) => p.plo_id === req.params.ploId)
+    if (!plo) return detail(404, 'PLO not found')
+    const needIds = new Set(plo.source_need_ids)
+    const evidenceIds = new Set(plo.source_evidence_ids)
+    const clusters = of(db.needs, pid).filter((n) => needIds.has(n.need_id))
+    const evidence = of(db.evidence, pid).filter((e) => evidenceIds.has(e.evidence_id))
+    return ok({
+      plo,
+      clusters,
+      evidence,
+      missing_need_ids: [...needIds].filter((id) => !clusters.some((n) => n.need_id === id)).sort(),
+      missing_evidence_ids: [...evidenceIds].filter((id) => !evidence.some((e) => e.evidence_id === id)).sort(),
+    })
+  })
+
+  r.get('/programs/:pid/plos/validation', (req) => {
+    if (!findProgram(req.params.pid)) return detail(404, 'Program not found')
+    const enabled = getControls().validationEnabled
+    return ok({ enabled, model: enabled ? 'z-ai/glm-5.3-flash' : '' })
+  })
+
+  r.post(
+    '/programs/:pid/plos/run',
+    async (req) => {
+      const pid = req.params.pid
+      if (!findProgram(pid)) return detail(404, 'Program not found')
+      const needs = of(getDb().needs, pid)
+      if (!needs.length) {
+        return detail(422, 'ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน')
+      }
+      if (synthesisInFlight.has(pid)) {
+        return detail(409, `กำลังสังเคราะห์ PLO ของโปรแกรม '${pid}' อยู่ — รอให้รอบเดิมเสร็จก่อน`)
+      }
+      synthesisInFlight.add(pid)
+      try {
+        await pause(latencyFor('slow'))
+        if (consumeFailNextRun()) return runFailure('plo_synthesis')
+        const plos = synthesizePlos(pid, of(getDb().needs, pid), of(getDb().skills, pid))
+        // The system switch wins over the request, as smart_agent orders them:
+        // DISABLED is checked before SKIPPED, and both only skip the agent —
+        // the pure-code verdict synthesizePlos already holds stays.
+        const skip = !getControls().validationEnabled
+          ? 'ไม่ได้ตรวจ (ปิดการใช้ validation agent)'
+          : body<{ run_validation: boolean }>(req).run_validation === false
+            ? 'ไม่ได้ตรวจ (ปิดการตรวจในรอบนี้)'
+            : null
+        if (skip) {
+          for (const plo of plos) {
+            // code_only_result: no soft verdict is manufactured, so a criterion
+            // fails only where a hard finding (S_verb, M_forbidden…) says so.
+            const hard = plo.smart_check.findings.filter((f) => f.severity === 'hard')
+            const failed = (letter: string) => hard.some((f) => f.criterion.startsWith(letter))
+            plo.smart_validated_by = 'code_only'
+            plo.smart_diagnosis_th = skip
+            plo.soft_flags = []
+            plo.smart_check = {
+              ...plo.smart_check,
+              specific: !failed('S'),
+              measurable: !failed('M'),
+              achievable: true,
+              relevant: !failed('R'),
+              timely: true,
+              findings: hard,
+            }
+          }
+        }
+        replaceRows('plos', pid, plos)
+        return ok(plos)
+      } finally {
+        synthesisInFlight.delete(pid)
+      }
+    },
+    'self',
+  )
+
+  r.post(
+    '/programs/:pid/plos/report/run',
+    (req) => {
+      const pid = req.params.pid
+      const plos = sortPlos(of(getDb().plos, pid))
+      if (!plos.length) {
+        return detail(422, 'ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน')
+      }
+      if (consumeFailNextRun()) return runFailure('plo_report')
+      const needs = of(getDb().needs, pid)
+      const cited = new Set(plos.flatMap((p) => p.source_need_ids))
+      const notSynthesized = needs.map((n) => n.need_id).filter((id) => !cited.has(id))
+      const core = plos.filter((p) => !p.is_optional).length
+      return ok({
+        plos,
+        counts: {
+          total: plos.length,
+          core,
+          optional: plos.length - core,
+          escalated: plos.filter((p) => p.smart_escalated).length,
+          stale: plos.filter((p) => p.smart_validated_by === 'stale').length,
+          code_only: plos.filter((p) => p.smart_validated_by === 'code_only').length,
+          needs_not_synthesized: notSynthesized.length,
+        },
+        needs_by_id: Object.fromEntries(needs.map((n) => [n.need_id, n])),
+        needs_not_synthesized: notSynthesized,
+      })
+    },
+    'slow',
+  )
+
+  r.post(
+    '/programs/:pid/plos/from-needs',
+    (req) => {
+      const pid = req.params.pid
+      const b = body<{ need_ids: string[]; note_th: string | null }>(req)
+      const needIds = Array.isArray(b.need_ids) ? b.need_ids.map(String) : []
+      if (needIds.length < 2) {
+        return invalid([{ loc: ['body', 'need_ids'], msg: 'List should have at least 2 items after validation, not ' + needIds.length, type: 'too_short' }])
+      }
+      if (!findProgram(pid)) return detail(404, 'ไม่พบหลักสูตรนี้')
+      const db = getDb()
+      const allNeeds = of(db.needs, pid)
+      const byId = new Map(allNeeds.map((n) => [n.need_id, n]))
+      const missing = needIds.filter((id) => !byId.has(id))
+      if (missing.length) return detail(422, `ไม่พบ Need: ${missing.join(', ')}`)
+
+      const selected = needIds.map((id) => byId.get(id) as NeedRow)
+      const isOptional = selected.every((n) => n.is_optional)
+      const existing = of(db.plos, pid)
+      const superseded = existing.filter((p) => p.source_need_ids.some((id) => needIds.includes(id)))
+      const supersededIds = new Set(superseded.map((p) => p.plo_id))
+      const surviving = existing.filter((p) => !supersededIds.has(p.plo_id))
+      const currentCore = existing.filter((p) => !p.is_optional).length
+      const projectedCore = surviving.filter((p) => !p.is_optional).length + (isOptional ? 0 : 1)
+
+      if (projectedCore > MAX_CORE_PLOS) {
+        return detail(
+          422,
+          `การรวมนี้จะทำให้มี PLO หลัก ${projectedCore} ข้อ เกินเพดาน ${MAX_CORE_PLOS} ข้อ เลือก Need ที่มี PLO อยู่แล้วเข้ามารวมด้วย เพื่อให้การรวมนี้แทนที่ PLO เดิมแทนที่จะเพิ่มข้อใหม่`,
+        )
+      }
+      if (projectedCore < MIN_CORE_AFTER_MERGE && projectedCore < currentCore) {
+        return detail(
+          422,
+          `การรวมนี้จะเหลือ PLO หลัก ${projectedCore} ข้อ ต่ำกว่าขั้นต่ำของการรวม ${MIN_CORE_AFTER_MERGE} ข้อ รวม Need ที่ยังไม่มี PLO ขึ้นมาเป็นข้อใหม่ก่อน แล้วจึงรวมข้อที่ซ้ำซ้อนกัน`,
+        )
+      }
+      if (consumeFailNextRun()) return detail(502, 'สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่')
+
+      // Numbered from what survives, so the merge reuses the lowest freed slot.
+      const prefix = isOptional ? 'OPT' : 'PLO'
+      const used = new Set(
+        surviving
+          .map((p) => p.plo_id)
+          .filter((id) => id.startsWith(prefix) && /^\d+$/.test(id.slice(prefix.length)))
+          .map((id) => Number(id.slice(prefix.length))),
+      )
+      let index = 1
+      while (used.has(index)) index++
+      const plo = makePlo(pid, formatPloId(index, isOptional), selected, mergedPloSeed(selected, of(db.skills, pid)), isOptional)
+      db.plos = [...db.plos.filter((p) => !(p.program_id === pid && supersededIds.has(p.plo_id))), plo]
+      return ok(plo)
+    },
+    'slow',
+  )
+
+  r.put('/programs/:pid/plos/:ploId', (req) => {
+    const pid = req.params.pid
+    const b = body<PloRow>(req)
+    const errors: { loc: string[]; msg: string; type: string }[] = []
+    for (const key of ['statement_th', 'action_verb_th', 'rationale_th'] as const) {
+      if (typeof b[key] !== 'string') errors.push({ loc: ['body', key], msg: 'Field required', type: 'missing' })
+    }
+    if (!BLOOM_LEVELS.includes(String(b.bloom_level))) {
+      errors.push({ loc: ['body', 'bloom_level'], msg: 'Input should be a valid BloomLevel', type: 'enum' })
+    }
+    if (errors.length) return invalid(errors)
+
+    const db = getDb()
+    const match = of(db.plos, pid).find((p) => p.plo_id === req.params.ploId)
+    if (!match) return detail(404, 'PLO not found')
+
+    // PLOStatementUpdate: text only. Verdict fields in the body are ignored.
+    const text = {
+      statement_th: b.statement_th as string,
+      statement_en: b.statement_en ?? null,
+      bloom_level: b.bloom_level as string,
+      action_verb_th: b.action_verb_th as string,
+      rationale_th: b.rationale_th as string,
+      distinctive_feature_th: b.distinctive_feature_th ?? null,
+    }
+    const edited = text.statement_th.trim() !== match.statement_th.trim()
+    if (!edited) {
+      Object.assign(match, text, { version: match.version + 1 })
+      return ok(match)
+    }
+    const known = new Set(of(db.needs, pid).map((n) => n.need_id))
+    const fails = hardFailures(text.statement_th, text.action_verb_th, match.source_need_ids, known)
+    Object.assign(match, text, {
+      version: match.version + 1,
+      smart_check: codeVerdict(fails),
+      soft_flags: [],
+      smart_escalated: fails.length > 0,
+      smart_validated_by: 'stale',
+      smart_diagnosis_th:
+        'แก้ข้อความแล้ว ตรวจด้วยกฎพื้นฐานเท่านั้น — กด "ตรวจ SMART ซ้ำ" เพื่อให้ผู้ตรวจอ่านประโยคใหม่',
+    } satisfies Partial<PloRow>)
+    return ok(match)
+  })
+
+  r.post(
+    '/programs/:pid/plos/:ploId/revalidate',
+    (req) => {
+      const pid = req.params.pid
+      if (!findProgram(pid)) return detail(404, 'Program not found')
+      const db = getDb()
+      const match = of(db.plos, pid).find((p) => p.plo_id === req.params.ploId)
+      if (!match) return detail(404, 'PLO not found')
+      const allNeeds = of(db.needs, pid)
+      const cited = allNeeds.filter((n) => match.source_need_ids.includes(n.need_id))
+      if (!cited.length) {
+        return detail(422, `PLO ${match.plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน`)
+      }
+      if (consumeFailNextRun()) return detail(502, 'ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่')
+
+      // Simplification: the agent's repairs are not simulated. A statement that
+      // still fails the code gate escalates after three spent repairs; one that
+      // passes it gets a clean agent verdict.
+      const statement = stripOutcomePrefix(match.statement_th)
+      const fails = hardFailures(statement, match.action_verb_th, match.source_need_ids, new Set(allNeeds.map((n) => n.need_id)))
+      const verdict: Partial<PloRow> = fails.length
+        ? {
+            smart_check: codeVerdict(fails),
+            soft_flags: [],
+            smart_escalated: true,
+            smart_retry_count: 3,
+            smart_validated_by: 'agent',
+            smart_diagnosis_th:
+              'ผู้ตรวจขอให้แก้สามรอบแล้วแต่ประโยคยังไม่ผ่านเกณฑ์บังคับ ต้องเขียนใหม่ด้วยมือตามข้อที่ไม่ผ่านด้านล่าง',
+          }
+        : {
+            smart_check: passingCheck(),
+            soft_flags: [],
+            smart_escalated: false,
+            smart_retry_count: 0,
+            smart_validated_by: 'agent',
+            smart_diagnosis_th: null,
+          }
+      Object.assign(match, { statement_th: statement, version: match.version + 1 }, verdict)
+      return ok(match)
+    },
+    'slow',
+  )
+
+  // --- sessions -------------------------------------------------------------
+
+  r.get('/programs/:pid/sessions', (req) =>
+    ok(
+      of(getDb().sessions, req.params.pid)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .map(publicSession),
+    ),
+  )
+
+  r.post('/programs/:pid/sessions', (req) => {
+    const pid = req.params.pid
+    if (!findProgram(pid)) return detail(404, 'Program not found')
+    if (!of(getDb().evidence, pid).length) {
+      return detail(
+        422,
+        'ยังไม่มี evidence สำหรับหลักสูตรนี้ — เพิ่มหลักฐานที่ขั้น Stakeholder Needs ก่อนเริ่มรัน',
+      )
+    }
+    const sessionId = newId()
+    const now = nowIso()
+    const row: SessionRow = {
+      session_id: sessionId,
+      program_id: pid,
+      thread_id: `${pid}:${sessionId}`,
+      status: 'running',
+      current_stage: null,
+      suspended_message: null,
+      created_at: now,
+      updated_at: now,
+      due_at: Date.now() + stepDuration(),
+      target: 0,
+      will_fail: consumeFailNextRun(),
+    }
+    getDb().sessions.push(row)
+    return ok(publicSession(row))
+  })
+
+  const findSession = (pid: string, sid: string): SessionRow | undefined =>
+    getDb().sessions.find((s) => s.session_id === sid && s.program_id === pid)
+
+  r.get('/programs/:pid/sessions/:sid', (req) => {
+    const s = findSession(req.params.pid, req.params.sid)
+    return s ? ok(publicSession(s)) : detail(404, 'Session not found')
+  })
+
+  r.post('/programs/:pid/sessions/:sid/approve', (req) => {
+    const s = findSession(req.params.pid, req.params.sid)
+    if (!s) return detail(404, 'Session not found')
+    if (s.status !== 'suspended') return detail(409, `Session is '${s.status}', not suspended`)
+    // set_status keeps current_stage and the message: a resumed run still names
+    // the gate it came from until it reaches the next one.
+    s.status = 'running'
+    s.updated_at = nowIso()
+    s.due_at = Date.now() + stepDuration()
+    s.will_fail = consumeFailNextRun()
+    return ok(publicSession(s))
+  })
+
+  r.post('/programs/:pid/sessions/:sid/reject', (req) => {
+    const s = findSession(req.params.pid, req.params.sid)
+    if (!s) return detail(404, 'Session not found')
+    if (s.status !== 'suspended') return detail(409, `Session is '${s.status}', not suspended`)
+    s.status = 'rejected'
+    s.updated_at = nowIso()
+    return ok(publicSession(s))
+  })
+
+  r.delete('/programs/:pid/sessions/:sid', (req) => {
+    const s = findSession(req.params.pid, req.params.sid)
+    if (!s) return detail(404, 'ไม่พบ session นี้')
+    if (s.status === 'running') {
+      return detail(409, 'session นี้กำลังทำงานอยู่ — รอให้จบหรือกด reject ที่ checkpoint ก่อนลบ')
+    }
+    const db = getDb()
+    db.sessions = db.sessions.filter((x) => x !== s)
+    return { status: 204 }
+  })
+
+  return r
+}
+
+// ----------------------------------------------------------------------------
+// classify-stream (served through fetch, not axios)
+// ----------------------------------------------------------------------------
+
+/**
+ * The SSE events GET /evidence/classify-stream emits, in order, with the
+ * classification applied to the stored rows as each item is reached. Every
+ * item is reclassified, not only the unclassified ones — as the route does.
+ */
+export function classifyStream(pid: string): { events: object[]; apply: (index: number) => void } {
+  const items = of(getDb().evidence, pid)
+  const total = items.length
+  const events: object[] = [{ status: 'started', total }]
+  items.forEach((e, i) => {
+    events.push({
+      status: 'progress',
+      index: i + 1,
+      total,
+      evidence_id: e.evidence_id,
+      source_name: e.source_name,
+      classification: classifyEvidence(e.stakeholder_type),
+    })
+  })
+  events.push({ status: 'done', total })
+  return {
+    events,
+    apply: (index: number) => {
+      const item = items[index]
+      if (item) item.classification = classifyEvidence(item.stakeholder_type)
+    },
+  }
+}
+
