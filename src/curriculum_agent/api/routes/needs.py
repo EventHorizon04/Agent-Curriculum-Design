@@ -5,6 +5,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from curriculum_agent.api.jobs import start_job_or_409
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
@@ -15,6 +16,7 @@ from curriculum_agent.graph import AgentState
 from curriculum_agent.models import (
     DesignerNoteRequest,
     ExtractedSkill,
+    JobInfo,
     Need,
     StakeholderEvidence,
 )
@@ -30,10 +32,10 @@ class NeedTrace(BaseModel):
 
 
 class NeedRunResult(BaseModel):
-    """POST /run returns the drop count alongside the Needs.
+    """The `result` of a needs_pipeline or need_combination job.
 
     The count is a property of the run, not of any stored row, so it travels in
-    the response rather than being re-derivable from the database later.
+    the result rather than being re-derivable from the database later.
     """
 
     needs: list[Need]
@@ -41,7 +43,7 @@ class NeedRunResult(BaseModel):
 
 
 class SkillRunResult(BaseModel):
-    """What POST /skills/run answers with.
+    """The `result` of a skill_extraction job.
 
     Skills rather than Needs, because this route deliberately stops before
     need_combination: the stored Needs are left exactly as they were.
@@ -122,30 +124,34 @@ async def _build_stage_state(program_id: str, body: DesignerNoteRequest | None) 
     return state
 
 
-@router.post("/run", response_model=NeedRunResult)
-async def run_need_pipeline(
-    program_id: str, body: DesignerNoteRequest | None = None
-) -> NeedRunResult:
+@router.post("/run", response_model=JobInfo, status_code=202)
+async def run_need_pipeline(program_id: str, body: DesignerNoteRequest | None = None) -> JobInfo:
     """Both stages back to back — the first run of a program, where there are no
     skills to combine yet. Re-running one stage alone goes through the two routes
-    below."""
+    below. Answers 202; the result (a `NeedRunResult`) arrives through
+    `GET /jobs`."""
     from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
     from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
 
     state = await _build_stage_state(program_id, body)
-    state = await asyncio.wait_for(run_skills(state), timeout=300)
-    state = await asyncio.wait_for(run_needs(state), timeout=300)
-    return NeedRunResult(
-        needs=[Need.model_validate(n) for n in state.get("needs", [])],
-        dropped_ungrounded_count=state.get("dropped_ungrounded_count", 0),
+
+    async def work() -> NeedRunResult:
+        done = await asyncio.wait_for(run_skills(state), timeout=300)
+        done = await asyncio.wait_for(run_needs(done), timeout=300)
+        return NeedRunResult(
+            needs=[Need.model_validate(n) for n in done.get("needs", [])],
+            dropped_ungrounded_count=done.get("dropped_ungrounded_count", 0),
+        )
+
+    return await start_job_or_409(
+        program_id, "needs_pipeline", {"note_th": body.note_th if body else None}, work
     )
 
 
-@router.post("/skills/run", response_model=SkillRunResult)
-async def run_skill_extraction(
-    program_id: str, body: DesignerNoteRequest | None = None
-) -> SkillRunResult:
-    """Re-extract skills and stop.
+@router.post("/skills/run", response_model=JobInfo, status_code=202)
+async def run_skill_extraction(program_id: str, body: DesignerNoteRequest | None = None) -> JobInfo:
+    """Re-extract skills and stop. Answers 202; the result (a `SkillRunResult`)
+    arrives through `GET /jobs`.
 
     The stored Needs are left untouched on purpose. They will point at skill ids
     this run just replaced, which the UI surfaces as a stale banner — a designer
@@ -155,18 +161,23 @@ async def run_skill_extraction(
     from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
 
     state = await _build_stage_state(program_id, body)
-    state = await asyncio.wait_for(run_skills(state), timeout=300)
-    return SkillRunResult(
-        skills=[ExtractedSkill.model_validate(s) for s in state.get("extracted_skills", [])],
-        dropped_ungrounded_count=state.get("dropped_ungrounded_count", 0),
+
+    async def work() -> SkillRunResult:
+        done = await asyncio.wait_for(run_skills(state), timeout=300)
+        return SkillRunResult(
+            skills=[ExtractedSkill.model_validate(s) for s in done.get("extracted_skills", [])],
+            dropped_ungrounded_count=done.get("dropped_ungrounded_count", 0),
+        )
+
+    return await start_job_or_409(
+        program_id, "skill_extraction", {"note_th": body.note_th if body else None}, work
     )
 
 
-@router.post("/combine/run", response_model=NeedRunResult)
-async def run_need_combination(
-    program_id: str, body: DesignerNoteRequest | None = None
-) -> NeedRunResult:
-    """Re-cluster the skills already on record into Needs.
+@router.post("/combine/run", response_model=JobInfo, status_code=202)
+async def run_need_combination(program_id: str, body: DesignerNoteRequest | None = None) -> JobInfo:
+    """Re-cluster the skills already on record into Needs. Answers 202; the
+    result (a `NeedRunResult`) arrives through `GET /jobs`.
 
     Reads the skill rows back from the repository instead of re-extracting: the
     expensive per-evidence LLM pass is exactly what a designer re-running this
@@ -183,8 +194,14 @@ async def run_need_combination(
             detail="ยังไม่มีทักษะที่สกัดไว้ กรุณารัน Skill Extraction ก่อน",
         )
     state["extracted_skills"] = [s.model_dump(mode="json") for s in skills]
-    state = await asyncio.wait_for(run_needs(state), timeout=300)
-    return NeedRunResult(
-        needs=[Need.model_validate(n) for n in state.get("needs", [])],
-        dropped_ungrounded_count=state.get("dropped_ungrounded_count", 0),
+
+    async def work() -> NeedRunResult:
+        done = await asyncio.wait_for(run_needs(state), timeout=300)
+        return NeedRunResult(
+            needs=[Need.model_validate(n) for n in done.get("needs", [])],
+            dropped_ungrounded_count=done.get("dropped_ungrounded_count", 0),
+        )
+
+    return await start_job_or_409(
+        program_id, "need_combination", {"note_th": body.note_th if body else None}, work
     )

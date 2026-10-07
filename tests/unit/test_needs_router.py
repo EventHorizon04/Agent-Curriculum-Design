@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient
+from httpx import ASGITransport, AsyncClient, Response
 
 from curriculum_agent.api.routes import needs as needs_route
 from curriculum_agent.api.routes import plos as plos_route
@@ -13,6 +13,7 @@ from curriculum_agent.models import (
     PLO,
     BloomLevel,
     ExtractedSkill,
+    JobInfo,
     KSECCategory,
     Need,
     ProgramMetadata,
@@ -20,6 +21,7 @@ from curriculum_agent.models import (
     StakeholderEvidence,
 )
 from curriculum_agent.stages import skill_extraction
+from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 
 def _need() -> Need:
@@ -75,6 +77,17 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+async def _finish(response: Response, jobs_store: InMemoryJobs, spawned: SpawnRecorder) -> JobInfo:
+    """The three needs routes answer 202 and run their stage as a job body. Run
+    that body to completion — inside the caller's patches, which is why this is
+    awaited there and not at teardown — and hand back the finished job."""
+    assert response.status_code == 202, response.text
+    await spawned.coros.pop(0)
+    job = jobs_store.rows[response.json()["job_id"]]
+    assert job.status == "succeeded", job.error_th
+    return job
 
 
 async def test_list_needs_returns_repository_rows(
@@ -249,7 +262,10 @@ def _stub_need_stages(seen: dict[str, object]):
 
 
 async def test_needs_run_carries_the_note_into_the_stage_state(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     seen: dict[str, object] = {}
     monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
@@ -261,13 +277,16 @@ async def test_needs_run_carries_the_note_into_the_stage_state(
     cache_patch, complete_patch, repo_patch, needs_patch = _stub_need_stages(seen)
     with cache_patch, complete_patch, repo_patch, needs_patch:
         response = await client.post("/programs/cs-test/needs/run", json={"note_th": NOTE})
+        await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
     assert seen["designer_note"] == NOTE
 
 
 async def test_needs_run_still_works_with_no_body_at_all(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     """The live frontend posts no body. That must keep working."""
     seen: dict[str, object] = {}
@@ -280,8 +299,8 @@ async def test_needs_run_still_works_with_no_body_at_all(
     cache_patch, complete_patch, repo_patch, needs_patch = _stub_need_stages(seen)
     with cache_patch, complete_patch, repo_patch, needs_patch:
         response = await client.post("/programs/cs-test/needs/run")
+        await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
     assert "designer_note" not in seen
 
 
@@ -300,7 +319,10 @@ async def test_needs_run_rejects_an_over_length_note(
 
 
 async def test_needs_run_passes_program_field_into_extraction_prompt(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     """Pins the Important-1 fix: run_need_pipeline must load the program and put
     its metadata into the pipeline state, or skill_extraction.run falls back to
@@ -350,8 +372,8 @@ async def test_needs_run_passes_program_field_into_extraction_prompt(
         patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
     ):
         response = await client.post("/programs/cs-test/needs/run")
+        await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
     user_message = captured["messages"][1]["content"]
     assert _program().field in user_message
 
@@ -430,7 +452,10 @@ async def test_from_needs_passes_the_note_to_synthesis(
 
 
 async def test_skills_run_does_not_invoke_need_combination(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     """The whole point of the split: re-extracting skills must leave the stored
     Needs alone. If this route ever chained into need_combination again, a
@@ -455,14 +480,17 @@ async def test_skills_run_does_not_invoke_need_combination(
         patch("curriculum_agent.stages.need_combination.run", new=fake_needs),
     ):
         response = await client.post("/programs/cs-test/needs/skills/run")
+        job = await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
     assert called is False
-    assert response.json()["skills"][0]["skill_name_th"] == "วิเคราะห์ข้อมูลขนาดใหญ่"
+    assert job.result["skills"][0]["skill_name_th"] == "วิเคราะห์ข้อมูลขนาดใหญ่"
 
 
 async def test_skills_run_carries_the_note_into_the_stage_state(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     seen: dict[str, object] = {}
     monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
@@ -484,8 +512,8 @@ async def test_skills_run_carries_the_note_into_the_stage_state(
         patch("curriculum_agent.stages.skill_extraction.run", new=recording_run),
     ):
         response = await client.post("/programs/cs-test/needs/skills/run", json={"note_th": NOTE})
+        await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
     assert seen["designer_note"] == NOTE
 
 
@@ -501,7 +529,10 @@ async def test_skills_run_returns_404_for_missing_program(
 
 
 async def test_combine_run_feeds_stored_skills_into_the_stage(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     """Combine-only reads the skill rows back out of the repository — it must not
     re-extract, and the stage must receive them under the key it reads.
@@ -531,12 +562,12 @@ async def test_combine_run_feeds_stored_skills_into_the_stage(
         patch("curriculum_agent.stages.skill_extraction.run", new=fake_skills),
     ):
         response = await client.post("/programs/cs-test/needs/combine/run")
+        job = await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
     assert extracted is False
     assert [s["skill_id"] for s in seen["extracted_skills"]] == ["S1"]
     assert "classified_evidence" not in seen
-    assert response.json()["needs"][0]["need_id"] == "N1"
+    assert job.result["needs"][0]["need_id"] == "N1"
 
 
 async def test_combine_run_rejects_a_program_with_no_skills(
@@ -561,7 +592,10 @@ async def test_combine_run_returns_404_for_missing_program(
 
 
 async def test_combine_run_does_not_require_any_evidence(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ):
     """Skills are the only precondition.
 
@@ -583,9 +617,9 @@ async def test_combine_run_does_not_require_any_evidence(
     )
     with patch("curriculum_agent.stages.need_combination.run", new=fake_needs):
         response = await client.post("/programs/cs-test/needs/combine/run")
+        job = await _finish(response, jobs_store, spawned)
 
-    assert response.status_code == 200, response.text
-    assert response.json()["needs"][0]["need_id"] == "N1"
+    assert job.result["needs"][0]["need_id"] == "N1"
 
 
 # --- POST /plos/from-needs: a merge replaces what it covers ------------------
