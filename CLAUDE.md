@@ -632,10 +632,16 @@ tests/integration/     ← LLM mocked, full stages
   timestamps carry `+00:00` only in JSON output (`field_serializer(...,
   when_used="json")`; the DB stays naive UTC, and a python-mode dump keeps the
   datetime because the ORM column rejects an ISO string) — a browser reads a
-  naive ISO string as local time. The UI side is `useProgramJobs` (mounted once
-  by `StageLayout`, polling while a job runs): a stage page reloads its data
-  when a job it watched running — from its own `started(job)` or from the shared
-  list — is later seen `succeeded`, for any kind that changes that page's data,
+  naive ISO string as local time. The UI side is `JobsProvider` / `useJobs`
+  (`hooks/useProgramJobs.tsx`; `StageLayout` mounts the provider once). It polls
+  while a job runs and re-reads on every route change and whenever the tab
+  becomes visible, so a job another tab or client started is not unknown until
+  this page starts one of its own. A stage page reloads its data through one
+  shared hook, `useReloadOnJobs` (`hooks/useReloadOnJobs.ts`), when a job it
+  watched running — from its own `started(job)` or from the shared list —
+  reaches **any terminal status**, `succeeded` or `failed` (`/needs/run`
+  commits the new skills before need_combination can fail, so a failed run has
+  still changed the page's rows), for any kind that changes that page's data,
   and never by comparing a server timestamp with the browser clock. Tests reach
   none of this for real: conftest swaps `JobRepository` for memory
   (`tests/support/jobs.py`), `spawn` for a recorder — `spawned.drain()` runs the

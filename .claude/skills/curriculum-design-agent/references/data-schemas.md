@@ -387,7 +387,7 @@ The seven long run routes answer 202 with a `JobInfo` instead of holding the req
 
 `jobs` is one row per run (`job_id` primary key, FK to `programs.program_id`), `kind` and `status` as plain strings, `params` and `result` as JSONB. Its datetimes are naive UTC like every other table's; `JobInfo` adds `+00:00` only when serialised to JSON, so a browser does not read them as local time.
 
-**One writer per program.** A `running` job, or a graph session whose status is `running`, blocks every other job and the synchronous writers (`POST /sessions/`, `/approve`, `/plos/from-needs`, `/copy`) with a 409 whose `detail` is a Thai string. Rows still `running` after a restart belong to a dead process and are marked `failed` at startup. A job is an operational record, not an OBE artifact: it carries no evidence trail and nothing downstream reads it.
+**One writer per program.** A `running` job, or a graph session whose status is `running`, blocks every other job and the synchronous writers (`POST /sessions/`, `/approve`, `/plos/from-needs`, `/copy`) with a 409 whose `detail` is a Thai string. Rows still `running` after a restart belong to a dead process and are marked `failed` at startup. A job is an operational record, not an OBE artifact: it carries no evidence trail and no stage reads it.
 
 ## Versioning
 
@@ -403,7 +403,7 @@ PLOs are mutable objects under designer review. Use this versioning approach:
 These Pydantic models map to Postgres tables 1:1 with these adjustments:
 - `list[str]` fields → JSON column or junction table depending on access pattern
 - `dict` metadata → JSONB column
-- `datetime` → `timestamptz`
+- `datetime` → a naive UTC `timestamp` column (`DateTime` without a time zone), not `timestamptz`; an API model adds the `+00:00` offset only when it serialises to JSON (`JobInfo` does)
 - Enums → Postgres enum types or text with check constraint
 
 Use SQLAlchemy 2.0 with Pydantic for the ORM layer. Schema changes go through Alembic migrations.
