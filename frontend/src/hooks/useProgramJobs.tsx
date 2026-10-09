@@ -3,17 +3,24 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react'
+import { useLocation } from 'react-router-dom'
 import { listJobs, type JobInfo, type JobKind } from '../api/jobs'
 
 /** How often a program with a running job is asked how it is getting on. */
 const POLL_MS = 2000
 
 export interface JobsValue {
+  /** The program these jobs belong to. */
+  programId: string
+  /** Every job the last read returned, newest first. Its identity changes on
+   *  every poll: derive primitives from it before keying an effect on it. */
+  jobs: JobInfo[]
   /** The newest job still running, if any. A program has at most one. */
   running: JobInfo | null
   /** The newest job (by `created_at`) whose kind is one of `kinds`, whatever
@@ -57,7 +64,10 @@ function newest(jobs: JobInfo[]): JobInfo | null {
  * fetched, and while any job is `running` it is fetched again every
  * {@link POLL_MS}. A failed read keeps the last list and tries again on the next
  * tick — including a first read that failed, since with no list there is nothing
- * to say a job is running and polling would otherwise never begin.
+ * to say a job is running and polling would otherwise never begin. It is also
+ * read again when the route changes and when the tab becomes visible, because a
+ * job another tab or client started is otherwise unknown until a page here
+ * starts one of its own.
  */
 function useProgramJobs(programId: string): JobsValue {
   const [store, setStore] = useState<Store>({ programId: '', jobs: NO_JOBS, failed: false })
@@ -75,6 +85,16 @@ function useProgramJobs(programId: string): JobsValue {
   // overwrite the list with one that does not contain it yet.
   const latest = useRef(0)
   const warned = useRef(false)
+  // The program on screen *now*. `refresh` and `started` are handed to pages and
+  // called later (after an await, from a handler), so a copy that closed over the
+  // program of the render it was made in would, after a switch, write that
+  // program's list over the new one's. They read this instead. Set in a layout
+  // effect, not during render, which runs before any passive effect or event that
+  // could reach them.
+  const current = useRef(programId)
+  useLayoutEffect(() => {
+    current.current = programId
+  }, [programId])
 
   /** Make every read still in flight stale. */
   const supersede = useCallback((): void => {
@@ -85,11 +105,13 @@ function useProgramJobs(programId: string): JobsValue {
     const token = ++latest.current
     try {
       const rows = await listJobs(pid)
-      if (token !== latest.current) return
+      // The program check is belt and braces: leaving a program already
+      // supersedes its reads, but a read must never be the thing that decides.
+      if (token !== latest.current || pid !== current.current) return
       warned.current = false
       setStore({ programId: pid, jobs: rows, failed: false })
     } catch (err) {
-      if (token !== latest.current) return
+      if (token !== latest.current || pid !== current.current) return
       // The last list stays. Once per outage: the next tick retries, and a
       // line every two seconds would bury whatever else is in the console.
       if (!warned.current) {
@@ -129,25 +151,47 @@ function useProgramJobs(programId: string): JobsValue {
   }, [programId, needsPolling, load])
 
   const refresh = useCallback(async (): Promise<void> => {
-    if (programId) await load(programId)
-  }, [programId, load])
+    if (current.current) await load(current.current)
+  }, [load])
+
+  // The route changed: a page was opened, and whatever another tab or client
+  // started since the last read is news to this one. Skipped on mount, where the
+  // read above is already under way.
+  const { pathname } = useLocation()
+  const seenPath = useRef(pathname)
+  useEffect(() => {
+    if (seenPath.current === pathname) return
+    seenPath.current = pathname
+    void refresh()
+  }, [pathname, refresh])
+
+  // Timers are throttled in a background tab, so a tab coming back to the front
+  // may be minutes behind: read at once instead of waiting out the next tick.
+  useEffect(() => {
+    const onVisible = (): void => {
+      if (document.visibilityState === 'visible') void refresh()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [refresh])
 
   const started = useCallback(
     (job: JobInfo): void => {
+      const pid = current.current
       // A job for a program the designer has already switched away from is not
       // this view's to show.
-      if (job.program_id !== programId) return
+      if (job.program_id !== pid) return
       supersede()
       setStore((prev) => ({
-        programId,
+        programId: pid,
         jobs: [
           job,
-          ...(prev.programId === programId ? prev.jobs : NO_JOBS).filter((j) => j.job_id !== job.job_id),
+          ...(prev.programId === pid ? prev.jobs : NO_JOBS).filter((j) => j.job_id !== job.job_id),
         ],
-        failed: prev.programId === programId && prev.failed,
+        failed: prev.programId === pid && prev.failed,
       }))
     },
-    [programId, supersede],
+    [supersede],
   )
 
   const latestOf = useCallback(
@@ -158,8 +202,8 @@ function useProgramJobs(programId: string): JobsValue {
   const running = useMemo(() => newest(jobs.filter((j) => j.status === 'running')), [jobs])
 
   return useMemo(
-    () => ({ running, latestOf, refresh, started }),
-    [running, latestOf, refresh, started],
+    () => ({ programId, jobs, running, latestOf, refresh, started }),
+    [programId, jobs, running, latestOf, refresh, started],
   )
 }
 

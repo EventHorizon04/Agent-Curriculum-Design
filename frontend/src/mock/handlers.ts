@@ -360,7 +360,7 @@ function busyReason(pid: string): string | null {
   const db = getDb()
   const running = of(db.jobs, pid).find((j) => j.status === 'running')
   if (running) {
-    return `หลักสูตรนี้มีงาน${JOB_LABEL_TH[running.kind] ?? running.kind}กำลังทำอยู่ — รอให้เสร็จก่อน`
+    return `หลักสูตรนี้มีงาน${JOB_LABEL_TH[running.kind] ?? running.kind} กำลังทำอยู่ — รอให้เสร็จก่อน`
   }
   if (of(db.sessions, pid).some((s) => s.status === 'running')) {
     return 'หลักสูตรนี้กำลังรัน pipeline อยู่ — รอให้เสร็จก่อน'

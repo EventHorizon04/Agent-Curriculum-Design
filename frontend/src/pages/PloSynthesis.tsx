@@ -1,10 +1,11 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { PLO_SYNTHESIS_PLAN, PLO_SYNTHESIS_CODE_ONLY_PLAN } from '../constants/runPlans'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
+import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
 import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import DesignerNote from './components/DesignerNote'
@@ -91,13 +92,6 @@ export default function PloSynthesis() {
   // kinds: the backend allows one writer per program, merging included.
   const busy = running !== null || starting || merging
 
-  // Ids of the jobs this page has seen running while it is mounted: the one its
-  // own start handed back, and whichever job the shared list shows running. A
-  // reload is owed when one of them is later seen to have succeeded. Nothing is
-  // compared against a clock — the server's and the browser's may disagree — and
-  // a job that finished before the page mounted is covered by the mount load.
-  const watching = useRef(new Set<string>())
-
   // Read once per program. A failed read leaves the status unknown rather than
   // "off": the box stays usable, and the backend still refuses to run an agent
   // its own settings disable.
@@ -141,8 +135,14 @@ export default function PloSynthesis() {
     [programId],
   )
 
+  // Reload once when a job that changes this page's data ends, whichever page
+  // started it and whichever way it ended: a run that fails part-way has already
+  // written rows. A re-check changes one outcome, so it reloads behind the list
+  // on screen.
+  const watch = useReloadOnJobs(RELOAD_KINDS, (job) => void fetchPlos(job.kind === 'plo_revalidate'))
+
   // Starting a run only records the job; the PLOs arrive in the table and are
-  // read by the reload below when it succeeds.
+  // read by the reload above when it ends.
   const runSynthesis = useCallback(async () => {
     if (!programId) return
     setStarting(true)
@@ -152,7 +152,7 @@ export default function PloSynthesis() {
         note_th: note.trim() || null,
         run_validation: agentWillRun,
       })
-      watching.current.add(job.job_id)
+      watch(job)
       started(job)
     } catch (err: unknown) {
       const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
@@ -163,7 +163,7 @@ export default function PloSynthesis() {
     } finally {
       setStarting(false)
     }
-  }, [programId, note, agentWillRun, started, refresh])
+  }, [programId, note, agentWillRun, watch, started, refresh])
 
   const revalidate = useCallback(
     async (ploId: string) => {
@@ -172,7 +172,7 @@ export default function PloSynthesis() {
       setError('')
       try {
         const job = await startJob(`/programs/${programId}/plos/${ploId}/revalidate`)
-        watching.current.add(job.job_id)
+        watch(job)
         started(job)
       } catch (err: unknown) {
         const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
@@ -182,37 +182,10 @@ export default function PloSynthesis() {
         setStarting(false)
       }
     },
-    [programId, started, refresh],
+    [programId, watch, started, refresh],
   )
 
   useEffect(() => { fetchPlos() }, [fetchPlos])
-
-  // Reload once when a job this page watched running is seen to have succeeded,
-  // whichever page started it. The effects are keyed on ids and strings —
-  // primitives — because the job objects get a new identity on every poll, and
-  // an effect keyed on them would reload every two seconds. Layout effects, not
-  // passive ones: when the result arrives the run screen is replaced in the same
-  // commit, and a passive effect would let the browser paint the previous data
-  // (or the empty state, with a live start button) for a moment before the
-  // reload put the loading line up.
-  const reloadLatest = latestOf(RELOAD_KINDS)
-  const reloadId = reloadLatest?.job_id ?? ''
-  const reloadStatus = reloadLatest?.status ?? ''
-  // A re-check changes one outcome, so it reloads behind the list on screen.
-  const reloadQuiet = reloadLatest?.kind === 'plo_revalidate'
-  const runningId = running && RELOAD_KINDS.includes(running.kind) ? running.job_id : ''
-  // Another program's jobs are not this one's to reload for.
-  useLayoutEffect(() => {
-    watching.current.clear()
-  }, [programId])
-  useLayoutEffect(() => {
-    if (runningId) watching.current.add(runningId)
-  }, [runningId])
-  useLayoutEffect(() => {
-    // Forgotten as soon as it has ended, whichever way: a failed job changed no rows.
-    if (reloadStatus === 'running' || !watching.current.delete(reloadId)) return
-    if (reloadStatus === 'succeeded') void fetchPlos(reloadQuiet)
-  }, [reloadId, reloadStatus, reloadQuiet, fetchPlos])
 
   const handleUpdate = (updated: PLO) =>
     setPlos(prev => prev.map(p => (p.plo_id === updated.plo_id ? updated : p)))

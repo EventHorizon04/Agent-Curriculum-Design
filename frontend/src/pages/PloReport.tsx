@@ -1,7 +1,8 @@
-import { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
+import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { PLO_REPORT_PLAN } from '../constants/runPlans'
 import api from '../api/client'
@@ -258,13 +259,6 @@ export default function PloReport() {
   // Any job of the program blocks the start button: one writer per program.
   const busy = running !== null || starting
 
-  // Ids of the jobs this page has seen running while it is mounted: the one its
-  // own start handed back, and whichever job the shared list shows running. A
-  // reload is owed when one of them is later seen to have succeeded. Nothing is
-  // compared against a clock — the server's and the browser's may disagree — and
-  // a job that finished before the page mounted is covered by the mount load.
-  const watching = useRef(new Set<string>())
-
   const fetchData = useCallback(async () => {
     if (!programId) return
     setLoading(true)
@@ -284,16 +278,20 @@ export default function PloReport() {
     }
   }, [programId])
 
+  // Reload once when a job that changes this page's data ends, whichever page
+  // started it and whichever way it ended.
+  const watch = useReloadOnJobs(RELOAD_KINDS, () => void fetchData())
+
   // The report is a background job: starting it only records it. The page has
-  // its own read of the stored PLOs and Needs, so when the job succeeds it
-  // reloads them below rather than drawing from the job's result.
+  // its own read of the stored PLOs and Needs, so when the job ends it reloads
+  // them (above) rather than drawing from the job's result.
   const runReport = useCallback(async () => {
     if (!programId) return
     setStarting(true)
     setError('')
     try {
       const job = await startJob(`/programs/${programId}/plos/report/run`)
-      watching.current.add(job.job_id)
+      watch(job)
       started(job)
     } catch (err: unknown) {
       const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
@@ -304,7 +302,7 @@ export default function PloReport() {
     } finally {
       setStarting(false)
     }
-  }, [programId, started, refresh])
+  }, [programId, watch, started, refresh])
 
   // Fetched as a blob through the api client rather than linked with a plain
   // anchor, so a 422 or 501 surfaces as an error message here instead of
@@ -333,31 +331,6 @@ export default function PloReport() {
   useEffect(() => {
     fetchData()
   }, [fetchData])
-
-  // Reload once when a job this page watched running is seen to have succeeded,
-  // whichever page started it. The effects are keyed on ids and a status —
-  // primitives — because the job objects get a new identity on every poll, and
-  // an effect keyed on them would reload every two seconds. Layout effects, not
-  // passive ones: when the result arrives the run screen is replaced in the same
-  // commit, and a passive effect would let the browser paint the previous data
-  // (or the empty state, with a live start button) for a moment before the
-  // reload put the loading line up.
-  const reloadLatest = latestOf(RELOAD_KINDS)
-  const reloadId = reloadLatest?.job_id ?? ''
-  const reloadStatus = reloadLatest?.status ?? ''
-  const runningId = running && RELOAD_KINDS.includes(running.kind) ? running.job_id : ''
-  // Another program's jobs are not this one's to reload for.
-  useLayoutEffect(() => {
-    watching.current.clear()
-  }, [programId])
-  useLayoutEffect(() => {
-    if (runningId) watching.current.add(runningId)
-  }, [runningId])
-  useLayoutEffect(() => {
-    // Forgotten as soon as it has ended, whichever way: a failed job changed no rows.
-    if (reloadStatus === 'running' || !watching.current.delete(reloadId)) return
-    if (reloadStatus === 'succeeded') void fetchData()
-  }, [reloadId, reloadStatus, fetchData])
 
   if (!programId) {
     return (
