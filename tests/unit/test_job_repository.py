@@ -67,6 +67,13 @@ def test_the_table_has_the_spec_columns() -> None:
     ] == ["programs"]
 
 
+def test_the_model_declares_the_index_the_migration_creates() -> None:
+    """`find_running` and the active-only listing filter on (program_id, status);
+    a model without it makes `alembic revision --autogenerate` propose dropping it."""
+    indexes = {i.name: [c.name for c in i.columns] for i in JobTable.__table__.indexes}
+    assert indexes == {"ix_jobs_program_status": ["program_id", "status"]}
+
+
 def test_the_migration_creates_and_drops_the_table() -> None:
     path = next(Path("migrations/versions").glob("*_jobs.py"))
     spec = importlib.util.spec_from_file_location("m", path)
@@ -131,6 +138,28 @@ async def test_finish_records_status_result_error_and_time() -> None:
         assert await JobRepository().finish("j1", "failed", error_th="ล้มเหลว") is True
     assert row.status == "failed"
     assert row.error_th == "ล้มเหลว"
+    assert row.finished_at is not None
+    session.commit.assert_awaited_once()
+
+
+async def test_finish_records_a_result_and_no_error_on_success() -> None:
+    row = JobTable(
+        job_id="j1",
+        program_id="p",
+        kind="plo_report",
+        status="running",
+        params={},
+        created_at=datetime(2026, 10, 8),
+    )
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    with patch(
+        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_session_ctx(session)
+    ):
+        assert await JobRepository().finish("j1", "succeeded", result={"x": 1}) is True
+    assert row.status == "succeeded"
+    assert row.result == {"x": 1}
+    assert row.error_th is None
     assert row.finished_at is not None
     session.commit.assert_awaited_once()
 

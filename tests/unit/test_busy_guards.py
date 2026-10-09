@@ -4,8 +4,9 @@
 `POST /programs/{id}/copy` write a program's tables without going through
 `start_job`, so each refuses with 409 while `program_busy` says the program has
 an active writer. Three of them also hold `program_lock` around the check and
-their short write, so a job cannot start between the two; the merge route does
-not, because its LLM call would hold the lock for minutes.
+their short write, so a job cannot start between the two. The merge route cannot
+hold it across its LLM call, so it registers with `jobs.sync_writer` instead: the
+registration is what `program_busy` reports to everyone else while the call runs.
 """
 
 from __future__ import annotations
@@ -274,3 +275,100 @@ async def test_a_writer_checks_busy_after_it_gets_the_lock(
         await task
     assert refused.value.status_code == 409
     writer.write.assert_not_awaited()
+
+
+# ---------- the merge registers as a writer ----------
+#
+# `POST /plos/from-needs` checks the program once and then spends minutes in an LLM
+# call. A synthesis job that started and finished in that window would leave the
+# merge replacing ids that now name different outcomes. The merge therefore
+# registers for the length of the call, without holding `program_lock`.
+
+
+@pytest.fixture
+def merge_in_flight(merge_synthesis: AsyncMock) -> tuple[asyncio.Event, asyncio.Event]:
+    """Makes the merge's LLM call wait for the test. Returns (reached, release)."""
+    reached, release = asyncio.Event(), asyncio.Event()
+    result = merge_synthesis.return_value
+
+    async def wait_for_the_test(*args: object, **kwargs: object) -> PLO:
+        reached.set()
+        await release.wait()
+        return result  # type: ignore[no-any-return]
+
+    merge_synthesis.side_effect = wait_for_the_test
+    return reached, release
+
+
+def _merge_call() -> Awaitable[PLO]:
+    body = plos_route.MergeNeedsRequest(need_ids=["N1", "N2"])
+    return plos_route.create_plo_from_needs("p", body)
+
+
+async def test_every_other_writer_is_refused_while_a_merge_is_in_flight(
+    merge_in_flight: tuple[asyncio.Event, asyncio.Event],
+    session_repo: MagicMock,
+    copy_program_mock: AsyncMock,
+    jobs_store: InMemoryJobs,
+) -> None:
+    reached, release = merge_in_flight
+    fake_request = MagicMock()
+    fake_request.app.state.graph.aupdate_state = AsyncMock()
+    merge = asyncio.ensure_future(_merge_call())
+    await asyncio.wait_for(reached.wait(), timeout=2)
+
+    with pytest.raises(jobs.JobConflict) as job_refused:
+        await jobs.start_job("p", "plo_synthesis", {}, AsyncMock())
+    assert "Need" in job_refused.value.detail_th
+    assert jobs_store.rows == {}
+
+    for refused_call in (
+        _merge_call(),
+        programs_route.copy_program_route("p", fake_request),
+        sessions_route.create_session("p", fake_request, BackgroundTasks()),
+    ):
+        with pytest.raises(HTTPException) as refused:
+            await refused_call
+        assert refused.value.status_code == 409
+        assert "Need" in str(refused.value.detail)
+    copy_program_mock.assert_not_awaited()
+    session_repo.create.assert_not_awaited()
+
+    release.set()
+    await merge
+    # once it is over the program is free again
+    assert await jobs.program_busy("p") is None
+
+
+async def test_the_merge_does_not_make_another_program_busy(
+    merge_in_flight: tuple[asyncio.Event, asyncio.Event],
+) -> None:
+    reached, release = merge_in_flight
+    merge = asyncio.ensure_future(_merge_call())
+    await asyncio.wait_for(reached.wait(), timeout=2)
+    assert await jobs.program_busy("q") is None
+    release.set()
+    await merge
+
+
+async def test_the_merge_registration_is_removed_when_the_merge_fails(
+    merge_synthesis: AsyncMock,
+) -> None:
+    merge_synthesis.return_value = None  # synthesis gave up: the route answers 502
+    with pytest.raises(HTTPException) as failed:
+        await _merge_call()
+    assert failed.value.status_code == 502
+    assert await jobs.program_busy("p") is None
+    assert jobs._SYNC_WRITERS == {}
+
+
+async def test_the_merge_registration_is_removed_when_the_merge_is_refused_early(
+    merge_synthesis: AsyncMock,
+) -> None:
+    with pytest.raises(HTTPException) as refused:
+        await plos_route.create_plo_from_needs(
+            "p", plos_route.MergeNeedsRequest(need_ids=["N1", "NOPE"])
+        )
+    assert refused.value.status_code == 422
+    assert jobs._SYNC_WRITERS == {}
+    merge_synthesis.assert_not_awaited()

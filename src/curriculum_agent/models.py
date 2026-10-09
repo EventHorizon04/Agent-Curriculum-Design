@@ -677,8 +677,10 @@ class DesignerNoteRequest(BaseModel):
     `PLO.check_no_forbidden_words`, so a note asking for one produces a retry and
     then an escalated PLO, never a silent violation.
 
-    Not persisted: the note is an input to one request, so a re-run needs it typed
-    again. That matches how these stateless stage endpoints already behave.
+    A background run records the note in its `jobs.params`, as a record of what that
+    run was given; nothing reads it back. The note is still an input to one request,
+    so a re-run needs it typed again, and the synchronous `/plos/from-needs` keeps
+    it nowhere.
     """
 
     note_th: str | None = Field(default=None, max_length=NOTE_MAX_CHARS)

@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     PrimaryKeyConstraint,
     String,
@@ -172,6 +173,8 @@ class JobTable(Base):
     when it failed. String kind/status, not PG enums (project convention)."""
 
     __tablename__ = "jobs"
+    # Matches the migration: `find_running` and the active-only listing filter on both.
+    __table_args__ = (Index("ix_jobs_program_status", "program_id", "status"),)
 
     job_id: Mapped[str] = mapped_column(String, primary_key=True)
     program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))

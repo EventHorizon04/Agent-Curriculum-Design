@@ -7,7 +7,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.api.jobs import program_busy, start_job_or_409
+from curriculum_agent.api.jobs import start_job_or_409, sync_writer
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
@@ -25,6 +25,7 @@ from curriculum_agent.models import (
     JobInfo,
     Need,
     PLOSetReview,
+    ProgramMetadata,
     SMARTCheck,
     StakeholderEvidence,
 )
@@ -370,7 +371,22 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
 
     Program is looked up first: a missing program is a 404, not a 422 blaming
     the Needs. Need ids are validated only after the program exists.
+
+    Everything after that runs as a registered writer (`sync_writer`): the LLM call
+    below takes minutes, and a synthesis job that started and finished inside it
+    would leave this merge replacing ids that now name different outcomes — a Need
+    behind two PLOs. The registration makes every other writer answer 409 for the
+    length of the call without this route holding `program_lock` across it.
     """
+    program = await ProgramRepository().get(program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
+
+    async with sync_writer(program_id, "หลักสูตรนี้กำลังรวม Need เป็น PLO อยู่ — รอให้เสร็จก่อน"):
+        return await _merge_needs(program, program_id, body)
+
+
+async def _merge_needs(program: ProgramMetadata, program_id: str, body: MergeNeedsRequest) -> PLO:
     from curriculum_agent.stages.need_grouping import (  # noqa: PLC0415
         MAX_CORE_PLOS,
         MIN_CORE_AFTER_MERGE,
@@ -384,16 +400,6 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         plos_citing,
         synthesize_from_needs,
     )
-
-    program = await ProgramRepository().get(program_id)
-    if program is None:
-        raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
-
-    # Checked without `program_lock`, unlike the other synchronous writers: the LLM
-    # call below would hold it for minutes and stall every `start_job` here. A job
-    # started after this check can still overlap the write — a known residual race.
-    if (reason := await program_busy(program_id)) is not None:
-        raise HTTPException(status_code=409, detail=reason)
 
     all_needs = await NeedRepository().list_by_program(program_id)
     by_id = {n.need_id: n for n in all_needs}

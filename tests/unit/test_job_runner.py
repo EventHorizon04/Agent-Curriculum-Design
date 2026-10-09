@@ -10,6 +10,10 @@ from fastapi import HTTPException
 from pydantic import BaseModel
 
 from curriculum_agent.api import jobs
+
+# Bound here, at import, which is before the autouse `jobs_store` fixture replaces
+# `jobs.spawn` with a recorder: this is the one handle on the real function.
+from curriculum_agent.api.jobs import spawn as real_spawn
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 
@@ -101,6 +105,17 @@ async def test_a_running_job_refuses_a_second(
     with pytest.raises(jobs.JobConflict) as info:
         await jobs.start_job("p", "plo_report", {}, _ok)
     assert jobs.JOB_KIND_LABEL_TH["plo_synthesis"] in info.value.detail_th
+
+
+async def test_the_409_text_keeps_the_label_and_the_verb_apart(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    """Thai has no spaces to fall back on: "{label}กำลังทำอยู่" ran an English
+    label straight into the verb ("สังเคราะห์ PLOกำลังทำอยู่")."""
+    await jobs.start_job("p", "plo_synthesis", {}, _ok)
+    with pytest.raises(jobs.JobConflict) as info:
+        await jobs.start_job("p", "plo_report", {}, _ok)
+    assert "PLO กำลังทำอยู่" in info.value.detail_th
 
 
 async def test_another_program_is_not_blocked(
@@ -205,3 +220,156 @@ async def test_program_busy_reports_job_session_or_none(
     assert jobs.JOB_KIND_LABEL_TH["need_combination"] in (await jobs.program_busy("p") or "")
     monkeypatch.setattr(jobs, "_running_session", AsyncMock(return_value=True))
     assert await jobs.program_busy("q") is not None
+
+
+# ---------- sync_writer: the merge route's registration ----------
+
+
+async def test_a_registered_sync_writer_makes_its_program_busy_with_its_own_reason(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    assert await jobs.program_busy("p") is None
+    async with jobs.sync_writer("p", "กำลังรวม Need"):
+        assert await jobs.program_busy("p") == "กำลังรวม Need"
+        assert await jobs.program_busy("q") is None
+    assert await jobs.program_busy("p") is None
+
+
+async def test_a_registered_sync_writer_refuses_start_job(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    async with jobs.sync_writer("p", "กำลังรวม Need"):
+        with pytest.raises(jobs.JobConflict) as info:
+            await jobs.start_job("p", "plo_report", {}, _ok)
+    assert info.value.detail_th == "กำลังรวม Need"
+    assert jobs_store.rows == {}
+    assert spawned.coros == []
+
+
+async def test_a_second_sync_writer_is_refused_with_the_first_ones_reason(
+    jobs_store: InMemoryJobs,
+) -> None:
+    async with jobs.sync_writer("p", "กำลังรวม Need"):
+        with pytest.raises(HTTPException) as info:
+            async with jobs.sync_writer("p", "อย่างอื่น"):
+                pytest.fail("the second writer must not get in")
+    assert info.value.status_code == 409
+    assert info.value.detail == "กำลังรวม Need"
+    # the refused one did not register, and the first one's registration survived it
+    assert await jobs.program_busy("p") is None
+
+
+async def test_sync_writer_is_refused_while_a_job_runs_and_does_not_register(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    await jobs.start_job("p", "plo_synthesis", {}, _ok)
+    with pytest.raises(HTTPException) as info:
+        async with jobs.sync_writer("p", "กำลังรวม Need"):
+            pytest.fail("a busy program must not admit a writer")
+    assert info.value.status_code == 409
+    assert "PLO กำลังทำอยู่" in str(info.value.detail)
+    assert "p" not in jobs._SYNC_WRITERS
+
+
+async def test_sync_writer_registration_is_removed_when_its_body_raises() -> None:
+    with pytest.raises(RuntimeError):
+        async with jobs.sync_writer("p", "กำลังรวม Need"):
+            raise RuntimeError("synthesis blew up")
+    assert await jobs.program_busy("p") is None
+    assert jobs._SYNC_WRITERS == {}
+
+
+async def test_sync_writer_does_not_hold_the_program_lock_across_its_body(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    """The body is an LLM call of minutes. Holding the lock would stall every
+    other writer's queue for that long instead of answering them 409."""
+    async with jobs.sync_writer("p", "กำลังรวม Need"):
+        async with asyncio.timeout(1):
+            async with jobs.program_lock("p"):
+                pass
+
+
+async def test_sync_writer_waits_for_the_program_lock_before_checking(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    entered = asyncio.Event()
+
+    async def writer() -> None:
+        async with jobs.sync_writer("p", "กำลังรวม Need"):
+            entered.set()
+
+    async with jobs.program_lock("p"):
+        task = asyncio.create_task(writer())
+        await asyncio.sleep(0.01)
+        assert not entered.is_set()
+    await task
+    assert entered.is_set()
+
+
+# ---------- spawn ----------
+
+
+async def test_spawn_holds_the_task_while_it_runs_and_lets_go_when_it_ends() -> None:
+    gate = asyncio.Event()
+
+    async def body() -> None:
+        await gate.wait()
+
+    before = set(jobs._TASKS)
+    real_spawn(body())
+    (task,) = jobs._TASKS - before
+    assert not task.done()
+    gate.set()
+    await task
+    await asyncio.sleep(0)  # done-callbacks run on the loop's next turn
+    assert task not in jobs._TASKS
+
+
+# ---------- what is logged ----------
+
+
+def _capture_errors() -> tuple[list[str], int]:
+    from loguru import logger  # noqa: PLC0415
+
+    seen: list[str] = []
+    sink_id = logger.add(lambda m: seen.append(str(m)), level="ERROR", format="{message}")
+    return seen, sink_id
+
+
+async def test_an_unexpected_failure_is_logged_with_its_traceback(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    from loguru import logger  # noqa: PLC0415
+
+    async def boom() -> _Out:
+        raise ValueError("kaboom-marker")
+
+    seen, sink_id = _capture_errors()
+    try:
+        await jobs.start_job("p", "plo_report", {}, boom)
+        await spawned.coros.pop(0)
+    finally:
+        logger.remove(sink_id)
+    text = "\n".join(seen)
+    assert "kaboom-marker" in text
+    assert "Traceback" in text
+
+
+async def test_an_http_failure_stays_a_one_line_log(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    from loguru import logger  # noqa: PLC0415
+
+    async def refused() -> _Out:
+        raise HTTPException(status_code=422, detail="ยังไม่มี PLO")
+
+    seen, sink_id = _capture_errors()
+    try:
+        await jobs.start_job("p", "plo_report", {}, refused)
+        await spawned.coros.pop(0)
+    finally:
+        logger.remove(sink_id)
+    text = "\n".join(seen)
+    assert "failed" in text
+    assert "Traceback" not in text

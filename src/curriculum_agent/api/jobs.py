@@ -10,6 +10,12 @@ One active writer per program: every stage deletes and rewrites tables the
 next stage reads, so two runs on one program — or a run and a graph session —
 interleave. The check-then-insert is serialised per program in this process
 (the deployment is one uvicorn process).
+
+A writer that finishes inside its request holds `program_lock` around the check and
+its short write. One whose write follows an LLM call of minutes — the merge route —
+cannot hold a lock that long, so it registers with `sync_writer` instead: the lock
+covers only the check and the registration, and `program_busy` reports the
+registration to everyone else until the call is over.
 """
 
 from __future__ import annotations
@@ -41,6 +47,7 @@ __all__ = [
     "start_job",
     "start_job_or_409",
     "sweep_orphaned_jobs",
+    "sync_writer",
     "with_label",
 ]
 
@@ -57,6 +64,8 @@ RESTART_MESSAGE_TH = "backend ถูกปิดระหว่างทำง�
 
 _LOCKS: dict[str, asyncio.Lock] = {}
 _TASKS: set[asyncio.Task[None]] = set()
+# program_id -> why it is busy, for a synchronous writer in the middle of its call.
+_SYNC_WRITERS: dict[str, str] = {}
 
 
 class JobConflict(Exception):
@@ -72,6 +81,26 @@ async def program_lock(program_id: str) -> AsyncIterator[None]:
         yield
 
 
+@asynccontextmanager
+async def sync_writer(program_id: str, reason_th: str) -> AsyncIterator[None]:
+    """A writer whose work outlasts any lock it could hold (an LLM call).
+
+    Under `program_lock` it checks `program_busy` — 409 with the reason when the
+    program is busy — and registers, then releases the lock before the body runs:
+    holding it for minutes would stall every `start_job` queued behind it, where
+    the registration makes them answer 409 at once. `reason_th` is what everyone
+    else is told while it runs. The registration goes whatever the body does."""
+    async with program_lock(program_id):
+        busy = await program_busy(program_id)
+        if busy is not None:
+            raise HTTPException(status_code=409, detail=busy)
+        _SYNC_WRITERS[program_id] = reason_th
+    try:
+        yield
+    finally:
+        _SYNC_WRITERS.pop(program_id, None)
+
+
 def with_label(job: JobInfo) -> JobInfo:
     return job.model_copy(update={"label_th": JOB_KIND_LABEL_TH.get(job.kind, job.kind)})
 
@@ -83,10 +112,12 @@ async def _running_session(program_id: str) -> bool:
 
 async def program_busy(program_id: str) -> str | None:
     """Why this program cannot take another writer right now, in Thai, or None."""
+    if (registered := _SYNC_WRITERS.get(program_id)) is not None:
+        return registered
     running = await JobRepository().find_running(program_id)
     if running is not None:
         label = JOB_KIND_LABEL_TH.get(running.kind, running.kind)
-        return f"หลักสูตรนี้มีงาน{label}กำลังทำอยู่ — รอให้เสร็จก่อน"
+        return f"หลักสูตรนี้มีงาน{label} กำลังทำอยู่ — รอให้เสร็จก่อน"
     if await _running_session(program_id):
         return "หลักสูตรนี้กำลังรัน pipeline อยู่ — รอให้เสร็จก่อน"
     return None
@@ -128,7 +159,13 @@ async def _run(
         outcome: dict[str, Any] = {"status": "succeeded", "result": _dump(await work())}
         logger.info(f"job {job_id} ({kind}) succeeded")
     except Exception as exc:  # noqa: BLE001 - every failure becomes the job's error
-        logger.error(f"job {job_id} ({kind}) failed: {exc!r}")
+        if isinstance(exc, HTTPException):
+            # A refusal the stage chose to make: its detail is the whole story.
+            logger.error(f"job {job_id} ({kind}) failed: {exc!r}")
+        else:
+            # Anything else is a bug or an outage, and the job row keeps only
+            # str(exc) — the traceback is lost unless it is logged here.
+            logger.opt(exception=exc).error(f"job {job_id} ({kind}) failed: {exc!r}")
         outcome = {"status": "failed", "error_th": _error_th(exc)}
     try:
         status = outcome.pop("status")

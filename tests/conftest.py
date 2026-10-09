@@ -110,6 +110,7 @@ def jobs_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[InMemoryJobs]:
     no_sessions.fail_all_running = AsyncMock(return_value=0)
     monkeypatch.setattr(jobs_mod, "SessionRepository", lambda: no_sessions)
     jobs_mod._LOCKS.clear()
+    jobs_mod._SYNC_WRITERS.clear()
     store.recorder = recorder  # type: ignore[attr-defined]
     yield store
     recorder.close()

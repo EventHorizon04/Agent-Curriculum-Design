@@ -619,10 +619,13 @@ tests/integration/     ← LLM mocked, full stages
   reads. The check-then-write is serialised per program by `program_lock`
   (in-process; the deployment is one uvicorn process): `start_job` holds it
   around its busy-check and insert, `/sessions/`, `/approve` and `/copy` around
-  their busy-check and short write. `/plos/from-needs` checks **without** it on
-  purpose — its LLM call would hold the lock for minutes and stall every
-  `start_job` — so a job started mid-merge can still overlap it, a known
-  residual race. Anything left `running` by a dead process is failed at startup
+  their busy-check and short write. `/plos/from-needs` cannot hold it across its
+  LLM call — that would stall every `start_job` for minutes — so it registers as
+  an in-process writer instead (`sync_writer`: busy-check and registration under
+  the lock, the lock released before the call, the registration removed in a
+  `finally`); `program_busy` reports a registered writer first, so a job, a
+  session, a copy or a second merge started mid-merge answers 409 rather than
+  overlapping the replace. Anything left `running` by a dead process is failed at startup
   (`sweep_orphaned_jobs`: jobs, and graph sessions via
   `SessionRepository.fail_all_running`, same restart message), or the program
   would stay blocked. `result` is the body the route used to return. `JobInfo`
