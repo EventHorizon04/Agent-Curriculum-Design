@@ -539,7 +539,11 @@ def test_revalidate_refuses_a_plo_whose_needs_are_gone(
     resp = client.post("/programs/cs-test/plos/PLO1/revalidate")
 
     assert resp.status_code == 422
-    assert "Need" in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert "Need" in detail
+    # plo_id already reads "PLO1"; a "PLO " prefix showed "PLO PLO1".
+    assert detail.startswith("PLO1 ")
+    assert "PLO PLO1" not in detail
 
 
 def test_revalidate_404s_for_an_unknown_plo(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -950,7 +950,7 @@ export function buildRouter(): Router {
     if (!found) return detail(404, 'PLO not found')
     const cited = of(db.needs, pid).filter((n) => found.source_need_ids.includes(n.need_id))
     if (!cited.length) {
-      return detail(422, `PLO ${found.plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน`)
+      return detail(422, `${found.plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน`)
     }
     return startJob({
       pid,

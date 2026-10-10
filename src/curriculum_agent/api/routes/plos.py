@@ -671,7 +671,7 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
         # trace endpoint reports the same condition as missing_need_ids.
         raise HTTPException(
             status_code=422,
-            detail=f"PLO {plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน",
+            detail=f"{plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน",
         )
 
     draft = _PLODraft(
