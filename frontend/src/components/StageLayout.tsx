@@ -20,14 +20,21 @@ type GateState = 'passed' | 'current' | 'ahead'
 
 /** Where a stage sits relative to how far this program has reached.
  *
+ * `current_stage` is the furthest stage that has already produced stored
+ * output, so that stage and every one before it are passed; ◐ marks the next
+ * stage, the one the designer is at now. Drawing the reached stage itself as
+ * ◐ left a finished stage looking in progress for good once its rows existed.
+ * The report stage leaves no artifact of its own, so once PLOs exist it stays
+ * ◐: it is where the designer goes next.
+ *
  * Reached-ness comes from the program's own `current_stage`, not from which
  * page happens to be open: a designer can open any stage at any time, and a nav
  * that marked whatever they clicked as "reached" would tell them nothing. */
 function gateStateFor(stage: StageDef, reached: number): GateState {
   const here = STAGES.indexOf(stage)
   if (reached < 0) return here === 0 ? 'current' : 'ahead'
-  if (here < reached) return 'passed'
-  if (here === reached) return 'current'
+  if (here <= reached) return 'passed'
+  if (here === reached + 1) return 'current'
   return 'ahead'
 }
 
