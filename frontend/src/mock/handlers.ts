@@ -288,13 +288,20 @@ function runStageForSession(pid: string, stage: string): void {
       replaceRows('plos', pid, synthesizePlos(pid, needs, of(db.skills, pid)))
       return
     }
-    case 'plo_report': {
-      if (!of(db.plos, pid).length) {
-        throw new Error(`PLO report: no PLOs for program '${pid}' — run PLO synthesis first`)
-      }
-      return
-    }
   }
+}
+
+/** What resuming the last checkpoint runs: plo_report, then plo_review, then END.
+ *  The review is stored the way the real graph's plo_review node stores it. */
+function finishSession(pid: string): void {
+  const db = getDb()
+  const plos = of(db.plos, pid)
+  if (!plos.length) {
+    throw new Error(`PLO report: no PLOs for program '${pid}' — run PLO synthesis first`)
+  }
+  const degree = db.programs.find((p) => p.program_id === pid)?.degree_level ?? 'bachelor'
+  const review = buildMockReview(pid, plos, of(db.needs, pid), degree)
+  db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
 }
 
 /**
@@ -311,11 +318,19 @@ export function tickSessions(): void {
     if (s.will_fail) {
       s.will_fail = false
       s.status = 'failed'
-      s.suspended_message = `mock: จำลองความล้มเหลว — ขั้น ${stage ?? 'plo_report'} เรียกโมเดลไม่สำเร็จ (หมดเวลารอผลตอบกลับ 300 วินาที)`
+      s.suspended_message = `mock: จำลองความล้มเหลว — ขั้น ${stage ?? 'plo_review'} เรียกโมเดลไม่สำเร็จ (หมดเวลารอผลตอบกลับ 300 วินาที)`
       continue
     }
     if (stage === undefined) {
-      // Resumed past the last gate: the graph reaches END.
+      // Resumed past the last gate: plo_report and plo_review run, the graph
+      // reaches END.
+      try {
+        finishSession(s.program_id)
+      } catch (err) {
+        s.status = 'failed'
+        s.suspended_message = err instanceof Error ? err.message : String(err)
+        continue
+      }
       s.status = 'completed'
       continue
     }

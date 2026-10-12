@@ -79,8 +79,10 @@ interface RunError {
 
 export default function PloReview() {
   const { programId } = useProgram()
-  const [data, setData] = useState<PLOReviewResponse | null>(null)
-  const [loading, setLoading] = useState(false)
+  // Tagged with the program it was read for, so another program's review is
+  // never drawn while this one loads.
+  const [read, setRead] = useState<{ programId: string; response: PLOReviewResponse } | null>(null)
+  const data = read?.programId === programId ? read.response : null
   const [loadError, setLoadError] = useState('')
   const [starting, setStarting] = useState(false)
   const [runError, setRunError] = useState<RunError | null>(null)
@@ -98,17 +100,14 @@ export default function PloReview() {
   const fetchData = useCallback(async () => {
     if (!programId) return
     const mineRead = ++latestRead.current
-    setLoading(true)
     setLoadError('')
     try {
       const res = await api.get<PLOReviewResponse>(`/programs/${programId}/plos/review`)
-      if (mineRead === latestRead.current) setData(res.data)
+      if (mineRead === latestRead.current) setRead({ programId, response: res.data })
     } catch {
       if (mineRead === latestRead.current) {
         setLoadError('โหลดผลตรวจไม่สำเร็จ ตรวจว่า API ทำงานอยู่ แล้วลองใหม่')
       }
-    } finally {
-      if (mineRead === latestRead.current) setLoading(false)
     }
   }, [programId])
 
@@ -149,6 +148,9 @@ export default function PloReview() {
   }
 
   const review = data?.review ?? null
+  // No answer and no error means the first read for this program is still on its
+  // way (or has not started): say so rather than showing "not reviewed". A
+  // reload with a review already on screen keeps it.
 
   return (
     <div className="space-y-6">
@@ -178,7 +180,7 @@ export default function PloReview() {
 
       {mine ? (
         <RunProgress key={mine.job_id} plan={PLO_REVIEW_PLAN} since={Date.parse(mine.created_at)} />
-      ) : loading ? (
+      ) : data === null && !loadError ? (
         <LoadingLine />
       ) : review ? (
         <>

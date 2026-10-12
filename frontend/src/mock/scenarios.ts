@@ -76,11 +76,12 @@ export const INTERRUPT_MESSAGE: Record<string, string> = {
   stakeholder_needs: 'Stage 1 complete — review classified evidence before clustering',
   skill_extraction: 'Stage 2 complete — review raw skills and distilled Needs',
   plo_synthesis: 'Stage 3 complete — review/edit PLOs before PLO report',
-  plo_report: 'Stage 5 complete — review the assembled PLO report before export',
 }
 
-/** The review gates a session suspends at, in order (REVIEW_NODE_STAGE). */
-export const CHECKPOINTS = ['stakeholder_needs', 'skill_extraction', 'plo_synthesis', 'plo_report']
+/** The review gates a session suspends at, in order (REVIEW_NODE_STAGE). The
+ *  last one is the PLO checkpoint: resuming it runs plo_report and plo_review
+ *  straight through to END, with no gate after them. */
+export const CHECKPOINTS = ['stakeholder_needs', 'skill_extraction', 'plo_synthesis']
 
 // ----------------------------------------------------------------------------
 // Deterministic ids
@@ -888,10 +889,9 @@ export function synthesizePlos(programId: string, needs: NeedRow[], skills: Skil
  * histogram, unused Needs) are derived the way the backend derives them, and the
  * judgements are fixed sentences chosen so every part of the page has something
  * to draw — one KSEC disagreement, one Bloom suggestion, one redundancy group,
- * one `consider` and one `ok_to_leave`. The missing domain and the
- * `no_e_or_c` flag are written in outright rather than derived: the seeded set
- * has both an E and a C outcome, so deriving them would leave that part of the
- * page undrawn.
+ * one `consider` and one `ok_to_leave`. The counts, missing domains and flags
+ * are all derived from the same rows the table shows, so the page never
+ * disagrees with itself; a set with no E or C outcome draws the missing chips.
  */
 export function buildMockReview(
   programId: string,
@@ -930,9 +930,15 @@ export function buildMockReview(
     }
   })
 
+  const KSEC_DOMAINS = ['K', 'S', 'E', 'C'] as const
   const ksecCounts: Record<string, number> = { K: 0, S: 0, E: 0, C: 0 }
   for (const row of ksec) for (const d of row.current) ksecCounts[d] += 1
-  ksecCounts.C = 0
+  // Missing and flags follow from the counts, by the rules the backend applies,
+  // so every figure on the page agrees with the table beside it.
+  const missing = KSEC_DOMAINS.filter((d) => ksecCounts[d] === 0)
+  const ksecFlags: string[] = []
+  if (sorted.length > 0 && ksecCounts.S + ksecCounts.E + ksecCounts.C === 0) ksecFlags.push('all_k')
+  if (sorted.length > 0 && ksecCounts.E === 0 && ksecCounts.C === 0) ksecFlags.push('no_e_or_c')
 
   const bloomCounts: Record<string, number> = Object.fromEntries(BLOOM_LEVELS.map((l) => [l, 0]))
   for (const p of sorted) bloomCounts[p.bloom_level] = (bloomCounts[p.bloom_level] ?? 0) + 1
@@ -995,14 +1001,14 @@ export function buildMockReview(
     bloom,
     bloom_distribution_th: 'PLO ส่วนใหญ่อยู่ที่ระดับประยุกต์ใช้ ซึ่งพอดีกับหลักสูตรระดับปริญญาตรี',
     summary_th:
-      'ชุด PLO ครอบคลุมงานแปลหลักของสาขา แต่ยังขาดข้อที่ว่าด้วยจริยธรรมและคุณลักษณะบุคคล และมีสองข้อที่ซ้ำกัน',
-    ksec_coverage: { counts: ksecCounts, missing: ['C'], flags: ['no_e_or_c'] },
+      'ชุด PLO ครอบคลุมงานแปลหลักของสาขา มีสองข้อที่ซ้ำกันและหนึ่งข้อที่หมวดสมรรถนะควรทบทวน',
+    ksec_coverage: { counts: ksecCounts, missing, flags: ksecFlags },
     bloom_histogram: {
       counts: bloomCounts,
       degree_level: degreeLevel,
       flags: belowApply * 2 > sorted.length ? ['below_apply_majority'] : [],
     },
-    coverage_th: 'งานแปล ล่าม และการใช้เครื่องมือช่วยแปลมี PLO รองรับ ส่วนความร่วมมือกับผู้ว่าจ้างยังไม่มี',
+    coverage_th: 'งานแปล ล่าม และการใช้เครื่องมือช่วยแปลมี PLO รองรับ',
     unused_needs: unusedNeeds,
     reviewed_by: 'agent',
     code_only_reason: null,
@@ -1224,8 +1230,9 @@ function seedComplete(): MockDb {
   db.sessions.push(
     session(TRANSLATION_PROGRAM_ID, 'current', {
       status: 'completed',
-      current_stage: 'plo_report',
-      suspended_message: INTERRUPT_MESSAGE.plo_report,
+      // A completed run keeps the stage it last suspended at.
+      current_stage: 'plo_synthesis',
+      suspended_message: INTERRUPT_MESSAGE.plo_synthesis,
       created_at: '2026-10-03T07:05:00',
       updated_at: '2026-10-03T08:21:47',
     }),
@@ -1273,8 +1280,9 @@ function seedMany(): MockDb {
   db.sessions.push(
     session('program', 'current', {
       status: 'completed',
-      current_stage: 'plo_report',
-      suspended_message: INTERRUPT_MESSAGE.plo_report,
+      // A completed run keeps the stage it last suspended at.
+      current_stage: 'plo_synthesis',
+      suspended_message: INTERRUPT_MESSAGE.plo_synthesis,
       created_at: '2026-09-30T06:00:00',
       updated_at: '2026-09-30T07:12:09',
     }),
