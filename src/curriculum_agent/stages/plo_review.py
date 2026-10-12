@@ -334,6 +334,16 @@ async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
         _REVIEW_IN_FLIGHT.discard(program_id)
 
 
+def _worth_reusing(review: PLOSetReview) -> bool:
+    """A current review is reused only if running again could not do better: the
+    agent's own answer, or a code-only one the switch produced while it is still
+    off. A failed or timed-out run, or a `disabled` one with the slot now on, is
+    run fresh — the set did not change but the reason for the gap did."""
+    if review.reviewed_by == "agent":
+        return True
+    return review.code_only_reason == "disabled" and not settings.plo_review_provider
+
+
 async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | None:
     """The graph's review: the stored one if the set is unchanged, else a fresh
     one. Never raises — an advisory step must not fail the session."""
@@ -343,7 +353,11 @@ async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview |
     except Exception as exc:
         logger.warning(f"plo_review: could not read inputs for {program_id}: {exc!r}")
         return None
-    if stored is not None and not is_stale(stored, plos, need_demands(needs)):
+    if (
+        stored is not None
+        and not is_stale(stored, plos, need_demands(needs))
+        and _worth_reusing(stored)
+    ):
         return stored
     try:
         return await fresh_review(program_id, plos)

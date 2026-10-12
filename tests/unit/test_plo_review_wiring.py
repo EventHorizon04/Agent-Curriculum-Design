@@ -110,9 +110,10 @@ def test_get_review_guards_a_storage_read_failure() -> None:
     assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
 
 
-def test_get_review_guards_a_failed_need_load() -> None:
-    """The Need read is part of judging staleness; its failure degrades the
-    response the same way a failed review read does, not to a 500."""
+def test_get_review_with_a_failed_need_load_returns_the_review_as_stale() -> None:
+    """The Need read only judges staleness. When it fails the stored review is
+    still real and still shown, labelled stale because it could not be confirmed
+    current; only a failed review read has nothing to show."""
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch("curriculum_agent.api.routes.plos.PLOReviewRepository") as rr,
@@ -123,6 +124,21 @@ def test_get_review_guards_a_failed_need_load() -> None:
         needs.return_value.list_by_program = AsyncMock(side_effect=RuntimeError("db down"))
         resp = client.get("/programs/p1/plos/review")
     assert resp.status_code == 200
+    body = resp.json()
+    assert body["stale"] is True and body["review"]["summary_th"] == "ดีแล้ว"
+    assert body["review_enabled"] is False
+
+
+def test_get_review_with_a_failed_need_load_and_no_review_stays_empty() -> None:
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.api.routes.plos.PLOReviewRepository") as rr,
+        patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
+    ):
+        repo.list_by_program = AsyncMock(return_value=[_PLO])
+        rr.return_value.get = AsyncMock(return_value=None)
+        needs.return_value.list_by_program = AsyncMock(side_effect=RuntimeError("db down"))
+        resp = client.get("/programs/p1/plos/review")
     assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
 
 

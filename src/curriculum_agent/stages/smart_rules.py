@@ -107,6 +107,12 @@ def declares_too_many_verbs(action_verb_th: str) -> bool:
     )
 
 
+def opens_with_declared_verb(statement_th: str, action_verb_th: str) -> bool:
+    """S: the statement, after any "บัณฑิตสามารถ…" subject, opens with the declared
+    verb. An empty declared verb opens nothing."""
+    return bool(action_verb_th) and strip_outcome_prefix(statement_th).startswith(action_verb_th)
+
+
 def hard_failures(
     statement_th: str,
     action_verb_th: str,
@@ -115,7 +121,7 @@ def hard_failures(
 ) -> list[HardCriterion]:
     """Code-level SMART hard checks (S verb leads and is one, M forbidden words, R evidence)."""
     fails: list[HardCriterion] = []
-    if not action_verb_th or not strip_outcome_prefix(statement_th).startswith(action_verb_th):
+    if not opens_with_declared_verb(statement_th, action_verb_th):
         fails.append(HardCriterion.S_VERB)
     if declares_too_many_verbs(action_verb_th):
         fails.append(HardCriterion.S_MULTI_VERB)

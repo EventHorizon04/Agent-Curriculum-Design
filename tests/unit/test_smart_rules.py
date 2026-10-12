@@ -4,6 +4,7 @@ from curriculum_agent.stages.smart_rules import (
     CRITERION_FIX_HINTS_TH,
     HardCriterion,
     hard_failures,
+    opens_with_declared_verb,
     strip_outcome_prefix,
 )
 
@@ -169,3 +170,10 @@ def test_a_prefix_word_inside_the_sentence_is_left_alone() -> None:
     """Only the opening is the subject; "บัณฑิต" later in the sentence is content."""
     statement = "วิเคราะห์ความสามารถของบัณฑิตสามารถด้านภาษา"
     assert strip_outcome_prefix(statement) == statement
+
+
+def test_opens_with_declared_verb_reads_the_opening_after_the_subject_prefix() -> None:
+    assert opens_with_declared_verb("บัณฑิตสามารถแปลเอกสารธุรกิจ", "แปล")
+    assert opens_with_declared_verb("แปลเอกสารธุรกิจ โดยใช้เครื่องมือ", "แปล")
+    assert not opens_with_declared_verb("แปลเอกสาร โดยประยุกต์ใช้เทคโนโลยี", "ประยุกต์ใช้")
+    assert not opens_with_declared_verb("แปลเอกสารธุรกิจ", "")

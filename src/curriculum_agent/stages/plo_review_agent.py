@@ -34,7 +34,10 @@ from curriculum_agent.prompts.plo_review import (
 )
 from curriculum_agent.stages.bloom_verbs import levels_for_verb, scan_statement_verbs
 from curriculum_agent.stages.plo_review_facts import ReviewDossier
-from curriculum_agent.stages.smart_rules import declares_too_many_verbs, strip_outcome_prefix
+from curriculum_agent.stages.smart_rules import (
+    declares_too_many_verbs,
+    opens_with_declared_verb,
+)
 
 MAX_TOOL_CALLS = 4
 MAX_STEPS = 6
@@ -132,8 +135,9 @@ def run_review_tool(
         return True, {
             "plo_id": item.plo_id,
             "action_verb_th": item.action_verb_th,
-            "opens_with_declared_verb": bool(item.action_verb_th)
-            and strip_outcome_prefix(item.statement_th).startswith(item.action_verb_th),
+            "opens_with_declared_verb": opens_with_declared_verb(
+                item.statement_th, item.action_verb_th
+            ),
             "declared_verbs": declared,
             "too_many_verbs": declares_too_many_verbs(item.action_verb_th),
             "levels": {v: [lv.value for lv in levels_for_verb(v)] for v in declared},

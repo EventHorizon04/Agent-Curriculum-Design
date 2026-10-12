@@ -142,6 +142,39 @@ async def test_an_unchanged_set_reuses_the_stored_review(live: AsyncMock) -> Non
     assert first == second and live.await_count == 1
 
 
+@pytest.mark.parametrize("reason", ["failed", "timeout"])
+async def test_a_stored_code_only_failure_is_run_fresh_not_reused(
+    live: AsyncMock, reason: str
+) -> None:
+    live.return_value = AgentOutcome(None, reason, [])
+    first = await pr.review_plo_set("p", _PLOS)
+    assert first is not None and first.code_only_reason == reason
+    live.return_value = AgentOutcome(_FINISH, None, [])
+    second = await pr.review_plo_set("p", _PLOS)
+    assert second is not None and second.reviewed_by == "agent" and live.await_count == 2
+
+
+async def test_a_stored_disabled_review_is_reused_while_the_slot_stays_off(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "plo_review_provider", "")
+    first = await pr.review_plo_set("p", _PLOS)
+    second = await pr.review_plo_set("p", _PLOS)
+    assert first == second and first is not None and first.code_only_reason == "disabled"
+    live.assert_not_awaited()
+
+
+async def test_a_stored_disabled_review_is_run_fresh_once_the_slot_is_on(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "plo_review_provider", "")
+    off = await pr.review_plo_set("p", _PLOS)
+    assert off is not None and off.code_only_reason == "disabled"
+    monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
+    on = await pr.review_plo_set("p", _PLOS)
+    assert on is not None and on.reviewed_by == "agent" and live.await_count == 1
+
+
 async def test_a_changed_set_is_reviewed_again(live: AsyncMock) -> None:
     await pr.review_plo_set("p", _PLOS)
     await pr.review_plo_set("p", _changed())

@@ -269,21 +269,32 @@ class PLOReviewResponse(BaseModel):
 @router.get("/review", response_model=PLOReviewResponse)
 async def get_plo_review(program_id: str) -> PLOReviewResponse:
     plos = await _repo.list_by_program(program_id)
+    enabled = bool(settings.plo_review_provider)
+    # A read failure here must not 500 the whole page — GET /plos/ already
+    # raises on an unrelated bad row, and this route must not add a second way
+    # for the report/checkpoint page to go blank over stored review data.
     try:
         review = await PLOReviewRepository().get(program_id)
+    except Exception as exc:
+        logger.warning(f"plo_review: could not read the stored review for {program_id}: {exc!r}")
+        return PLOReviewResponse(review=None, stale=False, review_enabled=enabled)
+    if review is None:
+        # Nothing stored, so nothing to judge: the Need read would only decide
+        # staleness of a review that does not exist.
+        return PLOReviewResponse(review=None, stale=False, review_enabled=enabled)
+    try:
         needs = await NeedRepository().list_by_program(program_id)
     except Exception as exc:
-        # A read failure here must not 500 the whole page — GET /plos/ already
-        # raises on an unrelated bad row, and this route must not add a second
-        # way for the report/checkpoint page to go blank over stored review data.
-        logger.warning(f"plo_review: could not read the stored review for {program_id}: {exc!r}")
-        return PLOReviewResponse(
-            review=None, stale=False, review_enabled=bool(settings.plo_review_provider)
+        # The review is real and worth showing; it just cannot be confirmed current.
+        logger.warning(
+            f"plo_review: could not read the Needs for {program_id} to judge staleness "
+            f"— showing the stored review as stale: {exc!r}"
         )
+        return PLOReviewResponse(review=review, stale=True, review_enabled=enabled)
     return PLOReviewResponse(
         review=review,
-        stale=review is not None and is_stale(review, plos, need_demands(needs)),
-        review_enabled=bool(settings.plo_review_provider),
+        stale=is_stale(review, plos, need_demands(needs)),
+        review_enabled=enabled,
     )
 
 
