@@ -18,7 +18,7 @@
 - Every number stored on a review is computed in code; no model field is ever copied into `ksec_coverage`, `bloom_histogram`, `unused_needs[*]` facts, `current`, `agrees` or `declared`.
 - Any failure (slot disabled, timeout, malformed/truncated step, step cap, answer emptied by `accept_review`) stores the code facts with `reviewed_by="code_only"` and `code_only_reason` in `disabled` / `failed` / `timeout`; no agent finding is manufactured.
 - Keep every existing name: slot `PLO_REVIEW_*`, table `plo_reviews`, job kind `plo_review`, routes under `/programs/{id}/plos/review`.
-- Ruling (spec silent): `ksec_coverage` and `bloom_histogram` count **core PLOs only** (`is_optional=False`). Optional PLOs sit outside the 6-10 band, and a set whose only ethics outcome is optional does not give every graduate that outcome. With zero core PLOs no flag is raised.
+- Decision (designer, 2026-10-12): `ksec_coverage` and `bloom_histogram` count **every PLO, optional included**. `core_count` stays core-only (it is measured against the 6-10 band). With zero PLOs no flag is raised.
 - Unused-Need selection: the 5 highest `demand_score` uncited Needs plus every uncited Need whose `source_stakeholder_types` contains `professional_council`, de-duplicated, ordered by `demand_score` descending then `need_id`. Exclusion reason: `out_of_scope` (`not is_in_scope`) first, then `unwritten` (`is_unwritten_need`), else `lost_on_demand`.
 - Code, comments, log lines, commit messages: English. Designer-facing strings: Thai.
 - Repository pattern for data access; prompts live in `src/curriculum_agent/prompts/`; type hints everywhere with `from __future__ import annotations`; `loguru` for logging.
@@ -28,7 +28,7 @@
 ## Review Focus
 
 1. A PLO citing a Need id that no longer exists → it contributes no KSEC count, the dossier renders "(ไม่พบ Need)", nothing raises (Task 1 test).
-2. A program whose PLOs are all optional → coverage and histogram counts are zero and no flag fires (Task 1 test).
+2. A program whose PLOs are all optional → they are counted in coverage and histogram, `core_count` is 0; an empty set raises no flag (Task 1 test).
 3. A review row stored before this change (no new fields) → reads with `reviewed_by="agent"` and reads stale under the new fingerprint (Task 1 and Task 3 tests).
 4. The agent calls `need_detail` with a Need outside the unused list, or `check_verbs` with an unknown PLO → refused observation, and the refused call still counts toward the 4 (Task 2 test).
 5. In the graph path the Needs fail to load → the node logs, keeps the stored review (or none), and the session still completes (Task 3 test).
@@ -149,11 +149,11 @@ def test_current_ksec_expands_ec_and_ignores_a_missing_need() -> None:
     assert current_ksec(_plo("PLO1", ["n2", "n1", "gone"]), needs) == ["K", "E", "C"]
 
 
-def test_coverage_counts_core_plos_per_domain_and_names_the_missing() -> None:
+def test_coverage_counts_every_plo_per_domain_and_names_the_missing() -> None:
     needs = {"n1": _need("n1", KSECCategory.S), "n2": _need("n2", KSECCategory.EC)}
     plos = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2"]), _plo("OPT1", ["n1"], optional=True)]
     cov = ksec_coverage(plos, needs)
-    assert cov.counts == {"K": 0, "S": 1, "E": 1, "C": 1}
+    assert cov.counts == {"K": 0, "S": 2, "E": 1, "C": 1}
     assert cov.missing == ["K"]
     assert cov.flags == []
 
@@ -169,19 +169,20 @@ def test_a_plo_citing_a_vanished_need_counts_nothing() -> None:
     assert cov.counts == {"K": 0, "S": 0, "E": 0, "C": 0}
 
 
-def test_no_core_plo_means_no_flag() -> None:
+def test_optional_plos_count_and_an_empty_set_raises_no_flag() -> None:
     needs = {"k": _need("k", KSECCategory.K)}
     cov = ksec_coverage([_plo("OPT1", ["k"], optional=True)], needs)
-    assert cov.counts == {"K": 0, "S": 0, "E": 0, "C": 0}
-    assert cov.flags == []
+    assert cov.counts == {"K": 1, "S": 0, "E": 0, "C": 0}
+    assert cov.flags == ["all_k", "no_e_or_c"]
     hist = bloom_histogram([_plo("OPT1", ["k"], optional=True, level=BloomLevel.REMEMBER)], "bachelor")
-    assert hist.flags == []
+    assert hist.counts["remember"] == 1 and hist.flags == ["below_apply_majority"]
+    assert ksec_coverage([], needs).flags == [] and bloom_histogram([], "bachelor").flags == []
 
 
 # ------------------------------ Bloom ------------------------------
 
 
-def test_histogram_counts_core_plos_in_level_order() -> None:
+def test_histogram_counts_every_plo_in_level_order() -> None:
     plos = [
         _plo("PLO1", ["n"], level=BloomLevel.CREATE),
         _plo("PLO2", ["n"], level=BloomLevel.APPLY),
@@ -190,7 +191,7 @@ def test_histogram_counts_core_plos_in_level_order() -> None:
     ]
     hist = bloom_histogram(plos, "bachelor")
     assert list(hist.counts) == [l.value for l in BloomLevel]
-    assert hist.counts["create"] == 2 and hist.counts["apply"] == 1 and hist.counts["remember"] == 0
+    assert hist.counts["create"] == 2 and hist.counts["apply"] == 1 and hist.counts["remember"] == 1
     assert hist.degree_level == "bachelor"
     assert hist.flags == []
 
@@ -294,7 +295,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'curriculum_agent.stage
 
 ```python
 class KsecCoverage(BaseModel):
-    """How many core PLOs sit in each of K/S/E/C. Computed in code, never by the reviewer.
+    """How many PLOs (optional included) sit in each of K/S/E/C. Computed in code, never by the reviewer.
 
     Plain `str` keys and flags for the `soft_flags` reason: a stored row must
     stay readable if the vocabulary moves.
@@ -306,7 +307,7 @@ class KsecCoverage(BaseModel):
 
 
 class BloomHistogram(BaseModel):
-    """Core PLOs per Bloom level against the degree level. Computed in code."""
+    """PLOs (optional included) per Bloom level against the degree level. Computed in code."""
 
     counts: dict[str, int] = Field(default_factory=dict)
     degree_level: str = ""
@@ -405,23 +406,15 @@ def current_ksec(plo: PLO, needs_by_id: Mapping[str, Need]) -> list[str]:
     )
 
 
-def _core(plos: Sequence[PLO]) -> list[PLO]:
-    return [p for p in plos if not p.is_optional]
-
-
 def ksec_coverage(plos: Sequence[PLO], needs_by_id: Mapping[str, Need]) -> KsecCoverage:
-    """Core PLOs per domain. A PLO counts once in every domain its Needs give it.
-
-    Core only: an optional PLO sits outside the 6-10 band, and a set whose only
-    ethics outcome is optional does not give every graduate that outcome.
-    """
-    core = _core(plos)
+    """PLOs per domain, optional ones included (the designer's call, 2026-10-12).
+    A PLO counts once in every domain its Needs give it."""
     counts = dict.fromkeys(KSEC_ORDER, 0)
-    for plo in core:
+    for plo in plos:
         for tag in current_ksec(plo, needs_by_id):
             counts[tag] += 1
     flags: list[str] = []
-    if core:
+    if plos:
         if counts["K"] > 0 and counts["S"] == counts["E"] == counts["C"] == 0:
             flags.append("all_k")
         if counts["E"] == 0 and counts["C"] == 0:
@@ -432,15 +425,14 @@ def ksec_coverage(plos: Sequence[PLO], needs_by_id: Mapping[str, Need]) -> KsecC
 
 
 def bloom_histogram(plos: Sequence[PLO], degree_level: str) -> BloomHistogram:
-    """Core PLOs per level, in level order. The only flag is one the skill sources:
-    PLOs sit mostly at Apply and above, so more than half below Apply is flagged.
-    There is no numeric ceiling on Create — nothing sources one."""
-    core = _core(plos)
+    """PLOs per level (optional included), in level order. The only flag is one the
+    skill sources: PLOs sit mostly at Apply and above, so more than half below Apply
+    is flagged. There is no numeric ceiling on Create — nothing sources one."""
     counts = {level.value: 0 for level in BloomLevel}
-    for plo in core:
+    for plo in plos:
         counts[plo.bloom_level.value] += 1
-    below = sum(1 for p in core if p.bloom_level in _BELOW_APPLY)
-    flags = ["below_apply_majority"] if core and below * 2 > len(core) else []
+    below = sum(1 for p in plos if p.bloom_level in _BELOW_APPLY)
+    flags = ["below_apply_majority"] if plos and below * 2 > len(plos) else []
     return BloomHistogram(counts=counts, degree_level=degree_level, flags=flags)
 
 
@@ -526,7 +518,7 @@ def build_dossier(
         items=items,
         ksec_coverage=ksec_coverage(plos, needs_by_id),
         bloom_histogram=bloom_histogram(plos, degree_level),
-        core_count=len(_core(plos)),
+        core_count=sum(1 for p in plos if not p.is_optional),
         unused_needs=tuple(select_unused_needs(plos, needs)),
     )
 
@@ -831,9 +823,9 @@ _SYSTEM_TH = """คุณเป็นกรรมการตรวจคุณ�
    แต่ละรายการ: plo_id, suggested (list เช่น ["S","E"]), reason_th
 3) bloom (ระดับ Bloom รายข้อ): ใส่เฉพาะ PLO ที่ระดับที่ประกาศไม่เหมาะกับกริยา กรรม และระดับปริญญา
    แต่ละรายการ: plo_id, suggested_level (remember understand apply analyze evaluate create), reason_th
-4) coverage_th (KSEC ทั้งชุด): หนึ่งถึงสามประโยค ตีความจำนวน PLO หลักต่อหมวดที่ระบบนับให้
+4) coverage_th (KSEC ทั้งชุด): หนึ่งถึงสามประโยค ตีความจำนวน PLO ต่อหมวดที่ระบบนับให้
    หมวดไหนขาดหรือหนาแน่นเกิน และสำคัญอย่างไรกับหลักสูตรนี้
-5) bloom_distribution_th (การกระจาย Bloom): หนึ่งถึงสามประโยค ตีความจำนวน PLO หลักต่อระดับเทียบระดับปริญญา
+5) bloom_distribution_th (การกระจาย Bloom): หนึ่งถึงสามประโยค ตีความจำนวน PLO ต่อระดับเทียบระดับปริญญา
 6) unused_needs (Need สำคัญที่ไม่ได้เป็น PLO): สำหรับแต่ละ Need ในรายการที่ให้มา
    need_id, verdict ("consider" = ควรพิจารณาใส่เป็น PLO, "ok_to_leave" = ปล่อยไว้ได้), reason_th
 
@@ -880,7 +872,7 @@ def build_plo_review_prompt(dossier: ReviewDossier) -> list[dict[str, str]]:
     cov = dossier.ksec_coverage
     hist = dossier.bloom_histogram
     facts = (
-        "ข้อเท็จจริงที่ระบบนับให้ (นับเฉพาะ PLO หลัก):\n"
+        "ข้อเท็จจริงที่ระบบนับให้ (KSEC และ Bloom นับทุก PLO รวม PLO เสริม):\n"
         f"- PLO หลัก {dossier.core_count} ข้อ (นโยบาย 6-10 ข้อ)\n"
         f"- KSEC: {_counts_line(cov.counts)} | หมวดที่ไม่มี: {', '.join(cov.missing) or '-'} | "
         f"ธง: {', '.join(cov.flags) or '-'}\n"
@@ -2093,7 +2085,7 @@ Update the file's top comment ("Six stages run in the engine; five of them have 
      - `stale` → a marker-ink notice `ผลนี้ตรวจจาก PLO ชุดก่อน — PLO หรือ Need เปลี่ยนหลังการตรวจ กดตรวจใหม่ให้ตรงกับชุดปัจจุบัน` (the old review stays shown under it);
      - no review → panel `ยังไม่ได้ตรวจชุด PLO นี้` with the run button; no PLOs (the run answers 422) → its detail plus a link `ไปสังเคราะห์ PLO` to `/plo-synthesis`.
   5. `summary_th` as a paragraph (skip when empty).
-  6. Section `ภาพรวมทั้งชุด`: a line `ตัวเลขนับโดยระบบ (เฉพาะ PLO หลัก)`; KSEC counts `K · S · E · C` each with its number, a missing domain marked with `chip chip-mandate` text `ไม่มี`; legend `K ความรู้ · S ทักษะวิชาชีพ · E จริยธรรม · C คุณลักษณะบุคคล`; flag texts: `all_k` → `ทั้งชุดเป็นความรู้ (K) ล้วน`, `no_e_or_c` → `ไม่มี PLO หลักด้านจริยธรรม (E) หรือคุณลักษณะบุคคล (C)`; Bloom counts per level in level order using the Thai Bloom labels (reuse `BLOOM_LABEL` from `PloReport.tsx` — export it or move it to a shared module, the smaller clean change, never duplicate the map) with the degree level, flag `below_apply_majority` → `PLO หลักเกินครึ่งอยู่ต่ำกว่าระดับประยุกต์ใช้`. Under the numbers, labelled `ความเห็นของ agent`: `coverage_th` and `bloom_distribution_th` (skip empty).
+  6. Section `ภาพรวมทั้งชุด`: a line `ตัวเลขนับโดยระบบ (รวม PLO เสริม)`; KSEC counts `K · S · E · C` each with its number, a missing domain marked with `chip chip-mandate` text `ไม่มี`; legend `K ความรู้ · S ทักษะวิชาชีพ · E จริยธรรม · C คุณลักษณะบุคคล`; flag texts: `all_k` → `ทั้งชุดเป็นความรู้ (K) ล้วน`, `no_e_or_c` → `ไม่มี PLO ด้านจริยธรรม (E) หรือคุณลักษณะบุคคล (C)`; Bloom counts per level in level order using the Thai Bloom labels (reuse `BLOOM_LABEL` from `PloReport.tsx` — export it or move it to a shared module, the smaller clean change, never duplicate the map) with the degree level, flag `below_apply_majority` → `PLO เกินครึ่งอยู่ต่ำกว่าระดับประยุกต์ใช้`. Under the numbers, labelled `ความเห็นของ agent`: `coverage_th` and `bloom_distribution_th` (skip empty).
   7. Section `ความซ้ำซ้อน`: per group the ids joined ` · ` (`data`), `reason_th`, `ข้อเสนอ: {suggestion_th}`; then `รวม PLO ที่ซ้ำได้โดยรวม Need ที่หน้า` + link `สังเคราะห์ PLO` (`/plo-synthesis`). Empty → `ไม่พบ PLO ที่ซ้ำกัน`.
   8. Section `หมวดสมรรถนะรายข้อ (KSEC)`: table PLO | หมวดปัจจุบัน | หมวดที่เสนอ | เหตุผล; rows with `agrees === false` first, marked `chip` `ไม่ตรง`; agreeing rows inside `<details>` with summary `ตรงกับหมวดเดิม {n} ข้อ`; lists shown `S+E`, empty `—`; wrapper `overflow-x-auto` so the page itself never scrolls sideways. Empty → `ไม่มีข้อมูล KSEC`.
   9. Section `ระดับ Bloom รายข้อ`: per entry `plo_id`, declared label → suggested label (no arrow when `suggested_level` is null or equal), `reason_th`. Empty → `ระดับ Bloom ทุกข้อเหมาะกับกริยาและระดับปริญญา`.
