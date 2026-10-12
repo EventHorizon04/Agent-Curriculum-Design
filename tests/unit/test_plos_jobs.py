@@ -128,7 +128,7 @@ class _Env:
             return {**state, "plos": [_plo().model_dump(mode="json")]}
 
         async def review_run(state: dict[str, Any]) -> dict[str, Any]:
-            return {**state, "plo_review": None}
+            return {**state, "plo_review": None}  # the report must never call this
 
         async def report_run(state: dict[str, Any]) -> dict[str, Any]:
             return {
@@ -138,8 +138,6 @@ class _Env:
                     "counts": {"total": len(state["plos"])},
                     "needs_by_id": {"N1": _need().model_dump(mode="json")},
                     "needs_not_synthesized": [],
-                    "review": None,
-                    "review_stale": False,
                 },
             }
 
@@ -237,43 +235,39 @@ def test_report_result_is_the_old_report_payload(
 ) -> None:
     job = _finish(client.post(f"{BASE}/report/run"), jobs_store, spawned)
 
-    env.review_run.assert_awaited_once()
     env.report.assert_awaited_once()
-    assert set(job.result) == {
-        "plos",
-        "counts",
-        "needs_by_id",
-        "needs_not_synthesized",
-        "review",
-        "review_stale",
-        "review_enabled",
-    }
+    assert set(job.result) == {"plos", "counts", "needs_by_id", "needs_not_synthesized"}
     assert [p["plo_id"] for p in job.result["plos"]] == ["PLO1"]
     assert job.result["needs_by_id"]["N1"]["need_id"] == "N1"
-    assert job.result["review_enabled"] is True
 
 
-def test_report_re_reads_the_plos_inside_the_job_after_the_review(
+def test_the_report_job_never_runs_the_review(
     env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:
-    """The lost-update guard: the review call can run for minutes, so the PLOs the
-    report persists are read again after it, and that second read is part of the
-    job body, not of the request."""
-    plo_b = _plo().model_copy(update={"statement_th": "ออกแบบระบบสารสนเทศตามมาตรฐานได้"})
-    env.plos.side_effect = [[_plo()], [plo_b]]
+    job = _finish(client.post(f"{BASE}/report/run"), jobs_store, spawned)
 
-    r = client.post(f"{BASE}/report/run")
-    assert env.plos.await_count == 1  # the precondition read only
+    assert job.status == "succeeded"
+    env.review_run.assert_not_awaited()
+    env.fresh_review.assert_not_awaited()
+    for key in ("review", "review_stale", "review_enabled"):
+        assert key not in job.result
 
-    spawned.drain()
 
-    assert env.plos.await_count == 2
-    job = jobs_store.rows[r.json()["job_id"]]
+def test_review_with_the_slot_off_is_still_a_job(
+    env: _Env,
+    monkeypatch: pytest.MonkeyPatch,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
+) -> None:
+    monkeypatch.setattr(settings, "plo_review_provider", "")
+
+    r = client.post(f"{BASE}/review/run")
+
+    assert r.status_code == 202
+    job = _finish(r, jobs_store, spawned)
     assert job.status == "succeeded", job.error_th
-    assert [p["statement_th"] for p in job.result["plos"]] == [plo_b.statement_th]
-    # What the stage was handed is the second read, not the snapshot.
-    state = env.report.await_args.args[0]
-    assert [p["statement_th"] for p in state["plos"]] == [plo_b.statement_th]
+    env.fresh_review.assert_awaited_once()
+    assert job.result["review_enabled"] is False
 
 
 def test_review_result_is_the_old_review_body(
@@ -382,21 +376,6 @@ def test_report_and_review_without_plos_are_a_synchronous_422(
     _assert_no_job(jobs_store, spawned, env)
 
 
-def test_review_switched_off_is_a_synchronous_503(
-    env: _Env,
-    monkeypatch: pytest.MonkeyPatch,
-    jobs_store: InMemoryJobs,
-    spawned: SpawnRecorder,
-) -> None:
-    monkeypatch.setattr(settings, "plo_review_provider", "")
-
-    r = client.post(f"{BASE}/review/run")
-
-    assert r.status_code == 503
-    assert "PLO_REVIEW_PROVIDER" in r.json()["detail"]
-    _assert_no_job(jobs_store, spawned, env)
-
-
 def test_revalidate_unknown_program_is_a_synchronous_404(
     env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:
@@ -450,15 +429,15 @@ def test_revalidate_still_requires_the_api_key_when_one_is_configured(
 # --- failures inside the work become failed jobs with the Thai text ----------
 
 
-def test_a_review_that_came_back_empty_fails_the_job(
+def test_a_database_error_from_the_review_fails_the_job_with_its_message(
     env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:
-    env.fresh_review.return_value = None
+    env.fresh_review.side_effect = RuntimeError("db")
 
     job = _finish(client.post(f"{BASE}/review/run"), jobs_store, spawned)
 
     assert job.status == "failed"
-    assert job.error_th == "ตรวจชุด PLO ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง"
+    assert job.error_th == "db"
 
 
 def test_a_review_already_running_inside_the_job_fails_the_job_with_its_message(
@@ -500,18 +479,6 @@ def test_a_revalidation_that_produced_nothing_fails_the_job_and_stores_nothing(
     assert job.status == "failed"
     assert job.error_th == "ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่"
     env.bulk_insert.assert_not_awaited()
-
-
-def test_plos_that_vanish_during_the_review_fail_the_report_job_with_the_422_text(
-    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
-) -> None:
-    env.plos.side_effect = [[_plo()], []]
-
-    job = _finish(client.post(f"{BASE}/report/run"), jobs_store, spawned)
-
-    assert job.status == "failed"
-    assert job.error_th == NO_PLOS_TH
-    env.report.assert_not_awaited()
 
 
 def test_a_failing_stage_fails_the_job_not_the_request(

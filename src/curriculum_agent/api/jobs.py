@@ -56,7 +56,7 @@ JOB_KIND_LABEL_TH: dict[str, str] = {
     "skill_extraction": "สกัดทักษะ",
     "need_combination": "รวมความต้องการ",
     "plo_synthesis": "สังเคราะห์ PLO",
-    "plo_review": "ตรวจชุด PLO",
+    "plo_review": "ตรวจคุณภาพชุด PLO",
     "plo_report": "ออกรายงาน PLO",
     "plo_revalidate": "ตรวจ SMART ซ้ำ",
 }

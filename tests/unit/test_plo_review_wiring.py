@@ -52,21 +52,6 @@ def _review(fingerprint: str) -> PLOSetReview:
 # ------------------------------ routes ------------------------------
 
 
-def test_report_job_fails_when_the_re_read_finds_nothing(jobs_store, spawned) -> None:
-    """The precondition read found PLOs, so the request is accepted; the re-read
-    after the review found none, so the job fails with the 422's own text."""
-    review_run = AsyncMock(side_effect=lambda s: {**s, "plo_review": None})
-    with (
-        patch("curriculum_agent.api.routes.plos._repo") as repo,
-        patch("curriculum_agent.stages.plo_review.run", review_run),
-    ):
-        repo.list_by_program = AsyncMock(side_effect=[[_PLO], []])
-        resp = client.post("/programs/p1/plos/report/run")
-        job = _run_job(resp, jobs_store, spawned)
-    assert job.status == "failed"
-    assert job.error_th == "ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"
-
-
 def test_get_review_reports_staleness() -> None:
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
@@ -121,30 +106,58 @@ def test_get_review_guards_a_storage_read_failure() -> None:
     assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
 
 
+def test_get_review_guards_a_failed_need_load() -> None:
+    """The Need read is part of judging staleness; its failure degrades the
+    response the same way a failed review read does, not to a 500."""
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch("curriculum_agent.api.routes.plos.PLOReviewRepository") as rr,
+        patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
+    ):
+        repo.list_by_program = AsyncMock(return_value=[_PLO])
+        rr.return_value.get = AsyncMock(return_value=_review("old"))
+        needs.return_value.list_by_program = AsyncMock(side_effect=RuntimeError("db down"))
+        resp = client.get("/programs/p1/plos/review")
+    assert resp.status_code == 200
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
+
+
 def test_review_run_422_without_plos() -> None:
     with patch("curriculum_agent.api.routes.plos._repo") as repo:
         repo.list_by_program = AsyncMock(return_value=[])
         assert client.post("/programs/p1/plos/review/run").status_code == 422
 
 
-def test_review_run_503_when_switched_off() -> None:
-    # conftest switches the slot off for every test.
-    with patch("curriculum_agent.api.routes.plos._repo") as repo:
+def test_review_run_with_the_slot_off_is_a_job(monkeypatch, jobs_store, spawned) -> None:
+    monkeypatch.setattr(settings, "plo_review_provider", "")
+    with (
+        patch("curriculum_agent.api.routes.plos._repo") as repo,
+        patch(
+            "curriculum_agent.stages.plo_review.fresh_review",
+            AsyncMock(return_value=_review(plo_fingerprint([_PLO], {}))),
+        ),
+        patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
+    ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
-        resp = client.post("/programs/p1/plos/review/run")
-    assert resp.status_code == 503
+        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        job = _run_job(client.post("/programs/p1/plos/review/run"), jobs_store, spawned)
+    assert job.status == "succeeded", job.error_th
+    assert job.result["review_enabled"] is False
 
 
-def test_review_run_job_fails_when_the_review_failed(monkeypatch, jobs_store, spawned) -> None:
+def test_review_run_job_fails_when_the_review_raised(monkeypatch, jobs_store, spawned) -> None:
     monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
-        patch("curriculum_agent.stages.plo_review.fresh_review", AsyncMock(return_value=None)),
+        patch(
+            "curriculum_agent.stages.plo_review.fresh_review",
+            AsyncMock(side_effect=RuntimeError("db")),
+        ),
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
         job = _run_job(client.post("/programs/p1/plos/review/run"), jobs_store, spawned)
     assert job.status == "failed"
-    assert job.error_th == "ตรวจชุด PLO ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง"
+    assert job.error_th == "db"
 
 
 def test_review_run_409_while_a_job_is_running_on_the_program(

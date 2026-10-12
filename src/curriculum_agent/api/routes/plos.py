@@ -29,6 +29,7 @@ from curriculum_agent.models import (
     SMARTCheck,
     StakeholderEvidence,
 )
+from curriculum_agent.stages.plo_review_facts import is_stale, need_demands
 
 router = APIRouter()
 _repo = PLORepository()
@@ -61,13 +62,6 @@ class PLOReportResponse(BaseModel):
     # synthesis failed. Carried through for the same reason as `counts` — computing
     # it in the stage and dropping it at the route would hide the cap.
     needs_not_synthesized: list[str] = []
-    # The advisory set review shown beside the report (stages/plo_review.py).
-    review: PLOSetReview | None = None
-    review_stale: bool = False
-    # Whether the slot can run at all right now, vs. having run and failed or
-    # never having run. "" (off) and a provider outage both leave `review=None`,
-    # and the designer cannot tell those apart without this.
-    review_enabled: bool = False
 
 
 @router.get("/", response_model=list[PLO])
@@ -235,9 +229,9 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
 
 @router.post("/report/run", response_model=JobInfo, status_code=202)
 async def run_plo_report(program_id: str) -> JobInfo:
-    """Review the PLO set, then assemble the report. Answers 202; the result (a
-    `PLOReportResponse`) arrives through `GET /jobs`."""
-    from curriculum_agent.stages import plo_review  # noqa: PLC0415
+    """Assemble the report. Answers 202; the result (a `PLOReportResponse`)
+    arrives through `GET /jobs`. The QA review is stage 06 and runs on its own
+    (`POST /plos/review/run`), never from here."""
     from curriculum_agent.stages.plo_report import run  # noqa: PLC0415
 
     plos = await _repo.list_by_program(program_id)
@@ -246,28 +240,12 @@ async def run_plo_report(program_id: str) -> JobInfo:
             status_code=422,
             detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
         )
-
-    snapshot_state: AgentState = {
+    state: AgentState = {
         "program_id": program_id,
         "plos": [p.model_dump(mode="json") for p in plos],
     }
 
     async def work() -> PLOReportResponse:
-        state = await plo_review.run(snapshot_state)
-        # plo_review.run is an LLM call up to plo_review_timeout_seconds (180s) —
-        # long enough for a PUT edit, a merge, or a re-synthesis to land on this
-        # program while it was in flight. Re-read rather than reuse the snapshot
-        # taken above: plo_report.run persists whatever is in state["plos"]
-        # (PLORepository.bulk_insert), and persisting the old snapshot would revert
-        # that change. review_stale is computed by plo_report against the set it
-        # actually persists, not against the one the review call saw.
-        current = await _repo.list_by_program(program_id)
-        if not current:
-            raise HTTPException(
-                status_code=422,
-                detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
-            )
-        state["plos"] = [p.model_dump(mode="json") for p in current]
         result_state = await run(state)
         report = result_state["report"]
         return PLOReportResponse(
@@ -275,9 +253,6 @@ async def run_plo_report(program_id: str) -> JobInfo:
             counts=report["counts"],
             needs_by_id={k: Need.model_validate(v) for k, v in report["needs_by_id"].items()},
             needs_not_synthesized=report["needs_not_synthesized"],
-            review=report["review"],
-            review_stale=report["review_stale"],
-            review_enabled=bool(settings.plo_review_provider),
         )
 
     return await start_job_or_409(program_id, "plo_report", {}, work)
@@ -286,22 +261,17 @@ async def run_plo_report(program_id: str) -> JobInfo:
 class PLOReviewResponse(BaseModel):
     review: PLOSetReview | None
     stale: bool
-    # Same purpose as PLOReportResponse.review_enabled: tells "switched off"
-    # apart from "failed" / "never ran" for a `review=None` the UI otherwise
-    # cannot explain.
+    # Whether the agent half of the slot can run right now. "" (off) still
+    # stores the code facts, so this tells "facts only" apart from "judged".
     review_enabled: bool = False
 
 
 @router.get("/review", response_model=PLOReviewResponse)
 async def get_plo_review(program_id: str) -> PLOReviewResponse:
-    from curriculum_agent.stages.plo_review_facts import (  # noqa: PLC0415
-        is_stale,
-        need_demands,
-    )
-
     plos = await _repo.list_by_program(program_id)
     try:
         review = await PLOReviewRepository().get(program_id)
+        needs = await NeedRepository().list_by_program(program_id)
     except Exception as exc:
         # A read failure here must not 500 the whole page — GET /plos/ already
         # raises on an unrelated bad row, and this route must not add a second
@@ -312,37 +282,26 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
         )
     return PLOReviewResponse(
         review=review,
-        stale=review is not None
-        and is_stale(
-            review, plos, need_demands(await NeedRepository().list_by_program(program_id))
-        ),
+        stale=review is not None and is_stale(review, plos, need_demands(needs)),
         review_enabled=bool(settings.plo_review_provider),
     )
 
 
 @router.post("/review/run", response_model=JobInfo, status_code=202)
 async def run_plo_review(program_id: str) -> JobInfo:
-    """Run the advisory set review afresh. Answers 202; the result (a
+    """Run the closing-stage QA review afresh. Answers 202; the result (a
     `PLOReviewResponse`) arrives through `GET /jobs`.
 
-    The switched-off 503 stays on the request: whether the slot can run at all is
-    known before any job exists, so a designer who asks for a disabled feature is
-    told so rather than shown a job that fails.
+    It runs with the slot switched off too: the code facts are stored without the
+    agent, so there is no disabled-feature 503 — `review_enabled` in the result
+    says whether the agent judged it.
     """
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
-    from curriculum_agent.stages.plo_review_facts import (  # noqa: PLC0415
-        is_stale,
-        need_demands,
-    )
 
     plos = await _repo.list_by_program(program_id)
     if not plos:
         raise HTTPException(
             status_code=422, detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"
-        )
-    if not settings.plo_review_provider:
-        raise HTTPException(
-            status_code=503, detail="ปิดการตรวจชุด PLO อยู่ (ตั้ง PLO_REVIEW_PROVIDER ไว้ว่าง)"
         )
 
     async def work() -> PLOReviewResponse:
@@ -350,18 +309,14 @@ async def run_plo_review(program_id: str) -> JobInfo:
             review = await plo_review.fresh_review(program_id, plos)
         except plo_review.ReviewAlreadyRunning as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        if review is None:
-            raise HTTPException(status_code=503, detail="ตรวจชุด PLO ไม่สำเร็จ กรุณาลองใหม่อีกครั้ง")
-        # fresh_review's call can run for up to plo_review_timeout_seconds (180s);
-        # re-read rather than reuse `plos` so staleness is judged against whatever
-        # landed on this program while the call was in flight, not the snapshot
-        # from before it started.
+        # The agent can run for up to plo_review_timeout_seconds (300s); judge
+        # staleness against whatever landed on this program meanwhile.
         plos_now = await _repo.list_by_program(program_id)
-        demands_now = need_demands(await NeedRepository().list_by_program(program_id))
+        needs_now = await NeedRepository().list_by_program(program_id)
         return PLOReviewResponse(
             review=review,
-            stale=is_stale(review, plos_now, demands_now),
-            review_enabled=True,
+            stale=is_stale(review, plos_now, need_demands(needs_now)),
+            review_enabled=bool(settings.plo_review_provider),
         )
 
     return await start_job_or_409(program_id, "plo_review", {}, work)
