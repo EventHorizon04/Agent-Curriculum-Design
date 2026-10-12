@@ -56,7 +56,7 @@ _SYSTEM_TH = """คุณเป็นกรรมการตรวจคุณ�
 5) bloom_distribution_th (การกระจาย Bloom): หนึ่งถึงสามประโยค ตีความจำนวน PLO ต่อระดับเทียบระดับปริญญา
 6) unused_needs (Need สำคัญที่ไม่ได้เป็น PLO): สำหรับแต่ละ Need ในรายการที่ให้มา
    need_id, verdict ("consider" = ควรพิจารณาใส่เป็น PLO, "ok_to_leave" = ปล่อยไว้ได้), reason_th
-   Need ที่ยังไม่มีประโยค (เหตุที่ไม่ได้ใช้ = unwritten) ตัดสินว่า "consider" ไม่ได้จนกว่าผู้ออกแบบจะเขียนประโยคก่อน
+   Need ที่ยังไม่มีประโยค (ในรายการแสดงว่า "(ยังไม่มีประโยค Need ...)") ตัดสินว่า "consider" ไม่ได้จนกว่าผู้ออกแบบจะเขียนประโยคก่อน
    ให้ตอบ "ok_to_leave" หรือไม่ต้องใส่ในรายการ
 
 summary_th: สรุป 2-5 ประโยคให้ผู้ออกแบบ เรียงเรื่องสำคัญก่อน
@@ -80,6 +80,8 @@ summary_th: สรุป 2-5 ประโยคให้ผู้ออกแบ
 # printing it would hand the reviewer the skill-level detail it is kept away from.
 # The stored finding keeps the real text; only the prompt is masked.
 _UNWRITTEN_PLACEHOLDER_TH = "(ยังไม่มีประโยค Need — ผู้ออกแบบต้องเขียนก่อน)"
+# The same, where a PLO's cited Need is the unwritten one (an older stored PLO).
+UNWRITTEN_CITED_PLACEHOLDER_TH = "(Need นี้ยังไม่มีประโยค — ผู้ออกแบบต้องเขียนก่อน)"
 
 
 def _ksec_label(tags: Sequence[str]) -> str:
@@ -116,7 +118,7 @@ def build_plo_review_prompt(dossier: ReviewDossier) -> list[dict[str, str]]:
         unused = "\n".join(
             f"[{u.need_id}] demand {u.demand_score:.2f} | KSEC {u.ksec_category} | "
             f"ผู้ขอ: {', '.join(u.stakeholder_types) or '-'} | เหตุที่ไม่ได้ใช้: {u.exclusion}\n"
-            f"  {_UNWRITTEN_PLACEHOLDER_TH if u.exclusion == 'unwritten' else u.statement_th}"
+            f"  {_UNWRITTEN_PLACEHOLDER_TH if u.unwritten else u.statement_th}"
             for u in dossier.unused_needs
         )
     else:

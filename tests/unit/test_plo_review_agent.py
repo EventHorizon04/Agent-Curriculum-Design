@@ -167,7 +167,9 @@ def test_check_verbs_reports_the_opening_and_the_declared_verbs() -> None:
 
 
 def test_need_detail_refuses_an_unwritten_need() -> None:
-    unwritten = _UNUSED.model_copy(update={"need_id": "w1", "exclusion": "unwritten"})
+    unwritten = _UNUSED.model_copy(
+        update={"need_id": "w1", "exclusion": "out_of_scope", "unwritten": True}
+    )
     dossier = _DOSSIER.__class__(**{**_DOSSIER.__dict__, "unused_needs": (_UNUSED, unwritten)})
     w1 = _U1.model_copy(update={"need_id": "w1", "rationale_th": "[ต้องทบทวน] ไม่มีคำอธิบาย"})
     ok, payload = agent.run_review_tool(

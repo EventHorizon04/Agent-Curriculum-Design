@@ -197,15 +197,35 @@ def test_the_rendered_prompt_carries_no_skill_names_ids_or_rationale() -> None:
     including an unwritten Need whose fallback statement is a skill list."""
     skill_a, skill_b = "การแปลเอกสารกฎหมาย", "การล่ามประชุม"
     unwritten = _need("w1", demand=0.9, statement=f"[ต้องทบทวน] {skill_a}, {skill_b}")
-    needs = [_need("n1"), _need("n2", KSECCategory.EC), unwritten]
-    plos = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2"])]
+    # Also out of scope: exclusion_reason answers "out_of_scope" for it, and the
+    # leak must be closed by the flag, not by the reason.
+    skill_c, skill_d = "การเขียนโปรแกรมฐานข้อมูล", "การดูแลเซิร์ฟเวอร์"
+    unwritten_oos = _need(
+        "w2", demand=0.8, statement=f"[ต้องทบทวน] {skill_c}, {skill_d}", in_field=0
+    )
+    # An older stored PLO citing a fallback Need.
+    cited_fallback = _need("w3", demand=0.1, statement="[ต้องทบทวน] การตรวจสอบบัญชี, การวางแผนภาษี")
+    needs = [_need("n1"), _need("n2", KSECCategory.EC), unwritten, unwritten_oos, cited_fallback]
+    plos = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2"]), _plo("PLO3", ["w3"])]
     d = build_dossier(
         plos, needs, program_context="หลักสูตรปริญญาตรี สาขาการแปล", degree_level="bachelor"
     )
-    assert [u.exclusion for u in d.unused_needs] == ["unwritten"]
+    by_id = {u.need_id: u for u in d.unused_needs}
+    assert by_id["w1"].exclusion == "unwritten" and by_id["w1"].unwritten
+    assert by_id["w2"].exclusion == "out_of_scope" and by_id["w2"].unwritten
     text = "\n".join(m["content"] for m in build_plo_review_prompt(d))
-    assert "[w1]" in text  # the Need is offered to the reviewer, by id
-    forbidden = [skill_a, skill_b, "smart_check", "diagnosis", "rationale"]
+    assert "[w1]" in text and "[w2]" in text  # offered to the reviewer, by id
+    forbidden = [
+        skill_a,
+        skill_b,
+        skill_c,
+        skill_d,
+        "การตรวจสอบบัญชี",
+        "การวางแผนภาษี",
+        "smart_check",
+        "diagnosis",
+        "rationale",
+    ]
     for n in needs:
         forbidden += [*n.source_evidence_ids, *n.member_skill_ids, n.rationale_th]
     for term in forbidden:

@@ -24,7 +24,7 @@ from curriculum_agent.models import (
     StakeholderType,
     UnusedNeedFinding,
 )
-from curriculum_agent.prompts.plo_review import ReviewItem
+from curriculum_agent.prompts.plo_review import UNWRITTEN_CITED_PLACEHOLDER_TH, ReviewItem
 from curriculum_agent.stages.need_grouping import is_in_scope, is_unwritten_need
 
 KSEC_ORDER: tuple[str, ...] = ("K", "S", "E", "C")
@@ -117,6 +117,7 @@ def select_unused_needs(
             ksec_category=n.ksec_category.value,
             stakeholder_types=[t.value for t in n.source_stakeholder_types],
             exclusion=exclusion_reason(n),
+            unwritten=is_unwritten_need(n),
         )
         for n in picked
     ]
@@ -152,7 +153,11 @@ def build_dossier(
             bloom_level=p.bloom_level.value,
             current_ksec=tuple(current_ksec(p, needs_by_id)),
             need_statements_th=tuple(
-                needs_by_id[nid].statement_th for nid in p.source_need_ids if nid in needs_by_id
+                UNWRITTEN_CITED_PLACEHOLDER_TH
+                if is_unwritten_need(needs_by_id[nid])
+                else needs_by_id[nid].statement_th
+                for nid in p.source_need_ids
+                if nid in needs_by_id
             ),
         )
         for p in sorted(plos, key=lambda p: (p.is_optional, len(p.plo_id), p.plo_id))

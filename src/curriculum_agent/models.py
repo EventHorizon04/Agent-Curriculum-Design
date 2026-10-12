@@ -597,6 +597,11 @@ class UnusedNeedFinding(BaseModel):
     ksec_category: str
     stakeholder_types: list[str] = Field(default_factory=list)
     exclusion: str
+    # The Need's statement is a fallback ("[ต้องทบทวน]" plus skill names). Separate
+    # from `exclusion`, which gives out_of_scope precedence, so an unwritten Need
+    # that is also out of scope is still known to be unwritten. The default keeps
+    # rows stored before the field readable.
+    unwritten: bool = False
     verdict: str | None = None
     reason_th: str = ""
 

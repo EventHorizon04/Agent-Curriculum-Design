@@ -143,6 +143,7 @@ def test_an_unwritten_need_prints_a_placeholder_not_its_fallback_statement() -> 
                 ksec_category="S",
                 stakeholder_types=["employer"],
                 exclusion="unwritten",
+                unwritten=True,
             ),
         )
     )
@@ -156,3 +157,4 @@ def test_an_unwritten_need_prints_a_placeholder_not_its_fallback_statement() -> 
 def test_rubric_says_an_unwritten_need_cannot_be_judged_consider() -> None:
     system, _ = _turns()
     assert "Need ที่ยังไม่มีประโยค" in system and "ok_to_leave" in system
+    assert "เหตุที่ไม่ได้ใช้ = unwritten" not in system  # keyed on the flag, not the reason
