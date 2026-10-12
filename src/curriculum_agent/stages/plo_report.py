@@ -7,7 +7,7 @@ from loguru import logger
 from curriculum_agent.data.repositories import NeedRepository, PLORepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import PLO, PLOSetReview
-from curriculum_agent.stages.plo_review import is_stale
+from curriculum_agent.stages.plo_review_facts import is_stale, need_demands
 from curriculum_agent.stages.plo_synthesis import cited_need_ids
 
 
@@ -95,7 +95,7 @@ async def run(state: AgentState) -> AgentState:
         # Advisory; may be stale (made from an earlier PLO set) or absent (the
         # review did not run). Never changes anything above.
         "review": review.model_dump(mode="json") if review is not None else None,
-        "review_stale": review is not None and is_stale(review, plos),
+        "review_stale": review is not None and is_stale(review, plos, need_demands(needs)),
     }
 
     await PLORepository().bulk_insert(plos)

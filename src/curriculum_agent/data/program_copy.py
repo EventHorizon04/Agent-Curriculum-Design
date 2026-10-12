@@ -50,7 +50,7 @@ from curriculum_agent.data.orm import (
 from curriculum_agent.data.postgres import AsyncSessionLocal
 from curriculum_agent.data.repositories import _row_to_dict
 from curriculum_agent.models import PLO
-from curriculum_agent.stages.plo_review import plo_fingerprint
+from curriculum_agent.stages.plo_review_facts import plo_fingerprint
 
 _Row = TypeVar("_Row", bound=Base)
 
@@ -112,10 +112,13 @@ def _clone(row: _Row, id_map: Mapping[str, str], **overrides: Any) -> _Row:
     return type(row)(**data)
 
 
-def _fingerprint(rows: list[PLOTable]) -> str | None:
-    """The review fingerprint of a PLO row set, or None if a row won't parse."""
+def _fingerprint(plo_rows: list[PLOTable], need_rows: list[NeedTable]) -> str | None:
+    """The review fingerprint of a program's rows, or None if a PLO row won't parse."""
     try:
-        return plo_fingerprint([PLO.model_validate(_row_to_dict(r)) for r in rows])
+        return plo_fingerprint(
+            [PLO.model_validate(_row_to_dict(r)) for r in plo_rows],
+            {r.need_id: r.demand_score for r in need_rows},
+        )
     except Exception as exc:  # noqa: BLE001 - a legacy row only costs freshness
         logger.warning(f"program copy: PLO rows did not parse for the fingerprint: {exc}")
         return None
@@ -164,8 +167,8 @@ def build_copy(
         # The fingerprint hashes source_need_ids, which just changed. A review
         # that was current for the source is recomputed so it stays current for
         # the copy; a stale one keeps its old fingerprint and so stays stale.
-        source_fp = _fingerprint(src.plos)
-        copied_fp = _fingerprint(plos)
+        source_fp = _fingerprint(src.plos, src.needs)
+        copied_fp = _fingerprint(plos, needs)
         fingerprint = src.review.plo_fingerprint
         if source_fp is not None and copied_fp is not None and fingerprint == source_fp:
             fingerprint = copied_fp

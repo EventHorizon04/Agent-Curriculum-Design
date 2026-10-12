@@ -23,7 +23,7 @@ from curriculum_agent.data.orm import (
 from curriculum_agent.data.program_copy import ProgramRows, build_copy, remap_ids
 from curriculum_agent.data.repositories import _row_to_dict
 from curriculum_agent.models import PLO
-from curriculum_agent.stages.plo_review import plo_fingerprint
+from curriculum_agent.stages.plo_review_facts import plo_fingerprint
 
 NOW = datetime(2026, 10, 6, 12, 0, 0)
 
@@ -169,8 +169,11 @@ def _with_review(src: ProgramRows, *, fingerprint: str) -> ProgramRows:
     return replace(src, review=review)
 
 
-def _fingerprint(rows: list[PLOTable]) -> str:
-    return plo_fingerprint([PLO.model_validate(_row_to_dict(r)) for r in rows])
+def _fingerprint(rows: list[PLOTable], need_rows: list[NeedTable]) -> str:
+    return plo_fingerprint(
+        [PLO.model_validate(_row_to_dict(r)) for r in rows],
+        {r.need_id: r.demand_score for r in need_rows},
+    )
 
 
 def _dump(rows: ProgramRows) -> str:
@@ -227,18 +230,18 @@ def test_the_source_rows_are_not_mutated() -> None:
 
 def test_a_current_review_stays_current_in_the_copy() -> None:
     src = _source()
-    src = _with_review(src, fingerprint=_fingerprint(src.plos))
+    src = _with_review(src, fingerprint=_fingerprint(src.plos, src.needs))
     copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
     assert copy.review is not None
     assert copy.review.program_id == "program-2-run-1"
-    assert copy.review.plo_fingerprint == _fingerprint(copy.plos)
+    assert copy.review.plo_fingerprint == _fingerprint(copy.plos, copy.needs)
 
 
 def test_a_stale_review_stays_stale_in_the_copy() -> None:
     src = _with_review(_source(), fingerprint="0" * 64)
     copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
     assert copy.review is not None
-    assert copy.review.plo_fingerprint != _fingerprint(copy.plos)
+    assert copy.review.plo_fingerprint != _fingerprint(copy.plos, copy.needs)
 
 
 def test_no_review_means_no_review() -> None:

@@ -30,7 +30,8 @@ from curriculum_agent.models import (
     ProgramMetadata,
     SMARTCheck,
 )
-from curriculum_agent.stages.plo_review import ReviewAlreadyRunning, plo_fingerprint
+from curriculum_agent.stages.plo_review import ReviewAlreadyRunning
+from curriculum_agent.stages.plo_review_facts import need_demands, plo_fingerprint
 from curriculum_agent.stages.plo_synthesis import SynthesisAlreadyRunning
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
@@ -98,7 +99,7 @@ def _plo() -> PLO:
 def _review() -> PLOSetReview:
     return PLOSetReview(
         program_id="cs-test",
-        plo_fingerprint=plo_fingerprint([_plo()]),
+        plo_fingerprint=plo_fingerprint([_plo()], need_demands([_need()])),
         model="m",
         created_at=datetime(2026, 10, 8),
         summary_th="ดีแล้ว",

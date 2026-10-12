@@ -15,7 +15,6 @@ claim — a PLO's current KSEC, whether a suggestion agrees, the declared level.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -42,9 +41,15 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.plo_review import ReviewItem, build_plo_review_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
+from curriculum_agent.stages.plo_review_facts import (
+    current_ksec,
+    is_stale,
+    need_demands,
+    normalize_ksec,
+    plo_fingerprint,
+)
 
 MAX_REDUNDANCY_GROUP = 3
-_KSEC_ORDER = ("K", "S", "E", "C")
 
 
 class _Redundancy(BaseModel):
@@ -71,56 +76,6 @@ class ReviewAnswer(BaseModel):
     bloom: list[_BloomVerdict] = Field(default_factory=list)
     bloom_distribution_th: str = ""
     summary_th: str = ""
-
-
-def _normalize_ksec(values: Sequence[str]) -> list[str]:
-    """K/S/E/C in canonical order; "EC" and "E|C" read as E and C; anything else dropped."""
-    found: set[str] = set()
-    for raw in values:
-        token = raw.strip().upper().replace("|", "")
-        if token == "EC":
-            found.update({"E", "C"})
-        elif token in _KSEC_ORDER:
-            found.add(token)
-    return [k for k in _KSEC_ORDER if k in found]
-
-
-def current_ksec(plo: PLO, needs_by_id: Mapping[str, Need]) -> list[str]:
-    """The KSEC tags of the Needs behind a PLO, EC expanded, unknown Needs ignored."""
-    return _normalize_ksec(
-        [needs_by_id[nid].ksec_category.value for nid in plo.source_need_ids if nid in needs_by_id]
-    )
-
-
-def plo_fingerprint(plos: Sequence[PLO]) -> str:
-    """What the review was made from. Any edit a designer could act on moves it.
-
-    It is built from the PLOs alone. Need statements, Need KSEC tags, and the
-    program context are also prompt inputs (`_items`, `build_plo_review_prompt`)
-    but are not covered by this fingerprint — so re-running need_combination
-    without re-running synthesis leaves a stored review reading as current
-    (`is_stale` returns False) even though it was built from Need text that no
-    longer exists. `POST /review/run` forces a fresh call regardless of
-    staleness and is the way to refresh it in that case.
-    """
-    parts = [
-        "\x1f".join(
-            [
-                p.plo_id,
-                p.statement_th,
-                p.bloom_level.value,
-                p.action_verb_th,
-                "1" if p.is_optional else "0",
-                ",".join(sorted(p.source_need_ids)),
-            ]
-        )
-        for p in sorted(plos, key=lambda p: p.plo_id)
-    ]
-    return hashlib.sha256("\x1e".join(parts).encode()).hexdigest()
-
-
-def is_stale(review: PLOSetReview, plos: Sequence[PLO]) -> bool:
-    return review.plo_fingerprint != plo_fingerprint(plos)
 
 
 def is_empty(review: PLOSetReview) -> bool:
@@ -180,7 +135,7 @@ def accept_review(
     ksec_seen: set[str] = set()
     for k in answer.ksec:
         pid = k.plo_id.strip()
-        suggested = _normalize_ksec(k.suggested)
+        suggested = normalize_ksec(k.suggested)
         if pid not in by_id or pid in ksec_seen or not suggested:
             drops["ksec"] += 1
             continue
@@ -301,7 +256,7 @@ async def _call(program_id: str, plos: Sequence[PLO]) -> PLOSetReview | None:
         plos,
         needs_by_id,
         program_id=program_id,
-        fingerprint=plo_fingerprint(plos),
+        fingerprint=plo_fingerprint(plos, need_demands(needs)),
         model=settings.plo_review_model,
         created_at=datetime.now(UTC).replace(tzinfo=None),
     )
@@ -345,8 +300,14 @@ async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview |
     except Exception as exc:
         logger.warning(f"plo_review: could not read the stored review for {program_id}: {exc!r}")
         stored = None
-    if stored is not None and not is_stale(stored, plos):
-        return stored
+    if stored is not None:
+        try:
+            demands = need_demands(await NeedRepository().list_by_program(program_id))
+        except Exception as exc:
+            logger.warning(f"plo_review: could not load the Needs for {program_id}: {exc!r}")
+            demands = None
+        if demands is not None and not is_stale(stored, plos, demands):
+            return stored
     try:
         fresh = await fresh_review(program_id, plos)
     except ReviewAlreadyRunning:

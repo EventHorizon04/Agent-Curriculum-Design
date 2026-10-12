@@ -566,8 +566,50 @@ class BloomFinding(BaseModel):
     reason_th: str = ""
 
 
+class KsecCoverage(BaseModel):
+    """How many PLOs (optional included) sit in each of K/S/E/C.
+
+    Computed in code, never by the reviewer.
+
+    Plain `str` keys and flags for the `soft_flags` reason: a stored row must
+    stay readable if the vocabulary moves.
+    """
+
+    counts: dict[str, int] = Field(default_factory=dict)
+    missing: list[str] = Field(default_factory=list)
+    flags: list[str] = Field(default_factory=list)
+
+
+class BloomHistogram(BaseModel):
+    """PLOs (optional included) per Bloom level against the degree level. Computed in code."""
+
+    counts: dict[str, int] = Field(default_factory=dict)
+    degree_level: str = ""
+    flags: list[str] = Field(default_factory=list)
+
+
+class UnusedNeedFinding(BaseModel):
+    """An important Need no PLO cites: facts from code, verdict from the reviewer."""
+
+    need_id: str
+    statement_th: str
+    demand_score: float
+    ksec_category: str
+    stakeholder_types: list[str] = Field(default_factory=list)
+    exclusion: str
+    verdict: str | None = None
+    reason_th: str = ""
+
+
+class ReviewToolCall(BaseModel):
+    """One tool call the QA agent made, in order, for the "what it looked at" list."""
+
+    tool: str
+    arg: str = ""
+
+
 class PLOSetReview(BaseModel):
-    """The advisory review of one program's PLO set — see stages/plo_review.py.
+    """The QA agent's review of one program's PLO set — see stages/plo_review.py.
 
     `plo_fingerprint` is the set it was made from; a review whose fingerprint no
     longer matches the stored PLOs is stale and is shown labelled as such.
@@ -582,6 +624,15 @@ class PLOSetReview(BaseModel):
     bloom: list[BloomFinding] = Field(default_factory=list)
     bloom_distribution_th: str = ""
     summary_th: str = ""
+    ksec_coverage: KsecCoverage = Field(default_factory=KsecCoverage)
+    bloom_histogram: BloomHistogram = Field(default_factory=BloomHistogram)
+    coverage_th: str = ""
+    unused_needs: list[UnusedNeedFinding] = Field(default_factory=list)
+    # "agent" for every row written before this field existed: those were all
+    # made by the model. Plain str, not a Literal, for the soft_flags reason.
+    reviewed_by: str = "agent"
+    code_only_reason: str | None = None
+    tool_calls: list[ReviewToolCall] = Field(default_factory=list)
 
 
 # ----------------------- Stage checkpoint ------------------------

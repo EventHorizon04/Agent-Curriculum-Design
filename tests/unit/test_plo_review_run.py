@@ -91,7 +91,7 @@ async def test_a_fresh_review_is_judged_and_stored(live: AsyncMock) -> None:
     review = await pr.fresh_review("p", _PLOS)
     assert review is not None
     assert review.redundancies[0].plo_ids == ["PLO1", "PLO2"]
-    assert review.plo_fingerprint == pr.plo_fingerprint(_PLOS)
+    assert review.plo_fingerprint == pr.plo_fingerprint(_PLOS, {_NEED.need_id: _NEED.demand_score})
     assert _MemoryRepo.rows["p"] == review
     live.assert_awaited_once()
 

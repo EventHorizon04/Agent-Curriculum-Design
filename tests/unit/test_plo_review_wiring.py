@@ -11,7 +11,8 @@ from curriculum_agent.config import settings
 from curriculum_agent.graph import DESIGNER_STAGES, REVIEW_NODE_STAGE, build_graph
 from curriculum_agent.models import PLO, BloomLevel, JobInfo, PLOSetReview, SMARTCheck
 from curriculum_agent.stages import plo_report
-from curriculum_agent.stages.plo_review import ReviewAlreadyRunning, plo_fingerprint
+from curriculum_agent.stages.plo_review import ReviewAlreadyRunning
+from curriculum_agent.stages.plo_review_facts import plo_fingerprint
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 app = FastAPI()
@@ -106,7 +107,7 @@ def test_report_route_runs_the_review_first(jobs_store, spawned) -> None:
     review_run = AsyncMock(
         side_effect=lambda s: {
             **s,
-            "plo_review": _review(plo_fingerprint([_PLO])).model_dump(mode="json"),
+            "plo_review": _review(plo_fingerprint([_PLO], {})).model_dump(mode="json"),
         }
     )
     with (
@@ -139,7 +140,7 @@ def test_report_route_re_reads_the_plos_after_the_review_call(jobs_store, spawne
     review_run = AsyncMock(
         side_effect=lambda s: {
             **s,
-            "plo_review": _review(plo_fingerprint([_PLO])).model_dump(mode="json"),
+            "plo_review": _review(plo_fingerprint([_PLO], {})).model_dump(mode="json"),
         }
     )
     with (
@@ -204,8 +205,10 @@ def test_get_review_reports_staleness() -> None:
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch("curriculum_agent.api.routes.plos.PLOReviewRepository") as rr,
+        patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
+        needs.return_value.list_by_program = AsyncMock(return_value=[])
         rr.return_value.get = AsyncMock(return_value=_review("old"))
         resp = client.get("/programs/p1/plos/review")
     assert resp.status_code == 200
@@ -291,7 +294,7 @@ def test_review_run_409_while_a_job_is_running_on_the_program(
         status="running",
         created_at=datetime(2026, 10, 8, 3, 0),
     )
-    fresh = AsyncMock(return_value=_review(plo_fingerprint([_PLO])))
+    fresh = AsyncMock(return_value=_review(plo_fingerprint([_PLO], {})))
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch("curriculum_agent.stages.plo_review.fresh_review", fresh),
@@ -326,12 +329,14 @@ def test_review_run_job_fails_with_the_stage_message_when_its_own_guard_fires(
 
 def test_review_run_returns_the_fresh_review(monkeypatch, jobs_store, spawned) -> None:
     monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
-    fresh = _review(plo_fingerprint([_PLO]))
+    fresh = _review(plo_fingerprint([_PLO], {}))
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch("curriculum_agent.stages.plo_review.fresh_review", AsyncMock(return_value=fresh)),
+        patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
+        needs.return_value.list_by_program = AsyncMock(return_value=[])
         resp = client.post("/programs/p1/plos/review/run")
         job = _run_job(resp, jobs_store, spawned)
     assert job.status == "succeeded", job.error_th
@@ -350,12 +355,14 @@ def test_review_run_reports_staleness_from_the_set_read_after_the_call(
     first, so the review's own fingerprint (set A) is now stale against it."""
     monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
     plo_b = _PLO.model_copy(update={"statement_th": "แปลเอกสารราชการ"})
-    fresh = _review(plo_fingerprint([_PLO]))
+    fresh = _review(plo_fingerprint([_PLO], {}))
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch("curriculum_agent.stages.plo_review.fresh_review", AsyncMock(return_value=fresh)),
+        patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(side_effect=[[_PLO], [plo_b]])
+        needs.return_value.list_by_program = AsyncMock(return_value=[])
         resp = client.post("/programs/p1/plos/review/run")
         job = _run_job(resp, jobs_store, spawned)
     assert job.status == "succeeded", job.error_th

@@ -435,7 +435,20 @@ class PLORepository:
             return [PLO.model_validate(_row_to_dict(row)) for row in rows]
 
 
-_REVIEW_BODY_FIELDS = {"redundancies", "ksec", "bloom", "bloom_distribution_th", "summary_th"}
+_REVIEW_BODY_FIELDS = {
+    "redundancies",
+    "ksec",
+    "bloom",
+    "bloom_distribution_th",
+    "summary_th",
+    "ksec_coverage",
+    "bloom_histogram",
+    "coverage_th",
+    "unused_needs",
+    "reviewed_by",
+    "code_only_reason",
+    "tool_calls",
+}
 
 
 class PLOReviewRepository:

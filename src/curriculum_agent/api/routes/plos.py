@@ -294,7 +294,10 @@ class PLOReviewResponse(BaseModel):
 
 @router.get("/review", response_model=PLOReviewResponse)
 async def get_plo_review(program_id: str) -> PLOReviewResponse:
-    from curriculum_agent.stages.plo_review import is_stale  # noqa: PLC0415
+    from curriculum_agent.stages.plo_review_facts import (  # noqa: PLC0415
+        is_stale,
+        need_demands,
+    )
 
     plos = await _repo.list_by_program(program_id)
     try:
@@ -309,7 +312,10 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
         )
     return PLOReviewResponse(
         review=review,
-        stale=review is not None and is_stale(review, plos),
+        stale=review is not None
+        and is_stale(
+            review, plos, need_demands(await NeedRepository().list_by_program(program_id))
+        ),
         review_enabled=bool(settings.plo_review_provider),
     )
 
@@ -324,6 +330,10 @@ async def run_plo_review(program_id: str) -> JobInfo:
     told so rather than shown a job that fails.
     """
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
+    from curriculum_agent.stages.plo_review_facts import (  # noqa: PLC0415
+        is_stale,
+        need_demands,
+    )
 
     plos = await _repo.list_by_program(program_id)
     if not plos:
@@ -347,8 +357,11 @@ async def run_plo_review(program_id: str) -> JobInfo:
         # landed on this program while the call was in flight, not the snapshot
         # from before it started.
         plos_now = await _repo.list_by_program(program_id)
+        demands_now = need_demands(await NeedRepository().list_by_program(program_id))
         return PLOReviewResponse(
-            review=review, stale=plo_review.is_stale(review, plos_now), review_enabled=True
+            review=review,
+            stale=is_stale(review, plos_now, demands_now),
+            review_enabled=True,
         )
 
     return await start_job_or_409(program_id, "plo_review", {}, work)

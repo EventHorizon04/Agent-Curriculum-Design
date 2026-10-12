@@ -16,6 +16,8 @@ from curriculum_agent.models import (
     KsecFinding,
     PLOSetReview,
     RedundancyFinding,
+    ReviewToolCall,
+    UnusedNeedFinding,
 )
 
 _REVIEW = PLOSetReview(
@@ -39,6 +41,20 @@ _REVIEW = PLOSetReview(
     ],
     bloom_distribution_th="apply เป็นหลัก",
     summary_th="มีสองข้อซ้ำกัน",
+    unused_needs=[
+        UnusedNeedFinding(
+            need_id="n9",
+            statement_th="ต้องการบัณฑิตที่ใช้ภาษาที่สามได้",
+            demand_score=0.7,
+            ksec_category="S",
+            exclusion="lost_on_demand",
+            verdict="should_be_covered",
+            reason_th="ความต้องการสูง",
+        )
+    ],
+    reviewed_by="code_only",
+    code_only_reason="timeout",
+    tool_calls=[ReviewToolCall(tool="read_need", arg="n9")],
 )
 
 
@@ -83,6 +99,20 @@ async def test_upsert_replaces_the_existing_row() -> None:
     session.add.assert_not_called()
     assert existing.plo_fingerprint == "f" * 64
     assert existing.review["summary_th"] == "มีสองข้อซ้ำกัน"
+
+
+async def test_upsert_writes_the_agent_fields_into_the_jsonb_body() -> None:
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=None)
+    session.add = MagicMock()
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_ctx(session)):
+        await PLOReviewRepository().upsert(_REVIEW)
+    body = session.add.call_args.args[0].review
+    assert body["reviewed_by"] == "code_only"
+    assert body["code_only_reason"] == "timeout"
+    assert body["unused_needs"][0]["need_id"] == "n9"
+    assert body["tool_calls"] == [{"tool": "read_need", "arg": "n9"}]
+    assert "ksec_coverage" in body and "bloom_histogram" in body and "coverage_th" in body
 
 
 def test_program_delete_cascade_drops_the_review() -> None:

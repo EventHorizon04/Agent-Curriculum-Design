@@ -12,6 +12,7 @@ from curriculum_agent.stages.plo_review import (
     current_ksec,
     is_empty,
     is_stale,
+    need_demands,
     plo_fingerprint,
 )
 
@@ -48,6 +49,7 @@ def _plo(pid: str, need_ids: list[str], *, statement: str | None = None) -> PLO:
 
 
 NEEDS = {"n1": _need("n1", KSECCategory.S), "n2": _need("n2", KSECCategory.EC)}
+DEMANDS = need_demands(NEEDS.values())
 PLOS = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2"]), _plo("PLO3", ["n1", "n2"])]
 
 
@@ -73,17 +75,19 @@ def test_current_ksec_ignores_an_unknown_need() -> None:
 
 
 def test_fingerprint_ignores_order_and_moves_on_each_field() -> None:
-    base = plo_fingerprint(PLOS)
-    assert plo_fingerprint(list(reversed(PLOS))) == base
+    base = plo_fingerprint(PLOS, DEMANDS)
+    assert plo_fingerprint(list(reversed(PLOS)), DEMANDS) == base
     changed = [PLOS[0].model_copy(update={"statement_th": "ออกแบบระบบ"}), *PLOS[1:]]
-    assert plo_fingerprint(changed) != base
+    assert plo_fingerprint(changed, DEMANDS) != base
     for field, value in [
         ("bloom_level", BloomLevel.CREATE),
         ("action_verb_th", "ออกแบบ"),
         ("is_optional", True),
         ("source_need_ids", ["n2"]),
     ]:
-        assert plo_fingerprint([PLOS[0].model_copy(update={field: value}), *PLOS[1:]]) != base
+        assert (
+            plo_fingerprint([PLOS[0].model_copy(update={field: value}), *PLOS[1:]], DEMANDS) != base
+        )
 
 
 def test_is_stale_compares_fingerprints() -> None:
@@ -92,12 +96,12 @@ def test_is_stale_compares_fingerprints() -> None:
         PLOS,
         NEEDS,
         program_id="p",
-        fingerprint=plo_fingerprint(PLOS),
+        fingerprint=plo_fingerprint(PLOS, DEMANDS),
         model="m",
         created_at=_NOW,
     )
-    assert not is_stale(review, PLOS)
-    assert is_stale(review, PLOS[:2])
+    assert not is_stale(review, PLOS, DEMANDS)
+    assert is_stale(review, PLOS[:2], DEMANDS)
 
 
 # ------------------------------ redundancy ------------------------------
