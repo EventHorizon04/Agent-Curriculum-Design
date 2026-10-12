@@ -1,6 +1,6 @@
 /** The pipeline as the designer meets it.
  *
- * Six stages run in the engine; five of them have a page, because
+ * Seven stages run in the engine; six of them have a page, because
  * skill_extraction and need_combination run back to back behind one review gate
  * and are therefore reviewed together on one screen. `engineStages` records that
  * — the nav shows it rather than hiding it, since a designer looking for a
@@ -57,6 +57,13 @@ export const STAGES: StageDef[] = [
     ordinal: 5,
     label: 'รายงาน PLO',
     summary: 'ทบทวนผลตรวจ ย้อนรอยหลักฐาน และส่งออก',
+  },
+  {
+    key: 'plo_review',
+    route: '/plo-review',
+    ordinal: 6,
+    label: 'ตรวจคุณภาพชุด PLO',
+    summary: 'QA agent อ่าน PLO ทั้งชุด แนะนำเรื่องซ้ำ KSEC Bloom และ Need ที่ตกหล่น',
   },
 ]
 

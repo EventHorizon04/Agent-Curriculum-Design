@@ -39,7 +39,7 @@ export const JOB_PAGE: Record<JobKind, { path: string }> = {
   need_combination: { path: '/skill-extraction' },
   plo_synthesis: { path: '/plo-synthesis' },
   plo_revalidate: { path: '/plo-synthesis' },
-  plo_review: { path: '/plo-report' },
+  plo_review: { path: '/plo-review' },
   plo_report: { path: '/plo-report' },
 }
 

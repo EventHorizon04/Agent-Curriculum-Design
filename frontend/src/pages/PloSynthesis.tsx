@@ -13,6 +13,7 @@ import ValidationToggle, { type ValidationStatus } from './components/Validation
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
+import { BLOOM_LABEL } from '../constants/bloom'
 import type { PLO } from '../types/plo'
 
 interface NeedSummary {
@@ -40,15 +41,6 @@ interface PLOTrace {
   evidence: StakeholderEvidence[]
   missing_need_ids: string[]
   missing_evidence_ids: string[]
-}
-
-const BLOOM_LABEL: Record<string, string> = {
-  remember: 'Remember',
-  understand: 'Understand',
-  apply: 'Apply',
-  analyze: 'Analyze',
-  evaluate: 'Evaluate',
-  create: 'Create',
 }
 
 interface NeedListItem {

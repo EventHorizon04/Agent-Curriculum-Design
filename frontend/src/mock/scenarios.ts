@@ -18,11 +18,13 @@
  * plo_id numbering and order from plo_synthesis / PLORepository.
  */
 import type { SMARTCheck, SmartFinding, ValidatedBy } from '../types/plo'
+import type { PLOSetReview, UnusedNeedFinding } from '../types/ploReview'
 import { MAX_CORE_PLOS, REVIEW_MARKER_TH } from '../constants/needPolicy'
 import { scopeVerdict } from '../constants/scope'
 import {
   emptyDb,
   newId,
+  nowIso,
   replaceDb,
   setControls,
   type EvidenceRow,
@@ -878,6 +880,139 @@ export function synthesizePlos(programId: string, needs: NeedRow[], skills: Skil
   return sortPlos(plos)
 }
 
+/**
+ * A set review shaped like the stored one, built from whatever PLOs and Needs the
+ * mock holds now so every id in it resolves on the other pages.
+ *
+ * It is a fixture, not a reviewer: the code facts (current KSEC, counts,
+ * histogram, unused Needs) are derived the way the backend derives them, and the
+ * judgements are fixed sentences chosen so every part of the page has something
+ * to draw — one KSEC disagreement, one Bloom suggestion, one redundancy group,
+ * one `consider` and one `ok_to_leave`. The missing domain and the
+ * `no_e_or_c` flag are written in outright rather than derived: the seeded set
+ * has both an E and a C outcome, so deriving them would leave that part of the
+ * page undrawn.
+ */
+export function buildMockReview(
+  programId: string,
+  plos: PloRow[],
+  needs: NeedRow[],
+  degreeLevel: string,
+): PLOSetReview {
+  const sorted = sortPlos(plos)
+  const needById = new Map(needs.map((n) => [n.need_id, n]))
+  const currentOf = (p: PloRow): string[] => {
+    const found = new Set<string>()
+    for (const id of p.source_need_ids) {
+      const k = needById.get(id)?.ksec_category
+      if (k === 'EC') {
+        found.add('E')
+        found.add('C')
+      } else if (k) found.add(k)
+    }
+    return ['K', 'S', 'E', 'C'].filter((d) => found.has(d))
+  }
+
+  const ksec = sorted.map((p, i) => {
+    const current = currentOf(p)
+    // The first outcome is the one the reviewer disagrees on: it proposes a
+    // second domain the outcome's Need does not carry.
+    const extra = i === 0 ? ['E', 'C', 'S', 'K'].find((d) => !current.includes(d)) : undefined
+    const suggested = extra ? [...current, extra].sort((a, b) => 'KSEC'.indexOf(a) - 'KSEC'.indexOf(b)) : current
+    return {
+      plo_id: p.plo_id,
+      current,
+      suggested,
+      agrees: suggested.join('') === current.join(''),
+      reason_th: extra
+        ? `ข้อความ PLO ยังมีส่วนของหมวด ${extra} ปนอยู่ด้วย นอกเหนือจากหมวดของ Need ต้นทาง`
+        : 'หมวดตรงกับสิ่งที่ข้อความ PLO ให้บัณฑิตทำ',
+    }
+  })
+
+  const ksecCounts: Record<string, number> = { K: 0, S: 0, E: 0, C: 0 }
+  for (const row of ksec) for (const d of row.current) ksecCounts[d] += 1
+  ksecCounts.C = 0
+
+  const bloomCounts: Record<string, number> = Object.fromEntries(BLOOM_LEVELS.map((l) => [l, 0]))
+  for (const p of sorted) bloomCounts[p.bloom_level] = (bloomCounts[p.bloom_level] ?? 0) + 1
+  const belowApply = (bloomCounts.remember ?? 0) + (bloomCounts.understand ?? 0)
+
+  const toRevise = sorted.find((p) => p.bloom_level === 'apply') ?? sorted[0]
+  const bloom = toRevise
+    ? [
+        {
+          plo_id: toRevise.plo_id,
+          declared: toRevise.bloom_level,
+          suggested_level: toRevise.bloom_level === 'analyze' ? 'evaluate' : 'analyze',
+          reason_th: 'งานที่ข้อความ PLO ระบุต้องเลือกระหว่างวิธีทำ ซึ่งสูงกว่าระดับที่ประกาศไว้',
+        },
+      ]
+    : []
+
+  const cited = new Set(sorted.flatMap((p) => p.source_need_ids))
+  const unusedNeeds: UnusedNeedFinding[] = needs
+    .filter((n) => !cited.has(n.need_id))
+    .sort((a, b) => b.demand_score - a.demand_score)
+    .slice(0, 2)
+    .map((n, i) => {
+      const verdict = scopeVerdict(n)
+      return {
+        need_id: n.need_id,
+        statement_th: n.statement_th,
+        demand_score: n.demand_score,
+        ksec_category: n.ksec_category,
+        stakeholder_types: n.source_stakeholder_types,
+        exclusion: n.statement_th.startsWith(REVIEW_MARKER_TH)
+          ? 'unwritten'
+          : verdict === 'in_scope'
+            ? 'lost_on_demand'
+            : 'out_of_scope',
+        verdict: i === 0 ? 'consider' : 'ok_to_leave',
+        reason_th:
+          i === 0
+            ? 'หลายฝ่ายเอ่ยถึงความต้องการนี้ และยังไม่มี PLO ข้อใดครอบคลุม'
+            : 'เป็นงานของอีกวิชาชีพ ไม่ใช่สิ่งที่บัณฑิตสาขานี้ต้องทำเอง',
+      }
+    })
+
+  return {
+    program_id: programId,
+    plo_fingerprint: 'mock',
+    model: 'mock/qa-agent',
+    created_at: nowIso(),
+    redundancies:
+      sorted.length >= 2
+        ? [
+            {
+              plo_ids: [sorted[0].plo_id, sorted[1].plo_id],
+              reason_th: 'ทั้งสองข้อให้บัณฑิตทำงานเดียวกันกับเอกสารประเภทเดียวกัน ต่างกันที่ถ้อยคำ',
+              suggestion_th: 'รวมสอง Need ที่หน้าสังเคราะห์ PLO ให้เหลือ PLO ข้อเดียว',
+            },
+          ]
+        : [],
+    ksec,
+    bloom,
+    bloom_distribution_th: 'PLO ส่วนใหญ่อยู่ที่ระดับประยุกต์ใช้ ซึ่งพอดีกับหลักสูตรระดับปริญญาตรี',
+    summary_th:
+      'ชุด PLO ครอบคลุมงานแปลหลักของสาขา แต่ยังขาดข้อที่ว่าด้วยจริยธรรมและคุณลักษณะบุคคล และมีสองข้อที่ซ้ำกัน',
+    ksec_coverage: { counts: ksecCounts, missing: ['C'], flags: ['no_e_or_c'] },
+    bloom_histogram: {
+      counts: bloomCounts,
+      degree_level: degreeLevel,
+      flags: belowApply * 2 > sorted.length ? ['below_apply_majority'] : [],
+    },
+    coverage_th: 'งานแปล ล่าม และการใช้เครื่องมือช่วยแปลมี PLO รองรับ ส่วนความร่วมมือกับผู้ว่าจ้างยังไม่มี',
+    unused_needs: unusedNeeds,
+    reviewed_by: 'agent',
+    code_only_reason: null,
+    tool_calls: [
+      { tool: 'read_need', arg: unusedNeeds[0]?.need_id ?? sorted[0]?.plo_id ?? '' },
+      { tool: 'read_plo', arg: sorted[0]?.plo_id ?? '' },
+    ],
+  }
+}
+
 function genericPlo(need: NeedRow): PloSeed {
   return {
     action_verb_th: 'ประยุกต์',
@@ -1058,6 +1193,8 @@ function seedCompletePlos(db: MockDb, programId: string): void {
   }
 
   db.plos.push(...plos)
+  const degree = db.programs.find((p) => p.program_id === programId)?.degree_level ?? 'bachelor'
+  db.reviews = [...(db.reviews ?? []), buildMockReview(programId, plos, needs, degree)]
 }
 
 function seedEmpty(): MockDb {

@@ -34,6 +34,7 @@ import {
   classifyEvidence,
   combineNeeds,
   extractSkills,
+  buildMockReview,
   formatPloId,
   makePlo,
   mergedPloSeed,
@@ -539,6 +540,7 @@ export function buildRouter(): Router {
     db.plos = db.plos.filter((r2) => r2.program_id !== pid)
     db.sessions = db.sessions.filter((r2) => r2.program_id !== pid)
     db.jobs = db.jobs.filter((r2) => r2.program_id !== pid)
+    db.reviews = (db.reviews ?? []).filter((r2) => r2.program_id !== pid)
     return { status: 204 }
   })
 
@@ -808,9 +810,13 @@ export function buildRouter(): Router {
     })
   })
 
-  /** The advisory set review. No page reads it yet, so the mock does not
-   *  invent findings: it answers the PLOReviewResponse shape with an empty
-   *  review that says so. */
+  /** The stage 06 set review: what is stored, if anything. The mock never
+   *  reports it stale — nothing here fingerprints the set. */
+  r.get('/programs/:pid/plos/review', (req) => {
+    const review = (getDb().reviews ?? []).find((x) => x.program_id === req.params.pid) ?? null
+    return ok({ review, stale: false, review_enabled: true })
+  })
+
   r.post('/programs/:pid/plos/review/run', (req) => {
     const pid = req.params.pid
     if (!of(getDb().plos, pid).length) {
@@ -821,22 +827,15 @@ export function buildRouter(): Router {
       kind: 'plo_review',
       params: {},
       failure: runFailureText('plo_review'),
-      work: () =>
-        ok({
-          review: {
-            program_id: pid,
-            plo_fingerprint: 'mock',
-            model: 'mock',
-            created_at: nowIso(),
-            redundancies: [],
-            ksec: [],
-            bloom: [],
-            bloom_distribution_th: '',
-            summary_th: 'mock: ไม่ได้จำลองผลการตรวจชุด PLO',
-          },
-          stale: false,
-          review_enabled: true,
-        }),
+      work: () => {
+        // Built when the job finishes, from the set as it is by then, and stored
+        // the way the real run replaces the previous review.
+        const db = getDb()
+        const degree = db.programs.find((p) => p.program_id === pid)?.degree_level ?? 'bachelor'
+        const review = buildMockReview(pid, of(db.plos, pid), of(db.needs, pid), degree)
+        db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
+        return ok({ review, stale: false, review_enabled: true })
+      },
     })
   })
 

@@ -6,6 +6,7 @@ import StakeholderNeeds from './pages/StakeholderNeeds'
 import SkillExtraction from './pages/SkillExtraction'
 import PloSynthesis from './pages/PloSynthesis'
 import PloReport from './pages/PloReport'
+import PloReview from './pages/PloReview'
 import Pipeline from './pages/Pipeline'
 
 export default function App() {
@@ -19,6 +20,7 @@ export default function App() {
           <Route path="skill-extraction" element={<SkillExtraction />} />
           <Route path="plo-synthesis" element={<PloSynthesis />} />
           <Route path="plo-report" element={<PloReport />} />
+          <Route path="plo-review" element={<PloReview />} />
           <Route path="pipeline" element={<Pipeline />} />
         </Route>
       </Routes>

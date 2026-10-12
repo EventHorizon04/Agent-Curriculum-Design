@@ -10,6 +10,7 @@
  */
 import type { JobInfo } from '../api/jobs'
 import type { PLO } from '../types/plo'
+import type { PLOSetReview } from '../types/ploReview'
 
 export type ScenarioName = 'empty' | 'checkpoint' | 'complete' | 'many'
 
@@ -137,10 +138,14 @@ export interface MockDb {
   sessions: SessionRow[]
   /** Background stage runs, oldest first — JobInfo as the API sends it. */
   jobs: JobInfo[]
+  /** The stage 06 set review, one per program at most. Optional because a db
+   *  stored by an earlier build has none; every read treats a missing list as
+   *  empty. */
+  reviews?: PLOSetReview[]
 }
 
 export function emptyDb(): MockDb {
-  return { programs: [], evidence: [], skills: [], needs: [], plos: [], sessions: [], jobs: [] }
+  return { programs: [], evidence: [], skills: [], needs: [], plos: [], sessions: [], jobs: [], reviews: [] }
 }
 
 // ----------------------------------------------------------------------------

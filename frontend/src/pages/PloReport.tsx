@@ -13,6 +13,7 @@ import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
 import type { ScopeVerdict } from '../constants/scope'
 import { SCOPE_REASON_TH, scopeCountsTh, scopeVerdict } from '../constants/scope'
 import { MAX_CORE_PLOS, MIN_CORE_PLOS } from '../constants/needPolicy'
+import { BLOOM_LABEL } from '../constants/bloom'
 import type { PLO } from '../types/plo'
 
 /** `/needs/` returns whole Needs; the report only reads these fields, and the
@@ -55,14 +56,12 @@ interface ReportCounts {
   code_only: number
 }
 
-/** The job kinds whose outcome this page reports. Only the report run is shown
- *  as a run here: the set review has no button on this page, so a review job is
- *  here for its failure to be seen, not to be started or waited on. */
-const PAGE_KINDS: JobKind[] = ['plo_report', 'plo_review']
+/** The job kinds whose outcome this page reports: the report run alone. The set
+ *  review is stage 06 and has its own page, which shows its runs and failures. */
+const PAGE_KINDS: JobKind[] = ['plo_report']
 /** The jobs that change what this page draws, whichever page started them: the
  *  report is a reading of the PLOs and the Needs, so a synthesis, a re-check, or
- *  a new set of Needs all leave it showing a set that no longer exists. A set
- *  review changes none of it. */
+ *  a new set of Needs all leave it showing a set that no longer exists. */
 const RELOAD_KINDS: JobKind[] = [
   'plo_report',
   'plo_synthesis',
@@ -112,15 +111,6 @@ interface PLOTrace {
   plo: PLO
   clusters: TraceNeed[]
   evidence: TraceEvidence[]
-}
-
-const BLOOM_LABEL: Record<string, string> = {
-  remember: 'Remember',
-  understand: 'Understand',
-  apply: 'Apply',
-  analyze: 'Analyze',
-  evaluate: 'Evaluate',
-  create: 'Create',
 }
 
 /** The band is the policy a curriculum is judged against, so the page states it
@@ -432,9 +422,8 @@ export default function PloReport() {
           {unusedNeeds.length > 0 && <UnusedNeeds needs={unusedNeeds} programId={programId} />}
 
           <p className="border-t border-hair pt-4 text-sm text-pencil">
-            ตรวจเสร็จแล้ว อนุมัติและปิด session ได้ที่{' '}
-            <Link to="/pipeline" className="link">
-              รันทั้งชุด
+            <Link to="/plo-review" className="link">
+              ไปตรวจคุณภาพชุด PLO →
             </Link>
           </p>
         </>

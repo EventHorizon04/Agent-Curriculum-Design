@@ -24,8 +24,7 @@ interface Session {
 const CHECKPOINT_TH: Record<string, string> = {
   stakeholder_needs: 'รวบรวมหลักฐานเสร็จแล้ว — ตรวจการจำแนกหลักฐานก่อนสกัดทักษะ',
   skill_extraction: 'สกัดทักษะและรวม Need เสร็จแล้ว — ตรวจทักษะและ Need ก่อนสังเคราะห์ PLO',
-  plo_synthesis: 'สังเคราะห์ PLO เสร็จแล้ว — ตรวจและแก้ PLO ก่อนสร้างรายงาน',
-  plo_report: 'สร้างรายงาน PLO เสร็จแล้ว — ตรวจรายงานก่อนส่งออก',
+  plo_synthesis: 'สังเคราะห์ PLO เสร็จแล้ว — ตรวจและแก้ PLO ก่อนสร้างรายงานและตรวจคุณภาพ',
 }
 
 // A finished, rejected or failed run is a terminal state a person (or the run)
