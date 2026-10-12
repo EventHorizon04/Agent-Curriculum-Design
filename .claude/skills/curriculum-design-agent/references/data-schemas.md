@@ -288,7 +288,7 @@ Validation rules for PLO (enforce in code):
 - `soft_flags` stays `list[str]`, not the enum. A row carrying a code this build no longer knows would otherwise raise on read, and `R_alignment` was emitted for months. The typed detail is in `findings`; a validator keeps the flat list and the soft findings in step, exempting a row that has flags but no findings (that is what `legacy` means).
 - `smart_validated_by` distinguishes four facts the UI must not conflate: `agent` (judged and this is the verdict), `code_only` (the validator could not run; the pure checks decided alone), `stale` (a designer edited the statement and nothing has re-judged it — set by `PUT /plos/{id}`), `legacy` (predates the validator). `POST /plos/{id}/revalidate` is what moves a `stale` row back to `agent`.
 
-## Stage 4b: PLO set review (advisory)
+## Stage 6: PLO QA review (advisory)
 
 ```python
 class RedundancyFinding(BaseModel):
@@ -316,8 +316,36 @@ class BloomFinding(BaseModel):
     suggested_level: BloomLevel | None = None
     reason_th: str = ""
 
+class KsecCoverage(BaseModel):
+    """PLOs per K/S/E/C (optional included), computed in code. Plain str keys and flags."""
+    counts: dict[str, int] = Field(default_factory=dict)
+    missing: list[str] = Field(default_factory=list)
+    flags: list[str] = Field(default_factory=list)       # all_k | no_e_or_c
+
+class BloomHistogram(BaseModel):
+    """PLOs per Bloom level against the degree level, computed in code."""
+    counts: dict[str, int] = Field(default_factory=dict)
+    degree_level: str = ""
+    flags: list[str] = Field(default_factory=list)       # below_apply_majority
+
+class UnusedNeedFinding(BaseModel):
+    """An important Need no PLO cites: facts from code, verdict from the agent."""
+    need_id: str
+    statement_th: str
+    demand_score: float
+    ksec_category: str
+    stakeholder_types: list[str] = Field(default_factory=list)
+    exclusion: str                                       # out_of_scope | unwritten | lost_on_demand
+    verdict: str | None = None                           # consider | ok_to_leave | None (agent gave none)
+    reason_th: str = ""
+
+class ReviewToolCall(BaseModel):
+    """One tool call the QA agent made, in order, for the "what it looked at" list."""
+    tool: str                                            # bloom_lookup | check_verbs | need_detail
+    arg: str = ""
+
 class PLOSetReview(BaseModel):
-    """The advisory review of one program's PLO set — see stages/plo_review.py.
+    """The QA agent's review of one program's PLO set — see stages/plo_review.py.
 
     `plo_fingerprint` is the set it was made from; a review whose fingerprint
     no longer matches the stored PLOs is stale and is shown labelled as such."""
@@ -330,11 +358,18 @@ class PLOSetReview(BaseModel):
     bloom: list[BloomFinding] = Field(default_factory=list)
     bloom_distribution_th: str = ""
     summary_th: str = ""
+    ksec_coverage: KsecCoverage = Field(default_factory=KsecCoverage)        # code
+    bloom_histogram: BloomHistogram = Field(default_factory=BloomHistogram)  # code
+    coverage_th: str = ""                                # agent's reading of ksec_coverage
+    unused_needs: list[UnusedNeedFinding] = Field(default_factory=list)      # code selects, agent judges
+    reviewed_by: str = "agent"                           # agent | code_only; "agent" for rows predating the field
+    code_only_reason: str | None = None                  # disabled | failed | timeout
+    tool_calls: list[ReviewToolCall] = Field(default_factory=list)           # code, in call order
 ```
 
 `plo_reviews` is one row per program (`program_id` primary key, FK to `programs.program_id`, cascade-deleted with it), holding `plo_fingerprint`, `model`, `created_at`, and the rest of `PLOSetReview` in a single JSONB `review` column — no migration needed for a new finding field, the same reasoning as `SMARTCheck.findings`.
 
-**Advisory only.** The review reads the finished PLO set once, after synthesis, and writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table and nothing else. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. `plo_report` shows a stored review beside the report and labels it stale once `plo_fingerprint` no longer matches the current PLO set; a review that did not run (slot disabled, call failed, nothing stored yet) produces no findings and never blocks the report.
+**Advisory only.** The QA agent reads the finished PLO set as a whole, after the report (it is stage 06; the graph runs `plo_synthesis → [PLO checkpoint] → plo_report → plo_review → END`), and writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table and nothing else. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. The stage 06 page shows a stored review and labels it stale once `plo_fingerprint` no longer matches the current PLO set and Needs (the fingerprint hashes the PLOs plus the program's `(need_id, demand_score)` pairs); `plo_report` no longer carries a review. Every number and the unused-Need selection are code's (`stages/plo_review_facts.py`); only the judgements are the agent's. A review that could not run (slot disabled, failure, timeout) is stored with `reviewed_by="code_only"`, a `code_only_reason`, the code facts and no agent finding — none is manufactured — and never blocks anything. Every new field defaults, so rows written before them still read; no migration (JSONB, the `SMARTCheck.findings` reasoning).
 
 ## Cross-stage: human-in-the-loop checkpoint
 

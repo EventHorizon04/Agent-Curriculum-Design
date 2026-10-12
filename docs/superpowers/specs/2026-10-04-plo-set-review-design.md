@@ -1,5 +1,7 @@
 # Review the PLO set before the report — design
 
+> Partly superseded by 2026-10-12-plo-qa-agent-design.md (placement, the single call, the 503, the rule 7 text).
+
 **Date:** 2026-10-04
 **Amends:** immutable rule 7 in `CLAUDE.md` (a second pair of stages that share one checkpoint).
 

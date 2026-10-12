@@ -17,7 +17,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from curriculum_agent.models import BloomLevel, KSECCategory, Need, ProgramMetadata
+from curriculum_agent.models import (
+    BloomHistogram,
+    BloomLevel,
+    KSECCategory,
+    KsecCoverage,
+    Need,
+    ProgramMetadata,
+    UnusedNeedFinding,
+)
 from curriculum_agent.prompts.cluster_skills import (
     build_cluster_skills_prompt,
     build_merge_clusters_prompt,
@@ -25,7 +33,12 @@ from curriculum_agent.prompts.cluster_skills import (
 from curriculum_agent.prompts.designer_note import NOTE_HEADER_TH, NOTE_POLICY_TH
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
-from curriculum_agent.prompts.plo_review import ReviewItem, build_plo_review_prompt
+from curriculum_agent.prompts.plo_review import (
+    ReviewItem,
+    build_plo_review_prompt,
+    build_review_observation,
+    build_review_refusal,
+)
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
@@ -40,6 +53,7 @@ from curriculum_agent.prompts.summarize_need import (
     MIN_STATEMENT_CHARS,
     build_summarize_need_prompt,
 )
+from curriculum_agent.stages.plo_review_facts import ReviewDossier
 
 OUTPUT = Path(__file__).resolve().parent.parent / "docs" / "prompt-inventory.md"
 
@@ -107,29 +121,57 @@ def _build() -> str:
     )
     review = _render(
         build_plo_review_prompt(
-            [
-                ReviewItem(
-                    plo_id="<PLO1>",
-                    is_optional=False,
-                    statement_th="<ประโยค PLO หลัก>",
-                    action_verb_th="<กริยา>",
-                    bloom_level="apply",
-                    current_ksec=("S",),
-                    need_statements_th=("<ประโยคความต้องการ>",),
+            ReviewDossier(
+                program_context="<program context>",
+                degree_level="bachelor",
+                items=(
+                    ReviewItem(
+                        plo_id="<PLO1>",
+                        is_optional=False,
+                        statement_th="<ประโยค PLO หลัก>",
+                        action_verb_th="<กริยา>",
+                        bloom_level="apply",
+                        current_ksec=("S",),
+                        need_statements_th=("<ประโยคความต้องการ>",),
+                    ),
+                    ReviewItem(
+                        plo_id="<OPT1>",
+                        is_optional=True,
+                        statement_th="<ประโยค PLO เสริม>",
+                        action_verb_th="<กริยา>",
+                        bloom_level="analyze",
+                        current_ksec=("E", "C"),
+                        need_statements_th=("<ประโยคความต้องการ>",),
+                    ),
                 ),
-                ReviewItem(
-                    plo_id="<OPT1>",
-                    is_optional=True,
-                    statement_th="<ประโยค PLO เสริม>",
-                    action_verb_th="<กริยา>",
-                    bloom_level="analyze",
-                    current_ksec=("E", "C"),
-                    need_statements_th=("<ประโยคความต้องการ>",),
+                ksec_coverage=KsecCoverage(
+                    counts={"K": 0, "S": 1, "E": 1, "C": 1},
+                    missing=["K"],
+                    flags=[],
                 ),
-            ],
-            program_context="<program context>",
+                bloom_histogram=BloomHistogram(
+                    counts={"apply": 1, "analyze": 1},
+                    degree_level="bachelor",
+                    flags=[],
+                ),
+                core_count=1,
+                unused_needs=(
+                    UnusedNeedFinding(
+                        need_id="<need_id>",
+                        statement_th="<ประโยคความต้องการที่ไม่ได้เป็น PLO>",
+                        demand_score=0.62,
+                        ksec_category="K",
+                        stakeholder_types=["professional_council"],
+                        exclusion="lost_on_demand",
+                    ),
+                ),
+            )
         )
     )
+    review_observation = build_review_observation(
+        "check_verbs", {"plo_id": "<PLO1>", "opens_with_declared_verb": True}
+    )
+    review_refusal = build_review_refusal("<เหตุผลที่ระบบปฏิเสธ>")
     smart = _render(
         build_smart_agent_prompt(
             statement_th="<ประโยค PLO ที่ร่างไว้>",
@@ -170,6 +212,8 @@ def _build() -> str:
         plo=plo,
         dedup=dedup,
         review=review,
+        review_observation=review_observation,
+        review_refusal=review_refusal,
         smart=smart,
         repair=repair,
         note_policy=NOTE_POLICY_TH,
@@ -210,7 +254,7 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_loop` | `validation` | `ValidationStep` | ❌ |
 | 7 | สั่งแก้ประโยค PLO | `build_agent_repair_prompt` | `stages/smart_agent.py` → `_repair` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
-| 9 | ตรวจชุด PLO ก่อนรายงาน | `build_plo_review_prompt` | `stages/plo_review.py` → `review_plo_set` | `plo_review` | `ReviewAnswer` | ❌ |
+| 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -433,23 +477,31 @@ prompt ซ่อมพกแค่คำสั่ง + ประโยคเด�
 
 ---
 
-## 9. ตรวจชุด PLO ทั้งหมดก่อนออกรายงาน
+## 9. ตรวจคุณภาพชุด PLO ทั้งหมด (QA agent ขั้นที่ 06)
 
 | | |
 |---|---|
-| **builder** | `prompts/plo_review.py` → `build_plo_review_prompt(items, *, program_context=None)` |
-| **ผู้เรียก** | `stages/plo_review.py` → `review_plo_set` |
-| **slot / wrapper** | `plo_review` → `complete_plo_review` · ปิดได้ด้วย `PLO_REVIEW_PROVIDER=` |
-| **response model** | `ReviewAnswer` |
+| **builder** | `prompts/plo_review.py` → `build_plo_review_prompt(dossier)` · `build_review_observation(tool, payload)` · `build_review_refusal(reason_th)` |
+| **ผู้เรียก** | `stages/plo_review_agent.py` → `run_review_agent` (orchestration ที่ `stages/plo_review.py` → `review_plo_set`) |
+| **slot / wrapper** | `plo_review` → `complete_plo_review` · ปิดได้ด้วย `PLO_REVIEW_PROVIDER=` (ปิดแล้วยังเก็บข้อเท็จจริงที่โค้ดนับเป็น `code_only`) |
+| **response model** | `ReviewStep` (`reasoning_th` + `action` แบบ `call_tool` / `finish`) |
 | **cache** | ไม่มี |
 
-เป็นด่านเดียวที่อ่าน **ทั้งชุด** PLO พร้อมกัน — ทุกด่านก่อนหน้าตรวจทีละ PLO เทียบกับ Need ของตัวเอง
-ส่วนความซ้ำซ้อนระหว่างร่าง โดเมนที่คาบเกี่ยวหลาย KSEC และการกระจายระดับ Bloom ทั้งชุด
+เป็นด่านเดียวที่อ่าน **ทั้งชุด** PLO พร้อมกัน และเป็นด่านสุดท้ายของ pipeline — ทำงานหลังรายงาน
+ไม่มี checkpoint คั่น ความซ้ำซ้อนระหว่างร่าง โดเมน KSEC ทั้งชุด การกระจายระดับ Bloom และ Need ที่ไม่ได้เป็น PLO
 เป็นสมบัติของชุด ไม่ใช่ของ PLO ข้อใดข้อหนึ่ง
+
+**เป็น agent ที่มีเครื่องมือ แต่ได้ข้อมูลน้อยโดยตั้งใจ** — โค้ดสร้าง dossier ให้ครั้งเดียว (ชุด PLO, ประโยค Need
+ที่แต่ละข้ออ้าง, ตัวเลข KSEC/Bloom ที่โค้ดนับ, Need ที่ไม่ได้เป็น PLO) แล้ว agent เรียกเครื่องมือได้รวมไม่เกิน 4 ครั้ง
+(`bloom_lookup`, `check_verbs`, `need_detail`) ใน 6 step · ไม่มี evidence ชื่อทักษะสมาชิก สัดส่วน evidence ร่วม
+ผล SMART หรือผลตรวจครั้งก่อน เพราะยิ่งอ่านรายละเอียดต้นน้ำมาก ยิ่งยึดถ้อยคำเดิมและไปตัดสินขั้นก่อนหน้าซ้ำ
+แทนที่จะอ่านชุดตามที่เขียนไว้อย่างที่กรรมการหลักสูตรอ่าน (สัดส่วน evidence ร่วมวัดแล้วหลอก:
+คู่ที่ไม่เกี่ยวกันร่วม 55% คู่ซ้ำจริงต่ำกว่า 20%)
 
 **เป็นคำแนะนำล้วน ไม่มีการเขียนทับอะไร** — prompt บอกตรง ๆ ว่ากรรมการคนนี้ไม่ได้แก้ PLO
 ห้ามเขียนประโยคใหม่ ผลตรวจไปที่ตาราง `plo_reviews` และคำตอบ API เท่านั้น ไม่กระทบ PLO, Need, KSEC
-tag หรือระดับ Bloom ที่เก็บไว้จริง และไม่เข้า Excel export
+tag หรือระดับ Bloom ที่เก็บไว้จริง และไม่เข้า Excel export · ตัวเลขทุกตัวโค้ดเป็นผู้นับ `finish` ไม่มี field
+สำหรับตัวเลข
 
 ข้อเสนอ KSEC เป็น**เซ็ตที่เลือกได้มากกว่าหนึ่งหมวด** — ประโยคหนึ่งอาจเป็นได้ทั้ง S และ E พร้อมกัน
 ต่างจาก `current_ksec` ที่ PLO ถืออยู่จริงซึ่งเป็นหมวดเดียวเสมอ (`EC` อ่านเป็น E และ C)
@@ -458,7 +510,23 @@ tag หรือระดับ Bloom ที่เก็บไว้จริง
 กฎ "อยู่สาขาเดียวกันไม่ถือว่าซ้ำ" กันไม่ให้หลักสูตรที่ทุกข้อเกี่ยวกับงานเดียวกันโดยธรรมชาติ
 (เช่นหลักสูตรการแปล ทุกข้อมีการแปล) ถูกตีว่าซ้ำกันหมด — ต้องงานหลักและวัตถุหลักเดียวกันจริง
 
+หนึ่ง run ใช้ reasoning ซ่อนไม่เกิน 1024 token ต่อ step และเวลารวมไม่เกิน `plo_review_timeout_seconds`
+(300 วินาที) · เกินหรือตอบผิดรูปแบบ = เก็บผลแบบ `code_only` ไม่มี finding ของ agent
+
 {review}
+
+ผลของเครื่องมือกลับไปเป็น user turn ถัดไป:
+
+```text
+{review_observation}
+```
+
+ถ้าเรียกเครื่องมือเกิน 4 ครั้ง หรือเรียก `need_detail` กับ Need นอกรายการ ระบบตอบกลับด้วยการปฏิเสธ
+(และการเรียกนั้นยังนับ):
+
+```text
+{review_refusal}
+```
 
 ---
 
