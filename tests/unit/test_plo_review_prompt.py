@@ -130,3 +130,29 @@ def test_rubric_keeps_the_existing_rules() -> None:
 def test_observation_and_refusal_are_thai_user_turn_text() -> None:
     assert "check_verbs" in build_review_observation("check_verbs", {"plo_id": "PLO1"})
     assert "ปฏิเสธ" in build_review_refusal("ใช้ tool ครบแล้ว")
+
+
+def test_an_unwritten_need_prints_a_placeholder_not_its_fallback_statement() -> None:
+    fallback = "[ต้องทบทวน] การแปลเอกสารกฎหมาย, การล่ามประชุม"
+    dossier = _dossier(
+        unused_needs=(
+            UnusedNeedFinding(
+                need_id="n7",
+                statement_th=fallback,
+                demand_score=0.3,
+                ksec_category="S",
+                stakeholder_types=["employer"],
+                exclusion="unwritten",
+            ),
+        )
+    )
+    user = build_plo_review_prompt(dossier)[1]["content"]
+    assert "[n7]" in user and "unwritten" in user
+    assert "(ยังไม่มีประโยค Need — ผู้ออกแบบต้องเขียนก่อน)" in user
+    assert "การแปลเอกสารกฎหมาย" not in user and "การล่ามประชุม" not in user
+    assert dossier.unused_needs[0].statement_th == fallback  # stored text is untouched
+
+
+def test_rubric_says_an_unwritten_need_cannot_be_judged_consider() -> None:
+    system, _ = _turns()
+    assert "Need ที่ยังไม่มีประโยค" in system and "ok_to_leave" in system

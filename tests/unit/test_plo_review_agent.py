@@ -166,6 +166,20 @@ def test_check_verbs_reports_the_opening_and_the_declared_verbs() -> None:
     assert "analyze" in payload["levels"]["วิเคราะห์"]
 
 
+def test_need_detail_refuses_an_unwritten_need() -> None:
+    unwritten = _UNUSED.model_copy(update={"need_id": "w1", "exclusion": "unwritten"})
+    dossier = _DOSSIER.__class__(**{**_DOSSIER.__dict__, "unused_needs": (_UNUSED, unwritten)})
+    w1 = _U1.model_copy(update={"need_id": "w1", "rationale_th": "[ต้องทบทวน] ไม่มีคำอธิบาย"})
+    ok, payload = agent.run_review_tool(
+        dossier, {"u1": _U1, "w1": w1}, agent.ReviewToolName.NEED_DETAIL, "w1"
+    )
+    assert not ok and "error_th" in payload and "rationale_th" not in payload
+    ok, _ = agent.run_review_tool(
+        dossier, {"u1": _U1, "w1": w1}, agent.ReviewToolName.NEED_DETAIL, "u1"
+    )
+    assert ok
+
+
 def test_bloom_lookup_answers_an_unknown_verb_without_refusing() -> None:
     ok, payload = agent.run_review_tool(_DOSSIER, {}, agent.ReviewToolName.BLOOM_LOOKUP, "ฟฟฟ")
     assert ok and payload == {"verb_th": "ฟฟฟ", "recognized": False, "levels": []}

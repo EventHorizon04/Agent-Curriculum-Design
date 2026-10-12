@@ -139,6 +139,12 @@ def run_review_tool(
             "levels": {v: [lv.value for lv in levels_for_verb(v)] for v in declared},
         }
     need = unused_needs.get(arg)
+    if need is not None and any(
+        u.need_id == arg and u.exclusion == "unwritten" for u in dossier.unused_needs
+    ):
+        # Its rationale is a fallback sentence naming member skills, and the
+        # reviewer is kept away from skill-level text.
+        return False, {"error_th": "Need นี้ยังไม่มีประโยคที่ผู้ออกแบบเขียนไว้ จึงไม่มีรายละเอียดให้ดู"}
     if need is None:
         return False, {"error_th": "need_detail ใช้ได้กับ Need ในรายการที่ไม่ได้เป็น PLO เท่านั้น"}
     return True, {

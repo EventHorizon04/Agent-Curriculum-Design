@@ -9,6 +9,7 @@ from curriculum_agent.models import (
     SMARTCheck,
     StakeholderType,
 )
+from curriculum_agent.prompts.plo_review import build_plo_review_prompt
 from curriculum_agent.stages.plo_review_facts import (
     bloom_histogram,
     build_dossier,
@@ -189,6 +190,26 @@ def test_the_dossier_carries_no_evidence_skill_names_or_old_verdicts() -> None:
     assert d.items[1].need_statements_th == (needs[1].statement_th,)
     assert d.core_count == 2
     assert [u.need_id for u in d.unused_needs] == ["u1"]
+
+
+def test_the_rendered_prompt_carries_no_skill_names_ids_or_rationale() -> None:
+    """The bias test reads what the model reads: both turns of the rendered prompt,
+    including an unwritten Need whose fallback statement is a skill list."""
+    skill_a, skill_b = "การแปลเอกสารกฎหมาย", "การล่ามประชุม"
+    unwritten = _need("w1", demand=0.9, statement=f"[ต้องทบทวน] {skill_a}, {skill_b}")
+    needs = [_need("n1"), _need("n2", KSECCategory.EC), unwritten]
+    plos = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2"])]
+    d = build_dossier(
+        plos, needs, program_context="หลักสูตรปริญญาตรี สาขาการแปล", degree_level="bachelor"
+    )
+    assert [u.exclusion for u in d.unused_needs] == ["unwritten"]
+    text = "\n".join(m["content"] for m in build_plo_review_prompt(d))
+    assert "[w1]" in text  # the Need is offered to the reviewer, by id
+    forbidden = [skill_a, skill_b, "smart_check", "diagnosis", "rationale"]
+    for n in needs:
+        forbidden += [*n.source_evidence_ids, *n.member_skill_ids, n.rationale_th]
+    for term in forbidden:
+        assert term not in text, term
 
 
 # ------------------------------ fingerprint ------------------------------
