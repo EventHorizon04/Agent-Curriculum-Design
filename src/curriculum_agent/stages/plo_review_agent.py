@@ -188,27 +188,22 @@ async def run_review_agent(
                     return AgentOutcome(action, None, calls)
                 if step_no == MAX_STEPS:
                     break
-                last_note = (
-                    " — รอบถัดไปเป็นรอบสุดท้าย ต้องสรุปด้วย finish" if step_no == MAX_STEPS - 1 else ""
-                )
                 if len(calls) >= MAX_TOOL_CALLS:
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": build_review_refusal(
-                                f"ใช้เครื่องมือครบ {MAX_TOOL_CALLS} ครั้งแล้ว — สรุปผลด้วย finish"
-                            ),
-                        }
+                    content = build_review_refusal(
+                        f"ใช้เครื่องมือครบ {MAX_TOOL_CALLS} ครั้งแล้ว — สรุปผลด้วย finish"
                     )
-                    continue
-                calls.append(ReviewToolCall(tool=action.tool.value, arg=action.arg))
-                ok, payload = run_review_tool(dossier, unused_needs, action.tool, action.arg)
-                content = (
-                    build_review_observation(action.tool.value, payload)
-                    if ok
-                    else build_review_refusal(payload["error_th"])
-                )
-                messages.append({"role": "user", "content": content + last_note})
+                else:
+                    arg = action.arg.strip()
+                    calls.append(ReviewToolCall(tool=action.tool.value, arg=arg))
+                    ok, payload = run_review_tool(dossier, unused_needs, action.tool, arg)
+                    content = (
+                        build_review_observation(action.tool.value, payload)
+                        if ok
+                        else build_review_refusal(payload["error_th"])
+                    )
+                if step_no == MAX_STEPS - 1:
+                    content += " — รอบถัดไปเป็นรอบสุดท้าย ต้องสรุปด้วย finish"
+                messages.append({"role": "user", "content": content})
     except TimeoutError:
         logger.warning(
             f"plo_review agent: timed out after {settings.plo_review_timeout_seconds}s "

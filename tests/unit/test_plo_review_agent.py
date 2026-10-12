@@ -169,3 +169,16 @@ def test_check_verbs_reports_the_opening_and_the_declared_verbs() -> None:
 def test_bloom_lookup_answers_an_unknown_verb_without_refusing() -> None:
     ok, payload = agent.run_review_tool(_DOSSIER, {}, agent.ReviewToolName.BLOOM_LOOKUP, "ฟฟฟ")
     assert ok and payload == {"verb_th": "ฟฟฟ", "recognized": False, "levels": []}
+
+
+async def test_the_turn_before_the_last_step_says_it_is_the_last(script) -> None:
+    fake = script([_tool("bloom_lookup", f"v{i}") for i in range(5)] + [_finish()])
+    await agent.run_review_agent(_DOSSIER, {"u1": _U1})
+    assert "รอบสุดท้าย" in fake.sent[5][-1]["content"]
+    assert "รอบสุดท้าย" not in fake.sent[4][-1]["content"]
+
+
+async def test_the_recorded_tool_argument_is_stripped(script) -> None:
+    script([_tool("check_verbs", " PLO1 "), _finish()])
+    out = await agent.run_review_agent(_DOSSIER, {"u1": _U1})
+    assert out.tool_calls[0].arg == "PLO1"

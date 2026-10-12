@@ -12,9 +12,12 @@ from curriculum_agent.models import (
     Need,
     PLOSetReview,
     ProgramMetadata,
+    ReviewToolCall,
     SMARTCheck,
 )
 from curriculum_agent.stages import plo_review as pr
+from curriculum_agent.stages.plo_review_agent import AgentOutcome, Redundancy, ReviewFinish
+from curriculum_agent.stages.plo_review_facts import need_demands
 
 _SMART = SMARTCheck(specific=True, measurable=True, achievable=True, relevant=True, timely=True)
 _META = ProgramMetadata.model_validate(
@@ -52,8 +55,9 @@ _PLOS = [
     )
     for pid in ("PLO1", "PLO2")
 ]
-_ANSWER = pr.ReviewAnswer(
-    redundancies=[pr._Redundancy(plo_ids=["PLO1", "PLO2"], reason_th="ซ้ำ", suggestion_th="รวม")],
+_FINISH = ReviewFinish(
+    kind="finish",
+    redundancies=[Redundancy(plo_ids=["PLO1", "PLO2"], reason_th="ซ้ำ", suggestion_th="รวม")],
     summary_th="สองข้อซ้ำกัน",
 )
 
@@ -82,164 +86,133 @@ def live(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
         "NeedRepository",
         lambda: AsyncMock(list_by_program=AsyncMock(return_value=[_NEED])),
     )
-    call = AsyncMock(return_value=_ANSWER)
-    monkeypatch.setattr(pr, "complete_plo_review", call)
-    return call
+    agent_run = AsyncMock(
+        return_value=AgentOutcome(_FINISH, None, [ReviewToolCall(tool="check_verbs", arg="PLO1")])
+    )
+    monkeypatch.setattr(pr, "run_review_agent", agent_run)
+    return agent_run
 
 
-async def test_a_fresh_review_is_judged_and_stored(live: AsyncMock) -> None:
+def _changed() -> list[PLO]:
+    return [_PLOS[0].model_copy(update={"statement_th": "ล่ามการเจรจาธุรกิจ"}), _PLOS[1]]
+
+
+async def test_a_fresh_review_is_the_agents_answer_judged_and_stored(live: AsyncMock) -> None:
     review = await pr.fresh_review("p", _PLOS)
-    assert review is not None
-    assert review.redundancies[0].plo_ids == ["PLO1", "PLO2"]
-    assert review.plo_fingerprint == pr.plo_fingerprint(_PLOS, {_NEED.need_id: _NEED.demand_score})
+    assert review.reviewed_by == "agent" and review.redundancies[0].plo_ids == ["PLO1", "PLO2"]
+    assert review.tool_calls[0].tool == "check_verbs"
+    assert review.plo_fingerprint == pr.plo_fingerprint(_PLOS, need_demands([_NEED]))
     assert _MemoryRepo.rows["p"] == review
-    live.assert_awaited_once()
 
 
-async def test_the_prompt_carries_every_plo_and_its_needs(live: AsyncMock) -> None:
+async def test_the_agent_is_handed_the_dossier_and_only_the_unused_needs(live: AsyncMock) -> None:
     await pr.fresh_review("p", _PLOS)
-    messages = live.await_args.args[1]
-    user = messages[1]["content"]
-    assert "[PLO1]" in user and "[PLO2]" in user
-    assert "ต้องการบัณฑิตที่แปลเอกสารธุรกิจได้" in user
-    assert live.await_args.kwargs["temperature"] == 0
-    assert live.await_args.kwargs["max_tokens"] == 8192
-    assert live.await_args.kwargs["reasoning_max_tokens"] == 1024
+    dossier, unused = live.await_args.args
+    assert [i.plo_id for i in dossier.items] == ["PLO1", "PLO2"]
+    assert dict(unused) == {}  # _NEED is cited by both PLOs
+
+
+@pytest.mark.parametrize("reason", ["failed", "timeout"])
+async def test_an_agent_failure_stores_the_code_facts(live: AsyncMock, reason: str) -> None:
+    live.return_value = AgentOutcome(None, reason, [])
+    review = await pr.fresh_review("p", _PLOS)
+    assert review.reviewed_by == "code_only" and review.code_only_reason == reason
+    assert review.redundancies == [] and review.summary_th == ""
+    assert _MemoryRepo.rows["p"] == review
+
+
+async def test_an_answer_the_judge_empties_is_stored_as_code_only(live: AsyncMock) -> None:
+    live.return_value = AgentOutcome(ReviewFinish(kind="finish"), None, [])
+    review = await pr.fresh_review("p", _PLOS)
+    assert review.reviewed_by == "code_only" and review.code_only_reason == "failed"
+
+
+async def test_the_switched_off_slot_never_runs_the_agent(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "plo_review_provider", "")
+    review = await pr.fresh_review("p", _PLOS)
+    live.assert_not_awaited()
+    assert review.reviewed_by == "code_only" and review.code_only_reason == "disabled"
 
 
 async def test_an_unchanged_set_reuses_the_stored_review(live: AsyncMock) -> None:
     first = await pr.review_plo_set("p", _PLOS)
-    again = await pr.review_plo_set("p", _PLOS)
-    assert again == first
-    live.assert_awaited_once()
+    second = await pr.review_plo_set("p", _PLOS)
+    assert first == second and live.await_count == 1
 
 
 async def test_a_changed_set_is_reviewed_again(live: AsyncMock) -> None:
     await pr.review_plo_set("p", _PLOS)
-    changed = [_PLOS[0].model_copy(update={"statement_th": "ล่ามการเจรจาธุรกิจ"}), _PLOS[1]]
-    await pr.review_plo_set("p", changed)
+    await pr.review_plo_set("p", _changed())
     assert live.await_count == 2
 
 
-@pytest.mark.parametrize(
-    "failure",
-    [RuntimeError("provider down"), TimeoutError()],
-)
-async def test_a_failed_call_stores_nothing_and_returns_the_stored_review(
-    live: AsyncMock, failure: BaseException
-) -> None:
-    old = await pr.fresh_review("p", _PLOS)
-    live.side_effect = failure
-    changed = [_PLOS[0].model_copy(update={"statement_th": "ล่ามการเจรจาธุรกิจ"}), _PLOS[1]]
-    assert await pr.fresh_review("p", changed) is None
-    assert await pr.review_plo_set("p", changed) == old
-    assert _MemoryRepo.rows["p"] == old
-
-
-async def test_an_answer_the_judge_empties_is_a_failure(live: AsyncMock) -> None:
-    live.return_value = pr.ReviewAnswer(
-        redundancies=[pr._Redundancy(plo_ids=["PLO9", "PLO8"], reason_th="ไม่มีจริง")]
-    )
-    assert await pr.fresh_review("p", _PLOS) is None
-    assert "p" not in _MemoryRepo.rows
-
-
-async def test_the_switched_off_slot_never_calls(
+async def test_a_storage_failure_raises_from_fresh_review(
     live: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(settings, "plo_review_provider", "")
-    assert await pr.fresh_review("p", _PLOS) is None
-    live.assert_not_awaited()
+    monkeypatch.setattr(_MemoryRepo, "upsert", AsyncMock(side_effect=RuntimeError("db down")))
+    with pytest.raises(RuntimeError):
+        await pr.fresh_review("p", _PLOS)
 
 
-async def test_a_second_review_while_one_is_in_flight_is_refused(live: AsyncMock) -> None:
-    import asyncio
-
-    entered, release = asyncio.Event(), asyncio.Event()
-
-    async def hang(*_a: object, **_k: object) -> pr.ReviewAnswer:
-        entered.set()
-        await release.wait()
-        return _ANSWER
-
-    live.side_effect = hang
-    first = asyncio.create_task(pr.fresh_review("p", _PLOS))
-    await entered.wait()
-    try:
-        with pytest.raises(pr.ReviewAlreadyRunning):
-            await asyncio.wait_for(pr.fresh_review("p", _PLOS), timeout=2)
-    finally:
-        release.set()
-        await first
-
-
-async def test_run_puts_the_review_on_the_state(live: AsyncMock) -> None:
-    state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
-    assert state["plo_review"]["summary_th"] == "สองข้อซ้ำกัน"
-
-
-async def test_run_with_no_plos_leaves_no_review(live: AsyncMock) -> None:
-    state = await pr.run({"program_id": "p", "plos": []})
-    assert state["plo_review"] is None
-    live.assert_not_awaited()
-
-
-# ---- Fix round 1: every boundary the review touches must fail safe ----
-
-
-async def test_a_storage_failure_returns_none_and_falls_back_to_the_stored_review(
+async def test_review_plo_set_keeps_the_stored_review_when_the_new_one_fails_to_store(
     live: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     old = await pr.fresh_review("p", _PLOS)
     monkeypatch.setattr(_MemoryRepo, "upsert", AsyncMock(side_effect=RuntimeError("db down")))
-    changed = [_PLOS[0].model_copy(update={"statement_th": "ล่ามการเจรจาธุรกิจ"}), _PLOS[1]]
-    assert await pr.fresh_review("p", changed) is None
-    assert await pr.review_plo_set("p", changed) == old
-
-
-async def test_the_stored_review_read_failing_does_not_stop_a_fresh_one(
-    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(_MemoryRepo, "get", AsyncMock(side_effect=RuntimeError("db down")))
-    review = await pr.review_plo_set("p", _PLOS)
-    assert review is not None
-    assert review.summary_th == "สองข้อซ้ำกัน"
-    live.assert_awaited_once()
-
-
-async def test_a_needs_read_failure_means_no_call_is_made(
-    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setattr(
-        pr,
-        "NeedRepository",
-        lambda: AsyncMock(list_by_program=AsyncMock(side_effect=RuntimeError("db down"))),
-    )
-    assert await pr.fresh_review("p", _PLOS) is None
-    live.assert_not_awaited()
+    assert await pr.review_plo_set("p", _changed()) == old
 
 
 async def test_review_plo_set_degrades_to_the_stored_review_while_one_is_in_flight(
     live: AsyncMock,
 ) -> None:
-    """A second caller (e.g. GET /review's implicit refresh path, or a racing
-    report/run) must not pile a second call onto a review already running for
-    this program — it gets the stored answer instead, and the model is never
-    asked twice."""
     old = await pr.fresh_review("p", _PLOS)
-    changed = [_PLOS[0].model_copy(update={"statement_th": "ล่ามการเจรจาธุรกิจ"}), _PLOS[1]]
     pr._REVIEW_IN_FLIGHT.add("p")
     try:
-        result = await pr.review_plo_set("p", changed)
+        result = await pr.review_plo_set("p", _changed())
     finally:
         pr._REVIEW_IN_FLIGHT.discard("p")
     assert result == old
     live.assert_awaited_once()
 
 
-async def test_run_with_a_storage_failure_leaves_the_state_unset(
+async def test_review_plo_set_returns_none_when_its_reads_fail(
     live: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(_MemoryRepo, "upsert", AsyncMock(side_effect=RuntimeError("db down")))
+    monkeypatch.setattr(_MemoryRepo, "get", AsyncMock(side_effect=RuntimeError("db down")))
+    assert await pr.review_plo_set("p", _PLOS) is None
+    live.assert_not_awaited()
+
+
+async def test_the_graph_node_keeps_going_when_the_needs_fail_to_load(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        pr,
+        "NeedRepository",
+        lambda: AsyncMock(list_by_program=AsyncMock(side_effect=RuntimeError("db"))),
+    )
     state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
-    assert state["plo_review"] is None
+    assert state["plo_review"] is None and state["current_stage"] == "plo_review"
+
+
+async def test_run_puts_the_review_on_the_state(live: AsyncMock) -> None:
+    state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
+    assert state["plo_review"]["summary_th"] == "สองข้อซ้ำกัน"
+    assert state["current_stage"] == "plo_review"
+
+
+async def test_run_with_no_plos_leaves_no_review(live: AsyncMock) -> None:
+    state = await pr.run({"program_id": "p", "plos": []})
+    assert state["plo_review"] is None and state["current_stage"] == "plo_review"
+    live.assert_not_awaited()
+
+
+async def test_a_second_review_while_one_is_in_flight_is_refused(live: AsyncMock) -> None:
+    pr._REVIEW_IN_FLIGHT.add("p")
+    try:
+        with pytest.raises(pr.ReviewAlreadyRunning):
+            await pr.fresh_review("p", _PLOS)
+    finally:
+        pr._REVIEW_IN_FLIGHT.discard("p")
