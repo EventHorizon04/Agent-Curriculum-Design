@@ -203,5 +203,5 @@ def test_plo_review_runs_on_glm_and_can_be_switched_off() -> None:
     s = Settings(_env_file=None)
     assert s.plo_review_provider == "openrouter"
     assert s.plo_review_model == "z-ai/glm-5.3-flash"
-    assert s.plo_review_timeout_seconds == 180
+    assert s.plo_review_timeout_seconds == 300
     assert Settings(_env_file=None, plo_review_provider="").plo_review_provider == ""

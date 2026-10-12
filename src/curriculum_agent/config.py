@@ -322,7 +322,8 @@ class Settings(BaseSettings):
     # off and the report says so; None follows LLM_PROVIDER like every slot.
     plo_review_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"
     plo_review_model: str = ""
-    plo_review_timeout_seconds: int = 180
+    # Wall clock for the whole agent run (up to six steps), not one call.
+    plo_review_timeout_seconds: int = 300
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
     # fans out a call per evidence item, and now one per window of each item
