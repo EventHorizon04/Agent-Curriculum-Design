@@ -153,3 +153,19 @@ def test_plo_no_longer_carries_the_classification_fields():
         "classification_rationale_th",
     ):
         assert gone not in PLO.model_fields
+
+
+async def test_the_report_no_longer_carries_a_review(monkeypatch: pytest.MonkeyPatch):
+    """The QA review is stage 06 and runs after the report; the report neither
+    reads nor returns one, even when an old one is on the state."""
+    monkeypatch.setattr(pr.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1")]))
+    monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
+    state = await pr.run(
+        {
+            "program_id": "cs-test",
+            "plos": [_plo("PLO1", ["N1"]).model_dump(mode="json")],
+            "plo_review": {"summary_th": "เก่า"},
+        }
+    )
+    assert "review" not in state["report"]
+    assert "review_stale" not in state["report"]

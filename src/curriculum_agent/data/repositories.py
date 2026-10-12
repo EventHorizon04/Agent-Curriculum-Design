@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any, cast
 
+from loguru import logger
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,6 +46,29 @@ async def _programs_with_rows(session: AsyncSession, column: Any) -> set[str]:
     on the list page.
     """
     return set((await session.execute(select(column).distinct())).scalars().all())
+
+
+async def _programs_with_a_current_review(program_ids: Iterable[str]) -> set[str]:
+    """Programs whose stored QA review matches their current PLOs and Needs.
+
+    A read or parse failure counts as "not current" for that program and is
+    logged — the program list must never fail over advisory data.
+    """
+    from curriculum_agent.stages.plo_review_facts import is_stale, need_demands  # noqa: PLC0415
+
+    current: set[str] = set()
+    for pid in program_ids:
+        try:
+            review = await PLOReviewRepository().get(pid)
+            if review is None:
+                continue
+            plos = await PLORepository().list_by_program(pid)
+            needs = await NeedRepository().list_by_program(pid)
+            if plos and not is_stale(review, plos, need_demands(needs)):
+                current.add(pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"list_all: could not judge the QA review of {pid}: {exc!r}")
+    return current
 
 
 def _row_to_dict(row: Base) -> dict[str, Any]:
@@ -130,6 +154,9 @@ class ProgramRepository:
             with_needs = await _programs_with_rows(session, NeedTable.program_id)
             with_plos = await _programs_with_rows(session, PLOTable.program_id)
 
+        # Only a program with PLOs can have a current review.
+        current = await _programs_with_a_current_review(with_plos)
+
         latest: dict[str, SessionTable] = {}
         for s in sess_rows:
             cur = latest.get(s.program_id)
@@ -152,6 +179,7 @@ class ProgramRepository:
                     has_skills=p.program_id in with_skills,
                     has_needs=p.program_id in with_needs,
                     has_plos=p.program_id in with_plos,
+                    has_current_review=p.program_id in current,
                 ),
                 session_status=(latest[p.program_id].status if p.program_id in latest else None),
                 copied_from=p.copied_from,

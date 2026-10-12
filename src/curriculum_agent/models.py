@@ -648,6 +648,7 @@ class StageCheckpoint(BaseModel):
         "need_combination",
         "plo_synthesis",
         "plo_report",
+        "plo_review",
     ]
     artifacts: dict[str, Any]
     created_at: datetime = Field(default_factory=datetime.utcnow)

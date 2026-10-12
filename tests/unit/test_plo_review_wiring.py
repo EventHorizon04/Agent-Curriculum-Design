@@ -8,9 +8,7 @@ from fastapi.testclient import TestClient
 
 from curriculum_agent.api.routes.plos import router
 from curriculum_agent.config import settings
-from curriculum_agent.graph import DESIGNER_STAGES, REVIEW_NODE_STAGE, build_graph
 from curriculum_agent.models import PLO, BloomLevel, JobInfo, PLOSetReview, SMARTCheck
-from curriculum_agent.stages import plo_report
 from curriculum_agent.stages.plo_review import ReviewAlreadyRunning
 from curriculum_agent.stages.plo_review_facts import plo_fingerprint
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
@@ -51,119 +49,7 @@ def _review(fingerprint: str) -> PLOSetReview:
     )
 
 
-# ------------------------------ graph ------------------------------
-
-
-def test_plo_review_sits_between_the_plo_checkpoint_and_the_report() -> None:
-    graph = build_graph().get_graph()
-    edges = {(e.source, e.target) for e in graph.edges}
-    assert ("review_plos_node", "plo_review") in edges
-    assert ("plo_review", "plo_report") in edges
-    assert ("review_plos_node", "plo_report") not in edges
-
-
-def test_plo_review_is_not_a_designer_stage_or_a_checkpoint() -> None:
-    assert "plo_review" not in DESIGNER_STAGES
-    assert "plo_review" not in REVIEW_NODE_STAGE
-
-
-# ------------------------------ report ------------------------------
-
-
-async def test_the_report_carries_the_review_and_whether_it_is_stale() -> None:
-    state = {
-        "program_id": "p1",
-        "plos": [_PLO.model_dump(mode="json")],
-        "plo_review": _review("not-this-set").model_dump(mode="json"),
-    }
-    with (
-        patch.object(plo_report, "NeedRepository") as needs,
-        patch.object(plo_report, "PLORepository") as plos_repo,
-    ):
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
-        plos_repo.return_value.bulk_insert = AsyncMock()
-        out = await plo_report.run(state)
-    assert out["report"]["review"]["summary_th"] == "ดีแล้ว"
-    assert out["report"]["review_stale"] is True
-
-
-async def test_a_report_without_a_review_says_so() -> None:
-    state = {"program_id": "p1", "plos": [_PLO.model_dump(mode="json")]}
-    with (
-        patch.object(plo_report, "NeedRepository") as needs,
-        patch.object(plo_report, "PLORepository") as plos_repo,
-    ):
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
-        plos_repo.return_value.bulk_insert = AsyncMock()
-        out = await plo_report.run(state)
-    assert out["report"]["review"] is None
-    assert out["report"]["review_stale"] is False
-
-
 # ------------------------------ routes ------------------------------
-
-
-def test_report_route_runs_the_review_first(jobs_store, spawned) -> None:
-    review_run = AsyncMock(
-        side_effect=lambda s: {
-            **s,
-            "plo_review": _review(plo_fingerprint([_PLO], {})).model_dump(mode="json"),
-        }
-    )
-    with (
-        patch("curriculum_agent.api.routes.plos._repo") as repo,
-        patch("curriculum_agent.stages.plo_review.run", review_run),
-        patch.object(plo_report, "NeedRepository") as needs,
-        patch.object(plo_report, "PLORepository") as plos_repo,
-    ):
-        repo.list_by_program = AsyncMock(return_value=[_PLO])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
-        plos_repo.return_value.bulk_insert = AsyncMock()
-        resp = client.post("/programs/p1/plos/report/run")
-        job = _run_job(resp, jobs_store, spawned)
-    assert job.status == "succeeded", job.error_th
-    body = job.result
-    assert body["review"]["summary_th"] == "ดีแล้ว"
-    assert body["review_stale"] is False
-    assert body["review_enabled"] is False  # conftest kill switch
-    review_run.assert_awaited_once()
-
-
-def test_report_route_re_reads_the_plos_after_the_review_call(jobs_store, spawned) -> None:
-    """The review call can run for up to plo_review_timeout_seconds (180s) —
-    long enough for a PUT edit, a merge, or a re-synthesis to land on this
-    program while it is in flight. The route must persist and report what is
-    actually stored afterwards (set B), not the snapshot it read before
-    starting the review (set A) — otherwise plo_report.bulk_insert reverts
-    whatever changed in the meantime."""
-    plo_b = _PLO.model_copy(update={"statement_th": "แปลเอกสารราชการ"})
-    review_run = AsyncMock(
-        side_effect=lambda s: {
-            **s,
-            "plo_review": _review(plo_fingerprint([_PLO], {})).model_dump(mode="json"),
-        }
-    )
-    with (
-        patch("curriculum_agent.api.routes.plos._repo") as repo,
-        patch("curriculum_agent.stages.plo_review.run", review_run),
-        patch.object(plo_report, "NeedRepository") as needs,
-        patch.object(plo_report, "PLORepository") as plos_repo,
-    ):
-        repo.list_by_program = AsyncMock(side_effect=[[_PLO], [plo_b]])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
-        bulk_insert = AsyncMock()
-        plos_repo.return_value.bulk_insert = bulk_insert
-        resp = client.post("/programs/p1/plos/report/run")
-        job = _run_job(resp, jobs_store, spawned)
-    assert job.status == "succeeded", job.error_th
-    assert repo.list_by_program.await_count == 2
-    body = job.result
-    assert [p["statement_th"] for p in body["plos"]] == ["แปลเอกสารราชการ"]
-    inserted = bulk_insert.await_args.args[0]
-    assert [p.statement_th for p in inserted] == ["แปลเอกสารราชการ"]
-    # The review was built from set A's fingerprint; what was actually
-    # persisted is set B, so the review is reported stale.
-    assert body["review_stale"] is True
 
 
 def test_report_job_fails_when_the_re_read_finds_nothing(jobs_store, spawned) -> None:
@@ -179,26 +65,6 @@ def test_report_job_fails_when_the_re_read_finds_nothing(jobs_store, spawned) ->
         job = _run_job(resp, jobs_store, spawned)
     assert job.status == "failed"
     assert job.error_th == "ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"
-
-
-def test_report_route_review_enabled_true_when_the_slot_is_on(
-    monkeypatch, jobs_store, spawned
-) -> None:
-    monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
-    review_run = AsyncMock(side_effect=lambda s: {**s, "plo_review": None})
-    with (
-        patch("curriculum_agent.api.routes.plos._repo") as repo,
-        patch("curriculum_agent.stages.plo_review.run", review_run),
-        patch.object(plo_report, "NeedRepository") as needs,
-        patch.object(plo_report, "PLORepository") as plos_repo,
-    ):
-        repo.list_by_program = AsyncMock(return_value=[_PLO])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
-        plos_repo.return_value.bulk_insert = AsyncMock()
-        resp = client.post("/programs/p1/plos/report/run")
-        job = _run_job(resp, jobs_store, spawned)
-    assert job.status == "succeeded", job.error_th
-    assert job.result["review_enabled"] is True
 
 
 def test_get_review_reports_staleness() -> None:

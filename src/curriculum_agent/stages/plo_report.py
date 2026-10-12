@@ -6,8 +6,7 @@ from loguru import logger
 
 from curriculum_agent.data.repositories import NeedRepository, PLORepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import PLO, PLOSetReview
-from curriculum_agent.stages.plo_review_facts import is_stale, need_demands
+from curriculum_agent.models import PLO
 from curriculum_agent.stages.plo_synthesis import cited_need_ids
 
 
@@ -19,8 +18,9 @@ async def run(state: AgentState) -> AgentState:
     KSEC tag of the Needs behind it, and the report shows that directly instead of
     reducing it to a binary. No LLM call remains here.
 
-    The stage keeps its own checkpoint: synthesis produces outcomes, and this is
-    where a designer reviews the finished set and exports it.
+    No checkpoint follows it: the set was approved at the PLO checkpoint, and the
+    QA review (stage 06, `plo_review`) runs after this stage and is not part of
+    the report.
     """
     program_id = state.get("program_id", "unknown")
     plo_dicts = state.get("plos", [])
@@ -32,9 +32,6 @@ async def run(state: AgentState) -> AgentState:
     plos = [PLO.model_validate(d) for d in plo_dicts]
     needs = await NeedRepository().list_by_program(program_id)
     needs_by_id = {n.need_id: n for n in needs}
-
-    review_dict = state.get("plo_review")
-    review = PLOSetReview.model_validate(review_dict) if review_dict else None
 
     # Every PLO must trace to evidence (project rule); a source_need_id that
     # resolves to nothing here would ship a checkpoint the designer cannot
@@ -92,10 +89,6 @@ async def run(state: AgentState) -> AgentState:
             "code_only": code_only,
             "needs_not_synthesized": len(not_synthesized),
         },
-        # Advisory; may be stale (made from an earlier PLO set) or absent (the
-        # review did not run). Never changes anything above.
-        "review": review.model_dump(mode="json") if review is not None else None,
-        "review_stale": review is not None and is_stale(review, plos, need_demands(needs)),
     }
 
     await PLORepository().bulk_insert(plos)

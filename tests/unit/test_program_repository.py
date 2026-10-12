@@ -3,8 +3,31 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from curriculum_agent.data import repositories
 from curriculum_agent.data.orm import ProgramTable, SessionTable
 from curriculum_agent.data.repositories import ProgramRepository
+from curriculum_agent.models import (
+    PLO,
+    BloomLevel,
+    KSECCategory,
+    Need,
+    PLOSetReview,
+    SMARTCheck,
+)
+from curriculum_agent.stages.plo_review_facts import need_demands, plo_fingerprint
+
+_REAL_CURRENT_REVIEW_LOOKUP = repositories._programs_with_a_current_review
+
+
+@pytest.fixture(autouse=True)
+def _no_real_review_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """list_all asks the repositories whether a stored QA review is current; the
+    session mocks below only answer its own queries, so default that to "none"."""
+    monkeypatch.setattr(
+        repositories, "_programs_with_a_current_review", AsyncMock(return_value=set())
+    )
 
 
 def _program_row(program_id: str, created_at: datetime) -> ProgramTable:
@@ -157,6 +180,99 @@ async def test_list_all_preserves_program_order() -> None:
     ):
         result = await repo.list_all()
     assert [p.program_id for p in result] == ["newer", "older"]
+
+
+def _plo(plo_id: str = "PLO1") -> PLO:
+    return PLO(
+        plo_id=plo_id,
+        program_id="cs",
+        statement_th="วิเคราะห์งานเพื่อเสนอแนวทางแก้ปัญหาได้",
+        bloom_level=BloomLevel.ANALYZE,
+        action_verb_th="วิเคราะห์",
+        smart_check=SMARTCheck(
+            specific=True, measurable=True, achievable=True, relevant=True, timely=True
+        ),
+        source_need_ids=["N1"],
+        source_evidence_ids=["E1"],
+        rationale_th="ตรงกับความต้องการของตลาด",
+    )
+
+
+def _need() -> Need:
+    return Need(
+        need_id="N1",
+        program_id="cs",
+        statement_th="ต้องการบัณฑิตที่วิเคราะห์ข้อมูลธุรกิจเพื่อตัดสินใจได้",
+        ksec_category=KSECCategory.S,
+        bloom_level=BloomLevel.ANALYZE,
+        member_skill_ids=["S1"],
+        source_evidence_ids=["E1"],
+        freq=1,
+        demand_score=0.7,
+    )
+
+
+def _review_with(fingerprint: str) -> PLOSetReview:
+    return PLOSetReview(
+        program_id="cs",
+        plo_fingerprint=fingerprint,
+        model="m",
+        created_at=datetime(2026, 10, 12),
+        summary_th="ดีแล้ว",
+    )
+
+
+def _stored(monkeypatch: pytest.MonkeyPatch, review: object) -> None:
+    """Make the real `_programs_with_a_current_review` read one program's rows."""
+    # Put back the real helper the autouse stub replaced; it is what is under test.
+    monkeypatch.setattr(
+        repositories, "_programs_with_a_current_review", _REAL_CURRENT_REVIEW_LOOKUP
+    )
+    review_repo = MagicMock()
+    review_repo.return_value.get = (
+        AsyncMock(side_effect=review)
+        if isinstance(review, Exception)
+        else AsyncMock(return_value=review)
+    )
+    plo_repo = MagicMock()
+    plo_repo.return_value.list_by_program = AsyncMock(return_value=[_plo()])
+    need_repo = MagicMock()
+    need_repo.return_value.list_by_program = AsyncMock(return_value=[_need()])
+    monkeypatch.setattr(repositories, "PLOReviewRepository", review_repo)
+    monkeypatch.setattr(repositories, "PLORepository", plo_repo)
+    monkeypatch.setattr(repositories, "NeedRepository", need_repo)
+
+
+async def _stage_of_cs_with_plos() -> str:
+    programs = [_program_row("cs", datetime(2026, 7, 1))]
+    with patch(
+        "curriculum_agent.data.repositories.AsyncSessionLocal",
+        return_value=_mock_db(programs, [], plos=["cs"]),
+    ):
+        result = await ProgramRepository().list_all()
+    return result[0].current_stage
+
+
+async def test_list_all_reports_plo_review_for_a_current_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _review_with(plo_fingerprint([_plo()], need_demands([_need()])))
+    _stored(monkeypatch, current)
+    assert await _stage_of_cs_with_plos() == "plo_review"
+
+
+async def test_list_all_reports_plo_synthesis_for_a_stale_review(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stored(monkeypatch, _review_with("not-this-set"))
+    assert await _stage_of_cs_with_plos() == "plo_synthesis"
+
+
+async def test_list_all_survives_a_review_read_that_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stored(monkeypatch, RuntimeError("db down"))
+    assert await _stage_of_cs_with_plos() == "plo_synthesis"
 
 
 async def test_delete_cascade_deletes_tables_in_fk_safe_order() -> None:

@@ -47,11 +47,12 @@ def test_every_outcome_is_a_designer_stage():
     """Anything outside this list reaches the UI as a stage it cannot place, and
     the program reads as though it had never started."""
     flags = [
-        {"has_evidence": e, "has_skills": s, "has_needs": n, "has_plos": p}
+        {"has_evidence": e, "has_skills": s, "has_needs": n, "has_plos": p, "has_current_review": r}
         for e in (False, True)
         for s in (False, True)
         for n in (False, True)
         for p in (False, True)
+        for r in (False, True)
     ]
     for combination in flags:
         assert stage_reached(**combination) in DESIGNER_STAGES, combination
@@ -62,5 +63,25 @@ def test_later_output_wins_over_earlier():
     progress backwards — the furthest output is what counts."""
     assert (
         stage_reached(has_evidence=False, has_skills=False, has_needs=False, has_plos=True)
+        == "plo_synthesis"
+    )
+
+
+def test_a_current_review_is_the_last_stage():
+    assert (
+        stage_reached(
+            has_evidence=True,
+            has_skills=True,
+            has_needs=True,
+            has_plos=True,
+            has_current_review=True,
+        )
+        == "plo_review"
+    )
+
+
+def test_without_a_current_review_plos_are_still_plo_synthesis():
+    assert (
+        stage_reached(has_evidence=True, has_skills=True, has_needs=True, has_plos=True)
         == "plo_synthesis"
     )

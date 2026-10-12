@@ -102,7 +102,7 @@ async def stage_3_plo_synthesis(state: AgentState) -> AgentState:
     return await run(state)
 
 
-async def stage_4b_plo_review(state: AgentState) -> AgentState:
+async def stage_6_plo_review(state: AgentState) -> AgentState:
     from curriculum_agent.stages.plo_review import run  # noqa: PLC0415
 
     return await run(state)
@@ -138,13 +138,6 @@ def review_plos(state: AgentState) -> AgentState:
     return state
 
 
-def review_plo_report(state: AgentState) -> AgentState:
-    payload = interrupt("Stage 5 complete — review the assembled PLO report before export")
-    if isinstance(payload, dict):
-        return {**state, **payload}
-    return state
-
-
 # ----------------------- Stages as reported ----------------------
 
 # The stages a designer works through, in order. Fewer than the graph has nodes:
@@ -158,6 +151,7 @@ DESIGNER_STAGES: tuple[str, ...] = (
     "skill_extraction",
     "plo_synthesis",
     "plo_report",
+    "plo_review",
 )
 
 # Which stage a suspended run is waiting at, by the node it is suspended on.
@@ -172,7 +166,6 @@ REVIEW_NODE_STAGE: dict[str, str] = {
     "review_evidence": "stakeholder_needs",
     "review_needs_node": "skill_extraction",
     "review_plos_node": "plo_synthesis",
-    "review_plo_report": "plo_report",
 }
 
 
@@ -182,6 +175,7 @@ def stage_reached(
     has_skills: bool,
     has_needs: bool,
     has_plos: bool,
+    has_current_review: bool = False,
 ) -> str:
     """The furthest stage a program has produced output for.
 
@@ -200,11 +194,14 @@ def stage_reached(
     Skills and Needs both answer `skill_extraction`: they are two engine stages
     behind one review gate, reviewed together on one page.
 
-    `plo_report` is not reachable here — it re-persists the PLOs synthesis
-    already wrote and leaves no artifact of its own, so a program that has been
-    through it looks exactly like one that has not. The session still records
-    that distinction for the run it belongs to.
+    The report leaves no artifact of its own — it re-persists the PLOs synthesis
+    already wrote — so a program that has been through it looks exactly like one
+    that has not. The QA agent's review does leave one, and only a review current
+    for the stored set counts: a stale one means the set changed after it was
+    made, and the next thing to do is the report.
     """
+    if has_current_review:
+        return "plo_review"
     if has_plos:
         return "plo_synthesis"
     if has_skills or has_needs:
@@ -232,9 +229,8 @@ def build_graph(
     g.add_node("review_needs_node", review_needs)
     g.add_node("plo_synthesis", stage_3_plo_synthesis)
     g.add_node("review_plos_node", review_plos)
-    g.add_node("plo_review", stage_4b_plo_review)
     g.add_node("plo_report", stage_5_plo_report)
-    g.add_node("review_plo_report", review_plo_report)
+    g.add_node("plo_review", stage_6_plo_review)
 
     g.set_entry_point("intake")
     g.add_edge("intake", "stakeholder_needs")
@@ -244,12 +240,12 @@ def build_graph(
     g.add_edge("need_combination", "review_needs_node")
     g.add_edge("review_needs_node", "plo_synthesis")
     g.add_edge("plo_synthesis", "review_plos_node")
-    # No interrupt of its own: the review and the report share the report's
-    # checkpoint (immutable rule 7's second exception).
-    g.add_edge("review_plos_node", "plo_review")
-    g.add_edge("plo_review", "plo_report")
-    g.add_edge("plo_report", "review_plo_report")
-    g.add_edge("review_plo_report", END)
+    # No checkpoint after the PLOs (immutable rule 7, waived for this segment by
+    # the designer, 2026-10-12): the report re-persists the approved set and the
+    # QA agent only advises, so a checkpoint between or after them gates nothing.
+    g.add_edge("review_plos_node", "plo_report")
+    g.add_edge("plo_report", "plo_review")
+    g.add_edge("plo_review", END)
 
     return g.compile(checkpointer=checkpointer)
 
