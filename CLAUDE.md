@@ -134,7 +134,8 @@ src/curriculum_agent/
   prompts/             ← one file per LLM prompt, typed builder fns
   stages/              ← intake, stakeholder_needs, skill_extraction,
                           need_combination, llm_clustering, need_dedup,
-                          plo_synthesis, plo_review, plo_report (+ smart_rules,
+                          plo_synthesis, plo_review, plo_review_agent,
+                          plo_review_facts, plo_report (+ smart_rules,
                           smart_agent, smart_agent_tools, bloom_verbs)
   data/                ← repositories, postgres, minio_store,
                           prune_threads / prune_cache (maintenance sweeps)

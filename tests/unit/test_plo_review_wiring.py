@@ -70,8 +70,10 @@ def test_get_review_with_none_stored() -> None:
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch("curriculum_agent.api.routes.plos.PLOReviewRepository") as rr,
+        patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
+        needs.return_value.list_by_program = AsyncMock(return_value=[])
         rr.return_value.get = AsyncMock(return_value=None)
         resp = client.get("/programs/p1/plos/review")
     # conftest's kill switch has the slot off for every test, so review_enabled
@@ -85,8 +87,10 @@ def test_get_review_review_enabled_true_when_the_slot_is_on(monkeypatch) -> None
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch("curriculum_agent.api.routes.plos.PLOReviewRepository") as rr,
+        patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
+        needs.return_value.list_by_program = AsyncMock(return_value=[])
         rr.return_value.get = AsyncMock(return_value=None)
         resp = client.get("/programs/p1/plos/review")
     assert resp.json()["review_enabled"] is True

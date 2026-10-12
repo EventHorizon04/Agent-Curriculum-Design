@@ -380,7 +380,7 @@ class StageCheckpoint(BaseModel):
     program_id: str
     stage: Literal[
         "intake", "stakeholder_needs", "skill_extraction",
-        "need_combination", "plo_synthesis", "plo_report",
+        "need_combination", "plo_synthesis", "plo_report", "plo_review",
     ]
     artifacts: dict  # serialized output of the stage
     created_at: datetime
