@@ -104,6 +104,11 @@ function invalid(errors: { loc: string[]; msg: string; type: string }[]): MockRe
 /** graph.stage_reached: derived from what is stored, never recorded. */
 function stageReached(pid: string): string {
   const db = getDb()
+  // graph.stage_reached: a stored review counts once the program has PLOs; the
+  // mock never reports one stale, so any stored review is current.
+  if (of(db.plos, pid).length && (db.reviews ?? []).some((x) => x.program_id === pid)) {
+    return 'plo_review'
+  }
   if (of(db.plos, pid).length) return 'plo_synthesis'
   if (of(db.skills, pid).length || of(db.needs, pid).length) return 'skill_extraction'
   if (of(db.evidence, pid).length) return 'stakeholder_needs'
@@ -318,7 +323,7 @@ export function tickSessions(): void {
     if (s.will_fail) {
       s.will_fail = false
       s.status = 'failed'
-      s.suspended_message = `mock: จำลองความล้มเหลว — ขั้น ${stage ?? 'plo_review'} เรียกโมเดลไม่สำเร็จ (หมดเวลารอผลตอบกลับ 300 วินาที)`
+      s.suspended_message = `mock: จำลองความล้มเหลว — ขั้น ${stage ?? 'plo_report'} เรียกโมเดลไม่สำเร็จ (หมดเวลารอผลตอบกลับ 300 วินาที)`
       continue
     }
     if (stage === undefined) {
@@ -358,7 +363,7 @@ const JOB_LABEL_TH: Record<JobKind, string> = {
   skill_extraction: 'สกัดทักษะ',
   need_combination: 'รวมความต้องการ',
   plo_synthesis: 'สังเคราะห์ PLO',
-  plo_review: 'ตรวจชุด PLO',
+  plo_review: 'ตรวจคุณภาพชุด PLO',
   plo_report: 'ออกรายงาน PLO',
   plo_revalidate: 'ตรวจ SMART ซ้ำ',
 }

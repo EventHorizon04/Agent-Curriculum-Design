@@ -148,9 +148,7 @@ export default function PloReview() {
   }
 
   const review = data?.review ?? null
-  // No answer and no error means the first read for this program is still on its
-  // way (or has not started): say so rather than showing "not reviewed". A
-  // reload with a review already on screen keeps it.
+  const agentOff = data?.review_enabled === false
 
   return (
     <div className="space-y-6">
@@ -190,6 +188,9 @@ export default function PloReview() {
               ตรวจใหม่
             </button>
           </div>
+          {agentOff && (
+            <p className="text-sm text-pencil">ปิดการตรวจด้วย agent ไว้ — กดตรวจจะได้ผลจากโค้ดอย่างเดียว</p>
+          )}
 
           {data?.stale && (
             <p className="notice notice-warn">
@@ -229,6 +230,9 @@ export default function PloReview() {
                 ตรวจชุด PLO
               </button>
             </div>
+            {agentOff && (
+              <p className="mt-3 text-sm text-pencil">ปิดการตรวจด้วย agent ไว้ — กดตรวจจะได้ผลจากโค้ดอย่างเดียว</p>
+            )}
           </div>
         )
       )}
