@@ -57,12 +57,14 @@ and is not the interesting result. Expert-rated soft quality is.
 ## Architecture
 
 ```
-scripts/freeze_needs.py ──► bundle.json  (Needs + cited evidence excerpts +
-                                          program context; content hash)
 experiments/agent_arch/
+  freeze_needs.py  stored program ──► bundle.json  (Needs + cited evidence
+                   excerpts + program context; content hash). Read-only,
+                   through the existing repositories.
   rubric.py        rubric fragments shared by every condition
-  toolbox.py       the one tool set (wraps core functions)
-  budget.py        every LLM call goes through here: counts, caps, retries
+  toolbox.py       the one tool set (calls the core's public rule functions)
+  budget.py        counting httpx transport under every LLM client: counts,
+                   caps, retries — for C0's production calls as well
   conditions/
     c0_pipeline.py   production synthesis core, validator on or off
     c1_single.py
@@ -85,22 +87,43 @@ Principles:
    at submit counts against its condition. A gate that fixed it would erase the
    difference being measured.
 
-### Production touchpoints
+### Production touchpoints: none
 
-Two refactors in `src/` are needed so the harness can call the core without
-the parts that persist or orchestrate:
+The experiment adapts to production rather than the other way round. Nothing in
+`src/` changes. Three seams make that possible:
 
-- `plo_synthesis._run` mixes the synthesis core (scope filter, unwritten-Need
-  filter, duplicate check, merge floor, slot selection, draft, validate) with
-  repository reads and writes. The core is extracted into a pure function that
-  `_run` then calls; behaviour unchanged, pinned by the existing stage tests.
-  C0 calls the extracted function.
-- `smart_agent_tools` functions take a `ValidationContext` built per PLO. The
-  toolbox needs `get_need`, `get_evidence`, `check_hard` and `bloom_lookup`
-  over a whole bundle, so their bodies are made callable from plain arguments
-  and the context-taking versions become thin wrappers.
+- **C0 runs the real stage.** The harness calls `plo_synthesis.run(state)` with
+  `needs` and `metadata` already in the state, so the stage loads nothing
+  itself (the "`None` means load it yourself" rule), and patches
+  `PLORepository.bulk_insert` / `delete_by_program` and `EvidenceIndex` with
+  in-memory versions backed by the bundle — the same seam
+  `tests/integration/test_stage_3_plo.py` uses. Every line of production
+  synthesis runs: scope filter, unwritten-Need filter, duplicate check, merge
+  floor, slot selection, draft, validation.
+- **The toolbox calls the rules, not the validator's tools.** The functions in
+  `smart_agent_tools` take a per-PLO `ValidationContext`, but they are thin
+  presentation over public rule functions — `smart_rules.hard_failures`,
+  `bloom_verbs.levels_for_verb` / `are_adjacent` / `verbs_for_level`,
+  `scan_statement_verbs`. The toolbox calls those directly. Rules are never
+  copied; only the result shapes are the harness's own.
+- **Budget is counted below the client.** Production calls go through
+  `llm._complete`, which the harness cannot wrap. Instead it patches
+  `llm._get_client` / `_get_raw_client` to build `AsyncOpenAI` with an `httpx`
+  transport that reads `usage` from every response. One mechanism counts C0's
+  production calls and C1/C2's alike. The single-model rule for C0 is applied
+  through environment variables when the harness starts.
 
-Nothing else in `src/` changes, and neither refactor changes stored data.
+**Cost: the harness is coupled to production internals** (the patched names
+above). A production rename breaks the harness, not production. A harness smoke
+test runs C0 on a pilot bundle against a scripted transport and fails loudly on
+any missing seam, and every result records the production commit hash it ran
+against.
+
+**C2's Validator is the harness's own**, following the `smart_agent` pattern
+rather than calling `run_smart_agent`. Production's validator carries its rubric
+inside its prompts, where C1 cannot be handed the same text as a fragment, so
+reusing it would break parity. Whether production's validator earns its place
+is what H4 (C0 vs C0−V) answers, on the real thing.
 
 ## Parity
 
@@ -109,8 +132,14 @@ What C1 and C2 know must be identical; only how it is divided may differ.
 - `rubric.py` holds the domain rules as named fragments: OBE/Bloom rules, the
   SMART rubric, each critic's checklist, and the set rules (6-10 core,
   `MIN_CORE_AFTER_MERGE`, a Need behind at most one PLO, non-empty trail).
-  Fragment text is built from the existing prompt builders where one exists, so
-  the experiment does not fork the rules it is testing.
+  Fragment text is taken from the existing production prompts where one exists,
+  so the experiment does not fork the rules it is testing.
+- **Drift test:** every fragment taken from production must appear verbatim in
+  the prompts production renders today (`scripts/dump_prompts.py` already
+  renders them). When production edits a prompt the test fails, and the
+  researcher decides — update the fragment, or pin the experiment to the commit
+  it was registered against. Fragments with no production source (the critic
+  checklists) are marked as such and exempt.
 - C1 receives every fragment in one system prompt. Each C2 role receives only
   its own.
 - **Parity test:** the union of fragments across C2's roles equals C1's set.
@@ -304,12 +333,14 @@ Every prompt and response goes to `trace.jsonl`, for audit and for reviewers.
 - **Unit:** each write tool's preconditions; `final_gate`; `budget` cuts exactly
   at the cap; the **rubric parity test** (including the C2−V case); `blind.py`
   leaks no condition id or trace detail into a rater packet.
-- **Integration:** a scripted fake LLM drives C1, C2 and C2−V end to end; C0 and
-  C0−V call the extracted production core.
+- **Drift:** the rubric drift test above.
+- **Integration:** a scripted transport drives C1, C2 and C2−V end to end, and
+  C0 / C0−V through the real `plo_synthesis.run` — which doubles as the seam
+  smoke test.
+- **Budget:** the counting transport sees every call, including production's,
+  and a cap cuts at exactly the configured number.
 - **Replay:** feeding a recorded trace back reproduces the same final set.
 - **Dry run:** a tiny budget on a pilot bundle before every real run.
-- The two production refactors are covered by the existing `plo_synthesis` and
-  `smart_agent` tests, which must pass unchanged.
 
 ## Limitations to report
 
