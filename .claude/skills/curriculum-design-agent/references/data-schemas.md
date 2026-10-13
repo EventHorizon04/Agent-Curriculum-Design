@@ -336,6 +336,7 @@ class UnusedNeedFinding(BaseModel):
     ksec_category: str
     stakeholder_types: list[str] = Field(default_factory=list)
     exclusion: str                                       # out_of_scope | unwritten | lost_on_demand
+    unwritten: bool = False                              # is_unwritten_need, whatever the exclusion; the agent sees a placeholder, not the statement
     verdict: str | None = None                           # consider | ok_to_leave | None (agent gave none)
     reason_th: str = ""
 
@@ -394,6 +395,8 @@ class StageCheckpoint(BaseModel):
 LangGraph's interrupt mechanism saves a `StageCheckpoint` and waits. The React UI fetches pending checkpoints via the FastAPI routes, lets the designer edit, then signals approval. The graph resumes with the (possibly edited) artifacts.
 
 Note: `skill_extraction` and `need_combination` are separate graph nodes but share one checkpoint, placed after `need_combination` — the designer reviews raw extracted skills and the distilled Needs together in one review, not at two separate boundaries. Every other stage boundary gets its own checkpoint.
+
+Exception: after the PLO checkpoint, `plo_report` and `plo_review` run to the end with none (waived by the designer, 2026-10-12; see CLAUDE.md rule 7). The Literal keeps both values because `models.py` does; the graph writes no checkpoint for them.
 
 ## Cross-stage: background jobs
 
