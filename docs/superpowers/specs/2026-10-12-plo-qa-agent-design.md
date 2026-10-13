@@ -255,6 +255,45 @@ Live (controller): run the QA agent on `program` (translation, never measured)
 and `program-2`; record time, tool calls used, and what it found in a "Measured"
 section here.
 
+## Measured
+
+2026-10-13, `z-ai/glm-5.3-flash` on OpenRouter, reasoning bounded at 1024 on
+every step, one run per program through `fresh_review` (stored like the job).
+
+| Program | PLOs | Wall time | Steps | Tool calls | Kept | Dropped |
+|---|---|---|---|---|---|---|
+| `program` (translation) | 7 | 20.4 s | 1 | 0 | 1 redundancy, 7 KSEC (1 disagrees), 0 Bloom, 4 unused verdicts | nothing |
+| `program-2` (tourism) | 9 | 21.2 s | 1 | 0 | 2 redundancies, 9 KSEC (1 disagrees), 0 Bloom, 1 unused verdict | nothing |
+
+Both `reviewed_by="agent"`. A full run fits the 300 s budget about 14 times
+over, so the step and tool caps, not the timeout, are what bound a run.
+
+What it found:
+
+- **Redundancy.** `program`: PLO2/PLO6/PLO7 — all "translate documents",
+  differing in context (legal, business, academic) and tool. `program-2`:
+  PLO1/PLO4 (same service, different means) and PLO4/PLO8/PLO9 (the same
+  "ดำเนินการ…อย่างมีการวางแผน" shape). PLO4 sits in both groups; `accept_review`
+  drops only an identical group, so overlapping groups are kept — advisory,
+  and they say different things.
+- **KSEC.** One disagreement each: `program` PLO7 K → K+S (the graduate
+  translates, which is S); `program-2` PLO7 S → S+C (coordination). Coverage
+  is complete on both, no flags; the agent's reading noted E and C share one
+  PLO on `program` and K has one PLO on `program-2`.
+- **Bloom.** No per-PLO finding on either. The distribution text names the
+  apply concentration (5/7, 6/9) and the missing evaluate level for a
+  bachelor's program; `below_apply_majority` did not fire on either.
+- **Unused Needs.** `program`: 4 out-of-scope Needs, all `ok_to_leave`
+  (institutional work, covered by PLO1/PLO5, duplicates PLO2, above bachelor
+  level). `program-2`: 1, `ok_to_leave` (covered by PLO5). No unwritten Need
+  was selected on either program.
+
+**Open: the tools went unused.** Both runs answered from the dossier alone on
+step 1. The dossier is enough for these two sets, so this is not a failure,
+but `bloom_lookup`, `check_verbs` and `need_detail` have no live exercise yet —
+only unit tests. A set with an unwritten or borderline unused Need, or a
+contested verb, is where they would be expected to fire.
+
 ## Docs
 
 - `CLAUDE.md`: immutable rule 7 (the waiver and why), the `PLO_REVIEW` slot
