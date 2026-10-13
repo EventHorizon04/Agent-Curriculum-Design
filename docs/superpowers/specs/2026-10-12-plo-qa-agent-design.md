@@ -117,8 +117,10 @@ A unit test pins this list against the built dossier.
    with the declared verb, how many verbs the declared phrase holds, which levels
    they can take (`smart_rules` / `bloom_verbs`).
 3. `need_detail(need_id)` — for a Need **in the dossier's unused list only**:
-   `rationale_th` (labelled as the model's explanation), member count, and the
-   `stakeholder_coverage` counts behind its demand. No evidence text.
+   member count and the `stakeholder_coverage` counts behind its demand. No
+   evidence text. `rationale_th` was dropped on 2026-10-13 (designer's decision) —
+   it is model-written text that can name member skills, and the counts are what
+   the demand is built from.
 
 A fifth call is refused with an observation telling the agent to finish. The
 agency is in choosing which suspicion to check, not in seeing more.

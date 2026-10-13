@@ -604,7 +604,8 @@ tests/integration/     ← LLM mocked, full stages
   (measured misleading — an unrelated pair shared 55%, a true duplicate pair
   under 20%), and SMART diagnoses or the previous review (it would restate an old
   verdict). `need_detail` answers only for a Need in the dossier's unused list, and
-  refuses an unwritten one. An unwritten (`[ต้องทบทวน]`) Need's statement *is* its
+  refuses an unwritten one; it returns counts only (member count and voices per
+  stakeholder type), never `rationale_th`. An unwritten (`[ต้องทบทวน]`) Need's statement *is* its
   skill names, so the prompt shows a placeholder in its place — keyed on
   `UnusedNeedFinding.unwritten`, not on the exclusion reason, and for cited Needs
   too. A unit test renders the prompt the model actually reads and asserts the

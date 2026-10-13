@@ -128,11 +128,17 @@ async def test_a_refused_argument_still_counts_toward_the_budget(script) -> None
     assert "ปฏิเสธ" in fake.sent[1][-1]["content"] and "ปฏิเสธ" in fake.sent[2][-1]["content"]
 
 
-async def test_need_detail_gives_the_explanation_and_counts_never_evidence(script) -> None:
+async def test_need_detail_gives_counts_only(script) -> None:
+    ok, payload = agent.run_review_tool(
+        _DOSSIER, {"u1": _U1}, agent.ReviewToolName.NEED_DETAIL, "u1"
+    )
+    assert ok and set(payload) == {"need_id", "member_count", "stakeholder_coverage"}
     fake = script([_tool("need_detail", "u1"), _finish()])
     await agent.run_review_agent(_DOSSIER, {"u1": _U1})
     content = fake.sent[1][-1]["content"]
-    assert "ทักษะล่ามสามข้อเป็นงานเดียวกัน" in content and '"member_count": 2' in content
+    assert '"member_count": 2' in content
+    assert "ทักษะล่ามสามข้อเป็นงานเดียวกัน" not in content
+    assert "rationale" not in content
     assert "e1" not in content and "s1" not in content
 
 

@@ -144,15 +144,14 @@ def run_review_tool(
         }
     need = unused_needs.get(arg)
     if need is not None and any(u.need_id == arg and u.unwritten for u in dossier.unused_needs):
-        # Its rationale is a fallback sentence naming member skills, and the
-        # reviewer is kept away from skill-level text.
+        # Its statement is just the member skill names, and there is nothing
+        # designer-written to look at; the reviewer is kept away from
+        # skill-level text.
         return False, {"error_th": "Need นี้ยังไม่มีประโยคที่ผู้ออกแบบเขียนไว้ จึงไม่มีรายละเอียดให้ดู"}
     if need is None:
         return False, {"error_th": "need_detail ใช้ได้กับ Need ในรายการที่ไม่ได้เป็น PLO เท่านั้น"}
     return True, {
         "need_id": need.need_id,
-        "rationale_th": need.rationale_th,
-        "rationale_note_th": "คำอธิบายของโมเดลที่เขียน Need นี้ ไม่ใช่หลักฐาน",
         "member_count": len(need.member_skill_ids),
         "stakeholder_coverage": {str(k): v for k, v in need.stakeholder_coverage.items()},
     }
