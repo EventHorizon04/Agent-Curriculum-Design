@@ -366,6 +366,7 @@ class PLOSetReview(BaseModel):
     reviewed_by: str = "agent"                           # agent | code_only; "agent" for rows predating the field
     code_only_reason: str | None = None                  # disabled | failed | timeout
     tool_calls: list[ReviewToolCall] = Field(default_factory=list)           # code, in call order
+    dropped_findings: dict[str, int] = Field(default_factory=dict)           # code: agent entries accept_review refused, by kind (redundancy|ksec|bloom|unused); {} for code_only and old rows
 ```
 
 `plo_reviews` is one row per program (`program_id` primary key, FK to `programs.program_id`, cascade-deleted with it), holding `plo_fingerprint`, `model`, `created_at`, and the rest of `PLOSetReview` in a single JSONB `review` column — no migration needed for a new finding field, the same reasoning as `SMARTCheck.findings`.

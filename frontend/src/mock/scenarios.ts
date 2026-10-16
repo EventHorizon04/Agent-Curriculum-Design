@@ -1012,6 +1012,7 @@ export function buildMockReview(
     unused_needs: unusedNeeds,
     reviewed_by: 'agent',
     code_only_reason: null,
+    dropped_findings: { redundancy: 1 },
     tool_calls: [
       { tool: 'read_need', arg: unusedNeeds[0]?.need_id ?? sorted[0]?.plo_id ?? '' },
       { tool: 'read_plo', arg: sorted[0]?.plo_id ?? '' },

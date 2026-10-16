@@ -198,6 +198,10 @@ export default function PloReview() {
             </p>
           )}
 
+          {droppedNotice(review.dropped_findings) && (
+            <p className="notice notice-warn">{droppedNotice(review.dropped_findings)}</p>
+          )}
+
           {review.summary_th && <p className="record text-base">{review.summary_th}</p>}
 
           <Overview review={review} />
@@ -243,6 +247,22 @@ export default function PloReview() {
 /** Who made the review, and when. A code-only review says so and why: it is the
  *  same page with fewer opinions on it, and the designer should not mistake the
  *  missing ones for a clean bill of health. */
+const DROPPED_LABEL_TH: Record<string, string> = {
+  redundancy: 'ความซ้ำซ้อน',
+  ksec: 'หมวด KSEC',
+  bloom: 'ระดับ Bloom',
+  unused: 'Need ที่ไม่ได้เป็น PLO',
+}
+
+/** The warning for agent entries the code refused, or null when none were. */
+function droppedNotice(dropped: Record<string, number> | undefined): string | null {
+  const entries = Object.entries(dropped ?? {}).filter(([, n]) => n > 0)
+  if (entries.length === 0) return null
+  const total = entries.reduce((sum, [, n]) => sum + n, 0)
+  const parts = entries.map(([kind, n]) => `${DROPPED_LABEL_TH[kind] ?? kind} ${n}`).join(', ')
+  return `ระบบตัดข้อเสนอของ agent ที่ไม่ผ่านกติกาออก ${total} ข้อ (${parts}) — ข้อความสรุปอาจยังพูดถึงข้อที่ถูกตัด`
+}
+
 function StatusLine({ review }: { review: PLOSetReview }) {
   const when = formatCreatedAt(review.created_at)
   if (review.reviewed_by === 'agent') {

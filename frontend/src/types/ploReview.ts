@@ -38,6 +38,8 @@ export interface UnusedNeedFinding {
   stakeholder_types: string[]
   /** `lost_on_demand` | `out_of_scope` | `unwritten`. */
   exclusion: string
+  /** True when the Need's sentence is a `[ต้องทบทวน]` fallback, not a written Need. */
+  unwritten?: boolean
   /** `consider` | `ok_to_leave` | null (the reviewer did not answer). */
   verdict: string | null
   reason_th: string
@@ -70,6 +72,8 @@ export interface PLOSetReview {
   /** `disabled` | `failed` | `timeout`; null when an agent answered. */
   code_only_reason: string | null
   tool_calls: ReviewToolCall[]
+  /** Agent entries the code refused, by kind (`redundancy` | `ksec` | `bloom` | `unused`). */
+  dropped_findings?: Record<string, number>
 }
 
 export interface PLOReviewResponse {

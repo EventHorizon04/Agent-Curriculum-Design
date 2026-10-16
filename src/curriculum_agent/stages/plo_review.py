@@ -199,6 +199,7 @@ def accept_review(
         reviewed_by="agent",
         code_only_reason=None,
         tool_calls=list(tool_calls),
+        dropped_findings={kind: n for kind, n in drops.items() if n > 0},
     )
     return review, drops
 

@@ -621,7 +621,9 @@ tests/integration/     ← LLM mocked, full stages
   as the PLOs, because the unused-Need answer depends on them: a rescored Need
   makes the review stale. A review is reused while the fingerprint is unchanged
   and shown labelled stale once it moves; `stage_reached` counts only a current
-  one as stage 06.
+  one as stage 06. Entries `accept_review` refuses are counted in
+  `dropped_findings` and the stage 06 page warns, because the agent's
+  `summary_th` is not re-checked and can still mention a dropped finding.
 - **A program copy re-keys every evidence, skill and Need id; the validator
   switch skips only the agent.** `POST /programs/{id}/copy` (`data/program_copy.py`)
   exists so one synthesis run survives the next. `evidence_id`, `skill_id` and

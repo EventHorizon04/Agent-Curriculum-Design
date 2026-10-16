@@ -638,6 +638,9 @@ class PLOSetReview(BaseModel):
     reviewed_by: str = "agent"
     code_only_reason: str | None = None
     tool_calls: list[ReviewToolCall] = Field(default_factory=list)
+    # Code: agent entries accept_review refused, by kind. Empty for a code_only
+    # review and for rows written before the field existed.
+    dropped_findings: dict[str, int] = Field(default_factory=dict)
 
 
 # ----------------------- Stage checkpoint ------------------------
