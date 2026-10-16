@@ -326,7 +326,7 @@ class Settings(BaseSettings):
     plo_review_timeout_seconds: int = 300
     # How many times the QA agent reads the same dossier, in parallel; the stored
     # review keeps what a majority agrees on. 1 restores the single-run review.
-    plo_review_runs: int = Field(default=3, ge=1)
+    plo_review_runs: int = Field(default=5, ge=1)
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
     # fans out a call per evidence item, and now one per window of each item

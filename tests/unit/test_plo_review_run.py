@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from curriculum_agent.config import settings
+from curriculum_agent.config import Settings, settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
@@ -259,6 +259,16 @@ async def test_a_second_review_while_one_is_in_flight_is_refused(live: AsyncMock
             await pr.fresh_review("p", _PLOS)
     finally:
         pr._REVIEW_IN_FLIGHT.discard("p")
+
+
+@pytest.fixture(autouse=True)
+def _three_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    # These tests are about a three-run vote, whatever the shipped default is.
+    monkeypatch.setattr(settings, "plo_review_runs", 3)
+
+
+def test_the_shipped_default_is_five_runs() -> None:
+    assert Settings.model_fields["plo_review_runs"].default == 5
 
 
 def _finish(*groups: list[str]) -> ReviewFinish:

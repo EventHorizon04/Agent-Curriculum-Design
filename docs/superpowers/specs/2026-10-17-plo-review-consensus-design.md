@@ -28,7 +28,7 @@ the core should hold.
    trustworthy, and resets on every set change) and C (code proposes candidate
    pairs, the agent answers yes/no — only covers redundancy, and the one code
    signal tried for it, shared evidence, measured misleading).
-2. **Three runs, majority threshold**, `plo_review_runs` setting, default 3;
+2. **Three runs, majority threshold**, `plo_review_runs` setting, default 5 (raised from 3 after the measurement below);
    `1` restores today's behaviour exactly.
 3. **One successful run is shown, labelled unconfirmed**, rather than dropped.
 4. Prompt, tools, dossier and the information-bias rule are unchanged — every
@@ -188,6 +188,23 @@ differ by at most one finding. Record in a "Measured" section here.
 Three samples cannot separate a finding the model gives 50% of the time from
 one it gives 67%; more runs per press (5, threshold 3) would, at 5× tokens and
 about the same wall time. Not changed — left for the designer.
+
+### Five runs (default since 2026-10-17)
+
+Same program, three presses, five runs each (threshold 3), through
+`fresh_review` with `plo_review_runs=5`:
+
+| Press | Wall time | Runs | Main redundancy (agreed/5) | KSEC main | Unused verdict |
+|---|---|---|---|---|---|
+| 1 | 19 s | 5/5 | PLO4-PLO9 (5) | PLO7 → S+C (3) | ok_to_leave (4) |
+| 2 | 16 s | 5/5 | PLO4-PLO9 (3) | PLO7 → S+C (5) | ok_to_leave (4) |
+| 3 | 14 s | 5/5 | PLO4-PLO9 (5) | PLO7 → S+C (3), PLO8 → E (3) | ok_to_leave (4) |
+
+**Success criterion met:** the main redundancy set is identical on all three
+presses. PLO1-PLO4 and PLO6-PLO8, which crossed the 2-of-3 line under three
+runs, reached only 1-2 of 5 and stayed below threshold every time. One KSEC
+suggestion (PLO8 → E) sat exactly at 3/5 on one press. Tokens are 5× a single
+run; wall time stays under 20 s.
 
 ## Docs
 
