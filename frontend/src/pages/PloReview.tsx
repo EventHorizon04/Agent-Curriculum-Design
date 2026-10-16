@@ -148,6 +148,7 @@ export default function PloReview() {
   }
 
   const review = data?.review ?? null
+  const dropped = droppedNotice(review?.dropped_findings)
   const agentOff = data?.review_enabled === false
 
   return (
@@ -198,9 +199,7 @@ export default function PloReview() {
             </p>
           )}
 
-          {droppedNotice(review.dropped_findings) && (
-            <p className="notice notice-warn">{droppedNotice(review.dropped_findings)}</p>
-          )}
+          {dropped && <p className="notice notice-warn">{dropped}</p>}
 
           {review.summary_th && <p className="record text-base">{review.summary_th}</p>}
 
@@ -244,9 +243,6 @@ export default function PloReview() {
   )
 }
 
-/** Who made the review, and when. A code-only review says so and why: it is the
- *  same page with fewer opinions on it, and the designer should not mistake the
- *  missing ones for a clean bill of health. */
 const DROPPED_LABEL_TH: Record<string, string> = {
   redundancy: 'ความซ้ำซ้อน',
   ksec: 'หมวด KSEC',
@@ -263,6 +259,9 @@ function droppedNotice(dropped: Record<string, number> | undefined): string | nu
   return `ระบบตัดข้อเสนอของ agent ที่ไม่ผ่านกติกาออก ${total} ข้อ (${parts}) — ข้อความสรุปอาจยังพูดถึงข้อที่ถูกตัด`
 }
 
+/** Who made the review, and when. A code-only review says so and why: it is the
+ *  same page with fewer opinions on it, and the designer should not mistake the
+ *  missing ones for a clean bill of health. */
 function StatusLine({ review }: { review: PLOSetReview }) {
   const when = formatCreatedAt(review.created_at)
   if (review.reviewed_by === 'agent') {
