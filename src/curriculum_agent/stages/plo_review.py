@@ -359,7 +359,8 @@ def _worth_reusing(review: PLOSetReview) -> bool:
     """A current review is reused only if running again could not do better: the
     agent's own answer, or a code-only one the switch produced while it is still
     off. An unconfirmed consensus (one run of several), a failed or timed-out run,
-    or a `disabled` one with the slot now on, is run fresh — the set did not change but the reason for the gap did."""
+    or a `disabled` one with the slot now on, is run fresh —
+    the set did not change but the reason for the gap did."""
     if review.reviewed_by == "agent":
         # One answer out of several asked for is unconfirmed; a fresh run can confirm it.
         return not (review.runs_requested > 1 and review.runs_succeeded == 1)
