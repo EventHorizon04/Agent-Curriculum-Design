@@ -7,8 +7,10 @@ is why it can read the set the report persisted, and it changes nothing: its
 findings are stored per program and shown beside the report. See
 docs/superpowers/specs/2026-10-12-plo-qa-agent-design.md.
 
-The review stored is one of two things: the agent's answer, judged entry by
-entry in `accept_review`, or the code facts alone (`code_only_review`) when the
+The review stored is one of three things: the agent's answer, judged entry by
+entry in `accept_review` — the agent runs `plo_review_runs` times and the stored
+review is the majority of the usable runs (`plo_review_consensus`), or the one
+usable run as-is — or the code facts alone (`code_only_review`) when the
 agent is switched off, fails, times out, or says nothing usable. The facts —
 KSEC coverage, the Bloom histogram, the unused-Need list — come from
 `plo_review_facts` on every path, so a review always has them; only the
@@ -19,6 +21,7 @@ declared level.
 
 from __future__ import annotations
 
+import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -49,6 +52,7 @@ from curriculum_agent.stages.plo_review_agent import (
     UnusedVerdict,
     run_review_agent,
 )
+from curriculum_agent.stages.plo_review_consensus import consensus_review
 from curriculum_agent.stages.plo_review_facts import (
     ReviewDossier,
     build_dossier,
@@ -279,44 +283,60 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
     # The only gate on need_detail: the agent may open a Need the report lists as
     # unused and no other.
     unused = {u.need_id: needs_by_id[u.need_id] for u in dossier.unused_needs}
-    outcome = await run_review_agent(dossier, unused)
-    if outcome.finish is None:
+    requested = settings.plo_review_runs
+    # Several independent reads of one dossier (spec 2026-10-17): the model
+    # answers differently from run to run even at temperature 0, and a finding
+    # most runs repeat is one the designer can trust. Each run keeps its own
+    # budget and timeout; none sees another's answer.
+    outcomes = await asyncio.gather(*(run_review_agent(dossier, unused) for _ in range(requested)))
+    judged: list[PLOSetReview] = []
+    for i, outcome in enumerate(outcomes, start=1):
+        if outcome.finish is None:
+            logger.warning(f"plo_review: run {i}/{requested} ended {outcome.reason}")
+            continue
+        review, drops = accept_review(
+            outcome.finish,
+            plos,
+            needs_by_id,
+            dossier,
+            program_id=program_id,
+            fingerprint=fingerprint,
+            model=settings.plo_review_model,
+            created_at=now,
+            tool_calls=outcome.tool_calls,
+        )
+        logger.info(
+            f"plo_review: run {i}/{requested} kept {len(review.redundancies)} redundancy / "
+            f"{len(review.ksec)} ksec / {len(review.bloom)} bloom / "
+            f"{sum(1 for u in review.unused_needs if u.verdict)} unused verdict(s), "
+            f"dropped {dict(drops) or 'nothing'}, {len(review.tool_calls)} tool call(s)"
+        )
+        if not has_agent_findings(review):
+            logger.warning(f"plo_review: run {i}/{requested} held nothing usable")
+            continue
+        judged.append(review)
+
+    if not judged:
+        reason = "timeout" if all(o.reason == "timeout" for o in outcomes) else "failed"
+        logger.warning(f"plo_review: no usable run for {program_id} — code facts only")
         return code_only_review(
             dossier,
             program_id=program_id,
             fingerprint=fingerprint,
             created_at=now,
-            reason=outcome.reason or "failed",
-            tool_calls=outcome.tool_calls,
+            reason=reason,
+            tool_calls=[c for o in outcomes for c in o.tool_calls],
         )
-    review, drops = accept_review(
-        outcome.finish,
-        plos,
-        needs_by_id,
-        dossier,
-        program_id=program_id,
-        fingerprint=fingerprint,
-        model=settings.plo_review_model,
-        created_at=now,
-        tool_calls=outcome.tool_calls,
-    )
+    if len(judged) == 1:
+        return judged[0].model_copy(
+            update={"runs_requested": requested, "runs_succeeded": 1, "agreement_threshold": 1}
+        )
+    review = consensus_review(judged, runs_requested=requested, max_group=MAX_REDUNDANCY_GROUP)
     logger.info(
-        f"plo_review: kept {len(review.redundancies)} redundancy / {len(review.ksec)} ksec / "
-        f"{len(review.bloom)} bloom / {sum(1 for u in review.unused_needs if u.verdict)} unused "
-        f"verdict(s), dropped {dict(drops) or 'nothing'}, {len(review.tool_calls)} tool call(s)"
+        f"plo_review: {len(judged)}/{requested} runs, threshold {review.agreement_threshold}, "
+        f"{sum(1 for r in review.redundancies if r.agreed_runs >= review.agreement_threshold)} "
+        f"redundancy finding(s) agreed"
     )
-    if not has_agent_findings(review):
-        logger.warning(
-            f"plo_review: the answer for {program_id} held nothing usable — code facts only"
-        )
-        return code_only_review(
-            dossier,
-            program_id=program_id,
-            fingerprint=fingerprint,
-            created_at=now,
-            reason="failed",
-            tool_calls=outcome.tool_calls,
-        )
     return review
 
 

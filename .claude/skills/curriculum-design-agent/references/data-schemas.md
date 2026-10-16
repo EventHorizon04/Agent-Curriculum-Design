@@ -296,6 +296,7 @@ class RedundancyFinding(BaseModel):
     plo_ids: list[str]
     reason_th: str
     suggestion_th: str = ""
+    agreed_runs: int = 1                                 # runs that said this; 1 for one-run reviews and old rows
 
 class KsecFinding(BaseModel):
     """Where one PLO's domain should sit, possibly several of K/S/E/C.
@@ -309,12 +310,14 @@ class KsecFinding(BaseModel):
     suggested: list[str]
     agrees: bool
     reason_th: str = ""
+    agreed_runs: int = 1                                 # runs that said this; 1 for one-run reviews and old rows
 
 class BloomFinding(BaseModel):
     plo_id: str
     declared: BloomLevel
     suggested_level: BloomLevel | None = None
     reason_th: str = ""
+    agreed_runs: int = 1                                 # runs that said this; 1 for one-run reviews and old rows
 
 class KsecCoverage(BaseModel):
     """PLOs per K/S/E/C (optional included), computed in code. Plain str keys and flags."""
@@ -339,6 +342,7 @@ class UnusedNeedFinding(BaseModel):
     unwritten: bool = False                              # is_unwritten_need, whatever the exclusion; the agent sees a placeholder, not the statement
     verdict: str | None = None                           # consider | ok_to_leave | None (agent gave none)
     reason_th: str = ""
+    agreed_runs: int = 1                                 # runs that said this; 1 for one-run reviews and old rows
 
 class ReviewToolCall(BaseModel):
     """One tool call the QA agent made, in order, for the "what it looked at" list."""
@@ -367,6 +371,9 @@ class PLOSetReview(BaseModel):
     code_only_reason: str | None = None                  # disabled | failed | timeout
     tool_calls: list[ReviewToolCall] = Field(default_factory=list)           # code, in call order
     dropped_findings: dict[str, int] = Field(default_factory=dict)           # code: agent entries accept_review refused, by kind (redundancy|ksec|bloom|unused); {} for code_only and old rows
+    runs_requested: int = 1                              # plo_review_runs at the time
+    runs_succeeded: int = 1                              # runs with a usable answer
+    agreement_threshold: int = 1                         # runs_succeeded // 2 + 1 when >=2 runs
 ```
 
 `plo_reviews` is one row per program (`program_id` primary key, FK to `programs.program_id`, cascade-deleted with it), holding `plo_fingerprint`, `model`, `created_at`, and the rest of `PLOSetReview` in a single JSONB `review` column — no migration needed for a new finding field, the same reasoning as `SMARTCheck.findings`.

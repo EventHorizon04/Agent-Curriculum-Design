@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -136,7 +137,10 @@ async def test_the_switched_off_slot_never_runs_the_agent(
     assert review.reviewed_by == "code_only" and review.code_only_reason == "disabled"
 
 
-async def test_an_unchanged_set_reuses_the_stored_review(live: AsyncMock) -> None:
+async def test_an_unchanged_set_reuses_the_stored_review(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "plo_review_runs", 1)
     first = await pr.review_plo_set("p", _PLOS)
     second = await pr.review_plo_set("p", _PLOS)
     assert first == second and live.await_count == 1
@@ -144,8 +148,9 @@ async def test_an_unchanged_set_reuses_the_stored_review(live: AsyncMock) -> Non
 
 @pytest.mark.parametrize("reason", ["failed", "timeout"])
 async def test_a_stored_code_only_failure_is_run_fresh_not_reused(
-    live: AsyncMock, reason: str
+    live: AsyncMock, reason: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(settings, "plo_review_runs", 1)
     live.return_value = AgentOutcome(None, reason, [])
     first = await pr.review_plo_set("p", _PLOS)
     assert first is not None and first.code_only_reason == reason
@@ -167,6 +172,7 @@ async def test_a_stored_disabled_review_is_reused_while_the_slot_stays_off(
 async def test_a_stored_disabled_review_is_run_fresh_once_the_slot_is_on(
     live: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(settings, "plo_review_runs", 1)
     monkeypatch.setattr(settings, "plo_review_provider", "")
     off = await pr.review_plo_set("p", _PLOS)
     assert off is not None and off.code_only_reason == "disabled"
@@ -175,7 +181,10 @@ async def test_a_stored_disabled_review_is_run_fresh_once_the_slot_is_on(
     assert on is not None and on.reviewed_by == "agent" and live.await_count == 1
 
 
-async def test_a_changed_set_is_reviewed_again(live: AsyncMock) -> None:
+async def test_a_changed_set_is_reviewed_again(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "plo_review_runs", 1)
     await pr.review_plo_set("p", _PLOS)
     await pr.review_plo_set("p", _changed())
     assert live.await_count == 2
@@ -198,8 +207,9 @@ async def test_review_plo_set_keeps_the_stored_review_when_the_new_one_fails_to_
 
 
 async def test_review_plo_set_degrades_to_the_stored_review_while_one_is_in_flight(
-    live: AsyncMock,
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(settings, "plo_review_runs", 1)
     old = await pr.fresh_review("p", _PLOS)
     pr._REVIEW_IN_FLIGHT.add("p")
     try:
@@ -249,3 +259,84 @@ async def test_a_second_review_while_one_is_in_flight_is_refused(live: AsyncMock
             await pr.fresh_review("p", _PLOS)
     finally:
         pr._REVIEW_IN_FLIGHT.discard("p")
+
+
+def _finish(*groups: list[str]) -> ReviewFinish:
+    return ReviewFinish(
+        kind="finish",
+        redundancies=[Redundancy(plo_ids=g, reason_th="ซ้ำ", suggestion_th="รวม") for g in groups],
+        summary_th="สรุป",
+    )
+
+
+async def test_three_runs_are_asked_for_and_voted_over(live: AsyncMock) -> None:
+    review = await pr.fresh_review("p", _PLOS)
+    assert live.await_count == 3
+    assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (3, 3, 2)
+    assert review.redundancies[0].agreed_runs == 3
+
+
+async def test_the_runs_are_concurrent(live: AsyncMock) -> None:
+    started = 0
+    all_started = asyncio.Event()
+
+    async def blocking(dossier, unused):  # type: ignore[no-untyped-def]
+        nonlocal started
+        started += 1
+        if started == 3:
+            all_started.set()
+        await asyncio.wait_for(all_started.wait(), timeout=1)
+        return AgentOutcome(_FINISH, None, [])
+
+    live.side_effect = blocking
+    review = await pr.fresh_review("p", _PLOS)
+    assert review.runs_succeeded == 3
+
+
+async def test_two_successes_and_one_failure_vote_over_two(live: AsyncMock) -> None:
+    live.side_effect = [
+        AgentOutcome(_FINISH, None, []),
+        AgentOutcome(None, "timeout", []),
+        AgentOutcome(_FINISH, None, []),
+    ]
+    review = await pr.fresh_review("p", _PLOS)
+    assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (3, 2, 2)
+    assert review.redundancies[0].agreed_runs == 2
+
+
+async def test_one_success_is_stored_as_is_and_marked(live: AsyncMock) -> None:
+    live.side_effect = [
+        AgentOutcome(None, "failed", []),
+        AgentOutcome(_finish(["PLO1", "PLO2"]), None, []),
+        AgentOutcome(None, "timeout", []),
+    ]
+    review = await pr.fresh_review("p", _PLOS)
+    assert review.reviewed_by == "agent"
+    assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (3, 1, 1)
+    assert review.redundancies[0].agreed_runs == 1
+
+
+async def test_all_timeouts_store_timeout(live: AsyncMock) -> None:
+    live.return_value = AgentOutcome(None, "timeout", [])
+    review = await pr.fresh_review("p", _PLOS)
+    assert review.reviewed_by == "code_only" and review.code_only_reason == "timeout"
+
+
+async def test_mixed_failures_store_failed(live: AsyncMock) -> None:
+    live.side_effect = [
+        AgentOutcome(None, "timeout", []),
+        AgentOutcome(None, "failed", []),
+        AgentOutcome(ReviewFinish(kind="finish"), None, []),  # judged empty: a failure
+    ]
+    review = await pr.fresh_review("p", _PLOS)
+    assert review.reviewed_by == "code_only" and review.code_only_reason == "failed"
+
+
+async def test_one_run_setting_is_todays_single_review(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(settings, "plo_review_runs", 1)
+    review = await pr.fresh_review("p", _PLOS)
+    assert live.await_count == 1
+    assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (1, 1, 1)
+    assert review.tool_calls[0].tool == "check_verbs"
