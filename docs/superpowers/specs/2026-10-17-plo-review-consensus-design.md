@@ -162,6 +162,33 @@ time per run and how the main redundancy findings compare across the three.
 **Success:** the main redundancy findings are identical across the three, or
 differ by at most one finding. Record in a "Measured" section here.
 
+## Measured
+
+2026-10-17, `program-2-run-1`, `z-ai/glm-5.3-flash`, three presses of
+`POST /plos/review/run` one after another, three runs each.
+
+| Press | Wall time | Runs | Main redundancy (agreed/3) | Below threshold |
+|---|---|---|---|---|
+| 1 | 14 s | 3/3 | PLO1-PLO4 (2), PLO4-PLO9 (3) | PLO6-PLO8 (1) |
+| 2 | 12 s | 3/3 | PLO1-PLO4 (2), PLO4-PLO9 (2), PLO6-PLO8 (2) | 3 pairs (1 each) |
+| 3 | 12 s | 3/3 | PLO4-PLO9 (3) | none |
+
+- **Success criterion not met.** Presses 2 and 3 differ by two main findings
+  (PLO1-PLO4, PLO6-PLO8). Presses 1-2 and 1-3 differ by one.
+- **What did stabilise:** PLO4-PLO9 is a main finding on every press, and
+  KSEC PLO7 → S+C on every press (2/3, 3/3, 3/3). Before the vote, two single
+  runs shared no redundancy finding at all.
+- **What still flips:** findings the model gives about half the time
+  (PLO1-PLO4, PLO6-PLO8, KSEC PLO3 → K+S) land on either side of 2-of-3 from
+  press to press; the one unused Need's verdict went `ok_to_leave` (2/3) on
+  presses 1-2 and `consider` (2/3) on press 3.
+- Wall time fell rather than rose against the single run (~20 s): the three
+  runs are concurrent, and each finished on step 1.
+
+Three samples cannot separate a finding the model gives 50% of the time from
+one it gives 67%; more runs per press (5, threshold 3) would, at 5× tokens and
+about the same wall time. Not changed — left for the designer.
+
 ## Docs
 
 - `CLAUDE.md`: the `PLO_REVIEW_PROVIDER` paragraph (three runs, majority,
