@@ -28,7 +28,7 @@ the core should hold.
    trustworthy, and resets on every set change) and C (code proposes candidate
    pairs, the agent answers yes/no — only covers redundancy, and the one code
    signal tried for it, shared evidence, measured misleading).
-2. **Three runs, majority threshold**, `plo_review_runs` setting, default 5 (raised from 3 after the measurement below);
+2. **Several runs, majority threshold**, `plo_review_runs` setting, default 5 (raised from 3 after the measurement below);
    `1` restores today's behaviour exactly.
 3. **One successful run is shown, labelled unconfirmed**, rather than dropped.
 4. Prompt, tools, dossier and the information-bias rule are unchanged — every
