@@ -463,20 +463,9 @@ class PLORepository:
             return [PLO.model_validate(_row_to_dict(row)) for row in rows]
 
 
-_REVIEW_BODY_FIELDS = {
-    "redundancies",
-    "ksec",
-    "bloom",
-    "bloom_distribution_th",
-    "summary_th",
-    "ksec_coverage",
-    "bloom_histogram",
-    "coverage_th",
-    "unused_needs",
-    "reviewed_by",
-    "code_only_reason",
-    "tool_calls",
-}
+# Stored in their own columns; everything else rides in the JSONB body, so a new
+# field is stored by default.
+_REVIEW_COLUMN_FIELDS = {"program_id", "plo_fingerprint", "model", "created_at"}
 
 
 class PLOReviewRepository:
@@ -498,7 +487,7 @@ class PLOReviewRepository:
             )
 
     async def upsert(self, review: PLOSetReview) -> None:
-        body = review.model_dump(mode="json", include=_REVIEW_BODY_FIELDS)
+        body = review.model_dump(mode="json", exclude=_REVIEW_COLUMN_FIELDS)
         async with AsyncSessionLocal() as session:
             existing = await session.get(PLOReviewTable, review.program_id)
             if existing is None:

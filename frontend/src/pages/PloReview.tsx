@@ -292,7 +292,7 @@ function StatusLine({ review }: { review: PLOSetReview }) {
       <p className="text-sm text-pencil">
         ตรวจโดย agent · {review.model} · {when}
         {isVoted(review) &&
-          ` · ตรวจ ${runsOf(review)} รอบ แสดงเฉพาะข้อที่ตรงกันอย่างน้อย ${review.agreement_threshold} รอบ`}
+          ` · ตรวจ ${runsOf(review)} รอบ แสดงเฉพาะข้อที่ตรงกันอย่างน้อย ${review.agreement_threshold ?? 1} รอบ`}
       </p>
     )
   }
@@ -587,7 +587,7 @@ function BelowThreshold({ review }: { review: PLOSetReview }) {
     <details className="border-t border-hair pt-4">
       <summary className="eyebrow cursor-pointer">พบไม่ถึงเกณฑ์ ({total})</summary>
       <p className="mt-2 text-sm text-pencil">
-        ข้อเหล่านี้มีบางรอบพูดถึงแต่ไม่ถึงเกณฑ์ {review.agreement_threshold} รอบ — ยังไม่ควรถือเป็นข้อค้นพบ
+        ข้อเหล่านี้มีบางรอบพูดถึงแต่ไม่ถึงเกณฑ์ {review.agreement_threshold ?? 1} รอบ — ยังไม่ควรถือเป็นข้อค้นพบ
       </p>
       <div className="mt-3 space-y-3">
         {red.length > 0 && (

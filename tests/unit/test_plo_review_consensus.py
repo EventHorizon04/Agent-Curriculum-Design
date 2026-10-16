@@ -206,3 +206,8 @@ def test_a_stored_review_without_the_new_fields_reads_as_one_run() -> None:
     review = PLOSetReview.model_validate(raw)
     assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (1, 1, 1)
     assert review.redundancies[0].agreed_runs == 1
+
+
+def test_pair_findings_are_ordered_by_plo_number_not_by_string() -> None:
+    review = _consensus(_run(groups=[["PLO10", "PLO11"], ["PLO2", "PLO3"]]), _run(), _run())
+    assert [r.plo_ids for r in review.redundancies] == [["PLO2", "PLO3"], ["PLO10", "PLO11"]]

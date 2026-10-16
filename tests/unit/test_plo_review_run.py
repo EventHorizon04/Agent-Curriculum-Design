@@ -320,6 +320,7 @@ async def test_all_timeouts_store_timeout(live: AsyncMock) -> None:
     live.return_value = AgentOutcome(None, "timeout", [])
     review = await pr.fresh_review("p", _PLOS)
     assert review.reviewed_by == "code_only" and review.code_only_reason == "timeout"
+    assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (3, 0, 1)
 
 
 async def test_mixed_failures_store_failed(live: AsyncMock) -> None:
@@ -330,6 +331,31 @@ async def test_mixed_failures_store_failed(live: AsyncMock) -> None:
     ]
     review = await pr.fresh_review("p", _PLOS)
     assert review.reviewed_by == "code_only" and review.code_only_reason == "failed"
+    assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (3, 0, 1)
+
+
+async def test_an_unconfirmed_stored_review_is_run_fresh(live: AsyncMock) -> None:
+    live.side_effect = [
+        AgentOutcome(None, "failed", []),
+        AgentOutcome(_finish(["PLO1", "PLO2"]), None, []),
+        AgentOutcome(None, "timeout", []),
+    ]
+    first = await pr.review_plo_set("p", _PLOS)
+    assert first is not None and (first.runs_requested, first.runs_succeeded) == (3, 1)
+    live.side_effect = None
+    live.return_value = AgentOutcome(_FINISH, None, [])
+    second = await pr.review_plo_set("p", _PLOS)
+    assert second is not None and second.runs_succeeded == 3 and live.await_count == 6
+
+
+@pytest.mark.parametrize("succeeded", [2, 3])
+async def test_a_confirmed_stored_review_is_reused(live: AsyncMock, succeeded: int) -> None:
+    ok = AgentOutcome(_FINISH, None, [])
+    live.side_effect = [ok] * succeeded + [AgentOutcome(None, "failed", [])] * (3 - succeeded)
+    first = await pr.review_plo_set("p", _PLOS)
+    assert first is not None and first.runs_succeeded == succeeded
+    second = await pr.review_plo_set("p", _PLOS)
+    assert second == first and live.await_count == 3
 
 
 async def test_one_run_setting_is_todays_single_review(

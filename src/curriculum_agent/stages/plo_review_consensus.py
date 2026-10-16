@@ -45,6 +45,10 @@ def _sorted_ids(group: frozenset[str]) -> list[str]:
     return sorted(group, key=_plo_order)
 
 
+def _pair_order(pair: frozenset[str]) -> list[tuple[int, str]]:
+    return [_plo_order(i) for i in _sorted_ids(pair)]
+
+
 def _redundancy_text(group: frozenset[str], runs: Sequence[PLOSetReview]) -> RedundancyFinding:
     """The finding of the run whose group overlaps this one most: most shared PLOs,
     then fewest PLOs outside it, then the earlier run."""
@@ -96,7 +100,7 @@ def _redundancies(
         if len(component) <= max_group and inner <= passing:
             groups.append(frozenset(component))
         else:
-            groups.extend(sorted((p for p in inner if p in passing), key=lambda p: _sorted_ids(p)))
+            groups.extend(sorted((p for p in inner if p in passing), key=_pair_order))
 
     findings: list[RedundancyFinding] = []
     for group in groups:
@@ -110,7 +114,7 @@ def _redundancies(
                 agreed_runs=agreed,
             )
         )
-    for pair in sorted((p for p in support if p not in passing), key=lambda p: _sorted_ids(p)):
+    for pair in sorted((p for p in support if p not in passing), key=_pair_order):
         src = _redundancy_text(pair, runs)
         findings.append(
             RedundancyFinding(

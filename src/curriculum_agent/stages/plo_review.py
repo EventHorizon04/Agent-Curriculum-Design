@@ -326,7 +326,7 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
             created_at=now,
             reason=reason,
             tool_calls=[c for o in outcomes for c in o.tool_calls],
-        )
+        ).model_copy(update={"runs_requested": requested, "runs_succeeded": 0})
     if len(judged) == 1:
         return judged[0].model_copy(
             update={"runs_requested": requested, "runs_succeeded": 1, "agreement_threshold": 1}
@@ -358,10 +358,11 @@ async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
 def _worth_reusing(review: PLOSetReview) -> bool:
     """A current review is reused only if running again could not do better: the
     agent's own answer, or a code-only one the switch produced while it is still
-    off. A failed or timed-out run, or a `disabled` one with the slot now on, is
-    run fresh — the set did not change but the reason for the gap did."""
+    off. An unconfirmed consensus (one run of several), a failed or timed-out run,
+    or a `disabled` one with the slot now on, is run fresh — the set did not change but the reason for the gap did."""
     if review.reviewed_by == "agent":
-        return True
+        # One answer out of several asked for is unconfirmed; a fresh run can confirm it.
+        return not (review.runs_requested > 1 and review.runs_succeeded == 1)
     return review.code_only_reason == "disabled" and not settings.plo_review_provider
 
 

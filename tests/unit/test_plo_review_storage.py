@@ -12,7 +12,9 @@ from curriculum_agent.data.orm import PLOReviewTable
 from curriculum_agent.data.repositories import PLOReviewRepository
 from curriculum_agent.models import (
     BloomFinding,
+    BloomHistogram,
     BloomLevel,
+    KsecCoverage,
     KsecFinding,
     PLOSetReview,
     RedundancyFinding,
@@ -58,6 +60,53 @@ _REVIEW = PLOSetReview(
 )
 
 
+# Every field non-default, so a field that is not stored reads back as its default
+# and breaks equality. Keep it complete: the test below fails when a field is added
+# to PLOSetReview and not here.
+_FULL_REVIEW = _REVIEW.model_copy(
+    update={
+        "redundancies": [
+            RedundancyFinding(
+                plo_ids=["PLO1", "PLO4"], reason_th="ซ้ำ", suggestion_th="รวม", agreed_runs=2
+            )
+        ],
+        "ksec": [
+            KsecFinding(
+                plo_id="PLO6",
+                current=["S"],
+                suggested=["S", "E"],
+                agrees=False,
+                reason_th="จริยธรรม",
+                agreed_runs=2,
+            )
+        ],
+        "bloom": [
+            BloomFinding(
+                plo_id="PLO5",
+                declared=BloomLevel.CREATE,
+                suggested_level=BloomLevel.APPLY,
+                reason_th="ปริญญาตรี",
+                agreed_runs=2,
+            )
+        ],
+        "coverage_th": "ครบ K S",
+        "ksec_coverage": KsecCoverage(counts={"K": 2}, missing=["E"], flags=["missing_E"]),
+        "bloom_histogram": BloomHistogram(
+            counts={"apply": 3}, degree_level="bachelor", flags=["too_high"]
+        ),
+        "reviewed_by": "code_only",
+        "code_only_reason": "failed",
+        "dropped_findings": {"redundancy": 1},
+        "runs_requested": 3,
+        "runs_succeeded": 2,
+        "agreement_threshold": 2,
+        "unused_needs": [
+            _REVIEW.unused_needs[0].model_copy(update={"agreed_runs": 2, "unwritten": True})
+        ],
+    }
+)
+
+
 def _ctx(session: AsyncMock) -> MagicMock:
     ctx = MagicMock()
     ctx.__aenter__ = AsyncMock(return_value=session)
@@ -78,6 +127,26 @@ async def test_upsert_then_get_round_trips_the_review() -> None:
         await PLOReviewRepository().upsert(_REVIEW)
         got = await PLOReviewRepository().get("p")
     assert got == _REVIEW
+
+
+async def test_every_review_field_survives_storage() -> None:
+    defaults = PLOSetReview(
+        program_id="x", plo_fingerprint="x", model="x", created_at=datetime(2026, 1, 1)
+    )
+    for name in PLOSetReview.model_fields:
+        if name in {"program_id", "plo_fingerprint", "model", "created_at"}:
+            continue
+        assert getattr(_FULL_REVIEW, name) != getattr(defaults, name), (
+            f"fixture leaves {name} at its default — set it so the round trip can see it"
+        )
+    stored: dict[str, PLOReviewTable] = {}
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=lambda cls, key: stored.get(key))
+    session.add = MagicMock(side_effect=lambda row: stored.__setitem__(row.program_id, row))
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_ctx(session)):
+        await PLOReviewRepository().upsert(_FULL_REVIEW)
+        got = await PLOReviewRepository().get("p")
+    assert got == _FULL_REVIEW
 
 
 async def test_get_answers_none_for_a_program_never_reviewed() -> None:
