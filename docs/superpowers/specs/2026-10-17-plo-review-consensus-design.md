@@ -82,7 +82,8 @@ marked by its count, never deleted.
   `MAX_REDUNDANCY_GROUP` and never asserts a pair no majority asserted.
 - `agreed_runs` of a finding = the minimum support of its pairs.
 - `reason_th` / `suggestion_th` come from the run whose group overlaps the
-  finding most (ties: earlier run).
+  finding most — most shared PLOs, then fewest PLOs outside the finding, then
+  the earlier run.
 - Below-threshold pairs not already inside a passing finding are stored as pair
   findings with their support as `agreed_runs`, text from a run containing them.
 
