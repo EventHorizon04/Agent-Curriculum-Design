@@ -541,6 +541,9 @@ class RedundancyFinding(BaseModel):
     plo_ids: list[str]
     reason_th: str
     suggestion_th: str = ""
+    # How many of the review's runs said this (stages/plo_review_consensus.py).
+    # 1 for a one-run review and for rows written before the field existed.
+    agreed_runs: int = 1
 
 
 class KsecFinding(BaseModel):
@@ -557,6 +560,9 @@ class KsecFinding(BaseModel):
     suggested: list[str]
     agrees: bool
     reason_th: str = ""
+    # How many of the review's runs said this (stages/plo_review_consensus.py).
+    # 1 for a one-run review and for rows written before the field existed.
+    agreed_runs: int = 1
 
 
 class BloomFinding(BaseModel):
@@ -564,6 +570,9 @@ class BloomFinding(BaseModel):
     declared: BloomLevel
     suggested_level: BloomLevel | None = None
     reason_th: str = ""
+    # How many of the review's runs said this (stages/plo_review_consensus.py).
+    # 1 for a one-run review and for rows written before the field existed.
+    agreed_runs: int = 1
 
 
 class KsecCoverage(BaseModel):
@@ -604,6 +613,9 @@ class UnusedNeedFinding(BaseModel):
     unwritten: bool = False
     verdict: str | None = None
     reason_th: str = ""
+    # How many of the review's runs said this (stages/plo_review_consensus.py).
+    # 1 for a one-run review and for rows written before the field existed.
+    agreed_runs: int = 1
 
 
 class ReviewToolCall(BaseModel):
@@ -641,6 +653,12 @@ class PLOSetReview(BaseModel):
     # Code: agent entries accept_review refused, by kind. Empty for a code_only
     # review and for rows written before the field existed.
     dropped_findings: dict[str, int] = Field(default_factory=dict)
+    # Self-consistency (spec 2026-10-17): how many agent runs were asked for,
+    # how many produced a usable answer, and how many had to agree for a finding
+    # to count. All 1 for a one-run review and for rows written before the fields.
+    runs_requested: int = 1
+    runs_succeeded: int = 1
+    agreement_threshold: int = 1
 
 
 # ----------------------- Stage checkpoint ------------------------
