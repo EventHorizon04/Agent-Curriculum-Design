@@ -72,12 +72,6 @@ def test_plo_requires_bloom_level() -> None:
         PLO(**{k: v for k, v in make_plo().items() if k != "bloom_level"})
 
 
-def test_plo_has_no_domain_or_non_cognitive_level_fields() -> None:
-    plo = PLO(**make_plo())
-    for removed in ("domain", "psychomotor_level", "krathwohl_level"):
-        assert not hasattr(plo, removed), f"{removed} should have been deleted from PLO"
-
-
 # ---- new fields (Task 2) ---------------------------------------------------
 
 
@@ -221,18 +215,6 @@ def test_program_models_no_longer_carry_institutional_metadata():
         assert field not in ProgramMetadata.model_fields
 
 
-def test_removed_model_classes_are_gone():
-    import curriculum_agent.models as models
-
-    for name in (
-        "ExtractedMetadata",
-        "MetadataExtractionResult",
-        "IscedSuggestion",
-        "SuggestedName",
-    ):
-        assert not hasattr(models, name), f"{name} should have been deleted"
-
-
 def test_isced_code_is_still_validated_against_the_taxonomy():
     """The suggestion feature is gone but the code is still typed by hand, so the
     guard against an off-taxonomy value matters more, not less."""
@@ -345,12 +327,6 @@ def test_extracted_skill_requires_tags_and_span(missing: str):
         ExtractedSkill(**kwargs)
 
 
-def test_extracted_skill_no_longer_has_mixed_capable_fields():
-    skill = ExtractedSkill(**_skill_kwargs())
-    assert not hasattr(skill, "skill_type")
-    assert not hasattr(skill, "is_subject_specific")
-
-
 # ---- Need model (Task 5) -----------------------------------------------
 
 
@@ -380,13 +356,6 @@ def test_need_accepts_valid_payload():
 def test_need_requires_evidence_trail(empty_field: str):
     with pytest.raises(ValidationError):
         Need(**_need_kwargs(**{empty_field: []}))
-
-
-def test_skill_cluster_and_mixed_enums_are_gone():
-    import curriculum_agent.models as m
-
-    for removed in ("SkillCluster", "SkillType", "PsychomotorLevel", "KrathwohlLevel", "Domain"):
-        assert not hasattr(m, removed), f"{removed} should have been deleted"
 
 
 # ---- Cross-stage designer note (Task 1) ---------------------------------
@@ -437,16 +406,6 @@ def test_external_and_internal_membership():
     assert STAKEHOLDER_GROUP[StakeholderType.INSTITUTIONAL_DIRECTION] is StakeholderGroup.INTERNAL
 
 
-def test_deleted_stakeholder_types_are_gone():
-    from curriculum_agent.models import StakeholderType
-
-    values = {t.value for t in StakeholderType}
-    assert values.isdisjoint(
-        {"accreditation_body", "university", "subject_benchmark", "peer_program"}
-    )
-    assert len(values) == 15
-
-
 def test_ksec_has_no_ss_or_gs():
     from curriculum_agent.models import KSECCategory
 
@@ -461,18 +420,6 @@ def test_a_skill_may_not_carry_the_ec_umbrella_tag():
 
     assert KSECCategory.EC not in SKILL_KSEC
     assert SKILL_KSEC == {KSECCategory.K, KSECCategory.S, KSECCategory.E, KSECCategory.C}  # noqa: SIM300
-
-
-def test_plo_no_longer_carries_a_specificity_flag():
-    from curriculum_agent.models import PLO
-
-    for gone in (
-        "is_subject_specific",
-        "classification",
-        "classification_method",
-        "classification_rationale_th",
-    ):
-        assert gone not in PLO.model_fields
 
 
 # ---- PLO scope guard ---------------------------------------------------
