@@ -8,6 +8,7 @@ else was in flight.
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -173,15 +174,27 @@ async def test_numbering_comes_from_demand_not_from_which_draft_finishes_first(
     set_soft_judge(monkeypatch)
 
     order: list[str] = []
+    # Each draft waits for the one below it in demand to finish, so completion
+    # order is forced to be the reverse of demand order without any real-time delay.
+    finished = {nid: asyncio.Event() for nid in _VERBS}
+    waits_for = {"N3": None, "N2": "N3", "N1": "N2"}
+    entered: set[str] = set()
+    all_entered = asyncio.Event()
 
     async def out_of_order_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
-        import asyncio
-
         body = messages[-1]["content"]
         need_id = next(nid for nid in _VERBS if nid in body)
-        # The least-demanded Need answers first.
-        await asyncio.sleep({"N1": 0.03, "N2": 0.02, "N3": 0.0}[need_id])
+        entered.add(need_id)
+        if entered == set(_VERBS):
+            all_entered.set()
+        # Every draft is in flight before any may finish; then the least-demanded
+        # Need answers first.
+        await asyncio.wait_for(all_entered.wait(), timeout=5)
+        blocker = waits_for[need_id]
+        if blocker is not None:
+            await asyncio.wait_for(finished[blocker].wait(), timeout=5)
         order.append(need_id)
+        finished[need_id].set()
         return ps._SingleDraftResponse(plo=_draft_for(need_id))
 
     monkeypatch.setattr(ps, "complete_plo_synthesis", out_of_order_synthesis)

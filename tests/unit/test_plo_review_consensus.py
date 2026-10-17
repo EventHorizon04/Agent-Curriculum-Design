@@ -157,6 +157,34 @@ def test_ksec_takes_the_most_given_set_and_a_tie_prefers_current() -> None:
     assert review.agreement_threshold == 2
 
 
+def test_a_ksec_tie_with_current_outside_the_tied_sets_takes_the_earlier_run() -> None:
+    review = _consensus(_run(ksec={"PLO1": ["K"]}), _run(ksec={"PLO1": ["E"]}))
+    assert review.ksec[0].suggested == ["K"] and review.ksec[0].agreed_runs == 1
+
+
+def test_consensus_over_fewer_succeeded_runs_than_requested() -> None:
+    review = consensus_review([_run(), _run()], runs_requested=5, max_group=3)
+    assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (5, 2, 2)
+
+
+def test_a_score_tie_between_representative_runs_takes_the_earlier_run() -> None:
+    review = _consensus(
+        _run(groups=[["PLO1", "PLO2"]], summary="แรก"),
+        _run(groups=[["PLO1", "PLO2"]], summary="สอง"),
+        _run(groups=[["PLO1", "PLO2"]], summary="สาม"),
+    )
+    assert review.summary_th == "แรก"
+
+
+def test_a_split_component_orders_its_pairs_by_plo_number() -> None:
+    groups = [["PLO10", "PLO11"], ["PLO2", "PLO3"], ["PLO3", "PLO10"], ["PLO2", "PLO11"]]
+    review = _consensus(_run(groups=groups), _run(groups=groups), _run())
+    assert all(len(r.plo_ids) == 2 and r.agreed_runs == 2 for r in review.redundancies)
+    keys = [tuple(int(p[3:]) for p in r.plo_ids) for r in review.redundancies]
+    assert keys == sorted(keys) and len(keys) == 4
+    assert keys[0] == (2, 3) and keys[-1] == (10, 11)
+
+
 def test_ksec_votes_only_over_the_runs_that_have_the_plo() -> None:
     review = _consensus(
         _run(ksec={"PLO1": ["S"], "PLO2": ["K"]}),
