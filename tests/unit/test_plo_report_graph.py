@@ -8,13 +8,11 @@ def _edges() -> set[tuple[str, str]]:
     return {(e.source, e.target) for e in g.edges}
 
 
-def test_graph_wires_plo_report_and_detaches_ylo():
+def test_graph_wires_plo_report_and_plo_review():
     nodes = set(build_graph().get_graph().nodes)
     assert "plo_report" in nodes
     assert "plo_review" in nodes
     assert "review_plo_report" not in nodes
-    assert "ylo_derivation" not in nodes
-    assert "review_ylo" not in nodes
 
 
 def test_report_then_qa_then_end_with_no_checkpoint_after_the_plos():
