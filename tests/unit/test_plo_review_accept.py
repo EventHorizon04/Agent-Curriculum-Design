@@ -7,6 +7,7 @@ from curriculum_agent.models import (
     BloomLevel,
     KSECCategory,
     Need,
+    PLOSetReview,
     ReviewToolCall,
     SMARTCheck,
 )
@@ -290,6 +291,49 @@ def test_a_code_only_review_has_facts_and_no_findings() -> None:
     assert [u.need_id for u in review.unused_needs] == ["u1"]
     assert all(u.verdict is None for u in review.unused_needs)
     assert not has_agent_findings(review)
+
+
+def test_dropped_findings_counts_what_the_code_refused() -> None:
+    plos = [*PLOS, _plo("PLO4", ["n1"])]
+    answer = ReviewFinish(
+        kind="finish",
+        redundancies=[Redundancy(plo_ids=["PLO1", "PLO2", "PLO3", "PLO4"], reason_th="ซ้ำ")],
+    )
+    review, _ = accept_review(
+        answer,
+        plos,
+        NEEDS,
+        DOSSIER,
+        program_id="p",
+        fingerprint="f",
+        model="m",
+        created_at=_NOW,
+    )
+    assert review.dropped_findings == {"redundancy": 1}
+
+
+def test_a_clean_answer_drops_nothing() -> None:
+    review, _ = _accept(
+        ReviewFinish(
+            kind="finish",
+            redundancies=[Redundancy(plo_ids=["PLO1", "PLO2"], reason_th="ซ้ำ")],
+        )
+    )
+    assert review.dropped_findings == {}
+
+
+def test_a_code_only_review_drops_nothing() -> None:
+    review = code_only_review(
+        DOSSIER, program_id="p", fingerprint="f", created_at=_NOW, reason="failed"
+    )
+    assert review.dropped_findings == {}
+
+
+def test_a_stored_review_without_the_field_reads_with_none_dropped() -> None:
+    review, _ = _accept(ReviewFinish(kind="finish", summary_th="ดี"))
+    stored = review.model_dump(mode="json")
+    del stored["dropped_findings"]
+    assert PLOSetReview.model_validate(stored).dropped_findings == {}
 
 
 def test_an_answer_with_nothing_has_no_agent_findings() -> None:

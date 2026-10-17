@@ -927,6 +927,7 @@ export function buildMockReview(
       reason_th: extra
         ? `ข้อความ PLO ยังมีส่วนของหมวด ${extra} ปนอยู่ด้วย นอกเหนือจากหมวดของ Need ต้นทาง`
         : 'หมวดตรงกับสิ่งที่ข้อความ PLO ให้บัณฑิตทำ',
+      agreed_runs: extra ? 2 : 3,
     }
   })
 
@@ -952,6 +953,7 @@ export function buildMockReview(
           declared: toRevise.bloom_level,
           suggested_level: toRevise.bloom_level === 'analyze' ? 'evaluate' : 'analyze',
           reason_th: 'งานที่ข้อความ PLO ระบุต้องเลือกระหว่างวิธีทำ ซึ่งสูงกว่าระดับที่ประกาศไว้',
+          agreed_runs: 3,
         },
       ]
     : []
@@ -979,6 +981,7 @@ export function buildMockReview(
           i === 0
             ? 'หลายฝ่ายเอ่ยถึงความต้องการนี้ และยังไม่มี PLO ข้อใดครอบคลุม'
             : 'เป็นงานของอีกวิชาชีพ ไม่ใช่สิ่งที่บัณฑิตสาขานี้ต้องทำเอง',
+        agreed_runs: 3,
       }
     })
 
@@ -994,7 +997,20 @@ export function buildMockReview(
               plo_ids: [sorted[0].plo_id, sorted[1].plo_id],
               reason_th: 'ทั้งสองข้อให้บัณฑิตทำงานเดียวกันกับเอกสารประเภทเดียวกัน ต่างกันที่ถ้อยคำ',
               suggestion_th: 'รวมสอง Need ที่หน้าสังเคราะห์ PLO ให้เหลือ PLO ข้อเดียว',
+              agreed_runs: 3,
             },
+            // Seen in one run of three: below the threshold, so it draws in the
+            // "พบไม่ถึงเกณฑ์" fold rather than the main list.
+            ...(sorted.length >= 4
+              ? [
+                  {
+                    plo_ids: [sorted[2].plo_id, sorted[3].plo_id],
+                    reason_th: 'บางรอบเห็นว่าสองข้อนี้ใช้กริยาและวัตถุใกล้กัน',
+                    suggestion_th: '',
+                    agreed_runs: 1,
+                  },
+                ]
+              : []),
           ]
         : [],
     ksec,
@@ -1012,6 +1028,10 @@ export function buildMockReview(
     unused_needs: unusedNeeds,
     reviewed_by: 'agent',
     code_only_reason: null,
+    runs_requested: 3,
+    runs_succeeded: 3,
+    agreement_threshold: 2,
+    dropped_findings: { redundancy: 1 },
     tool_calls: [
       { tool: 'read_need', arg: unusedNeeds[0]?.need_id ?? sorted[0]?.plo_id ?? '' },
       { tool: 'read_plo', arg: sorted[0]?.plo_id ?? '' },

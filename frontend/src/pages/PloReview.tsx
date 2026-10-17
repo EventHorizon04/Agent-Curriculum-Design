@@ -13,7 +13,6 @@ import type {
   KsecFinding,
   PLOReviewResponse,
   PLOSetReview,
-  UnusedNeedFinding,
 } from '../types/ploReview'
 
 /** The job kinds whose runs this page shows. */
@@ -148,6 +147,7 @@ export default function PloReview() {
   }
 
   const review = data?.review ?? null
+  const dropped = droppedNotice(review?.dropped_findings)
   const agentOff = data?.review_enabled === false
 
   return (
@@ -198,13 +198,23 @@ export default function PloReview() {
             </p>
           )}
 
+          {(review.runs_requested ?? 1) > 1 && runsOf(review) === 1 && (
+            <p className="notice notice-warn">ได้ผลรอบเดียว ยังไม่ได้ยืนยันซ้ำ</p>
+          )}
+
+          {dropped && <p className="notice notice-warn">{dropped}</p>}
+
           {review.summary_th && <p className="record text-base">{review.summary_th}</p>}
+          {isVoted(review) && review.summary_th && (
+            <p className="text-sm text-pencil">สรุปจากรอบที่ตรงกับผลรวมมากที่สุด</p>
+          )}
 
           <Overview review={review} />
           <Redundancies review={review} />
-          <KsecSection rows={review.ksec} />
+          <KsecSection review={review} />
           <BloomSection review={review} />
-          <UnusedNeeds needs={review.unused_needs} />
+          <UnusedNeeds review={review} />
+          <BelowThreshold review={review} />
 
           {review.tool_calls.length > 0 && (
             <details className="border-t border-hair pt-4">
@@ -240,6 +250,38 @@ export default function PloReview() {
   )
 }
 
+const DROPPED_LABEL_TH: Record<string, string> = {
+  redundancy: 'ความซ้ำซ้อน',
+  ksec: 'หมวด KSEC',
+  bloom: 'ระดับ Bloom',
+  unused: 'Need ที่ไม่ได้เป็น PLO',
+}
+
+/** The warning for agent entries the code refused, or null when none were. */
+function droppedNotice(dropped: Record<string, number> | undefined): string | null {
+  const entries = Object.entries(dropped ?? {}).filter(([, n]) => n > 0)
+  if (entries.length === 0) return null
+  const total = entries.reduce((sum, [, n]) => sum + n, 0)
+  const parts = entries.map(([kind, n]) => `${DROPPED_LABEL_TH[kind] ?? kind} ${n}`).join(', ')
+  return `ระบบตัดข้อเสนอของ agent ที่ไม่ผ่านกติกาออก ${total} ข้อ (${parts}) — ข้อความสรุปอาจยังพูดถึงข้อที่ถูกตัด`
+}
+
+const runsOf = (r: PLOSetReview): number => r.runs_succeeded ?? 1
+const isVoted = (r: PLOSetReview): boolean => runsOf(r) >= 2
+/** Does a finding meet the review's agreement threshold? Old rows: always. */
+const isMain = (agreed: number | undefined, r: PLOSetReview): boolean =>
+  (agreed ?? 1) >= (r.agreement_threshold ?? 1)
+
+/** "ตรงกัน 2/3" — only on a review voted over several runs. */
+function AgreementChip({ agreed, review }: { agreed: number | undefined; review: PLOSetReview }) {
+  if (!isVoted(review)) return null
+  return (
+    <span className="chip chip-neutral ml-2">
+      ตรงกัน {agreed ?? 1}/{runsOf(review)}
+    </span>
+  )
+}
+
 /** Who made the review, and when. A code-only review says so and why: it is the
  *  same page with fewer opinions on it, and the designer should not mistake the
  *  missing ones for a clean bill of health. */
@@ -249,6 +291,8 @@ function StatusLine({ review }: { review: PLOSetReview }) {
     return (
       <p className="text-sm text-pencil">
         ตรวจโดย agent · {review.model} · {when}
+        {isVoted(review) &&
+          ` · ตรวจ ${runsOf(review)} รอบ แสดงเฉพาะข้อที่ตรงกันอย่างน้อย ${review.agreement_threshold ?? 1} รอบ`}
       </p>
     )
   }
@@ -345,7 +389,7 @@ function Overview({ review }: { review: PLOSetReview }) {
 }
 
 function Redundancies({ review }: { review: PLOSetReview }) {
-  const groups = review.redundancies
+  const groups = review.redundancies.filter((f) => isMain(f.agreed_runs, review))
   return (
     <section className="border-t border-hair pt-5" aria-labelledby="redundancy-heading">
       <h2 id="redundancy-heading" className="section-title">
@@ -358,7 +402,10 @@ function Redundancies({ review }: { review: PLOSetReview }) {
           <ul className="mt-3 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
             {groups.map((g, i) => (
               <li key={i} className="px-4 py-3">
-                <p className="data text-sm font-semibold text-graphite">{g.plo_ids.join(' · ')}</p>
+                <p className="data text-sm font-semibold text-graphite">
+                  {g.plo_ids.join(' · ')}
+                  <AgreementChip agreed={g.agreed_runs} review={review} />
+                </p>
                 <p className="mt-1 text-sm text-pencil">{g.reason_th}</p>
                 {g.suggestion_th && (
                   <p className="mt-1 text-sm text-graphite">ข้อเสนอ: {g.suggestion_th}</p>
@@ -378,7 +425,7 @@ function Redundancies({ review }: { review: PLOSetReview }) {
   )
 }
 
-function KsecTable({ rows }: { rows: KsecFinding[] }) {
+function KsecTable({ rows, review }: { rows: KsecFinding[]; review: PLOSetReview }) {
   return (
     <div className="overflow-x-auto">
       <table className="table min-w-[32rem]">
@@ -398,6 +445,7 @@ function KsecTable({ rows }: { rows: KsecFinding[] }) {
               <td className="align-top">
                 <span className="data whitespace-nowrap">{domains(r.suggested)}</span>
                 {!r.agrees && <span className="chip chip-marker ml-2">ไม่ตรง</span>}
+                {!r.agrees && <AgreementChip agreed={r.agreed_runs} review={review} />}
               </td>
               <td className="align-top text-pencil">{r.reason_th}</td>
             </tr>
@@ -408,10 +456,11 @@ function KsecTable({ rows }: { rows: KsecFinding[] }) {
   )
 }
 
-function KsecSection({ rows }: { rows: KsecFinding[] }) {
+function KsecSection({ review }: { review: PLOSetReview }) {
+  const rows = review.ksec
   // The ones that disagree are what the designer came for; the rest are proof
   // the check ran, so they sit behind a fold.
-  const differing = rows.filter((r) => !r.agrees)
+  const differing = rows.filter((r) => !r.agrees && isMain(r.agreed_runs, review))
   const agreeing = rows.filter((r) => r.agrees)
   return (
     <section className="border-t border-hair pt-5" aria-labelledby="ksec-heading">
@@ -422,14 +471,14 @@ function KsecSection({ rows }: { rows: KsecFinding[] }) {
         <p className="mt-2 text-sm text-pencil">ไม่มีข้อมูล KSEC</p>
       ) : (
         <div className="mt-3 space-y-3">
-          {differing.length > 0 && <KsecTable rows={differing} />}
+          {differing.length > 0 && <KsecTable rows={differing} review={review} />}
           {agreeing.length > 0 && (
             <details>
               <summary className="cursor-pointer text-sm text-pencil">
                 ตรงกับหมวดเดิม {agreeing.length} ข้อ
               </summary>
               <div className="mt-2">
-                <KsecTable rows={agreeing} />
+                <KsecTable rows={agreeing} review={review} />
               </div>
             </details>
           )}
@@ -440,7 +489,7 @@ function KsecSection({ rows }: { rows: KsecFinding[] }) {
 }
 
 function BloomSection({ review }: { review: PLOSetReview }) {
-  const rows = review.bloom
+  const rows = review.bloom.filter((b) => isMain(b.agreed_runs, review))
   return (
     <section className="border-t border-hair pt-5" aria-labelledby="bloom-heading">
       <h2 id="bloom-heading" className="section-title">
@@ -464,6 +513,7 @@ function BloomSection({ review }: { review: PLOSetReview }) {
                     <span className="data text-graphite">{bloomLabel(b.suggested_level)}</span>
                   </>
                 )}
+                <AgreementChip agreed={b.agreed_runs} review={review} />
               </p>
               {b.reason_th && <p className="mt-1 text-sm text-pencil">{b.reason_th}</p>}
             </li>
@@ -474,7 +524,8 @@ function BloomSection({ review }: { review: PLOSetReview }) {
   )
 }
 
-function UnusedNeeds({ needs }: { needs: UnusedNeedFinding[] }) {
+function UnusedNeeds({ review }: { review: PLOSetReview }) {
+  const needs = review.unused_needs
   return (
     <section className="border-t border-hair pt-5" aria-labelledby="unused-heading">
       <h2 id="unused-heading" className="section-title">
@@ -495,7 +546,7 @@ function UnusedNeeds({ needs }: { needs: UnusedNeedFinding[] }) {
                 )}
                 <span>{EXCLUSION_TH[n.exclusion] ?? n.exclusion}</span>
               </p>
-              {(n.verdict === 'consider' || n.verdict === 'ok_to_leave') && (
+              {(n.verdict === 'consider' || n.verdict === 'ok_to_leave') && isMain(n.agreed_runs, review) && (
                 <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                   {n.verdict === 'consider' ? (
                     <>
@@ -507,13 +558,113 @@ function UnusedNeeds({ needs }: { needs: UnusedNeedFinding[] }) {
                   ) : (
                     <span className="chip chip-neutral">ปล่อยไว้ได้</span>
                   )}
+                  <AgreementChip agreed={n.agreed_runs} review={review} />
                 </p>
               )}
-              {n.reason_th && <p className="mt-1.5 text-sm text-pencil">{n.reason_th}</p>}
+              {n.reason_th && isMain(n.agreed_runs, review) && (
+                <p className="mt-1.5 text-sm text-pencil">{n.reason_th}</p>
+              )}
             </li>
           ))}
         </ul>
       )}
     </section>
+  )
+}
+
+/** What some runs raised but too few agreed on: kept out of the main sections so
+ *  one run's passing opinion is not read as a finding, but not hidden either. */
+function BelowThreshold({ review }: { review: PLOSetReview }) {
+  if (!isVoted(review)) return null
+  const below = (agreed: number | undefined) => !isMain(agreed, review)
+  const red = review.redundancies.filter((f) => below(f.agreed_runs))
+  const ksec = review.ksec.filter((k) => !k.agrees && below(k.agreed_runs))
+  const bloom = review.bloom.filter((b) => below(b.agreed_runs))
+  const unused = review.unused_needs.filter((u) => u.verdict && below(u.agreed_runs))
+  const total = red.length + ksec.length + bloom.length + unused.length
+  if (total === 0) return null
+  return (
+    <details className="border-t border-hair pt-4">
+      <summary className="eyebrow cursor-pointer">พบไม่ถึงเกณฑ์ ({total})</summary>
+      <p className="mt-2 text-sm text-pencil">
+        ข้อเหล่านี้มีบางรอบพูดถึงแต่ไม่ถึงเกณฑ์ {review.agreement_threshold ?? 1} รอบ — ยังไม่ควรถือเป็นข้อค้นพบ
+      </p>
+      <div className="mt-3 space-y-3">
+        {red.length > 0 && (
+          <div>
+            <p className="text-sm font-medium text-graphite">{DROPPED_LABEL_TH.redundancy}</p>
+            <ul className="mt-1 space-y-2">
+              {red.map((g, i) => (
+                <li key={i}>
+                  <p className="data text-sm font-semibold text-graphite">
+                    {g.plo_ids.join(' · ')}
+                    <AgreementChip agreed={g.agreed_runs} review={review} />
+                  </p>
+                  <p className="mt-1 text-sm text-pencil">{g.reason_th}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {ksec.length > 0 && (
+          <div>
+            <p className="text-sm font-medium text-graphite">{DROPPED_LABEL_TH.ksec}</p>
+            <ul className="mt-1 space-y-2">
+              {ksec.map((k) => (
+                <li key={k.plo_id}>
+                  <p className="text-sm">
+                    <span className="data font-semibold text-graphite">{k.plo_id}</span>{' '}
+                    <span className="data text-pencil">
+                      {domains(k.current)} → {domains(k.suggested)}
+                    </span>
+                    <AgreementChip agreed={k.agreed_runs} review={review} />
+                  </p>
+                  <p className="mt-1 text-sm text-pencil">{k.reason_th}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {bloom.length > 0 && (
+          <div>
+            <p className="text-sm font-medium text-graphite">{DROPPED_LABEL_TH.bloom}</p>
+            <ul className="mt-1 space-y-2">
+              {bloom.map((b) => (
+                <li key={b.plo_id}>
+                  <p className="text-sm">
+                    <span className="data font-semibold text-graphite">{b.plo_id}</span>{' '}
+                    <span className="data text-pencil">{bloomLabel(b.declared)}</span>
+                    {b.suggested_level && b.suggested_level !== b.declared && (
+                      <span className="data text-graphite"> → {bloomLabel(b.suggested_level)}</span>
+                    )}
+                    <AgreementChip agreed={b.agreed_runs} review={review} />
+                  </p>
+                  {b.reason_th && <p className="mt-1 text-sm text-pencil">{b.reason_th}</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {unused.length > 0 && (
+          <div>
+            <p className="text-sm font-medium text-graphite">{DROPPED_LABEL_TH.unused}</p>
+            <ul className="mt-1 space-y-2">
+              {unused.map((u) => (
+                <li key={u.need_id}>
+                  <p className="text-sm text-graphite">
+                    {u.statement_th}
+                    <span className="chip chip-neutral ml-2">
+                      {u.verdict === 'consider' ? 'ควรพิจารณา' : 'ปล่อยไว้ได้'}
+                    </span>
+                    <AgreementChip agreed={u.agreed_runs} review={review} />
+                  </p>
+                  {u.reason_th && <p className="mt-1 text-sm text-pencil">{u.reason_th}</p>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+    </details>
   )
 }
