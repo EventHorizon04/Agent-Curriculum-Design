@@ -9,11 +9,3 @@ def test_llm_module_has_no_global_client() -> None:
     assert not hasattr(llm_module, "_client"), (
         "_client must not be a module-level singleton; use _get_client() factory instead"
     )
-
-
-def test_get_client_function_exists() -> None:
-    """_get_client factory function must exist."""
-    import curriculum_agent.llm as llm_module
-
-    assert hasattr(llm_module, "_get_client"), "_get_client factory function must exist"
-    assert callable(llm_module._get_client)

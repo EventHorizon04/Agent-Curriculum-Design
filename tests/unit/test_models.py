@@ -233,28 +233,6 @@ def test_removed_model_classes_are_gone():
         assert not hasattr(models, name), f"{name} should have been deleted"
 
 
-def test_isced_code_is_still_validated_against_the_taxonomy():
-    """The suggestion feature is gone but the code is still typed by hand, so the
-    guard against an off-taxonomy value matters more, not less."""
-    import pytest
-
-    from curriculum_agent.models import ProgramCreateRequest
-
-    with pytest.raises(ValueError, match="ISCED"):
-        ProgramCreateRequest(
-            name_th="วิทยาการคอมพิวเตอร์",
-            name_en="Computer Science",
-            field="Computer Science",
-            isced_code="9999",
-            degree_level="bachelor",
-            duration_years=4,
-            faculty="วิทยาศาสตร์",
-            university="ทดสอบ",
-            program_goals_th=["ผลิตบัณฑิตที่ทำงานได้"],
-            program_objectives_th=["พัฒนาทักษะการเขียนโปรแกรม"],
-        )
-
-
 # ---- ProgramSummary (Task 1: program history) ---------------------------
 
 

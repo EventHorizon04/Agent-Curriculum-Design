@@ -105,7 +105,7 @@ def test_isced_code_valid_code_accepted() -> None:
 def test_isced_code_invalid_code_rejected() -> None:
     kwargs = _valid_program_kwargs()
     kwargs["isced_code"] = "9999"
-    with pytest.raises(ValidationError):
+    with pytest.raises(ValidationError, match="ISCED"):
         ProgramCreateRequest(**kwargs)
 
 
