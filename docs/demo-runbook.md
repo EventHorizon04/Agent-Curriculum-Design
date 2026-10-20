@@ -144,6 +144,53 @@ Watch for these two, which the setup cannot prevent:
 4. Remove the Access application if the hostname will not be reused.
 5. Keep the backup file until the exported results have been checked.
 
+## Demo package for a customer (แพ็ก demo ให้ลูกค้า)
+
+A self-contained zip the customer runs on their own Windows PC with Docker
+Desktop. No tunnel, no Cloudflare: the app listens on `127.0.0.1:8765` only.
+It is unrelated to the tunnelled `start-demo.ps1` setup above.
+
+### Build
+
+1. Create dedicated, spending-limited API keys for this demo (an OpenRouter key
+   and an OpenTyphoon key, with a low credit cap) and put them in `.env.demo`
+   at the repo root. The file is gitignored; never reuse the keys from `.env`.
+2. Make sure Docker Desktop is running and the dev `ca-postgres` container is up
+   (its data is what ships as the seed).
+3. Run `.\scriptsuild-demo-package.ps1`. A cold image build takes several
+   minutes and prints nothing until it ends. It prints the zip path, size, the
+   number of programs in the seed, and the image tag
+   `curriculum-demo-app:<YYYYMMDD-HHMM>`.
+
+Output: `dist\demo-package\curriculum-demo-<version>.zip` (about 1 GB).
+
+### What the zip contains
+
+`curriculum-demo-<version>\` holding `images.tar` (the app image and
+`postgres:16-alpine`), `docker-compose.yml`, `.env` (the demo keys and the
+compose project name), `seed-seed.sql.gz` (a dump of the dev database),
+`start`/`stop`/`reset` in `.cmd` and `.ps1` form, and `README-TH.txt` for the
+customer. The customer unzips anywhere (Thai and space-containing paths work),
+double-clicks `start.cmd`, and the browser opens `http://127.0.0.1:8765/`.
+`start` loads `images.tar` only when the app image is missing, so later starts
+are fast and data survives `stop`. `reset` asks for `y`, then wipes the data
+volume and restores the seed.
+
+### Verified
+
+Checked on a clean install (build 20261020-2236, 987 MB): fresh start loads the
+images and shows the seeded programs; one `plo_review` run succeeded against the
+real API; stop/start keeps the data and skips `docker load`; a busy port 8765
+gives a Thai message and exit 1 without starting containers; Docker not running
+gives a Thai message and exit 1 within a second; reset removes the review and
+restores the seed; the port listens on `127.0.0.1` only.
+
+### After the demo
+
+Revoke both demo keys at their providers. The keys sit in plain text in the
+`.env` inside every zip handed out, so treat each zip as a secret until then.
+Delete old zips from `dist\demo-package\`.
+
 ## Known gaps
 
 Recorded so they are not mistaken for oversights. Closing them is separate work.
