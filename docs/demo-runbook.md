@@ -157,7 +157,7 @@ It is unrelated to the tunnelled `start-demo.ps1` setup above.
    at the repo root. The file is gitignored; never reuse the keys from `.env`.
 2. Make sure Docker Desktop is running and the dev `ca-postgres` container is up
    (its data is what ships as the seed).
-3. Run `.\scriptsuild-demo-package.ps1`. A cold image build takes several
+3. Run `.\scripts\build-demo-package.ps1`. A cold image build takes several
    minutes and prints nothing until it ends. It prints the zip path, size, the
    number of programs in the seed, and the image tag
    `curriculum-demo-app:<YYYYMMDD-HHMM>`.
@@ -168,7 +168,7 @@ Output: `dist\demo-package\curriculum-demo-<version>.zip` (about 1 GB).
 
 `curriculum-demo-<version>\` holding `images.tar` (the app image and
 `postgres:16-alpine`), `docker-compose.yml`, `.env` (the demo keys and the
-compose project name), `seed-seed.sql.gz` (a dump of the dev database),
+compose project name), `seed\01-seed.sql.gz` (a dump of the dev database),
 `start`/`stop`/`reset` in `.cmd` and `.ps1` form, and `README-TH.txt` for the
 customer. The customer unzips anywhere (Thai and space-containing paths work),
 double-clicks `start.cmd`, and the browser opens `http://127.0.0.1:8765/`.
