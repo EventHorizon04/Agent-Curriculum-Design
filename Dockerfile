@@ -1,20 +1,24 @@
-FROM nvcr.io/nvidia/cuda:12.8.0-base-ubuntu24.04
+FROM node:22-alpine AS frontend
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
 
-# Ubuntu 24.04 ships Python 3.12 which satisfies requires-python>=3.11
-RUN apt-get update -q && \
-    apt-get install -y -q python3 python3-pip && \
-    rm -rf /var/lib/apt/lists/*
-
+FROM python:3.11-slim AS app
+COPY --from=ghcr.io/astral-sh/uv:0.11.11 /uv /uvx /bin/
 WORKDIR /app
-
-COPY pyproject.toml .
-# torch>=2.12 requires CUDA 13+; pin <2.12 for CUDA 12.8 (RTX 3060)
-RUN pip3 install --break-system-packages "torch>=2.6,<2.12" \
-    --index-url https://download.pytorch.org/whl/cu128 \
-    --extra-index-url https://pypi.org/simple/
-# pip won't reinstall already-satisfied torch; rest from PyPI
-RUN pip3 install --break-system-packages ".[gpu]"
-
+ENV UV_COMPILE_BYTECODE=1 UV_LINK_MODE=copy PYTHONUNBUFFERED=1
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project --no-dev
 COPY src/ ./src/
-
-CMD ["uvicorn", "curriculum_agent.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+COPY migrations/ ./migrations/
+COPY alembic.ini ./
+COPY docker/entrypoint.sh ./docker/entrypoint.sh
+RUN uv sync --frozen --no-dev && chmod +x /app/docker/entrypoint.sh
+COPY --from=frontend /app/frontend/dist ./frontend/dist
+ENV PATH=/app/.venv/bin:$PATH
+RUN useradd --create-home --uid 1000 app
+USER app
+EXPOSE 8000
+ENTRYPOINT ["/app/docker/entrypoint.sh"]

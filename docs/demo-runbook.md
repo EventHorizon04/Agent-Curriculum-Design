@@ -150,5 +150,3 @@ Recorded so they are not mistaken for oversights. Closing them is separate work.
 
 - GET routes carry no `require_api_key`, so all data is readable by anyone past Access.
 - Any authorised user can delete any program.
-- `Dockerfile` still installs CUDA and torch, which this branch does not use. It
-  is not on this deployment path; a production deployment needs it rewritten.

@@ -1,0 +1,16 @@
+.env
+.env.*
+.venv
+.scratch
+references
+**/node_modules
+**/dist
+.git
+tests
+.claude
+.superpowers
+.mypy_cache
+.pytest_cache
+.ruff_cache
+docs
+**/__pycache__
