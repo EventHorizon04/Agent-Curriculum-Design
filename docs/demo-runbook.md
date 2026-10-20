@@ -178,12 +178,21 @@ volume and restores the seed.
 
 ### Verified
 
-Checked on a clean install (build 20261020-2236, 987 MB): fresh start loads the
-images and shows the seeded programs; one `plo_review` run succeeded against the
-real API; stop/start keeps the data and skips `docker load`; a busy port 8765
-gives a Thai message and exit 1 without starting containers; Docker not running
-gives a Thai message and exit 1 within a second; reset removes the review and
-restores the seed; the port listens on `127.0.0.1` only.
+Build 20261020-2236 (987 MB), clean install: fresh start loads the images and
+shows the seeded programs; one `plo_review` run succeeded against the real API
+(provider exercised: OpenRouter); stop/start keeps the data and skips
+`docker load`; a busy port 8765 gives a Thai message and exit 1 without starting
+containers; Docker not running gives a Thai message and exit 1 within a second;
+reset removes the review and restores the seed; the port listens on `127.0.0.1`
+only.
+
+Build 20261020-2302 (987 MB, after the final-review fixes): extracted with
+Expand-Archive into a Thai, space-containing path and started; `GET /` served
+the built UI shell (`<div id="root">`) and `/programs/` listed the same 3
+programs; one `need_combination` run on `program-2-run-1` succeeded with 11
+written Needs (provider exercised: OpenTyphoon, the second shipped key);
+`start.cmd` with `start.ps1` missing printed the "extract the zip first"
+message and exited 1.
 
 ### Handing over
 
