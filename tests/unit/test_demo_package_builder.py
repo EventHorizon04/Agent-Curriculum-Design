@@ -84,5 +84,56 @@ def test_build_refuses_bad_keys_before_any_docker_call(
     assert calls == []
 
 
+def _stub_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    keys = tmp_path / ".env.demo"
+    keys.write_text("OPENROUTER_API_KEY=or\nOPENTYPHOON_API_KEY=ty\n", encoding="utf-8")
+    monkeypatch.setattr(dp, "expected_alembic_heads", lambda root: {"head1"})
+
+    def fake_run(cmd: list[str], what: str) -> subprocess.CompletedProcess[str]:
+        if cmd[1] == "exec":
+            out = "head1" if "alembic_version" in cmd[-1] else "3"
+            return subprocess.CompletedProcess(cmd, 0, stdout=out + "\n", stderr="")
+        if cmd[1] == "save":
+            Path(cmd[3]).write_bytes(b"partial")
+            raise dp.PackagingError("Image save failed")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(dp, "_run", fake_run)
+    monkeypatch.setattr(dp, "_dump_seed", lambda target: target.write_bytes(b"seed"))
+    return keys
+
+
+def test_failed_save_leaves_no_package_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    keys = _stub_happy_path(monkeypatch, tmp_path)
+    out = tmp_path / "out"
+    with pytest.raises(dp.PackagingError, match="Image save"):
+        dp.build_package(ROOT, keys, out, datetime(2026, 10, 20, 15, 30))
+    assert list(out.iterdir()) == []
+
+
+def test_failed_zip_leaves_neither_dir_nor_partial_zip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys = _stub_happy_path(monkeypatch, tmp_path)
+    original_run = dp._run
+
+    def save_ok(cmd: list[str], what: str) -> subprocess.CompletedProcess[str]:
+        if cmd[1] == "save":
+            Path(cmd[3]).write_bytes(b"tar")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, what)
+
+    def broken_archive(base: str, *a: Any, **k: Any) -> str:
+        Path(base + ".zip").write_bytes(b"half")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(dp, "_run", save_ok)
+    monkeypatch.setattr(dp.shutil, "make_archive", broken_archive)
+    out = tmp_path / "out"
+    with pytest.raises(KeyboardInterrupt):
+        dp.build_package(ROOT, keys, out, datetime(2026, 10, 20, 15, 30))
+    assert list(out.iterdir()) == []
+
+
 def test_env_demo_is_gitignored() -> None:
     assert subprocess.run(["git", "check-ignore", "-q", ".env.demo"], cwd=ROOT).returncode == 0

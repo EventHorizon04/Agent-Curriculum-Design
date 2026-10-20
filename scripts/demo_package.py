@@ -169,26 +169,37 @@ def build_package(repo_root: Path, keys_file: Path, out_dir: Path, now: datetime
     _run(["docker", "build", "--platform", "linux/amd64", "-t", tag, str(repo_root)], "Image build")
     _run(["docker", "pull", "--platform", "linux/amd64", POSTGRES_IMAGE], "Postgres image pull")
 
+    zip_target = out_dir / f"{name}.zip"
+    zip_started = False
     package_dir.mkdir(parents=True)
-    for item in (repo_root / "packaging" / "demo").iterdir():
-        if item.is_file():
-            shutil.copy2(item, package_dir / item.name)
+    try:
+        for item in (repo_root / "packaging" / "demo").iterdir():
+            if item.is_file():
+                shutil.copy2(item, package_dir / item.name)
 
-    seed_dir = package_dir / "seed"
-    seed_dir.mkdir()
-    _dump_seed(seed_dir / "01-seed.sql.gz")
+        seed_dir = package_dir / "seed"
+        seed_dir.mkdir()
+        _dump_seed(seed_dir / "01-seed.sql.gz")
 
-    env_text = render_package_env(
-        version=version, keys=keys, postgres_password=secrets.token_hex(16)
-    )
-    (package_dir / ".env").write_bytes(env_text.encode("utf-8"))
+        env_text = render_package_env(
+            version=version, keys=keys, postgres_password=secrets.token_hex(16)
+        )
+        (package_dir / ".env").write_bytes(env_text.encode("utf-8"))
 
-    _run(
-        ["docker", "save", "-o", str(package_dir / "images.tar"), tag, POSTGRES_IMAGE],
-        "Image save",
-    )
+        _run(
+            ["docker", "save", "-o", str(package_dir / "images.tar"), tag, POSTGRES_IMAGE],
+            "Image save",
+        )
 
-    zip_path = Path(shutil.make_archive(str(out_dir / name), "zip", out_dir, name))
+        zip_started = True
+        zip_path = Path(shutil.make_archive(str(out_dir / name), "zip", out_dir, name))
+    except BaseException:
+        # The directory may hold the real keys and a partial multi-hundred-MB
+        # images.tar; a half-written zip would look complete. Leave neither.
+        shutil.rmtree(package_dir, ignore_errors=True)
+        if zip_started:
+            zip_target.unlink(missing_ok=True)
+        raise
     size_mb = zip_path.stat().st_size / (1024 * 1024)
     print(f"Package: {zip_path}")
     print(f"Size: {size_mb:.0f} MB")
