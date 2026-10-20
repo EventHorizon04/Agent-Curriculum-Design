@@ -1,0 +1,35 @@
+# Project name comes from COMPOSE_PROJECT_NAME in .env.
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: curriculum
+      POSTGRES_DB: curriculum_agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./seed:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # TCP on purpose: during initdb the image runs a temporary server that
+      # listens on the unix socket only, so a socket check would report ready
+      # while the seed is still loading.
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "curriculum", "-d", "curriculum_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 120s
+
+  app:
+    image: ${APP_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:${APP_PORT}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata: {}
