@@ -21,11 +21,19 @@ foreach ($line in Get-Content -Encoding UTF8 ".env") {
     if ($eq -lt 1) { continue }
     $envVars[$trimmed.Substring(0, $eq).Trim()] = $trimmed.Substring($eq + 1).Trim()
 }
+# A value already set in the shell beats .env for compose interpolation; the
+# package's own .env must win.
+foreach ($name in "APP_PORT", "APP_IMAGE", "COMPOSE_PROJECT_NAME", "POSTGRES_PASSWORD") {
+    if ($envVars.ContainsKey($name)) { Set-Item -Path "Env:$name" -Value $envVars[$name] }
+}
 $port = $envVars["APP_PORT"]
 $appImage = $envVars["APP_IMAGE"]
 $projectName = $envVars["COMPOSE_PROJECT_NAME"]
 if (-not $port -or -not $appImage -or -not $projectName) {
     Fail "ไฟล์ .env ไม่ครบถ้วน กรุณาใช้ไฟล์ชุดติดตั้งที่ได้รับมาใหม่"
+}
+if ($port -notmatch '^\d{2,5}$') {
+    Fail "ค่า APP_PORT= ในไฟล์ .env ต้องเป็นตัวเลข 2-5 หลัก เช่น 8765 กรุณาแก้ไขบรรทัด APP_PORT= แล้วรันใหม่"
 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
@@ -61,7 +69,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "กำลังเริ่มระบบ..."
 docker compose up -d
 if ($LASTEXITCODE -ne 0) {
-    Fail "เริ่มระบบไม่สำเร็จ กรุณาตรวจสอบว่า Docker Desktop ทำงานอยู่ แล้วรันใหม่"
+    Fail "เริ่มระบบไม่สำเร็จ กรุณาตรวจสอบว่า Docker Desktop ทำงานอยู่ แล้วรันใหม่ หากยังไม่ได้ (เช่น เคยปิดหน้าต่างระหว่างเริ่มครั้งแรก) ให้รัน reset.cmd เพื่อเริ่มจากตัวอย่างเดิม"
 }
 
 $url = "http://127.0.0.1:$port"
@@ -87,7 +95,7 @@ while ((Get-Date) -lt $deadline) {
 if (-not $ready) {
     Write-Host ""
     docker compose logs --tail 50 app
-    Fail "ระบบยังไม่พร้อมใช้งานภายใน $HealthTimeoutSeconds วินาที กรุณาลองรัน start.cmd อีกครั้ง หากยังไม่ได้ ให้ส่งข้อความที่แสดงด้านบนให้ผู้ดูแล"
+    Fail "ระบบยังไม่พร้อมใช้งานภายใน $HealthTimeoutSeconds วินาที กรุณาลองรัน start.cmd อีกครั้ง หากยังไม่ได้ ให้ลองรัน reset.cmd (ข้อมูลที่คุณสร้างไว้จะหายไป) หรือส่งข้อความที่แสดงด้านบนให้ผู้ดูแล"
 }
 
 Write-Host ""

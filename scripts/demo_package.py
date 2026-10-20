@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple
 
-POSTGRES_IMAGE = "postgres:16-alpine"
+POSTGRES_IMAGE = "postgres:16.15-alpine"
 APP_PORT = 8765
 DEMO_KEY_NAMES = ("OPENROUTER_API_KEY", "OPENTYPHOON_API_KEY")
 PACKAGE_ENV_KEYS = (
@@ -104,7 +104,9 @@ def expected_alembic_heads(repo_root: Path) -> set[str]:
 
 def _run(cmd: list[str], what: str) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(cmd, check=True, capture_output=True, text=True, encoding="utf-8")
+        return subprocess.run(
+            cmd, check=True, capture_output=True, text=True, encoding="utf-8", errors="replace"
+        )
     except FileNotFoundError as exc:
         raise PackagingError(f"{what}: command not found ({cmd[0]})") from exc
     except subprocess.CalledProcessError as exc:
@@ -200,6 +202,8 @@ def build_package(repo_root: Path, keys_file: Path, out_dir: Path, now: datetime
         if zip_started:
             zip_target.unlink(missing_ok=True)
         raise
+    # The zip is the deliverable; the folder holds .env with keys and ~3 GB of images.tar.
+    shutil.rmtree(package_dir, ignore_errors=True)
     size_mb = zip_path.stat().st_size / (1024 * 1024)
     print(f"Package: {zip_path}")
     print(f"Size: {size_mb:.0f} MB")

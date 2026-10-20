@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import io
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -137,3 +138,93 @@ def test_failed_zip_leaves_neither_dir_nor_partial_zip(
 
 def test_env_demo_is_gitignored() -> None:
     assert subprocess.run(["git", "check-ignore", "-q", ".env.demo"], cwd=ROOT).returncode == 0
+
+
+def _docker_build_calls(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    seen: list[list[str]] = []
+    inner = dp._run
+
+    def spy(cmd: list[str], what: str) -> subprocess.CompletedProcess[str]:
+        seen.append(cmd)
+        return inner(cmd, what)
+
+    monkeypatch.setattr(dp, "_run", spy)
+    return seen
+
+
+def _stub_db_answers(monkeypatch: pytest.MonkeyPatch, *, revision: str, count: str) -> None:
+    def fake_run(cmd: list[str], what: str) -> subprocess.CompletedProcess[str]:
+        out = revision if "alembic_version" in cmd[-1] else count
+        return subprocess.CompletedProcess(cmd, 0, stdout=out + "\n", stderr="")
+
+    monkeypatch.setattr(dp, "_run", fake_run)
+
+
+@pytest.mark.parametrize(("revision", "count"), [("other", "3"), ("head1", "0")])
+def test_build_refuses_stale_or_empty_db_before_docker_build(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, revision: str, count: str
+) -> None:
+    keys = _stub_happy_path(monkeypatch, tmp_path)
+    _stub_db_answers(monkeypatch, revision=revision, count=count)
+    calls = _docker_build_calls(monkeypatch)
+    with pytest.raises(dp.PackagingError):
+        dp.build_package(ROOT, keys, tmp_path / "out", datetime(2026, 10, 20, 15, 30))
+    assert [c for c in calls if c[1] == "build"] == []
+    assert not (tmp_path / "out").exists()
+
+
+class _FakePopen:
+    def __init__(self, lines: list[bytes], returncode: int, stderr: bytes = b"") -> None:
+        self.stdout = io.BytesIO(b"".join(lines))
+        self.stderr = io.BytesIO(stderr)
+        self.returncode = returncode
+
+    def __enter__(self) -> _FakePopen:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def wait(self) -> int:
+        return self.returncode
+
+
+def _fake_popen(monkeypatch: pytest.MonkeyPatch, fake: _FakePopen) -> None:
+    monkeypatch.setattr(dp.subprocess, "Popen", lambda *a, **k: fake)
+
+
+def test_dump_seed_refuses_dump_without_programs_rows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_popen(monkeypatch, _FakePopen([b"COPY public.needs (a) FROM stdin;\n"], 0))
+    with pytest.raises(dp.PackagingError, match="programs"):
+        dp._dump_seed(tmp_path / "seed.sql.gz")
+
+
+def test_dump_seed_refuses_nonzero_pg_dump_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _fake_popen(
+        monkeypatch,
+        _FakePopen([b"COPY public.programs (a) FROM stdin;\n"], 1, b"boom"),
+    )
+    with pytest.raises(dp.PackagingError, match="pg_dump failed"):
+        dp._dump_seed(tmp_path / "seed.sql.gz")
+
+
+def test_successful_build_removes_staging_dir_and_keeps_zip(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    keys = _stub_happy_path(monkeypatch, tmp_path)
+    original_run = dp._run
+
+    def save_ok(cmd: list[str], what: str) -> subprocess.CompletedProcess[str]:
+        if cmd[1] == "save":
+            Path(cmd[3]).write_bytes(b"tar")
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return original_run(cmd, what)
+
+    monkeypatch.setattr(dp, "_run", save_ok)
+    out = tmp_path / "out"
+    zip_path = dp.build_package(ROOT, keys, out, datetime(2026, 10, 20, 15, 30))
+    assert [p.name for p in out.iterdir()] == [zip_path.name]

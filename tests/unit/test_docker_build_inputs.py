@@ -33,7 +33,7 @@ def test_entrypoint_has_lf_line_endings() -> None:
 
 def test_entrypoint_migrates_with_package_dsn_then_execs_api() -> None:
     text = (ROOT / "docker" / "entrypoint.sh").read_text(encoding="utf-8")
-    assert 'alembic -x url="$POSTGRES_DSN" upgrade head' in text
+    assert 'alembic -x url="${POSTGRES_DSN:?POSTGRES_DSN is not set}" upgrade head' in text
     assert "exec python -m curriculum_agent.api" in text
     assert text.index("alembic") < text.index("exec python")
 

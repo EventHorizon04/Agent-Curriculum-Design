@@ -167,7 +167,7 @@ Output: `dist\demo-package\curriculum-demo-<version>.zip` (about 1 GB).
 ### What the zip contains
 
 `curriculum-demo-<version>\` holding `images.tar` (the app image and
-`postgres:16-alpine`), `docker-compose.yml`, `.env` (the demo keys and the
+`postgres:16.15-alpine`), `docker-compose.yml`, `.env` (the demo keys and the
 compose project name), `seed\01-seed.sql.gz` (a dump of the dev database),
 `start`/`stop`/`reset` in `.cmd` and `.ps1` form, and `README-TH.txt` for the
 customer. The customer unzips anywhere (Thai and space-containing paths work),
@@ -184,6 +184,15 @@ real API; stop/start keeps the data and skips `docker load`; a busy port 8765
 gives a Thai message and exit 1 without starting containers; Docker not running
 gives a Thai message and exit 1 within a second; reset removes the review and
 restores the seed; the port listens on `127.0.0.1` only.
+
+### Handing over
+
+Tell the customer to right-click the zip and choose Extract All first, then run
+`start.cmd` from the extracted folder. Running it from inside the zip fails
+(`start.cmd` then prints an English reminder). The build deletes its unzipped
+staging folder when the zip is done, so only the zip remains. Each build also
+leaves an image behind: delete old zips and old app images with
+`docker image rm curriculum-demo-app:<old-version>`.
 
 ### After the demo
 
