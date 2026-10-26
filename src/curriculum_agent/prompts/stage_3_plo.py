@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from curriculum_agent.models import Need, ProgramMetadata
 from curriculum_agent.prompts.designer_note import NOTE_POLICY_TH, append_note
+from curriculum_agent.stages.need_grouping import ksec_label
 
 
 def build_plo_from_need_prompt(
@@ -67,7 +68,7 @@ def build_plo_from_need_prompt(
     need_block = "\n\n".join(
         f"need_id: {n.need_id}\n"
         f"ความต้องการ: {n.statement_th}\n"
-        f"หมวดสมรรถนะ: {n.ksec_category.value}\n"
+        f"หมวดสมรรถนะ: {ksec_label(n)}\n"
         f"ระดับ Bloom ที่เหมาะสม: {n.bloom_level.value}\n"
         f"ความถี่ที่ถูกกล่าวถึง: {n.freq} ครั้ง (demand {n.demand_score})"
         for n in needs

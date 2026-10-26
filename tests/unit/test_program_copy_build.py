@@ -105,7 +105,7 @@ def _source() -> ProgramRows:
             program_id="program-2",
             statement_th="ต้องการบัณฑิตที่สื่อสารภาษาอังกฤษกับนักท่องเที่ยวได้",
             rationale_th="ทุกทักษะในกลุ่มเป็นการสื่อสารกับลูกค้า",
-            ksec_category="S",
+            ksec_categories=["S"],
             bloom_level="apply",
             member_skill_ids=["sk-1"],
             source_evidence_ids=["ev-1"],

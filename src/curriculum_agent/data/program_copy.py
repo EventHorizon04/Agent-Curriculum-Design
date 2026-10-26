@@ -91,7 +91,14 @@ def remap_ids(value: Any, id_map: Mapping[str, str]) -> Any:
 # by name here); every other column is copied verbatim — see the module
 # docstring for why a plain column must not go through remap_ids.
 _REFERENCE_COLUMNS = frozenset(
-    {"source_evidence_id", "member_skill_ids", "source_evidence_ids", "source_need_ids"}
+    {
+        "source_evidence_id",
+        "member_skill_ids",
+        "source_evidence_ids",
+        "source_need_ids",
+        "merged_into",
+        "merged_from",
+    }
 )
 
 

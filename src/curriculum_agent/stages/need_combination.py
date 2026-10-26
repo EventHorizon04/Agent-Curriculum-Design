@@ -694,7 +694,7 @@ async def run(state: AgentState) -> AgentState:
                 statement_th=written.statement_th,
                 statement_en=written.statement_en,
                 rationale_th=written.rationale_th,
-                ksec_category=group.ksec,
+                ksec_categories=[group.ksec],
                 bloom_level=group.bloom_level,
                 member_skill_ids=group.skill_ids,
                 source_evidence_ids=group.evidence_ids,

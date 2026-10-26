@@ -402,6 +402,11 @@ def allocate_cluster_targets(
     return targets
 
 
+def ksec_label(need: Need) -> str:
+    """The Need's tags for display, joined with "+" ("K+S"); one tag reads as itself."""
+    return "+".join(t.value for t in need.ksec_categories)
+
+
 def resolve_need_ksec(members: list[ExtractedSkill]) -> KSECCategory:
     """The tag a Need carries, given the skills that formed it.
 

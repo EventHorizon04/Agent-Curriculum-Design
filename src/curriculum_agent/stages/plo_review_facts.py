@@ -47,7 +47,12 @@ def normalize_ksec(values: Sequence[str]) -> list[str]:
 def current_ksec(plo: PLO, needs_by_id: Mapping[str, Need]) -> list[str]:
     """The KSEC tags of the Needs behind a PLO, EC expanded, unknown Needs ignored."""
     return normalize_ksec(
-        [needs_by_id[nid].ksec_category.value for nid in plo.source_need_ids if nid in needs_by_id]
+        [
+            tag.value
+            for nid in plo.source_need_ids
+            if nid in needs_by_id
+            for tag in needs_by_id[nid].ksec_categories
+        ]
     )
 
 
@@ -114,7 +119,7 @@ def select_unused_needs(
             need_id=n.need_id,
             statement_th=n.statement_th,
             demand_score=n.demand_score,
-            ksec_category=n.ksec_category.value,
+            ksec_categories=[t.value for t in n.ksec_categories],
             stakeholder_types=[t.value for t in n.source_stakeholder_types],
             exclusion=exclusion_reason(n),
             unwritten=is_unwritten_need(n),

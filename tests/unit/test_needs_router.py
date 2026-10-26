@@ -100,7 +100,7 @@ async def test_list_needs_returns_repository_rows(
     assert response.status_code == 200
     body = response.json()
     assert [n["need_id"] for n in body] == ["N1"]
-    assert body[0]["ksec_category"] == "S"
+    assert body[0]["ksec_categories"] == ["S"]
 
 
 async def test_list_skills_exposes_span_and_importance(

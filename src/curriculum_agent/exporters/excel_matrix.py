@@ -73,9 +73,9 @@ def _ksec_tags(plo: PLO, needs_by_id: dict[str, Need]) -> str:
         need = needs_by_id.get(need_id)
         if need is None:
             continue
-        value = need.ksec_category.value
-        if value not in tags:
-            tags.append(value)
+        for tag in need.ksec_categories:
+            if tag.value not in tags:
+                tags.append(tag.value)
     return ", ".join(tags)
 
 

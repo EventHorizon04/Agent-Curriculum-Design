@@ -99,7 +99,7 @@ class NeedTable(Base):
     # default catches a row written by a path that predates the field — a
     # suspended checkpoint resuming — without failing the insert.
     rationale_th: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-    ksec_category: Mapped[str] = mapped_column(String(2))
+    ksec_categories: Mapped[list[str]] = mapped_column(JSONB)
     bloom_level: Mapped[str] = mapped_column(String(20))
     member_skill_ids: Mapped[list[str]] = mapped_column(JSONB)
     source_evidence_ids: Mapped[list[str]] = mapped_column(JSONB)
@@ -111,6 +111,10 @@ class NeedTable(Base):
     classification_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
     in_field_skill_count: Mapped[int] = mapped_column(Integer, default=0)
     graduate_capability_skill_count: Mapped[int] = mapped_column(Integer, default=0)
+    top_skill_ids: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    merged_from: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    merged_into: Mapped[str | None] = mapped_column(String, nullable=True)
+    merge_reason_th: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
 
 
 class PLOTable(Base):

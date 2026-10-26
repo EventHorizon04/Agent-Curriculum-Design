@@ -50,7 +50,7 @@ async def test_run_assembles_without_calling_an_llm(monkeypatch: pytest.MonkeyPa
     state = await pr.run({"program_id": "cs-test", "plos": [plo_dict]})
 
     assert state["report"]["counts"]["total"] == 1
-    assert state["report"]["needs_by_id"]["N1"]["ksec_category"] == "S"
+    assert state["report"]["needs_by_id"]["N1"]["ksec_categories"] == ["S"]
 
     # The stage still persists the (unchanged) PLOs on every run — that write is
     # what keeps a checkpoint replay idempotent even if the resumed state's PLOs

@@ -132,6 +132,16 @@ class KSECCategory(StrEnum):
 SKILL_KSEC = frozenset({KSECCategory.K, KSECCategory.S, KSECCategory.E, KSECCategory.C})
 
 
+# Canonical order of a Need's tags.
+_KSEC_TAG_ORDER = (
+    KSECCategory.K,
+    KSECCategory.S,
+    KSECCategory.E,
+    KSECCategory.C,
+    KSECCategory.EC,
+)
+
+
 # Bloom levels in order, used for monotonicity check
 BLOOM_ORDER = [
     BloomLevel.REMEMBER,
@@ -304,8 +314,10 @@ class Need(BaseModel):
     # LangGraph checkpoint suspended across the deploy that added the column, and
     # those never pass through the migration.
     rationale_th: str = ""
-    # Single-valued by construction: grouping runs inside one KSEC bucket.
-    ksec_category: KSECCategory
+    # Clustering stays inside one KSEC bucket, so a skill-grouped Need carries one
+    # tag; a Need merged from same-purpose Needs of different tags carries the
+    # union. At least one, no duplicates, in K, S, E, C, EC order.
+    ksec_categories: list[KSECCategory] = Field(min_length=1)
     # What most of the group asks for — the lower mention-weighted median of the
     # members' levels (need_grouping.group_bloom), not the highest one.
     bloom_level: BloomLevel
@@ -327,6 +339,38 @@ class Need(BaseModel):
     # which is why these are plain ints rather than a coverage dict.
     in_field_skill_count: int = 0
     graduate_capability_skill_count: int = 0
+    # The most-demanded member skills, kept for display on a merged Need.
+    top_skill_ids: list[str] = Field(default_factory=list)
+    # A merged Need lists its originals (demand order); an original points back.
+    # Originals are stored, never deleted: `merged_into` hides them from every
+    # active read and a split clears it.
+    merged_from: list[str] = Field(default_factory=list)
+    merged_into: str | None = None
+    merge_reason_th: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_single_ksec(cls, data: Any) -> Any:
+        """Map the old single `ksec_category` key to `ksec_categories=[value]`.
+
+        Rows and LangGraph checkpoints written before the column became a list
+        still carry the old key. Copy first, for the same reason as below.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "ksec_categories" not in data and "ksec_category" in data:
+            data = {**data}
+            data["ksec_categories"] = [data.pop("ksec_category")]
+        return data
+
+    @field_validator("ksec_categories")
+    @classmethod
+    def _dedupe_and_order_tags(cls, tags: list[KSECCategory]) -> list[KSECCategory]:
+        return [t for t in _KSEC_TAG_ORDER if t in set(tags)]
+
+    @property
+    def is_merged(self) -> bool:
+        return bool(self.merged_from)
 
     @model_validator(mode="before")
     @classmethod
@@ -603,7 +647,7 @@ class UnusedNeedFinding(BaseModel):
     need_id: str
     statement_th: str
     demand_score: float
-    ksec_category: str
+    ksec_categories: list[str] = Field(default_factory=list)
     stakeholder_types: list[str] = Field(default_factory=list)
     exclusion: str
     # The Need's statement is a fallback ("[ต้องทบทวน]" plus skill names). Separate
@@ -613,6 +657,15 @@ class UnusedNeedFinding(BaseModel):
     unwritten: bool = False
     verdict: str | None = None
     reason_th: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_single_ksec(cls, data: Any) -> Any:
+        """Reviews stored before Needs carried several tags hold one `ksec_category`."""
+        if isinstance(data, dict) and "ksec_categories" not in data and "ksec_category" in data:
+            data = {**data}
+            data["ksec_categories"] = [data.pop("ksec_category")]
+        return data
     # How many of the review's runs said this (stages/plo_review_consensus.py).
     # 1 for a one-run review and for rows written before the field existed.
     agreed_runs: int = 1

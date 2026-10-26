@@ -261,3 +261,10 @@ def test_an_old_review_row_reads_and_is_stale_under_the_new_fingerprint() -> Non
     assert old.reviewed_by == "agent"
     assert old.code_only_reason is None and old.unused_needs == [] and old.tool_calls == []
     assert is_stale(old, [_plo("PLO1", ["n1"])], {"n1": 0.5})
+
+
+def test_coverage_counts_each_tag_of_a_multi_tag_need() -> None:
+    multi = _need("m", KSECCategory.K)
+    multi = multi.model_copy(update={"ksec_categories": [KSECCategory.K, KSECCategory.S]})
+    cov = ksec_coverage([_plo("PLO1", ["m"])], {"m": multi})
+    assert cov.counts == {"K": 1, "S": 1, "E": 0, "C": 0}

@@ -98,7 +98,7 @@ async def test_every_need_holds_exactly_one_ksec_tag(
     for need in needs:
         tags = {skills_by_id[sid].ksec_category.value for sid in need["member_skill_ids"]}
         assert len(tags) == 1
-        assert tags == {need["ksec_category"]}
+        assert tags == set(need["ksec_categories"])
 
 
 async def test_ethics_and_character_skills_form_one_ec_need(monkeypatch: pytest.MonkeyPatch):
@@ -123,7 +123,7 @@ async def test_ethics_and_character_skills_form_one_ec_need(monkeypatch: pytest.
         }
     )
 
-    assert [n["ksec_category"] for n in state["needs"]] == ["EC"]
+    assert [n["ksec_categories"] for n in state["needs"]] == [["EC"]]
 
 
 async def test_an_all_ethics_group_keeps_the_standalone_e_tag(monkeypatch: pytest.MonkeyPatch):
@@ -148,7 +148,7 @@ async def test_an_all_ethics_group_keeps_the_standalone_e_tag(monkeypatch: pytes
         }
     )
 
-    assert [n["ksec_category"] for n in state["needs"]] == ["E"]
+    assert [n["ksec_categories"] for n in state["needs"]] == [["E"]]
 
 
 async def test_needs_carry_their_source_stakeholder_types(monkeypatch: pytest.MonkeyPatch):

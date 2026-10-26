@@ -33,6 +33,7 @@ from curriculum_agent.llm import complete_need_dedup
 from curriculum_agent.models import Need, ProgramMetadata
 from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
+from curriculum_agent.stages.need_grouping import ksec_label
 
 # One sentence has to carry every member. Past three it stops being able to,
 # which is ticket 18's fifteen-name group over again at the PLO level.
@@ -69,7 +70,7 @@ def _rejection(known: list[str], taken: set[str], labelled: dict[str, Need]) -> 
         return "fewer than two known Needs"
     if taken.intersection(known):
         return "a member is already in an accepted group"
-    if len({labelled[label].ksec_category for label in known}) > 1:
+    if len({tuple(labelled[label].ksec_categories) for label in known}) > 1:
         return "members span more than one KSEC tag"
     if len(known) > MAX_GROUP_SIZE:
         return f"more than {MAX_GROUP_SIZE} members"
@@ -118,7 +119,7 @@ async def find_duplicate_groups(needs: list[Need], metadata: ProgramMetadata) ->
 
     labelled = label_needs(needs)
     messages = build_need_dedup_prompt(
-        [(label, n.ksec_category.value, n.statement_th) for label, n in labelled.items()],
+        [(label, ksec_label(n), n.statement_th) for label, n in labelled.items()],
         program_context=build_program_context_th(metadata.model_dump()),
     )
     try:

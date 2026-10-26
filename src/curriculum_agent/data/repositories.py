@@ -351,6 +351,42 @@ class NeedRepository:
             )
             return [Need.model_validate(_row_to_dict(row)) for row in result.scalars().all()]
 
+    async def list_active_by_program(self, program_id: str) -> list[Need]:
+        """Needs not folded into a merged Need — what every downstream stage reads."""
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(NeedTable).where(
+                    NeedTable.program_id == program_id,
+                    NeedTable.merged_into.is_(None),
+                )
+            )
+            return [Need.model_validate(_row_to_dict(row)) for row in result.scalars().all()]
+
+    async def split(self, program_id: str, merged_need_id: str) -> list[Need]:
+        """Undo a merge: delete the merged Need and free its originals.
+
+        One session, one commit — the merged row going away and the originals
+        coming back are one fact, and a half-applied split would leave Needs
+        hidden under a parent that no longer exists. Returns the restored
+        originals.
+        """
+        async with AsyncSessionLocal() as session:
+            merged = await session.get(NeedTable, merged_need_id)
+            if merged is None or merged.program_id != program_id:
+                raise KeyError(merged_need_id)
+            result = await session.execute(
+                select(NeedTable).where(
+                    NeedTable.program_id == program_id,
+                    NeedTable.merged_into == merged_need_id,
+                )
+            )
+            originals = list(result.scalars().all())
+            for row in originals:
+                row.merged_into = None
+            await session.delete(merged)
+            await session.commit()
+            return [Need.model_validate(_row_to_dict(row)) for row in originals]
+
 
 class PLORepository:
     async def delete_by_program(self, program_id: str) -> int:

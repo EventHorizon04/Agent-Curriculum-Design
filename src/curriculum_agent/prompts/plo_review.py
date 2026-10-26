@@ -116,7 +116,7 @@ def build_plo_review_prompt(dossier: ReviewDossier) -> list[dict[str, str]]:
     )
     if dossier.unused_needs:
         unused = "\n".join(
-            f"[{u.need_id}] demand {u.demand_score:.2f} | KSEC {u.ksec_category} | "
+            f"[{u.need_id}] demand {u.demand_score:.2f} | KSEC {'+'.join(u.ksec_categories)} | "
             f"ผู้ขอ: {', '.join(u.stakeholder_types) or '-'} | เหตุที่ไม่ได้ใช้: {u.exclusion}\n"
             f"  {_UNWRITTEN_PLACEHOLDER_TH if u.unwritten else u.statement_th}"
             for u in dossier.unused_needs

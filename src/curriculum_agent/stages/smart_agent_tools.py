@@ -55,7 +55,7 @@ class NeedView(BaseModel):
 
     need_id: str
     statement_th: str
-    ksec_category: str
+    ksec_categories: list[str]
     bloom_level: BloomLevel
     freq: int
     demand_score: float
@@ -310,7 +310,7 @@ def get_need(ctx: ValidationContext, need_id: str) -> NeedView:
     return NeedView(
         need_id=need.need_id,
         statement_th=need.statement_th,
-        ksec_category=str(need.ksec_category.value),
+        ksec_categories=[t.value for t in need.ksec_categories],
         bloom_level=need.bloom_level,
         freq=need.freq,
         demand_score=need.demand_score,

@@ -106,4 +106,4 @@ def test_report_run_returns_the_full_report_payload(jobs_store, spawned):
     }
 
     assert body["needs_by_id"]["c1"]["need_id"] == "c1"
-    assert body["needs_by_id"]["c1"]["ksec_category"] == "S"
+    assert body["needs_by_id"]["c1"]["ksec_categories"] == ["S"]
