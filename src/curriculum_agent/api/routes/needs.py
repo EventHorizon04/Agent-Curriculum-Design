@@ -5,10 +5,11 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from curriculum_agent.api.jobs import start_job_or_409
+from curriculum_agent.api.jobs import start_job_or_409, sync_writer
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
+    PLORepository,
     ProgramRepository,
     SkillRepository,
 )
@@ -54,8 +55,38 @@ class SkillRunResult(BaseModel):
 
 
 @router.get("/", response_model=list[Need])
-async def list_needs(program_id: str) -> list[Need]:
+async def list_needs(program_id: str, active_only: bool = False) -> list[Need]:
+    """Every stored Need, or with `active_only` just the ones downstream stages
+    read (the merged Needs and the never-merged ones, not the folded originals)."""
+    if active_only:
+        return await _repo.list_active_by_program(program_id)
     return await _repo.list_by_program(program_id)
+
+
+@router.post("/{need_id}/split", response_model=list[Need])
+async def split_need(program_id: str, need_id: str) -> list[Need]:
+    """Undo a merge at the Need checkpoint: drop the merged Need, free its originals.
+
+    Refused in the order 404 / 422 / 409 (a PLO cites it) / 409 (busy). The write
+    runs as a registered writer so a job or session starting mid-split answers 409.
+    """
+    needs = await _repo.list_by_program(program_id)
+    need = next((n for n in needs if n.need_id == need_id), None)
+    if need is None:
+        raise HTTPException(status_code=404, detail="ไม่พบ Need นี้")
+    if not need.is_merged:
+        raise HTTPException(status_code=422, detail="Need นี้ไม่ได้มาจากการรวม จึงแยกไม่ได้")
+    plos = await PLORepository().list_by_program(program_id)
+    if any(need_id in p.source_need_ids for p in plos):
+        raise HTTPException(
+            status_code=409,
+            detail="Need นี้ถูกใช้สร้าง PLO แล้ว — แยกก่อนสร้าง PLO หรือรันสังเคราะห์ PLO ใหม่หลังแยก",
+        )
+    async with sync_writer(program_id, "หลักสูตรนี้กำลังแยก Need อยู่ — รอให้เสร็จก่อน"):
+        try:
+            return await _repo.split(program_id, need_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="ไม่พบ Need นี้") from exc
 
 
 @router.get("/skills", response_model=list[ExtractedSkill])

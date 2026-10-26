@@ -132,11 +132,16 @@ def review_stakeholder_needs(state: AgentState) -> AgentState:
     return state
 
 
-def review_needs(state: AgentState) -> AgentState:
+async def review_needs(state: AgentState) -> AgentState:
     payload = interrupt("Stage 2 complete — review raw skills and distilled Needs")
     if isinstance(payload, dict):
-        return {**state, **payload}
-    return state
+        state = {**state, **payload}
+    # The designer may have split a merged Need while suspended; the checkpoint
+    # still holds the pre-split set, so reload what is stored now.
+    from curriculum_agent.data.repositories import NeedRepository  # noqa: PLC0415
+
+    active = await NeedRepository().list_active_by_program(state["program_id"])
+    return {**state, "needs": [n.model_dump(mode="json") for n in active]}
 
 
 def review_plos(state: AgentState) -> AgentState:
