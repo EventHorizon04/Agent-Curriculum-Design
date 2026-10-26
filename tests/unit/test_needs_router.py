@@ -404,7 +404,7 @@ async def test_plos_run_carries_the_note_into_the_stage_state(
 
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
-        plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
+        plos_route.NeedRepository, "list_active_by_program", AsyncMock(return_value=[_need()])
     )
     with patch("curriculum_agent.stages.plo_synthesis.run", new=fake_run):
         response = await client.post("/programs/cs-test/plos/run", json={"note_th": NOTE})
@@ -427,7 +427,7 @@ async def test_plos_run_still_works_with_no_body_at_all(
 
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
-        plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
+        plos_route.NeedRepository, "list_active_by_program", AsyncMock(return_value=[_need()])
     )
     with patch("curriculum_agent.stages.plo_synthesis.run", new=fake_run):
         response = await client.post("/programs/cs-test/plos/run")

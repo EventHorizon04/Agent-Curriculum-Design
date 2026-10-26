@@ -65,7 +65,7 @@ async def _programs_with_a_current_review(program_ids: Iterable[str]) -> set[str
             if review is None:
                 continue
             plos = await PLORepository().list_by_program(pid)
-            needs = await NeedRepository().list_by_program(pid)
+            needs = await NeedRepository().list_active_by_program(pid)
             if plos and not is_stale(review, plos, need_demands(needs)):
                 current.add(pid)
         except Exception as exc:  # noqa: BLE001

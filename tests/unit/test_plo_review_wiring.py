@@ -59,7 +59,7 @@ def test_get_review_reports_staleness() -> None:
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        needs.return_value.list_active_by_program = AsyncMock(return_value=[])
         rr.return_value.get = AsyncMock(return_value=_review("old"))
         resp = client.get("/programs/p1/plos/review")
     assert resp.status_code == 200
@@ -73,7 +73,7 @@ def test_get_review_with_none_stored() -> None:
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        needs.return_value.list_active_by_program = AsyncMock(return_value=[])
         rr.return_value.get = AsyncMock(return_value=None)
         resp = client.get("/programs/p1/plos/review")
     # conftest's kill switch has the slot off for every test, so review_enabled
@@ -90,7 +90,7 @@ def test_get_review_review_enabled_true_when_the_slot_is_on(monkeypatch) -> None
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        needs.return_value.list_active_by_program = AsyncMock(return_value=[])
         rr.return_value.get = AsyncMock(return_value=None)
         resp = client.get("/programs/p1/plos/review")
     assert resp.json()["review_enabled"] is True
@@ -121,7 +121,7 @@ def test_get_review_with_a_failed_need_load_returns_the_review_as_stale() -> Non
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
         rr.return_value.get = AsyncMock(return_value=_review("old"))
-        needs.return_value.list_by_program = AsyncMock(side_effect=RuntimeError("db down"))
+        needs.return_value.list_active_by_program = AsyncMock(side_effect=RuntimeError("db down"))
         resp = client.get("/programs/p1/plos/review")
     assert resp.status_code == 200
     body = resp.json()
@@ -137,7 +137,7 @@ def test_get_review_with_a_failed_need_load_and_no_review_stays_empty() -> None:
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
         rr.return_value.get = AsyncMock(return_value=None)
-        needs.return_value.list_by_program = AsyncMock(side_effect=RuntimeError("db down"))
+        needs.return_value.list_active_by_program = AsyncMock(side_effect=RuntimeError("db down"))
         resp = client.get("/programs/p1/plos/review")
     assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
 
@@ -159,7 +159,7 @@ def test_review_run_with_the_slot_off_is_a_job(monkeypatch, jobs_store, spawned)
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        needs.return_value.list_active_by_program = AsyncMock(return_value=[])
         job = _run_job(client.post("/programs/p1/plos/review/run"), jobs_store, spawned)
     assert job.status == "succeeded", job.error_th
     assert job.result["review_enabled"] is False
@@ -235,7 +235,7 @@ def test_review_run_returns_the_fresh_review(monkeypatch, jobs_store, spawned) -
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        needs.return_value.list_active_by_program = AsyncMock(return_value=[])
         resp = client.post("/programs/p1/plos/review/run")
         job = _run_job(resp, jobs_store, spawned)
     assert job.status == "succeeded", job.error_th
@@ -261,7 +261,7 @@ def test_review_run_reports_staleness_from_the_set_read_after_the_call(
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(side_effect=[[_PLO], [plo_b]])
-        needs.return_value.list_by_program = AsyncMock(return_value=[])
+        needs.return_value.list_active_by_program = AsyncMock(return_value=[])
         resp = client.post("/programs/p1/plos/review/run")
         job = _run_job(resp, jobs_store, spawned)
     assert job.status == "succeeded", job.error_th

@@ -259,7 +259,7 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
     """One review: the agent's judged answer, or the code facts. Raises only on a
     read failure — the caller decides whether that fails a job or is swallowed."""
     metadata = await ProgramRepository().get(program_id)
-    needs = await NeedRepository().list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
     needs_by_id = {n.need_id: n for n in needs}
     dossier = build_dossier(
         plos,
@@ -372,7 +372,7 @@ async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview |
     one. Never raises — an advisory step must not fail the session."""
     try:
         stored = await PLOReviewRepository().get(program_id)
-        needs = await NeedRepository().list_by_program(program_id)
+        needs = await NeedRepository().list_active_by_program(program_id)
     except Exception as exc:
         logger.warning(f"plo_review: could not read inputs for {program_id}: {exc!r}")
         return None

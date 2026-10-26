@@ -30,7 +30,7 @@ async def run(state: AgentState) -> AgentState:
         )
 
     plos = [PLO.model_validate(d) for d in plo_dicts]
-    needs = await NeedRepository().list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
     needs_by_id = {n.need_id: n for n in needs}
 
     # Every PLO must trace to evidence (project rule); a source_need_id that

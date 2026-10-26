@@ -161,7 +161,9 @@ async def test_trace_reports_needs_it_could_not_resolve() -> None:
     with (
         patch.object(plos_route._repo, "list_by_program", AsyncMock(return_value=[plo])),
         patch.object(
-            plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("other")])
+            plos_route.NeedRepository,
+            "list_active_by_program",
+            AsyncMock(return_value=[_need("other")]),
         ),
         patch.object(plos_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[])),
     ):

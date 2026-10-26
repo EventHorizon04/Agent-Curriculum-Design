@@ -253,7 +253,7 @@ async def test_plo_synthesis_loads_needs_when_state_carries_none(
     monkeypatch: pytest.MonkeyPatch,
 ):
     loader = AsyncMock(return_value=[_need()])
-    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+    monkeypatch.setattr(ps.NeedRepository, "list_active_by_program", loader)
     monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())
 
@@ -313,7 +313,7 @@ async def test_plo_synthesis_does_not_blame_need_combination_for_an_empty_result
     that is not at fault.
     """
     loader = AsyncMock(return_value=[_need()])
-    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+    monkeypatch.setattr(ps.NeedRepository, "list_active_by_program", loader)
 
     with pytest.raises(ValueError) as excinfo:
         await ps.run(

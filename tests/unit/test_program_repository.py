@@ -237,7 +237,7 @@ def _stored(monkeypatch: pytest.MonkeyPatch, review: object) -> None:
     plo_repo = MagicMock()
     plo_repo.return_value.list_by_program = AsyncMock(return_value=[_plo()])
     need_repo = MagicMock()
-    need_repo.return_value.list_by_program = AsyncMock(return_value=[_need()])
+    need_repo.return_value.list_active_by_program = AsyncMock(return_value=[_need()])
     monkeypatch.setattr(repositories, "PLOReviewRepository", review_repo)
     monkeypatch.setattr(repositories, "PLORepository", plo_repo)
     monkeypatch.setattr(repositories, "NeedRepository", need_repo)

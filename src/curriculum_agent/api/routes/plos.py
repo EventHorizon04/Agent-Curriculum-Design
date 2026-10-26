@@ -85,7 +85,7 @@ async def export_plo_matrix(program_id: str) -> Response:
             detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
         )
 
-    needs = await NeedRepository().list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
     payload = export_matrix_xlsx(plos, {n.need_id: n for n in needs})
 
     return Response(
@@ -150,7 +150,7 @@ async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     need_ids = set(plo.source_need_ids)
     evidence_ids = set(plo.source_evidence_ids)
 
-    all_needs = await NeedRepository().list_by_program(program_id)
+    all_needs = await NeedRepository().list_active_by_program(program_id)
     all_evidence = await EvidenceRepository().list_by_program(program_id)
 
     clusters = [n for n in all_needs if n.need_id in need_ids]
@@ -195,7 +195,7 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
     if metadata is None:
         raise HTTPException(status_code=404, detail="Program not found")
 
-    needs = await NeedRepository().list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
     if not needs:
         raise HTTPException(
             status_code=422,
@@ -283,7 +283,7 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
         # staleness of a review that does not exist.
         return PLOReviewResponse(review=None, stale=False, review_enabled=enabled)
     try:
-        needs = await NeedRepository().list_by_program(program_id)
+        needs = await NeedRepository().list_active_by_program(program_id)
     except Exception as exc:
         # The review is real and worth showing; it just cannot be confirmed current.
         logger.warning(
@@ -323,7 +323,7 @@ async def run_plo_review(program_id: str) -> JobInfo:
         # The agent can run for up to plo_review_timeout_seconds (300s); judge
         # staleness against whatever landed on this program meanwhile.
         plos_now = await _repo.list_by_program(program_id)
-        needs_now = await NeedRepository().list_by_program(program_id)
+        needs_now = await NeedRepository().list_active_by_program(program_id)
         return PLOReviewResponse(
             review=review,
             stale=is_stale(review, plos_now, need_demands(needs_now)),
@@ -387,6 +387,16 @@ async def _merge_needs(program: ProgramMetadata, program_id: str, body: MergeNee
         raise HTTPException(status_code=422, detail=f"ไม่พบ Need: {', '.join(missing)}")
 
     selected = [by_id[nid] for nid in body.need_ids]
+
+    # A Need folded into a merged one is represented by that Need; picking the
+    # original would put one demand behind two outcomes. Checked after the
+    # unknown-id test so a merged-away id answers this text, not "not found".
+    merged_away = [n for n in selected if n.merged_into is not None]
+    if merged_away:
+        raise HTTPException(
+            status_code=422,
+            detail="Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — เลือก Need ที่รวมแล้วแทน",
+        )
 
     # A fallback Need's statement is a marker plus a comma-joined skill list, not
     # a requirement — there is no PLO to draft it into, merged or otherwise. The
@@ -569,7 +579,7 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
         await _repo.bulk_insert([updated])
         return updated
 
-    known_need_ids = {n.need_id for n in await NeedRepository().list_by_program(program_id)}
+    known_need_ids = {n.need_id for n in await NeedRepository().list_active_by_program(program_id)}
     fails = hard_failures(
         body.statement_th,
         body.action_verb_th,
@@ -643,7 +653,7 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
     if match is None:
         raise HTTPException(status_code=404, detail="PLO not found")
 
-    all_needs = await NeedRepository().list_by_program(program_id)
+    all_needs = await NeedRepository().list_active_by_program(program_id)
     cited = [n for n in all_needs if n.need_id in set(match.source_need_ids)]
     if not cited:
         # Its Needs are gone, so there is nothing to judge it against. The

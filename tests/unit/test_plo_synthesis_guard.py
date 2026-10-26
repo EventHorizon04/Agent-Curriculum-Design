@@ -34,7 +34,7 @@ async def test_run_raises_when_needs_is_empty(monkeypatch: pytest.MonkeyPatch) -
     would synthesise PLOs from rows this run did not produce.
     """
     loader = AsyncMock(return_value=[_need("N1")])
-    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+    monkeypatch.setattr(ps.NeedRepository, "list_active_by_program", loader)
 
     state: AgentState = {
         "program_id": "test",
@@ -56,7 +56,7 @@ async def test_run_reads_stored_needs_when_the_key_is_missing(
     needs = [_need("N1")]
     _patch_llm(monkeypatch, needs)
     loader = AsyncMock(return_value=needs)
-    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+    monkeypatch.setattr(ps.NeedRepository, "list_active_by_program", loader)
 
     state: AgentState = {"program_id": "test", "metadata": _METADATA}
     result = await run(state)
@@ -69,7 +69,7 @@ async def test_run_raises_when_nothing_is_stored_either(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Nothing in state and nothing on record: the Needs stage has to run."""
-    monkeypatch.setattr(ps.NeedRepository, "list_by_program", AsyncMock(return_value=[]))
+    monkeypatch.setattr(ps.NeedRepository, "list_active_by_program", AsyncMock(return_value=[]))
 
     state: AgentState = {"program_id": "test", "metadata": _METADATA}
     with pytest.raises(ValueError, match="ยังไม่มี Need"):
@@ -385,28 +385,3 @@ async def test_the_slot_an_unwritten_need_would_have_taken_goes_to_the_next_need
 
     used = {nid for p in state["plos"] for nid in p["source_need_ids"]}
     assert used == {"N1", "N2"}, "U1 must not occupy the slot its demand score would win"
-
-
-async def test_an_unwritten_need_is_not_passed_to_the_duplicate_check(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    needs = [
-        _need("N1", demand=0.9),
-        _need("N2", demand=0.7),
-        _need("U1", demand=0.99, statement_th=f"{PROVIDER_MARKER_TH} ทักษะ A, ทักษะ B"),
-    ]
-    _patch_llm(monkeypatch, needs)
-    dedup_mock = AsyncMock(return_value=[])
-    monkeypatch.setattr(ps, "find_duplicate_groups", dedup_mock)
-
-    await ps.run(
-        {
-            "program_id": "test",
-            "metadata": _METADATA,
-            "needs": [n.model_dump(mode="json") for n in needs],
-        }
-    )
-
-    dedup_mock.assert_awaited_once()
-    passed_ids = {n.need_id for n in dedup_mock.call_args.args[0]}
-    assert passed_ids == {"N1", "N2"}

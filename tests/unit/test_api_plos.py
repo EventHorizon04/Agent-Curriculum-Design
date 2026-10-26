@@ -322,7 +322,7 @@ def _stored(monkeypatch: pytest.MonkeyPatch, plos: list[PLO]) -> AsyncMock:
     cited = [nid for plo in plos for nid in plo.source_need_ids]
     monkeypatch.setattr(
         plos_route.NeedRepository,
-        "list_by_program",
+        "list_active_by_program",
         AsyncMock(return_value=[_need(nid) for nid in cited]),
     )
     insert = AsyncMock()
@@ -491,7 +491,7 @@ def test_revalidate_rejudges_the_stored_statement(
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
         plos_route.NeedRepository,
-        "list_by_program",
+        "list_active_by_program",
         AsyncMock(return_value=[_need("N1"), _need("N2")]),
     )
 
@@ -534,7 +534,9 @@ def test_revalidate_refuses_a_plo_whose_needs_are_gone(
     orphan = _plo("PLO1", ["N-GONE"])
     _stored(monkeypatch, [orphan])
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
-    monkeypatch.setattr(plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[]))
+    monkeypatch.setattr(
+        plos_route.NeedRepository, "list_active_by_program", AsyncMock(return_value=[])
+    )
 
     resp = client.post("/programs/cs-test/plos/PLO1/revalidate")
 

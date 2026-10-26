@@ -209,7 +209,7 @@ async def test_the_stage_validates_when_the_key_is_absent(monkeypatch: pytest.Mo
 def _route_env(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_META))
     monkeypatch.setattr(
-        plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
+        plos_route.NeedRepository, "list_active_by_program", AsyncMock(return_value=[_need()])
     )
     run = AsyncMock(return_value={"plos": []})
     monkeypatch.setattr(ps, "run", run)

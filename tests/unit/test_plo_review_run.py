@@ -85,7 +85,7 @@ def live(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     monkeypatch.setattr(
         pr,
         "NeedRepository",
-        lambda: AsyncMock(list_by_program=AsyncMock(return_value=[_NEED])),
+        lambda: AsyncMock(list_active_by_program=AsyncMock(return_value=[_NEED])),
     )
     agent_run = AsyncMock(
         return_value=AgentOutcome(_FINISH, None, [ReviewToolCall(tool="check_verbs", arg="PLO1")])
@@ -234,7 +234,7 @@ async def test_the_graph_node_keeps_going_when_the_needs_fail_to_load(
     monkeypatch.setattr(
         pr,
         "NeedRepository",
-        lambda: AsyncMock(list_by_program=AsyncMock(side_effect=RuntimeError("db"))),
+        lambda: AsyncMock(list_active_by_program=AsyncMock(side_effect=RuntimeError("db"))),
     )
     state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
     assert state["plo_review"] is None and state["current_stage"] == "plo_review"

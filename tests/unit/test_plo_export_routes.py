@@ -52,7 +52,7 @@ def test_matrix_export_returns_a_readable_workbook() -> None:
         patch("curriculum_agent.api.routes.plos.NeedRepository") as mock_needs,
     ):
         mock_repo.list_by_program = AsyncMock(return_value=[_plo()])
-        mock_needs.return_value.list_by_program = AsyncMock(return_value=[_need()])
+        mock_needs.return_value.list_active_by_program = AsyncMock(return_value=[_need()])
         resp = client.get(_MATRIX_URL)
 
     assert resp.status_code == 200
@@ -69,7 +69,7 @@ def test_matrix_export_sends_a_spreadsheet_content_type() -> None:
         patch("curriculum_agent.api.routes.plos.NeedRepository") as mock_needs,
     ):
         mock_repo.list_by_program = AsyncMock(return_value=[_plo()])
-        mock_needs.return_value.list_by_program = AsyncMock(return_value=[_need()])
+        mock_needs.return_value.list_active_by_program = AsyncMock(return_value=[_need()])
         resp = client.get(_MATRIX_URL)
 
     assert resp.headers["content-type"].startswith(
@@ -85,7 +85,7 @@ def test_matrix_export_names_the_file_after_the_program() -> None:
         patch("curriculum_agent.api.routes.plos.NeedRepository") as mock_needs,
     ):
         mock_repo.list_by_program = AsyncMock(return_value=[_plo()])
-        mock_needs.return_value.list_by_program = AsyncMock(return_value=[_need()])
+        mock_needs.return_value.list_active_by_program = AsyncMock(return_value=[_need()])
         resp = client.get(_MATRIX_URL)
 
     disposition = resp.headers["content-disposition"]
@@ -101,7 +101,7 @@ def test_matrix_export_resolves_ksec_from_the_needs_repository() -> None:
         patch("curriculum_agent.api.routes.plos.NeedRepository") as mock_needs,
     ):
         mock_repo.list_by_program = AsyncMock(return_value=[_plo()])
-        mock_needs.return_value.list_by_program = AsyncMock(
+        mock_needs.return_value.list_active_by_program = AsyncMock(
             return_value=[_need("N1", KSECCategory.EC)]
         )
         resp = client.get(_MATRIX_URL)
@@ -145,7 +145,7 @@ def test_export_paths_do_not_shadow_the_plo_id_routes() -> None:
         patch("curriculum_agent.api.routes.plos.NeedRepository") as mock_needs,
     ):
         mock_repo.list_by_program = AsyncMock(return_value=[_plo()])
-        mock_needs.return_value.list_by_program = AsyncMock(return_value=[_need()])
+        mock_needs.return_value.list_active_by_program = AsyncMock(return_value=[_need()])
         resp = client.get(_MATRIX_URL)
 
     assert resp.status_code == 200

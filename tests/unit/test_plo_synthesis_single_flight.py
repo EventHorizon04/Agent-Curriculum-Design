@@ -198,7 +198,7 @@ async def test_the_slot_is_freed_after_a_run_that_raises(
 def _route_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_META))
     monkeypatch.setattr(
-        plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1")])
+        plos_route.NeedRepository, "list_active_by_program", AsyncMock(return_value=[_need("N1")])
     )
 
 

@@ -116,7 +116,7 @@ class _Env:
         self.plos = AsyncMock(return_value=[_plo()])
         self.bulk_insert = AsyncMock()
         monkeypatch.setattr(plos_route.ProgramRepository, "get", self.program)
-        monkeypatch.setattr(plos_route.NeedRepository, "list_by_program", self.needs)
+        monkeypatch.setattr(plos_route.NeedRepository, "list_active_by_program", self.needs)
         # On the class, never the module-level `_repo` instance (see test_api_plos).
         monkeypatch.setattr(plos_route.PLORepository, "list_by_program", self.plos)
         monkeypatch.setattr(plos_route.PLORepository, "bulk_insert", self.bulk_insert)

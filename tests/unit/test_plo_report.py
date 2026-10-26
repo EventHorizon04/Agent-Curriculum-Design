@@ -42,7 +42,9 @@ def _plo(pid: str, need_ids: list[str], *, optional: bool = False, escalated: bo
 
 async def test_run_assembles_without_calling_an_llm(monkeypatch: pytest.MonkeyPatch):
     """The stage no longer classifies, so it must not reach the network at all."""
-    monkeypatch.setattr(pr.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1")]))
+    monkeypatch.setattr(
+        pr.NeedRepository, "list_active_by_program", AsyncMock(return_value=[_need("N1")])
+    )
     bulk_insert = AsyncMock()
     monkeypatch.setattr(pr.PLORepository, "bulk_insert", bulk_insert)
 
@@ -66,7 +68,9 @@ async def test_run_assembles_without_calling_an_llm(monkeypatch: pytest.MonkeyPa
 
 async def test_report_counts_split_core_and_optional(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(
-        pr.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1"), _need("N2")])
+        pr.NeedRepository,
+        "list_active_by_program",
+        AsyncMock(return_value=[_need("N1"), _need("N2")]),
     )
     monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
 
@@ -95,7 +99,9 @@ async def test_report_counts_surface_escalated_plos(monkeypatch: pytest.MonkeyPa
     """`escalated` exists to surface repair work at the checkpoint — pin it
     against a set that actually contains one, not just the all-zero case."""
     monkeypatch.setattr(
-        pr.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1"), _need("N2")])
+        pr.NeedRepository,
+        "list_active_by_program",
+        AsyncMock(return_value=[_need("N1"), _need("N2")]),
     )
     monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
 
@@ -128,7 +134,7 @@ async def test_unresolved_need_id_logs_a_warning_naming_the_plo(monkeypatch: pyt
     replacement for what the old classification path surfaced as
     method="fallback" — there is no classification step left to carry that
     signal, so the warning is the whole mechanism now."""
-    monkeypatch.setattr(pr.NeedRepository, "list_by_program", AsyncMock(return_value=[]))
+    monkeypatch.setattr(pr.NeedRepository, "list_active_by_program", AsyncMock(return_value=[]))
     monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
 
     with patch.object(pr, "logger") as mock_logger:
@@ -158,7 +164,9 @@ def test_plo_no_longer_carries_the_classification_fields():
 async def test_the_report_no_longer_carries_a_review(monkeypatch: pytest.MonkeyPatch):
     """The QA review is stage 06 and runs after the report; the report neither
     reads nor returns one, even when an old one is on the state."""
-    monkeypatch.setattr(pr.NeedRepository, "list_by_program", AsyncMock(return_value=[_need("N1")]))
+    monkeypatch.setattr(
+        pr.NeedRepository, "list_active_by_program", AsyncMock(return_value=[_need("N1")])
+    )
     monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
     state = await pr.run(
         {

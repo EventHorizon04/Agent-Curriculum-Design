@@ -65,7 +65,7 @@ def test_report_run_returns_the_full_report_payload(jobs_store, spawned):
     with (
         patch("curriculum_agent.api.routes.plos._repo") as mock_repo,
         patch(
-            "curriculum_agent.stages.plo_report.NeedRepository.list_by_program",
+            "curriculum_agent.stages.plo_report.NeedRepository.list_active_by_program",
             new=AsyncMock(return_value=[need]),
         ),
         patch(
