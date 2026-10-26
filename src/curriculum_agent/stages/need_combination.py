@@ -11,10 +11,10 @@ from pydantic import ValidationError as PydanticValidationError
 
 from curriculum_agent.concurrency import gather_bounded
 from curriculum_agent.config import settings
-from curriculum_agent.data.repositories import NeedRepository, SkillGroupRepository
+from curriculum_agent.data.repositories import NeedRepository, SkillGroupRepository, SkillRepository
 from curriculum_agent.graph import AgentState
 from curriculum_agent.llm import complete_need_combination
-from curriculum_agent.models import Need, SkillGroup
+from curriculum_agent.models import ExtractedSkill, Need, ProgramMetadata, SkillGroup
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.summarize_need import (
     MAX_LISTED_SKILLS,
@@ -23,6 +23,7 @@ from curriculum_agent.prompts.summarize_need import (
     MIN_STATEMENT_CHARS,
     build_summarize_need_prompt,
 )
+from curriculum_agent.stages.demand import build_scoring_corpus
 from curriculum_agent.stages.need_grouping import (
     MIN_NEEDS,
     PROVIDER_MARKER_TH,
@@ -296,6 +297,10 @@ class _NeedStatement(BaseModel):
         return statement
 
 
+# Public name: the merged-Need prompt's answer is validated as this class too.
+NeedStatement = _NeedStatement
+
+
 def _coverage_breakdown(
     shown: int, claimed: set[int] | None, not_covered: list[_NotCovered] | None
 ) -> tuple[dict[str, int], int]:
@@ -425,6 +430,36 @@ async def _write_statement(
         return fallback, True
 
 
+async def _merge_duplicates(state: AgentState, program_id: str, needs: list[Need]) -> list[Need]:
+    """Fold duplicate Needs (stages/need_merge.py); the list unchanged when nothing folds.
+
+    Needs the program's extracted skills — to rank a merged Need's top skills and
+    to rescore it — taken from the state when the stage runs inside a session,
+    loaded otherwise. Without complete program metadata there is no context line to put
+    in front of the duplicate check, so nothing is merged.
+    """
+    # Imported here: need_merge writes its sentence through NeedStatement, defined above.
+    from curriculum_agent.stages.need_merge import merge_duplicates  # noqa: PLC0415
+
+    try:
+        metadata = ProgramMetadata.model_validate(state.get("metadata") or {})
+    except PydanticValidationError:
+        # Absent, or written before intake collected every field the model requires.
+        logger.info("need_combination: no complete program metadata, skipping the duplicate merge")
+        return needs
+    skill_dicts = state.get("extracted_skills")
+    if skill_dicts is None:
+        stored = await SkillRepository().list_by_program(program_id)
+        skills = list(stored)
+    else:
+        skills = [ExtractedSkill.model_validate(d) for d in skill_dicts]
+    # Same corpus the groups were scored against; see build_scoring_corpus.
+    corpus = build_scoring_corpus(
+        (s.source_evidence_id, s.source_stakeholder_type.value) for s in skills
+    )
+    return await merge_duplicates(program_id, needs, skills, metadata, corpus)
+
+
 async def run(state: AgentState) -> AgentState:
     """Stage 3b: write one Need per stored skill group (Agent 2)."""
     program_id = state.get("program_id", "unknown")
@@ -496,7 +531,10 @@ async def run(state: AgentState) -> AgentState:
             "written Needs"
         )
 
-    core_count = sum(1 for n in needs if not n.is_optional)
+    needs = await _merge_duplicates(state, program_id, needs)
+
+    # Active Needs only: an original a merge absorbed is no longer a candidate PLO.
+    core_count = sum(1 for n in needs if not n.is_optional and n.merged_into is None)
     if core_count < MIN_NEEDS:
         logger.warning(
             f"need_combination produced only {core_count} core Needs (policy is at least "

@@ -39,6 +39,8 @@ async def run_need_pipeline_from_skills(state: dict[str, Any]) -> dict[str, Any]
         corpus,
         build_program_context_th(state.get("metadata") or {}),
     )
-    rest = {k: v for k, v in state.items() if k != "extracted_skills"}
+    # extracted_skills stay on the state: Agent 2 reads them to score a merged Need,
+    # exactly as it does in a graph session where Agent 1 just ran.
+    rest = dict(state)
     rest["skill_groups"] = [g.model_dump(mode="json") for g in groups]
     return await need_combination.run(rest)  # type: ignore[arg-type]

@@ -102,33 +102,31 @@ def test_a_need_already_in_an_accepted_group_drops_the_later_group_whole() -> No
     assert _ids(folds) == [["a", "b"]], "the second group is dropped, not trimmed to N3+N4"
 
 
-def test_a_group_spanning_two_ksec_tags_is_dropped() -> None:
-    """A K Need folded into an S sentence is the knowledge disappearing."""
+def test_mixed_ksec_group_accepted() -> None:
+    """A K Need and an S Need that ask for one capability fold into one multi-tag Need."""
     labelled = label_needs([_need("a", ksec=KSECCategory.K), _need("b", ksec=KSECCategory.S)])
 
-    assert accept_groups(_answer(["N1", "N2"]), labelled) == []
+    assert _ids(accept_groups(_answer(["N1", "N2"]), labelled)) == [["a", "b"]]
 
 
-def test_a_group_of_four_is_dropped_not_trimmed() -> None:
-    labelled = label_needs([_need(x) for x in "abcd"])
+def test_group_of_five_accepted_six_dropped() -> None:
+    labelled = label_needs([_need(x) for x in "abcdef"])
 
-    assert accept_groups(_answer(["N1", "N2", "N3", "N4"]), labelled) == []
-
-
-def test_a_group_of_three_is_the_largest_accepted() -> None:
-    labelled = label_needs([_need(x) for x in "abc"])
-
-    assert _ids(accept_groups(_answer(["N1", "N2", "N3"]), labelled)) == [["a", "b", "c"]]
+    assert _ids(accept_groups(_answer(["N1", "N2", "N3", "N4", "N5"]), labelled)) == [
+        ["a", "b", "c", "d", "e"]
+    ]
+    assert accept_groups(_answer(["N1", "N2", "N3", "N4", "N5", "N6"]), labelled) == []
+    assert nd.MAX_GROUP_SIZE == 5
 
 
 def test_a_dropped_group_does_not_reserve_its_members() -> None:
-    """Only an *accepted* group takes its members: a group dropped for mixing
-    KSEC must not stop a later, valid group from using one of them."""
-    labelled = label_needs([_need("a"), _need("b", ksec=KSECCategory.K), _need("c")])
+    """Only an *accepted* group takes its members: a group dropped for size
+    must not stop a later, valid group from using one of them."""
+    labelled = label_needs([_need(x) for x in "abcdefg"])
 
-    folds = accept_groups(_answer(["N1", "N2"], ["N1", "N3"]), labelled)
+    folds = accept_groups(_answer(["N1", "N2", "N3", "N4", "N5", "N6"], ["N1", "N7"]), labelled)
 
-    assert _ids(folds) == [["a", "c"]]
+    assert _ids(folds) == [["a", "g"]]
 
 
 def test_an_empty_answer_accepts_nothing() -> None:
@@ -139,7 +137,7 @@ def test_the_answer_is_summarised_in_one_line(monkeypatch: pytest.MonkeyPatch) -
     """Accepted and dropped counts, for the per-stage figures a study reports."""
     logger = Mock()
     monkeypatch.setattr(nd, "logger", logger)
-    labelled = label_needs([_need("a"), _need("b"), _need("c", ksec=KSECCategory.K)])
+    labelled = label_needs([_need("a"), _need("b"), _need("c")])
 
     accept_groups(_answer(["N1", "N2"], ["N2", "N3"]), labelled)
 

@@ -32,6 +32,7 @@ from curriculum_agent.prompts.cluster_skills import (
 )
 from curriculum_agent.prompts.designer_note import NOTE_HEADER_TH, NOTE_POLICY_TH
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
+from curriculum_agent.prompts.merged_need import build_merged_need_prompt
 from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
 from curriculum_agent.prompts.plo_review import (
     ReviewItem,
@@ -116,6 +117,15 @@ def _build() -> str:
     dedup = _render(
         build_need_dedup_prompt(
             [("N1", "S", "<ประโยคความต้องการ 1>"), ("N2", "S", "<ประโยคความต้องการ 2>")],
+            program_context="<program context>",
+        )
+    )
+    merged_need = _render(
+        build_merged_need_prompt(
+            ["<skill a>", "<skill b>"],
+            ["K", "S"],
+            "apply",
+            "<เหตุผลที่ตรวจพบว่าซ้ำกัน>",
             program_context="<program context>",
         )
     )
@@ -211,6 +221,7 @@ def _build() -> str:
         summarize=summarize,
         plo=plo,
         dedup=dedup,
+        merged_need=merged_need,
         review=review,
         review_observation=review_observation,
         review_refusal=review_refusal,
@@ -255,6 +266,7 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 7 | สั่งแก้ประโยค PLO | `build_agent_repair_prompt` | `stages/smart_agent.py` → `_repair` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
 | 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
+| 10 | เขียนประโยค Need ที่รวมจากหลายข้อ | `build_merged_need_prompt` | `stages/need_merge.py` → `_write_merged` | `need_combination` | `NeedStatement` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -463,13 +475,13 @@ prompt ซ่อมพกแค่คำสั่ง + ประโยคเด�
 | | |
 |---|---|
 | **builder** | `prompts/need_dedup.py` → `build_need_dedup_prompt(rows, *, program_context=None)` |
-| **ผู้เรียก** | `stages/need_dedup.py` → `find_duplicate_groups` (ครั้งเดียวต่อการรัน `plo_synthesis`) |
+| **ผู้เรียก** | `stages/need_dedup.py` → `find_duplicate_groups` (ครั้งเดียวต่อการรัน `need_combination` โดย `stages/need_merge.py`) |
 | **slot / wrapper** | `need_dedup` → `complete_need_dedup` · ปิดได้ด้วย `NEED_DEDUP_PROVIDER=` |
 | **response model** | `DedupAnswer` (`groups: [{{labels, reason_th}}]`) |
 | **cache** | ไม่มี |
 
 ส่งป้าย `N1`, `N2`, ... แทน `need_id` เพราะ UUID ยาว 36 ตัวที่โมเดลต้องคัดลอกให้ตรง · กฎโครงสร้างทุกข้อ
-(2-3 ข้อต่อกลุ่ม · KSEC เดียวกัน · หนึ่ง Need หนึ่งกลุ่ม) โค้ดตรวจซ้ำใน `accept_groups` และทิ้งทั้งกลุ่มที่ผิด
+(2-5 ข้อต่อกลุ่ม · หมวด KSEC ต่างกันได้ · หนึ่ง Need หนึ่งกลุ่ม) โค้ดตรวจซ้ำใน `accept_groups` และทิ้งทั้งกลุ่มที่ผิด
 ไม่ตัดสมาชิกออก · กฎข้อ 1 นิยาม "ซ้ำ" ว่างานหลักและวัตถุหลักเหมือนกัน และบอกชัดว่าหัวข้อ เครื่องมือ หรือแหล่งที่มาเดียวกันยังไม่พอ เพราะ Need ที่มาจาก
 เอกสารชุดเดียวกันใช้ evidence ร่วมกันสูงถึง 55% ทั้งที่ขอคนละเรื่อง
 
@@ -527,6 +539,25 @@ tag หรือระดับ Bloom ที่เก็บไว้จริง
 ```text
 {review_refusal}
 ```
+
+---
+
+## 10. เขียนประโยค Need ที่รวมจากหลายข้อ
+
+| | |
+|---|---|
+| **builder** | `prompts/merged_need.py` → `build_merged_need_prompt(top_skill_names, ksec_tags, bloom_level, reason_th, *, program_context)` |
+| **ผู้เรียก** | `stages/need_merge.py` → `_write_merged` (หนึ่งครั้งต่อกลุ่มที่ขั้น dedup รับ) |
+| **slot / wrapper** | `need_combination` → `complete_need_combination` (`max_retries=3`) |
+| **response model** | `NeedStatement` (เดียวกับข้อ 4) |
+| **cache** | ไม่มี |
+
+กฎการเขียนประโยคใช้ชุดเดียวกับข้อ 4 (`NEED_SENTENCE_RULES_HEAD_TH` / `NEED_SENTENCE_RULES_TAIL_TH` ใน
+`prompts/summarize_need.py`) เพราะคำตอบถูกตรวจด้วย `NeedStatement` ตัวเดียวกัน · ที่ต่างคือ input: ไม่ใช่ชื่อสมาชิกทั้งกลุ่ม
+แต่เป็น**ทักษะเด่น** (คะแนน importance สูงสุด ไม่เกิน 7) พร้อมเหตุผลที่ขั้น dedup ให้ไว้ · หมวด KSEC ส่งเป็นรายการ
+เพราะความต้องการเดิมอยู่คนละหมวดได้ · ถ้าเขียนประโยคไม่สำเร็จ กลุ่มนั้นไม่ถูกรวม ความต้องการเดิมยังใช้งานอยู่
+
+{merged_need}
 
 ---
 

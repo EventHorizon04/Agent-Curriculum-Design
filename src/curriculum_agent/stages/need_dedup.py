@@ -4,8 +4,8 @@
 invariant only stops one Need being cited twice — two Needs that mean the same
 thing still became two PLOs. This module asks one model, once per run, which
 in-scope Needs ask for the same graduate capability, and hands back the groups
-the code accepts. Each accepted group becomes one slot drafted from all its
-members, exactly as a designer's manual merge would be.
+the code accepts. Each accepted group becomes one merged Need (stages/need_merge.py) that
+replaces its members for synthesis, as a designer's manual merge would.
 
 Evidence overlap is not the similarity, and it was measured before this was
 written: on the stored run a marketing Need and an ethics Need shared 55% of
@@ -35,9 +35,11 @@ from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.stages.need_grouping import ksec_label
 
-# One sentence has to carry every member. Past three it stops being able to,
-# which is ticket 18's fifteen-name group over again at the PLO level.
-MAX_GROUP_SIZE = 3
+# One sentence has to carry every member. Past five it stops being able to,
+# which is ticket 18's fifteen-name group over again. It was three while the
+# fold fed a PLO draft; a merged Need is written from its top skills only, so
+# five originals still fit one sentence.
+MAX_GROUP_SIZE = 5
 
 # Instructor attempts in total (an int max_retries is attempts, not retries).
 _ATTEMPTS = 2
@@ -65,13 +67,13 @@ def label_needs(needs: list[Need]) -> dict[str, Need]:
     return {f"N{i}": need for i, need in enumerate(needs, start=1)}
 
 
-def _rejection(known: list[str], taken: set[str], labelled: dict[str, Need]) -> str | None:
+def _rejection(known: list[str], taken: set[str]) -> str | None:
+    # No KSEC rule: Needs of different tags that ask for one capability merge into
+    # one multi-tag Need, so the tags may differ.
     if len(known) < 2:
         return "fewer than two known Needs"
     if taken.intersection(known):
         return "a member is already in an accepted group"
-    if len({tuple(labelled[label].ksec_categories) for label in known}) > 1:
-        return "members span more than one KSEC tag"
     if len(known) > MAX_GROUP_SIZE:
         return f"more than {MAX_GROUP_SIZE} members"
     return None
@@ -85,7 +87,7 @@ def accept_groups(answer: DedupAnswer, labelled: dict[str, Need]) -> list[FoldGr
     for group in answer.groups:
         raw = [label.strip().upper() for label in group.labels]
         known = list(dict.fromkeys(label for label in raw if label in labelled))
-        rejection = _rejection(known, taken, labelled)
+        rejection = _rejection(known, taken)
         if rejection:
             logger.warning(f"need_dedup: dropped group {raw} — {rejection}")
             continue

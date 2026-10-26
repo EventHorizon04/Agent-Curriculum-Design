@@ -8,6 +8,7 @@ targets, `validate_assignments` and scoring are unchanged; the result is a
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from uuid import uuid4
 
 from loguru import logger
@@ -31,6 +32,58 @@ from curriculum_agent.stages.need_grouping import (
     normalize_need_name,
     resolve_need_ksec,
 )
+
+
+@dataclass(frozen=True)
+class MemberStats:
+    """What a group of member skills adds up to, for a `SkillGroup` or a merged Need."""
+
+    evidence_ids: list[str]
+    demand_score: float
+    is_optional: bool
+    classification_coverage: dict[str, int]
+    stakeholder_coverage: dict[StakeholderType, int]
+    stakeholder_types: list[StakeholderType]
+    in_field_skill_count: int
+    graduate_capability_skill_count: int
+
+
+def score_members(
+    members: list[ExtractedSkill], stakeholder_type_by_evidence: dict[str, str]
+) -> MemberStats:
+    """Score one group of member skills.
+
+    The one place these figures are computed: `build_skill_groups` calls it for
+    every cluster and `need_merge` calls it for the pooled members of a merged
+    Need, so a merged Need is scored by exactly the rules a stored group is.
+    """
+    evidence_ids = sorted({m.source_evidence_id for m in members})
+    cls_coverage = classification_coverage([m.classification for m in members])
+    stk_coverage: dict[StakeholderType, int] = {}
+    for m in members:
+        key = m.source_stakeholder_type
+        stk_coverage[key] = stk_coverage.get(key, 0) + 1
+    # Enum declaration order puts external groups before internal ones,
+    # which is the order the report shows them in.
+    present = {m.source_stakeholder_type for m in members}
+    return MemberStats(
+        evidence_ids=evidence_ids,
+        demand_score=compute_demand_score(evidence_ids, stakeholder_type_by_evidence),
+        # Distinct evidence items, not member rows: "how many stakeholders asked
+        # for this" is a count of documents, and one document naming a
+        # capability three ways is one stakeholder asking once.
+        is_optional=is_optional_group(cls_coverage, len(evidence_ids)),
+        classification_coverage=cls_coverage,
+        stakeholder_coverage=stk_coverage,
+        # Member rows, not distinct names. classify_skills already ORs the field
+        # flag across every row sharing a name, and counting that way here would
+        # push the number to the total whenever a name recurs, leaving the
+        # designer a ratio that is always 8/8. The any rule these feed reads the
+        # same either way; only the fraction shown at the checkpoint differs.
+        in_field_skill_count=sum(1 for m in members if m.is_field_relevant),
+        graduate_capability_skill_count=sum(1 for m in members if m.is_graduate_capability),
+        stakeholder_types=[t for t in StakeholderType if t in present],
+    )
 
 
 async def build_skill_groups(
@@ -163,15 +216,7 @@ async def build_skill_groups(
             for _, name_indices in name_clusters:
                 member_positions = sorted({p for ni in name_indices for p in index_groups[ni]})
                 members = [bucket[p] for p in member_positions]
-                evidence_ids = sorted({m.source_evidence_id for m in members})
-                cls_coverage = classification_coverage([m.classification for m in members])
-                stk_coverage: dict[StakeholderType, int] = {}
-                for m in members:
-                    key = m.source_stakeholder_type
-                    stk_coverage[key] = stk_coverage.get(key, 0) + 1
-                # Enum declaration order puts external groups before internal ones,
-                # which is the order the report shows them in.
-                present = {m.source_stakeholder_type for m in members}
+                stats = score_members(members, stakeholder_type_by_evidence)
                 # Stable, so names mentioned equally often keep clustering's order.
                 ranked = sorted(name_indices, key=lambda ni: -len(index_groups[ni]))
                 groups.append(
@@ -181,7 +226,7 @@ async def build_skill_groups(
                         is_graduate=is_grad,
                         ksec=resolve_need_ksec(members),
                         skill_ids=[m.skill_id for m in members],
-                        evidence_ids=evidence_ids,
+                        evidence_ids=stats.evidence_ids,
                         skill_names=[names[ni] for ni in ranked],
                         skill_frequencies=[len(index_groups[ni]) for ni in ranked],
                         # What most of the group asks for, not its top member —
@@ -190,27 +235,13 @@ async def build_skill_groups(
                             [bloom_by_name[names[ni]] for ni in ranked],
                             [len(index_groups[ni]) for ni in ranked],
                         ),
-                        demand_score=compute_demand_score(
-                            evidence_ids, stakeholder_type_by_evidence
-                        ),
-                        # Distinct evidence items, not member rows: "how many
-                        # stakeholders asked for this" is a count of documents,
-                        # and one document naming a capability three ways is one
-                        # stakeholder asking once.
-                        is_optional=is_optional_group(cls_coverage, len(evidence_ids)),
-                        classification_coverage=cls_coverage,
-                        stakeholder_coverage=stk_coverage,
-                        # Member rows, not distinct names. classify_skills already
-                        # ORs the field flag across every row sharing a name, and
-                        # counting that way here would push the number to the total
-                        # whenever a name recurs, leaving the designer a ratio that is
-                        # always 8/8. The any rule these feed reads the same either
-                        # way; only the fraction shown at the checkpoint differs.
-                        in_field_skill_count=sum(1 for m in members if m.is_field_relevant),
-                        graduate_capability_skill_count=sum(
-                            1 for m in members if m.is_graduate_capability
-                        ),
-                        stakeholder_types=[t for t in StakeholderType if t in present],
+                        demand_score=stats.demand_score,
+                        is_optional=stats.is_optional,
+                        classification_coverage=stats.classification_coverage,
+                        stakeholder_coverage=stats.stakeholder_coverage,
+                        in_field_skill_count=stats.in_field_skill_count,
+                        graduate_capability_skill_count=stats.graduate_capability_skill_count,
+                        stakeholder_types=stats.stakeholder_types,
                     )
                 )
     return groups

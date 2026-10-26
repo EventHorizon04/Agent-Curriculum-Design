@@ -33,8 +33,10 @@ def test_the_rules_the_code_enforces_are_also_told_to_the_model() -> None:
     what keeps a good grouping from being thrown away for a rule it never saw."""
     system = build_need_dedup_prompt(_ROWS)[0]["content"]
 
-    assert "2-3" in system
-    assert "KSEC" in system
+    assert "2-5" in system
+    assert "2-3" not in system
+    assert "ทุกข้อในกลุ่มต้องอยู่ในหมวด KSEC เดียวกัน" not in system, "any KSEC may fold"
+    assert "KSEC" in system, "the model is still told the tags may differ"
     assert "ไม่เกินหนึ่งกลุ่ม" in system
 
 
