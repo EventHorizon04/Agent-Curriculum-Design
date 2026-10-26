@@ -232,6 +232,12 @@ class Settings(BaseSettings):
     # here: a class-body branch on a provider field would be frozen at import
     # time and ignore .env.
     need_combination_model: str = ""
+    # One endpoint (and optionally one model) for every slot that does not set
+    # its own. Precedence per slot: own *_PROVIDER/*_MODEL, then these, then the
+    # slot default, then LLM_PROVIDER. The pair resolves together: the model is
+    # only used by slots whose provider came from PIPELINE_PROVIDER.
+    pipeline_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = None
+    pipeline_model: str = ""
     # The Need sentence, and only that: `need_combination` calls this slot once
     # per group to write the Thai statement a PLO is later drafted from. It was
     # the `light` slot, named for a size rather than a job, and its docstring
@@ -408,6 +414,13 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _require_pipeline_provider_with_model(self) -> Settings:
+        """PIPELINE_MODEL alone is refused: a model name must not guess its endpoint."""
+        if self.pipeline_model and self.pipeline_provider is None:
+            raise ValueError("PIPELINE_MODEL requires PIPELINE_PROVIDER to be set as well.")
+        return self
+
+    @model_validator(mode="after")
     def _refuse_development_credentials_in_production(self) -> Settings:
         """Under APP_ENV=production, refuse the credentials this file ships.
 
@@ -469,9 +482,19 @@ class Settings(BaseSettings):
         One loop over one list, because this used to be ten `if` statements and
         the tenth was the one that could be forgotten.
         """
+        # Snapshot first: setattr below adds names to model_fields_set, and a
+        # class-level default (extraction's "openrouter") must not count as set.
+        explicit = set(self.model_fields_set)
         for slot in SLOTS:
             provider = getattr(self, slot.provider_field)
-            if provider is None:
+            from_pipeline = False
+            # PIPELINE_PROVIDER outranks the slot's class default but never the
+            # slot's own env/kwarg setting, "" (the kill switch) included.
+            if self.pipeline_provider is not None and slot.provider_field not in explicit:
+                provider = self.pipeline_provider
+                from_pipeline = True
+                setattr(self, slot.provider_field, provider)
+            elif provider is None:
                 provider = self.llm_provider
                 setattr(self, slot.provider_field, provider)
             # "" is left exactly as it is. It is the kill switch, and resolving
@@ -480,7 +503,12 @@ class Settings(BaseSettings):
             # why this is an `is None` test.
 
             if provider and not getattr(self, slot.model_field):
-                chosen = slot.default_models.get(provider, _PROVIDER_DEFAULT_MODEL[provider])
+                # PIPELINE_MODEL is half of a pair: only a slot that took
+                # PIPELINE_PROVIDER, and named no model of its own, may use it.
+                if from_pipeline and self.pipeline_model and slot.model_field not in explicit:
+                    chosen = self.pipeline_model
+                else:
+                    chosen = slot.default_models.get(provider, _PROVIDER_DEFAULT_MODEL[provider])
                 setattr(self, slot.model_field, chosen)
         return self
 
