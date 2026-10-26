@@ -912,3 +912,101 @@ async def test_one_create_member_does_not_make_the_need_create(monkeypatch: pyte
 
     assert state["needs"][0]["bloom_level"] == "apply"
     assert "(apply)" in seen[0]
+
+
+async def test_run_stores_a_merge_and_loads_skills_when_the_state_has_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The merge branch of `run`, which the conftest default (no folds) never reaches.
+
+    Six core Needs, two of them folded: five active ones remain, so the core-count
+    warning must read 5 (active only) rather than 7 (every stored row), and the
+    skills the merge needs come from the repository because the state carries none.
+    """
+    import loguru  # noqa: PLC0415
+
+    from curriculum_agent.models import Need  # noqa: PLC0415
+    from curriculum_agent.stages import need_merge as nm  # noqa: PLC0415
+    from curriculum_agent.stages.need_dedup import FoldGroup  # noqa: PLC0415
+
+    names = [f"ทักษะวิชาชีพที่ {i}" for i in range(6)]
+    # Two evidence rows per name, so every group is core rather than optional.
+    rows = [
+        _skill(name, KSECCategory.S, f"S{i}{j}", f"E{i}{j}")
+        for i, name in enumerate(names)
+        for j in range(2)
+    ]
+
+    async def singletons(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
+        return [[i] for i in range(len(names))]
+
+    monkeypatch.setattr(sg, "cluster_skill_names", singletons)
+    monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
+    monkeypatch.setattr(nm, "complete_need_combination", _fake_summarize)
+    corpus = {s.source_evidence_id: s.source_stakeholder_type.value for s in rows}
+    groups = await sg.build_skill_groups("cs-test", rows, corpus)
+
+    async def fold_first_two(needs: list[Need], metadata: object) -> list[FoldGroup]:
+        return [FoldGroup(needs=(needs[0], needs[1]), reason_th="งานเดียวกัน")]
+
+    monkeypatch.setattr(nm, "find_duplicate_groups", fold_first_two)
+    load = AsyncMock(return_value=rows)
+    monkeypatch.setattr(nc.SkillRepository, "list_by_program", load)
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
+    insert = AsyncMock()
+    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", insert)
+
+    warnings: list[str] = []
+    sink = loguru.logger.add(lambda m: warnings.append(m.record["message"]), level="WARNING")
+    try:
+        state = await nc.run(
+            {
+                "program_id": "cs-test",
+                "skill_groups": [g.model_dump(mode="json") for g in groups],
+                "metadata": {
+                    "program_id": "cs-test",
+                    "field": "ภาษาจีน",
+                    "degree_level": "bachelor",
+                    "duration_years": 4,
+                    "faculty": "มนุษยศาสตร์",
+                    "university": "Test University",
+                },
+            }
+        )
+    finally:
+        loguru.logger.remove(sink)
+
+    load.assert_awaited_once_with("cs-test")
+    stored: list[Need] = insert.await_args.args[0]
+    (merged,) = [n for n in stored if n.merged_from]
+    originals = [n for n in stored if n.need_id in merged.merged_from]
+    assert len(originals) == 2 and len(stored) == 7
+    assert all(n.merged_into == merged.need_id for n in originals)
+    assert {n["need_id"] for n in state["needs"]} == {n.need_id for n in stored}
+    assert any("only 5 core Needs" in m for m in warnings)
+
+
+async def test_run_warns_when_metadata_is_incomplete_and_skips_the_merge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import loguru  # noqa: PLC0415
+
+    _patch_llm(monkeypatch)
+    _patch_repo(monkeypatch)
+    warnings: list[str] = []
+    sink = loguru.logger.add(lambda m: warnings.append(m.record["message"]), level="WARNING")
+    try:
+        await run_need_pipeline_from_skills(
+            {
+                "program_id": "cs-test",
+                "extracted_skills": [
+                    _skill("เขียนโปรแกรมเว็บ", KSECCategory.S, "S1", "E1").model_dump(mode="json")
+                ],
+            }
+        )
+    finally:
+        loguru.logger.remove(sink)
+
+    assert any("skipping the duplicate merge" in m for m in warnings)

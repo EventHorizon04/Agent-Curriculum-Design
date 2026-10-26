@@ -334,3 +334,90 @@ async def test_the_merged_prompt_is_given_the_pooled_frequencies(
 
     user = sentence.calls[0][-1]["content"]  # type: ignore[attr-defined]
     assert "0 | วิเคราะห์ข้อมูล | 2" in user and "1 | นำเสนอผลงาน | 1" in user
+
+
+# ------------------------------ the summary line ------------------------------
+
+
+async def test_one_summary_line_reports_the_step_in_numbers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loguru import logger  # noqa: PLC0415
+
+    a = _need("A", 0.9, ksec=KSECCategory.S, skills=["s1"])
+    b = _need("B", 0.5, ksec=KSECCategory.K, skills=["s2"])
+    skills = [_skill("s1", "ทักษะหนึ่ง", 0.5), _skill("s2", "ทักษะสอง", 0.5)]
+    accepted = nd.AcceptedGroups([_fold(a, b)])
+    accepted.proposed = 3
+    _patch(monkeypatch, accepted)  # type: ignore[arg-type]
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(m.record["message"]), level="INFO")
+    try:
+        await _merge([a, b, *_fillers()], skills)
+    finally:
+        logger.remove(sink)
+
+    (summary,) = [m for m in lines if m.startswith("need_merge: groups proposed")]
+    assert summary == (
+        "need_merge: groups proposed=3 accepted=1 unfolded_for_floor=0 "
+        "sentence_failed=0 merged=1 multi_tag_merged=1 core_needs=6->5"
+    )
+
+
+async def test_summary_line_counts_a_floor_unfold_and_a_failed_sentence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from loguru import logger  # noqa: PLC0415
+
+    a, b = _need("A", 0.9, skills=["s1"]), _need("B", 0.5, skills=["s2"])
+    skills = [_skill("s1", "ทักษะหนึ่ง", 0.5), _skill("s2", "ทักษะสอง", 0.5)]
+    _patch(monkeypatch, [_fold(a, b)], sentence=AsyncMock(side_effect=RuntimeError("down")))
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(m.record["message"]), level="INFO")
+    try:
+        await _merge([a, b, *_fillers()], skills)
+    finally:
+        logger.remove(sink)
+
+    (summary,) = [m for m in lines if m.startswith("need_merge: groups proposed")]
+    assert "accepted=1 unfolded_for_floor=0 sentence_failed=1 merged=0" in summary
+    assert "core_needs=6->6" in summary
+
+
+async def test_summary_line_counts_unfolded_for_floor(monkeypatch: pytest.MonkeyPatch) -> None:
+    from loguru import logger  # noqa: PLC0415
+
+    a, b = _need("A", 0.9, skills=["s1"]), _need("B", 0.5, skills=["s2"])
+    skills = [_skill("s1", "ทักษะหนึ่ง", 0.5), _skill("s2", "ทักษะสอง", 0.5)]
+    _patch(monkeypatch, [_fold(a, b)])
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(m.record["message"]), level="INFO")
+    try:
+        # Only 2 core Needs: folding them would leave 1, below the floor of 4.
+        await _merge([a, b], skills)
+    finally:
+        logger.remove(sink)
+
+    (summary,) = [m for m in lines if m.startswith("need_merge: groups proposed")]
+    assert "accepted=1 unfolded_for_floor=1 sentence_failed=0 merged=0" in summary
+
+
+# ------------------------- names that normalise away -------------------------
+
+
+def test_rank_top_skills_is_empty_when_every_name_normalises_away() -> None:
+    assert nm.rank_top_skills([_skill("s1", "   ", 0.5)]) == []
+
+
+async def test_a_group_whose_names_all_normalise_away_is_left_unmerged(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    a, b = _need("A", 0.9, skills=["s1"]), _need("B", 0.5, skills=["s2"])
+    skills = [_skill("s1", "   ", 0.5), _skill("s2", " ", 0.5)]
+    _, sentence = _patch(monkeypatch, [_fold(a, b)])
+
+    stored = await _merge([a, b, *_fillers()], skills)
+
+    assert not any(n.merged_from for n in stored)
+    assert all(n.merged_into is None for n in stored)
+    assert sentence.calls == []  # type: ignore[attr-defined]

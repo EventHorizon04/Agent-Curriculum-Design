@@ -445,7 +445,9 @@ async def _merge_duplicates(state: AgentState, program_id: str, needs: list[Need
         metadata = ProgramMetadata.model_validate(state.get("metadata") or {})
     except PydanticValidationError:
         # Absent, or written before intake collected every field the model requires.
-        logger.info("need_combination: no complete program metadata, skipping the duplicate merge")
+        logger.warning(
+            "need_combination: no complete program metadata, skipping the duplicate merge"
+        )
         return needs
     skill_dicts = state.get("extracted_skills")
     if skill_dicts is None:

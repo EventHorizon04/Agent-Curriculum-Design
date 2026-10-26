@@ -194,6 +194,14 @@ async def _write_merged(
         )
         return None
     top = rank_top_skills(pooled)
+    if not top:
+        # Every pooled name normalised to "", so there is nothing to write a
+        # sentence from; the same outcome as having no pooled skills.
+        logger.warning(
+            f"need_merge: no usable skill names for {[n.need_id for n in originals]} — "
+            "left unmerged"
+        )
+        return None
     tags = [t for t in _TAG_ORDER if any(t in n.ksec_categories for n in originals)]
     bloom = _pooled_bloom(pooled)
     try:
@@ -240,6 +248,11 @@ async def _write_merged(
     )
 
 
+def _core_count(needs: Sequence[Need]) -> int:
+    """Active, non-optional Needs: what a PLO set's 6-10 band is counted over."""
+    return sum(1 for n in needs if n.merged_into is None and not n.is_optional)
+
+
 async def merge_duplicates(
     program_id: str,
     needs: list[Need],
@@ -257,40 +270,48 @@ async def merge_duplicates(
     """
     eligible = _demand_order([n for n in needs if is_in_scope(n) and not is_unwritten_need(n)])
     folds = await find_duplicate_groups(eligible, metadata)
-    if not folds:
-        return list(needs)
+    proposed = getattr(folds, "proposed", len(folds))
+    accepted = len(folds)
     # Before any sentence is written, so an unfolded group costs no call.
-    folds = enforce_merge_floor(eligible, folds)
-    if not folds:
-        return list(needs)
+    kept = enforce_merge_floor(eligible, folds) if folds else []
+    merged: list[Need] = []
+    if kept:
+        program_context = build_program_context_th(metadata.model_dump())
+        skills_by_id = {s.skill_id: s for s in skills}
+        results = await gather_bounded(
+            settings.llm_max_concurrency,
+            [
+                partial(
+                    _write_merged,
+                    program_id,
+                    fold,
+                    skills_by_id,
+                    stakeholder_type_by_evidence,
+                    program_context,
+                )
+                for fold in kept
+            ],
+        )
+        merged = [m for m in results if m is not None]
 
-    program_context = build_program_context_th(metadata.model_dump())
-    skills_by_id = {s.skill_id: s for s in skills}
-    results = await gather_bounded(
-        settings.llm_max_concurrency,
-        [
-            partial(
-                _write_merged,
-                program_id,
-                fold,
-                skills_by_id,
-                stakeholder_type_by_evidence,
-                program_context,
-            )
-            for fold in folds
-        ],
-    )
-    merged = [m for m in results if m is not None]
-    if not merged:
-        return list(needs)
-
-    parent_of = {oid: m.need_id for m in merged for oid in m.merged_from}
-    stored = [
-        n.model_copy(update={"merged_into": parent_of[n.need_id]}) if n.need_id in parent_of else n
-        for n in needs
-    ]
+    stored = list(needs)
+    if merged:
+        parent_of = {oid: m.need_id for m in merged for oid in m.merged_from}
+        stored = [
+            n.model_copy(update={"merged_into": parent_of[n.need_id]})
+            if n.need_id in parent_of
+            else n
+            for n in needs
+        ]
+        stored += merged
+    # One line per run, so the step's effect can be read off the log alone:
+    # without it a run that proposed three groups and merged none looks the same
+    # as one the model found nothing in.
     logger.info(
-        f"need_merge: {len(merged)} merged Need(s) from "
-        f"{sum(len(m.merged_from) for m in merged)} original(s)"
+        f"need_merge: groups proposed={proposed} accepted={accepted} "
+        f"unfolded_for_floor={accepted - len(kept)} "
+        f"sentence_failed={len(kept) - len(merged)} merged={len(merged)} "
+        f"multi_tag_merged={sum(1 for m in merged if len(m.ksec_categories) > 1)} "
+        f"core_needs={_core_count(needs)}->{_core_count(stored)}"
     )
-    return [*stored, *merged]
+    return stored

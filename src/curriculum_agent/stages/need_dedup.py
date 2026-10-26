@@ -62,6 +62,17 @@ class FoldGroup:
     reason_th: str
 
 
+class AcceptedGroups(list[FoldGroup]):
+    """The accepted groups, plus how many the model proposed.
+
+    A plain list to every caller. `proposed` rides along so the merge step's
+    one summary line can say how many groups the rules dropped without
+    `accept_groups` or `find_duplicate_groups` changing what they return.
+    """
+
+    proposed: int = 0
+
+
 def label_needs(needs: list[Need]) -> dict[str, Need]:
     """`N1`, `N2`, ... in the order given — the caller passes demand order."""
     return {f"N{i}": need for i, need in enumerate(needs, start=1)}
@@ -83,7 +94,8 @@ def accept_groups(answer: DedupAnswer, labelled: dict[str, Need]) -> list[FoldGr
     """The groups that break no structural rule, first group winning a contested Need."""
     order = {label: i for i, label in enumerate(labelled)}
     taken: set[str] = set()
-    accepted: list[FoldGroup] = []
+    accepted = AcceptedGroups()
+    accepted.proposed = len(answer.groups)
     for group in answer.groups:
         raw = [label.strip().upper() for label in group.labels]
         known = list(dict.fromkeys(label for label in raw if label in labelled))
