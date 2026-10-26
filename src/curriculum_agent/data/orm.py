@@ -120,6 +120,8 @@ class NeedTable(Base):
 class SkillGroupTable(Base):
     __tablename__ = "skill_groups"
 
+    __table_args__ = (Index("ix_skill_groups_program_id", "program_id"),)
+
     group_id: Mapped[str] = mapped_column(String, primary_key=True)
     program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
     # Stored order: list_by_program sorts on this, set at insert.

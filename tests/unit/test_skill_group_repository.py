@@ -138,3 +138,9 @@ async def test_delete_cascade_lists_skill_groups_before_skills() -> None:
     assert sql.index(next(s for s in sql if s.startswith("DELETE FROM skill_groups"))) < sql.index(
         next(s for s in sql if s.startswith("DELETE FROM skills"))
     )
+
+
+def test_the_orm_declares_the_index_the_migration_creates() -> None:
+
+    indexes = {i.name: [c.name for c in i.columns] for i in SkillGroupTable.__table__.indexes}
+    assert indexes == {"ix_skill_groups_program_id": ["program_id"]}
