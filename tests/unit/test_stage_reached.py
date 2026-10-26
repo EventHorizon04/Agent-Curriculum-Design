@@ -26,12 +26,19 @@ def test_evidence_alone_is_stakeholder_needs():
     )
 
 
-def test_skills_and_needs_both_report_skill_extraction():
-    """Two engine stages behind one review gate, reviewed on one page — so they
-    are one stage as far as the designer's rail is concerned."""
-    just_skills = stage_reached(has_evidence=True, has_skills=True, has_needs=False, has_plos=False)
-    and_needs = stage_reached(has_evidence=True, has_skills=True, has_needs=True, has_plos=False)
-    assert just_skills == and_needs == "skill_extraction"
+def test_skills_alone_are_skill_extraction():
+    assert (
+        stage_reached(has_evidence=True, has_skills=True, has_needs=False, has_plos=False)
+        == "skill_extraction"
+    )
+
+
+def test_needs_are_need_analysis():
+    """Agent 2 has its own page and rail stage, behind the one review gate."""
+    assert (
+        stage_reached(has_evidence=True, has_skills=True, has_needs=True, has_plos=False)
+        == "need_analysis"
+    )
 
 
 def test_plos_are_the_furthest_derivable_stage():

@@ -131,7 +131,7 @@ async def test_list_all_reports_progress_made_without_any_session() -> None:
         return_value=_mock_db(programs, [], evidence=["cs"], skills=["cs"], needs=["cs"]),
     ):
         result = await repo.list_all()
-    assert result[0].current_stage == "skill_extraction"
+    assert result[0].current_stage == "need_analysis"
     assert result[0].session_status is None
 
 

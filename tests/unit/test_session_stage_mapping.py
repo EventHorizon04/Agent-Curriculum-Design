@@ -56,14 +56,14 @@ def _suspended_at(node: str) -> MagicMock:
     return graph
 
 
-async def test_suspending_after_need_combination_records_skill_extraction():
-    """The regression itself: the shared gate after need_combination is reviewed
-    on the skill extraction page, so that is the stage the session records."""
+async def test_suspending_after_need_combination_records_need_analysis():
+    """The regression itself: the gate after need_combination is reviewed on
+    the Need analysis page, so that is the stage the session records."""
     repo = AsyncMock()
     with patch("curriculum_agent.api.routes.sessions.SessionRepository", return_value=repo):
         await _run_graph(_suspended_at("review_needs_node"), {}, {}, "s1")
 
-    repo.set_suspended.assert_awaited_once_with("s1", "skill_extraction", "Review required")
+    repo.set_suspended.assert_awaited_once_with("s1", "need_analysis", "Review required")
 
 
 async def test_completed_run_is_not_recorded_as_suspended():

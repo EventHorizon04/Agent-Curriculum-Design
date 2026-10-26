@@ -154,14 +154,16 @@ def review_plos(state: AgentState) -> AgentState:
 # ----------------------- Stages as reported ----------------------
 
 # The stages a designer works through, in order. Fewer than the graph has nodes:
-# skill_extraction and need_combination run back to back behind one review gate,
-# so the pair is reported under the stage whose page the designer opens it at.
+# skill_extraction and skill_grouping (Agent 1) report as skill_extraction, with
+# no checkpoint of their own; need_combination (Agent 2) is need_analysis, and
+# the review gate sits after it. Each is its own page and rail stage.
 # This is the same list the UI keys its rail off — a value outside it reaches the
 # frontend as "unknown stage" and the program looks like it never started.
 DESIGNER_STAGES: tuple[str, ...] = (
     "intake",
     "stakeholder_needs",
     "skill_extraction",
+    "need_analysis",
     "plo_synthesis",
     "plo_report",
     "plo_review",
@@ -177,7 +179,7 @@ DESIGNER_STAGES: tuple[str, ...] = (
 # both directions against the compiled graph so a rename cannot do that again.
 REVIEW_NODE_STAGE: dict[str, str] = {
     "review_evidence": "stakeholder_needs",
-    "review_needs_node": "skill_extraction",
+    "review_needs_node": "need_analysis",
     "review_plos_node": "plo_synthesis",
 }
 
@@ -204,8 +206,9 @@ def stage_reached(
     extraction, moves this answer back on its own; a stored column would keep
     claiming the furthest point the program ever got to.
 
-    Skills and Needs both answer `skill_extraction`: they are two engine stages
-    behind one review gate, reviewed together on one page.
+    Skills alone answer `skill_extraction`; once Needs exist the answer is
+    `need_analysis`. They are two pages: skills (Agent 1, no checkpoint) and
+    Needs (Agent 2, where the review gate is).
 
     The report leaves no artifact of its own — it re-persists the PLOs synthesis
     already wrote — so a program that has been through it looks exactly like one
@@ -217,7 +220,9 @@ def stage_reached(
         return "plo_review"
     if has_plos:
         return "plo_synthesis"
-    if has_skills or has_needs:
+    if has_needs:
+        return "need_analysis"
+    if has_skills:
         return "skill_extraction"
     if has_evidence:
         return "stakeholder_needs"
