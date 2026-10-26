@@ -5,8 +5,8 @@ comparison spec, docs/superpowers/specs/2026-10-06-run-comparison-design.md).
 
 evidence_id, skill_id, need_id and group_id (skill groups) are single-column,
 global primary keys, so a copy cannot reuse them; plo_id is per program since
-migration e4b6d19a3f72 and is kept. One old->new map covers the three id kinds. `_clone` runs `remap_ids`
-only over the named reference columns (`source_evidence_id`,
+migration e4b6d19a3f72 and is kept. One old->new map covers every id kind. `_clone`
+runs `remap_ids` only over the named reference columns (`source_evidence_id`,
 `member_skill_ids`, `source_evidence_ids`, `source_need_ids`) and over every
 JSONB column — not over every column — because a client-supplied id like
 `evidence_id` carries no format check and can coincidentally equal a plain
