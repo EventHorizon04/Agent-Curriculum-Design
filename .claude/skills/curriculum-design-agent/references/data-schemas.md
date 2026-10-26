@@ -13,7 +13,7 @@ StakeholderEvidence (raw)
   ↓ source_evidence_id + evidence_span_th (verified in code)
 ExtractedSkill (per evidence item)
   ↓ member_skill_ids
-Need (grouped skills, one KSEC tag, one sentence)
+Need (grouped skills, one KSEC tag — several when merged — one sentence)
   ↓ source_need_ids
 PLO (final artifact — agent scope ends here)
 ```
@@ -174,7 +174,10 @@ class Need(BaseModel):
     statement_th: str = Field(min_length=1)
     statement_en: str | None = None
     rationale_th: str = ""  # why this group is one demand — an explanation, NOT a trail
-    ksec_category: KSECCategory  # single-valued by construction — see below; one of K/S/EC/E/C
+    # One tag unless this Need is a merge (Agent 2), which carries the sorted union
+    # of its originals' tags in K, S, E, C order. At least one, no duplicates.
+    # A checkpoint dict with the old `ksec_category` key is mapped to [value].
+    ksec_categories: list[KSECCategory] = Field(min_length=1)
     bloom_level: BloomLevel  # lower mention-weighted median of member levels (group_bloom)
     member_skill_ids: list[str] = Field(min_length=1)  # ExtractedSkill IDs
     source_evidence_ids: list[str] = Field(min_length=1)
@@ -184,7 +187,36 @@ class Need(BaseModel):
     demand_score: float = Field(ge=0, le=1)  # 0.30 mandate block + 0.70 frequency block
     is_optional: bool = False  # majority-want group → supplementary, not core
     classification_coverage: dict[str, int] = {}  # member-skill count per classification
+    # Set only on a merged Need: the skills that stand for it (rank order, top 7 by
+    # importance_score), its originals in demand order, and the dedup reason.
+    top_skill_ids: list[str] = []
+    merged_from: list[str] = []
+    merged_into: str | None = None  # set on an ORIGINAL: hides it from every reader
+    merge_reason_th: str = ""
+
+class SkillGroup(BaseModel):
+    """Agent 1's output, stored so Agent 2 starts without calling the clustering
+    slot. One cluster inside ONE KSEC bucket; mirrors the candidate group
+    need_combination writes a Need sentence from."""
+    group_id: str
+    program_id: str
+    ksec: KSECCategory  # K / S / EC / E / C — resolved tag of the bucket
+    skill_ids: list[str]
+    evidence_ids: list[str]
+    skill_names: list[str]  # most-mentioned first
+    skill_frequencies: list[int]  # skill_frequencies[i] = member rows behind skill_names[i]
+    bloom_level: BloomLevel  # group_bloom
+    demand_score: float
+    is_optional: bool
+    is_graduate: bool  # graduate capability, not purely institutional
+    classification_coverage: dict[str, int]
+    stakeholder_coverage: dict[StakeholderType, int]
+    stakeholder_types: list[StakeholderType]
+    in_field_skill_count: int
+    graduate_capability_skill_count: int
 ```
+
+**Merged and active Needs.** Agent 2's duplicate check (up to 5 Needs, across KSEC) writes one new Need per group and keeps the originals with `merged_into = <merged need_id>`; readers use only active Needs (`merged_into is None`, `NeedRepository.list_active_by_program`). A merged Need's `member_skill_ids` and `source_evidence_ids` are the union over its originals (the trail is never smaller), `top_skill_ids` are the top 7 pooled skills by `importance_score`, and its scores are recomputed from the pooled skills, not the max of the originals. `POST /programs/{id}/needs/{need_id}/split` deletes the merged Need and clears `merged_into` on its originals. `skill_groups` is a table (`SkillGroupRepository`), replaced with the skills on a re-run of Agent 1.
 
 `rationale_th` is the model's account of why these skills form one demand, written by the same call that writes the sentence. Keep it apart from traceability: `source_evidence_ids` is what immutable rule 2 is about and is assembled in code, while this is free text nothing validates against the evidence — so the prompt forbids citing anything outside the skill names it was given, and both UI cards label it "คำอธิบายของโมเดล" and keep it out of the trail panel. `_NeedStatement` bounds it (20-240 characters) and rejects an empty answer with the same `find_vague_phrase` the statement uses. It defaults to `""` rather than being required, because a Need also arrives as a plain dict from a LangGraph checkpoint suspended across the deploy that added the column (migration `c7e2f81a4b93`, which backfills a self-identifying `[สร้างย้อนหลัง]` sentence into pre-existing rows rather than composing a reason nobody gave).
 
@@ -202,7 +234,7 @@ A Need holds no evidence text. `sample_quotes_th` was dropped (migration `e1a7c9
 
 Rules 1–2 outrank 3 on purpose — a mandated skill is never dropped for being judged off-field. Semantic matching is deliberately not used in rule 2 (that is what LLM clustering does one stage later, in `need_combination`); only normalized-name matching.
 
-**Single-tag guarantee (`Need.ksec_category`):** `need_combination` buckets `ExtractedSkill`s by `ksec_category` (`bucket_by_ksec` in `stages/need_grouping.py`) *before* clustering — `E` and `C` share one `EC` bucket, everything else buckets by its own tag — and clustering never fuses groups across buckets. A Need mixing two of `K`/`S`/`EC` is therefore structurally impossible. After a group forms, `resolve_need_ksec` decides its tag from its raw member tags: all-`E` → `E`, all-`C` → `C`, mixed → `EC`.
+**Single-tag guarantee for unmerged Needs (`Need.ksec_categories`):** Agent 1 (`stages/skill_grouping.py`) buckets `ExtractedSkill`s by `ksec_category` (`bucket_by_ksec` in `stages/need_grouping.py`) *before* clustering — `E` and `C` share one `EC` bucket, everything else buckets by its own tag — and clustering never fuses groups across buckets. An unmerged Need therefore has exactly one tag. After a group forms, `resolve_need_ksec` decides its tag from its raw member tags: all-`E` → `E`, all-`C` → `C`, mixed → `EC`. Only Agent 2's merge (designer's decision of 2026-10-26) produces a Need with more than one tag.
 
 `demand_score` is the signal the agent uses to decide which Needs are core vs optional. It is also what the 10-PLO ceiling ranks by. The rule (`compute_demand_score` in `stages/demand.py`, shared by skill-level `importance_score` and Need-level `demand_score`):
 
