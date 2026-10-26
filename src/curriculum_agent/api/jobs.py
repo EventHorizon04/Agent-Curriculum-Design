@@ -151,6 +151,7 @@ async def _run(
     job_id: str,
     kind: str,
     work: Callable[[], Awaitable[BaseModel | Sequence[BaseModel]]],
+    on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     repo = JobRepository()
     try:
@@ -173,6 +174,15 @@ async def _run(
             logger.warning(f"job {job_id}: row gone before its outcome was recorded")
     except Exception as exc:  # noqa: BLE001 - nobody is awaiting this task
         logger.error(f"job {job_id}: could not record its outcome: {exc!r}")
+        return
+    if on_success is None or status != "succeeded":
+        return
+    # After the row says `succeeded`, so the follow-up's busy check sees this job
+    # finished. A failure here is the follow-up's own; the finished job stays as is.
+    try:
+        await on_success()
+    except Exception as exc:  # noqa: BLE001 - nobody is awaiting this task
+        logger.opt(exception=exc).error(f"job {job_id} ({kind}): on_success failed: {exc!r}")
 
 
 async def start_job(
@@ -180,6 +190,8 @@ async def start_job(
     kind: JobKind,
     params: dict[str, Any],
     work: Callable[[], Awaitable[BaseModel | Sequence[BaseModel]]],
+    *,
+    on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> JobInfo:
     async with program_lock(program_id):
         reason = await program_busy(program_id)
@@ -195,7 +207,7 @@ async def start_job(
         )
         await JobRepository().insert(job)
     logger.info(f"job {job.job_id} ({kind}) started for {program_id}")
-    spawn(_run(job.job_id, kind, work))
+    spawn(_run(job.job_id, kind, work, on_success))
     return with_label(job)
 
 
@@ -204,9 +216,11 @@ async def start_job_or_409(
     kind: JobKind,
     params: dict[str, Any],
     work: Callable[[], Awaitable[BaseModel | Sequence[BaseModel]]],
+    *,
+    on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> JobInfo:
     try:
-        return await start_job(program_id, kind, params, work)
+        return await start_job(program_id, kind, params, work, on_success=on_success)
     except JobConflict as exc:
         raise HTTPException(status_code=409, detail=exc.detail_th) from exc
 

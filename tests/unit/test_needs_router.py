@@ -34,6 +34,10 @@ def _grouping_passes_state_through(monkeypatch: pytest.MonkeyPatch) -> None:
         return state
 
     monkeypatch.setattr("curriculum_agent.stages.skill_grouping.run", passthrough)
+    # Stored groups exist unless a test says otherwise (combine/run 422s without).
+    monkeypatch.setattr(
+        needs_route.SkillGroupRepository, "list_by_program", AsyncMock(return_value=[object()])
+    )
 
 
 def _need() -> Need:
@@ -290,6 +294,8 @@ async def test_needs_run_carries_the_note_into_the_stage_state(
     with cache_patch, complete_patch, repo_patch, needs_patch:
         response = await client.post("/programs/cs-test/needs/run", json={"note_th": NOTE})
         await _finish(response, jobs_store, spawned)
+        # The chained need_combination job, spawned once the skill job succeeded.
+        await spawned.coros.pop(0)
 
     assert seen["designer_note"] == NOTE
 
@@ -312,6 +318,8 @@ async def test_needs_run_still_works_with_no_body_at_all(
     with cache_patch, complete_patch, repo_patch, needs_patch:
         response = await client.post("/programs/cs-test/needs/run")
         await _finish(response, jobs_store, spawned)
+        # The chained need_combination job, spawned once the skill job succeeded.
+        await spawned.coros.pop(0)
 
     assert "designer_note" not in seen
 

@@ -24,6 +24,7 @@ from curriculum_agent.models import (
     KSECCategory,
     Need,
     ProgramMetadata,
+    SkillGroup,
     StakeholderEvidence,
 )
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
@@ -34,11 +35,11 @@ NOTE = "เน้นทักษะด้าน AI"
 
 # (url, job kind, the list key the old response body carried)
 ROUTES = [
-    ("/programs/cs-test/needs/run", "needs_pipeline", "needs"),
+    ("/programs/cs-test/needs/run", "skill_extraction", "skills"),
     ("/programs/cs-test/needs/skills/run", "skill_extraction", "skills"),
     ("/programs/cs-test/needs/combine/run", "need_combination", "needs"),
 ]
-ROUTE_IDS = ["needs_pipeline", "skill_extraction", "need_combination"]
+ROUTE_IDS = ["needs_run", "skill_extraction", "need_combination"]
 
 
 def _program() -> ProgramMetadata:
@@ -97,6 +98,27 @@ def _evidence() -> StakeholderEvidence:
     )
 
 
+def _group() -> SkillGroup:
+    return SkillGroup(
+        group_id="G1",
+        program_id="cs-test",
+        ksec=KSECCategory.S,
+        skill_ids=["S1"],
+        evidence_ids=["E1"],
+        skill_names=["วิเคราะห์ข้อมูลขนาดใหญ่"],
+        skill_frequencies=[1],
+        bloom_level=BloomLevel.ANALYZE,
+        demand_score=0.7,
+        is_optional=False,
+        is_graduate=True,
+        classification_coverage={},
+        stakeholder_coverage={},
+        stakeholder_types=[],
+        in_field_skill_count=1,
+        graduate_capability_skill_count=0,
+    )
+
+
 class _Stages:
     """The two stage `run` functions, patched where the routes import them."""
 
@@ -145,6 +167,9 @@ def stages(monkeypatch: pytest.MonkeyPatch) -> _Stages:
     monkeypatch.setattr(
         needs_route.SkillRepository, "list_by_program", AsyncMock(return_value=[_skill()])
     )
+    monkeypatch.setattr(
+        needs_route.SkillGroupRepository, "list_by_program", AsyncMock(return_value=[_group()])
+    )
     return _Stages(monkeypatch)
 
 
@@ -187,21 +212,69 @@ def test_run_answers_202_and_runs_the_stage_in_the_background(
     assert "dropped_ungrounded_count" in job.result
 
 
-def test_needs_run_result_is_the_old_need_run_result_body(
+def test_needs_run_chains_need_combination_after_skill_job(
     stages: _Stages, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:
     r = client.post("/programs/cs-test/needs/run")
+    assert r.status_code == 202
     spawned.drain()
 
-    # Both stages ran, in order, and the result carries the second one's Needs
-    # and the drop count of the state it left behind.
     stages.skills.assert_awaited_once()
     stages.grouping.assert_awaited_once()
     stages.needs.assert_awaited_once()
-    assert "extracted_skills" in stages.seen_by_needs
-    job = jobs_store.rows[r.json()["job_id"]]
-    assert [n["need_id"] for n in job.result["needs"]] == ["N1"]
-    assert job.result["dropped_ungrounded_count"] == 3
+    # Agent 2 starts from storage, not from Agent 1's in-memory state.
+    assert "extracted_skills" not in stages.seen_by_needs
+    assert "classified_evidence" not in stages.seen_by_needs
+    rows = sorted(jobs_store.rows.values(), key=lambda j: j.created_at)
+    assert [j.kind for j in rows] == ["skill_extraction", "need_combination"]
+    assert [j.status for j in rows] == ["succeeded", "succeeded"]
+    assert [s["skill_id"] for s in rows[0].result["skills"]] == ["S1"]
+    assert [n["need_id"] for n in rows[1].result["needs"]] == ["N1"]
+    assert rows[1].result["dropped_ungrounded_count"] == 3
+
+
+def test_skills_run_does_not_chain(
+    stages: _Stages, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    client.post("/programs/cs-test/needs/skills/run")
+    spawned.drain()
+
+    stages.needs.assert_not_awaited()
+    assert [j.kind for j in jobs_store.rows.values()] == ["skill_extraction"]
+
+
+def test_agent2_failure_keeps_agent1_output_and_old_needs(
+    stages: _Stages, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    stages.needs.side_effect = RuntimeError("clustering down")
+
+    client.post("/programs/cs-test/needs/run")
+    spawned.drain()
+
+    by_kind = {j.kind: j for j in jobs_store.rows.values()}
+    assert by_kind["skill_extraction"].status == "succeeded"
+    assert by_kind["need_combination"].status == "failed"
+    assert by_kind["need_combination"].error_th == "clustering down"
+    # The fake need stage raised before returning, so nothing was stored or deleted.
+    stages.grouping.assert_awaited_once()
+
+
+def test_combine_run_422_without_groups(
+    monkeypatch: pytest.MonkeyPatch,
+    stages: _Stages,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
+) -> None:
+    monkeypatch.setattr(
+        needs_route.SkillGroupRepository, "list_by_program", AsyncMock(return_value=[])
+    )
+
+    r = client.post("/programs/cs-test/needs/combine/run")
+
+    assert r.status_code == 422
+    assert r.json()["detail"] == "ยังไม่มีกลุ่มทักษะ กรุณารันสกัดทักษะใหม่ก่อน"
+    assert jobs_store.rows == {}
+    assert spawned.coros == []
 
 
 def test_skills_run_result_is_the_old_skill_run_result_body(
