@@ -33,6 +33,10 @@ const RUN_OF_KIND: Partial<Record<JobKind, RunKind>> = {
   skill_extraction: 'skills',
 }
 const PAGE_KINDS: JobKind[] = ['needs_pipeline', 'skill_extraction']
+/** What makes this page reload. Wider than PAGE_KINDS: the page also loads the
+ *  Needs (stale banner, Need-count link), and the need_combination job Agent 1
+ *  chains into rewrites them without ever being shown here. */
+const RELOAD_KINDS: JobKind[] = [...PAGE_KINDS, 'need_combination']
 
 /** `dropped_ungrounded_count` off a finished extraction job's result; 0 when
  *  there is no such job or its run did not finish. */
@@ -124,9 +128,9 @@ export default function SkillExtraction() {
     }
   }, [programId])
 
-  // Reload once when an extraction job ends, whichever way: a failed run may
-  // already have replaced the skills.
-  const watch = useReloadOnJobs(PAGE_KINDS, () => void fetchAll())
+  // Reload once when an extraction or the chained need_combination job ends,
+  // whichever way: a failed run may already have replaced the skills.
+  const watch = useReloadOnJobs(RELOAD_KINDS, () => void fetchAll())
 
   // The run is a background job: starting it only records it. Its result lands
   // in the tables, and the reload above picks it up when the job ends.
