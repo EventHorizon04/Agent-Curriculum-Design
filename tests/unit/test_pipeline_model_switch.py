@@ -68,3 +68,39 @@ def test_pipeline_provider_without_model_uses_slot_defaults() -> None:
 def test_pipeline_model_without_provider_refused() -> None:
     with pytest.raises(ValidationError):
         Settings(_env_file=None, pipeline_model="x/y")
+
+
+# ----------------------- through the environment, not kwargs -----------------------
+
+
+def _clear_slot_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No ambient slot or pipeline variable may leak in from the developer's shell."""
+    for name in ("PIPELINE_PROVIDER", "PIPELINE_MODEL", "LLM_PROVIDER"):
+        monkeypatch.delenv(name, raising=False)
+    for slot in SLOTS:
+        monkeypatch.delenv(slot.provider_field.upper(), raising=False)
+        monkeypatch.delenv(slot.model_field.upper(), raising=False)
+
+
+def test_pipeline_pair_from_the_environment_applies_to_every_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_slot_env(monkeypatch)
+    monkeypatch.setenv("PIPELINE_PROVIDER", "openrouter")
+    monkeypatch.setenv("PIPELINE_MODEL", "x/y")
+
+    got = _resolved(Settings(_env_file=None))
+
+    assert set(got.values()) == {("openrouter", "x/y")}
+
+
+def test_a_slot_env_provider_beats_the_pipeline_pair(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_slot_env(monkeypatch)
+    monkeypatch.setenv("PIPELINE_PROVIDER", "openrouter")
+    monkeypatch.setenv("PIPELINE_MODEL", "x/y")
+    monkeypatch.setenv("VALIDATION_PROVIDER", "ollama")
+
+    got = _resolved(Settings(_env_file=None))
+
+    assert got["validation"] == ("ollama", _PROVIDER_DEFAULT_MODEL["ollama"])
+    assert all(v == ("openrouter", "x/y") for k, v in got.items() if k != "validation")
