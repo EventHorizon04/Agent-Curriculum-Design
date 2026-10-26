@@ -19,8 +19,9 @@ from curriculum_agent.prompts.cluster_skills import (
     build_merge_clusters_prompt,
 )
 from curriculum_agent.stages import need_combination as nc
+from curriculum_agent.stages import skill_grouping as sg
 from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS, allocate_cluster_targets
-from tests.support.needs import RATIONALE_TH
+from tests.support.needs import RATIONALE_TH, run_need_pipeline_from_skills
 
 K, S, EC = KSECCategory.K, KSECCategory.S, KSECCategory.EC
 
@@ -155,12 +156,12 @@ async def test_each_bucket_is_clustered_against_its_own_share(monkeypatch):
             rationale_th=RATIONALE_TH,
         )
 
-    monkeypatch.setattr(nc, "cluster_skill_names", recording_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", recording_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 
-    await nc.run(
+    await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],

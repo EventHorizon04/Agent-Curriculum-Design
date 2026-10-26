@@ -7,12 +7,13 @@ from pydantic import ValidationError
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages import need_combination as nc
+from curriculum_agent.stages import skill_grouping as sg
 from curriculum_agent.stages.demand import (
     MANDATE_WEIGHT,
     OTHER_VOICE_WEIGHT,
     PRACTITIONER_WEIGHT,
 )
-from tests.support.needs import RATIONALE_TH
+from tests.support.needs import RATIONALE_TH, run_need_pipeline_from_skills
 
 
 def _skill(
@@ -65,7 +66,7 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
 
 
@@ -85,7 +86,7 @@ async def test_every_need_holds_exactly_one_ksec_tag(
     _patch_llm(monkeypatch)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -112,11 +113,11 @@ async def test_ethics_and_character_skills_form_one_ec_need(monkeypatch: pytest.
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -137,11 +138,11 @@ async def test_an_all_ethics_group_keeps_the_standalone_e_tag(monkeypatch: pytes
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -164,11 +165,11 @@ async def test_needs_carry_their_source_stakeholder_types(monkeypatch: pytest.Mo
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -186,7 +187,7 @@ async def test_a_want_only_group_is_optional(monkeypatch: pytest.MonkeyPatch):
     _patch_llm(monkeypatch)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -215,11 +216,11 @@ async def test_freq_counts_mentions_not_unique_names(monkeypatch: pytest.MonkeyP
             rationale_th=RATIONALE_TH,
         )
 
-    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in dupes],
@@ -243,8 +244,8 @@ async def test_empty_skills_stops_the_run_instead_of_yielding_no_needs(
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", delete)
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 
-    with pytest.raises(ValueError, match="skill_extraction"):
-        await nc.run({"program_id": "cs-test", "extracted_skills": []})
+    with pytest.raises(ValueError, match="ยังไม่มีกลุ่มทักษะ"):
+        await nc.run({"program_id": "cs-test", "skill_groups": []})
 
     delete.assert_not_awaited()
 
@@ -260,7 +261,7 @@ async def test_no_upper_cap_on_core_needs(monkeypatch: pytest.MonkeyPatch):
     _patch_llm(monkeypatch)  # clusters each name into its own singleton
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in many_skills],
@@ -314,7 +315,7 @@ async def test_the_written_statement_reaches_the_stored_need(
     _patch_llm(monkeypatch)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -346,11 +347,11 @@ async def test_evidence_text_in_the_state_never_reaches_the_prompt(
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", capture)
     _patch_repo(monkeypatch)
 
-    await nc.run(
+    await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "classified_evidence": [
@@ -385,7 +386,7 @@ async def test_demand_score_is_weighted_by_the_skills_own_stakeholder_types(
     _patch_llm(monkeypatch)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in (council, student)],
@@ -419,11 +420,11 @@ async def test_a_group_whose_sentence_cannot_be_written_is_marked_for_review(
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", always_fails)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -503,7 +504,7 @@ async def _needs_from(
 ) -> list[dict[str, object]]:
     _patch_llm(monkeypatch)
     _patch_repo(monkeypatch)
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -626,11 +627,11 @@ async def test_names_reach_the_prompt_most_mentioned_first(monkeypatch: pytest.M
         seen.append(messages[1]["content"])
         return await _fake_summarize(model, messages, **kw)
 
-    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", capture)
     _patch_repo(monkeypatch)
 
-    await nc.run(
+    await run_need_pipeline_from_skills(
         {"program_id": "cs-test", "extracted_skills": [r.model_dump(mode="json") for r in rows]}
     )
 
@@ -822,11 +823,11 @@ async def test_the_call_site_passes_the_groups_frequencies_to_the_prompt(
         seen.append(messages[1]["content"])
         return await _fake_summarize(model, messages, **kw)
 
-    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", capture)
     _patch_repo(monkeypatch)
 
-    await nc.run(
+    await run_need_pipeline_from_skills(
         {"program_id": "cs-test", "extracted_skills": [r.model_dump(mode="json") for r in rows]}
     )
 
@@ -850,7 +851,7 @@ async def test_designer_note_usage_is_logged_once_per_run(monkeypatch: pytest.Mo
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", fake_summarize_using_note)
     _patch_repo(monkeypatch)
 
@@ -864,7 +865,7 @@ async def test_designer_note_usage_is_logged_once_per_run(monkeypatch: pytest.Mo
 
     handler_id = loguru.logger.add(lambda m: messages.append(m.record["message"]), level="INFO")
     try:
-        await nc.run(
+        await run_need_pipeline_from_skills(
             {
                 "program_id": "cs-test",
                 "extracted_skills": [s.model_dump(mode="json") for s in skills],
@@ -901,11 +902,11 @@ async def test_one_create_member_does_not_make_the_need_create(monkeypatch: pyte
         seen.append(messages[1]["content"])
         return await _fake_summarize(model, messages, **kw)
 
-    monkeypatch.setattr(nc, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", capture)
     _patch_repo(monkeypatch)
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {"program_id": "cs-test", "extracted_skills": [r.model_dump(mode="json") for r in rows]}
     )
 

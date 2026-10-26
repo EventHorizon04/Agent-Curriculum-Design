@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
-from curriculum_agent.stages import need_combination as nc
+from curriculum_agent.stages import skill_grouping as sg
 from curriculum_agent.stages.need_grouping import MAX_CORE_PLOS
 
 
@@ -58,8 +58,12 @@ def _record_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[str], int 
         seen.append((list(names), target))
         return [list(range(len(names)))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     return seen
+
+
+async def _build_groups(skills, corpus):  # noqa: ANN001, ANN202
+    return await sg.build_skill_groups("prog", skills, corpus)
 
 
 async def test_a_group_never_mixes_the_two_populations(
@@ -74,7 +78,7 @@ async def test_a_group_never_mixes_the_two_populations(
     """
     _record_calls(monkeypatch)
 
-    groups = await nc._build_groups(mixed, {f"E{i}": "employer" for i in range(3)})
+    groups = await _build_groups(mixed, {f"E{i}": "employer" for i in range(3)})
 
     assert groups
     for g in groups:
@@ -87,7 +91,7 @@ async def test_neither_call_sees_the_other_populations_names(
 ):
     seen = _record_calls(monkeypatch)
 
-    await nc._build_groups(mixed, {f"E{i}": "employer" for i in range(3)})
+    await _build_groups(mixed, {f"E{i}": "employer" for i in range(3)})
 
     assert len(seen) == 2, "one clustering call per population in the bucket"
     by_names = {frozenset(names) for names, _ in seen}
@@ -102,7 +106,7 @@ async def test_the_institutional_names_do_not_spend_the_plo_budget(
     eleven institutional names eat the S bucket's eight slots."""
     seen = _record_calls(monkeypatch)
 
-    await nc._build_groups(mixed, {f"E{i}": "employer" for i in range(3)})
+    await _build_groups(mixed, {f"E{i}": "employer" for i in range(3)})
 
     target_by_names = {frozenset(names): target for names, target in seen}
     graduate_target = target_by_names[frozenset(GRADUATE)]
@@ -122,7 +126,7 @@ async def test_every_skill_still_lands_in_exactly_one_group(
     """
     _record_calls(monkeypatch)
 
-    groups = await nc._build_groups(mixed, {f"E{i}": "employer" for i in range(3)})
+    groups = await _build_groups(mixed, {f"E{i}": "employer" for i in range(3)})
 
     landed = [sid for g in groups for sid in g.skill_ids]
     assert sorted(landed) == sorted(s.skill_id for s in mixed)
@@ -136,7 +140,7 @@ async def test_a_bucket_of_one_population_makes_one_call(
     seen = _record_calls(monkeypatch)
     rows = [_skill(n, f"G{i}", f"E{i}") for i, n in enumerate(GRADUATE)]
 
-    await nc._build_groups(rows, {f"E{i}": "employer" for i in range(3)})
+    await _build_groups(rows, {f"E{i}": "employer" for i in range(3)})
 
     assert len(seen) == 1
 
@@ -157,7 +161,7 @@ async def test_a_name_flagged_both_ways_lands_on_the_graduate_side(
         _skill("การออกแบบหลักสูตร", "C", "E3", graduate=False),
     ]
 
-    groups = await nc._build_groups(rows, {"E1": "employer", "E2": "faculty", "E3": "faculty"})
+    groups = await _build_groups(rows, {"E1": "employer", "E2": "faculty", "E3": "faculty"})
 
     by_names = {frozenset(names) for names, _ in seen}
     assert by_names == {frozenset({"การแปลเอกสารกฎหมาย"}), frozenset({"การออกแบบหลักสูตร"})}
@@ -184,7 +188,7 @@ async def test_the_institutional_side_is_clustered_to_the_same_granularity(
         _skill(f"ภารกิจสถาบัน{i}", f"I{i}", f"E{i % 3}", graduate=False) for i in range(12)
     ]
 
-    await nc._build_groups(graduate + institutional, {f"E{i}": "employer" for i in range(3)})
+    await _build_groups(graduate + institutional, {f"E{i}": "employer" for i in range(3)})
 
     by_size = {len(names): target for names, target in seen}
     graduate_target = by_size[40]

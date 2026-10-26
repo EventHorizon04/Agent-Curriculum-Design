@@ -40,6 +40,7 @@ class AgentState(TypedDict, total=False):
 
     # Stage 2
     extracted_skills: list[dict[str, Any]]
+    skill_groups: list[dict[str, Any]]
     needs: list[dict[str, Any]]
     dropped_ungrounded_count: int
 
@@ -87,6 +88,12 @@ async def stage_1_stakeholder_needs(state: AgentState) -> AgentState:
 
 async def stage_2_skill_extraction(state: AgentState) -> AgentState:
     from curriculum_agent.stages.skill_extraction import run  # noqa: PLC0415
+
+    return await run(state)
+
+
+async def stage_2a_skill_grouping(state: AgentState) -> AgentState:
+    from curriculum_agent.stages.skill_grouping import run  # noqa: PLC0415
 
     return await run(state)
 
@@ -226,6 +233,7 @@ def build_graph(
     g.add_node("stakeholder_needs", stage_1_stakeholder_needs)
     g.add_node("review_evidence", review_stakeholder_needs)
     g.add_node("skill_extraction", stage_2_skill_extraction)
+    g.add_node("skill_grouping", stage_2a_skill_grouping)
     g.add_node("need_combination", stage_2b_need_combination)
     g.add_node("review_needs_node", review_needs)
     g.add_node("plo_synthesis", stage_3_plo_synthesis)
@@ -237,7 +245,8 @@ def build_graph(
     g.add_edge("intake", "stakeholder_needs")
     g.add_edge("stakeholder_needs", "review_evidence")
     g.add_edge("review_evidence", "skill_extraction")
-    g.add_edge("skill_extraction", "need_combination")
+    g.add_edge("skill_extraction", "skill_grouping")
+    g.add_edge("skill_grouping", "need_combination")
     g.add_edge("need_combination", "review_needs_node")
     g.add_edge("review_needs_node", "plo_synthesis")
     g.add_edge("plo_synthesis", "review_plos_node")

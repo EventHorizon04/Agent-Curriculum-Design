@@ -132,11 +132,13 @@ async def run_need_pipeline(program_id: str, body: DesignerNoteRequest | None = 
     `GET /jobs`."""
     from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
     from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
+    from curriculum_agent.stages.skill_grouping import run as run_grouping  # noqa: PLC0415
 
     state = await _build_stage_state(program_id, body)
 
     async def work() -> NeedRunResult:
         done = await asyncio.wait_for(run_skills(state), timeout=300)
+        done = await asyncio.wait_for(run_grouping(done), timeout=300)
         done = await asyncio.wait_for(run_needs(done), timeout=300)
         return NeedRunResult(
             needs=[Need.model_validate(n) for n in done.get("needs", [])],
@@ -159,11 +161,13 @@ async def run_skill_extraction(program_id: str, body: DesignerNoteRequest | None
     whether the Needs should be redrawn.
     """
     from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
+    from curriculum_agent.stages.skill_grouping import run as run_grouping  # noqa: PLC0415
 
     state = await _build_stage_state(program_id, body)
 
     async def work() -> SkillRunResult:
         done = await asyncio.wait_for(run_skills(state), timeout=300)
+        done = await asyncio.wait_for(run_grouping(done), timeout=300)
         return SkillRunResult(
             skills=[ExtractedSkill.model_validate(s) for s in done.get("extracted_skills", [])],
             dropped_ungrounded_count=done.get("dropped_ungrounded_count", 0),
@@ -193,7 +197,7 @@ async def run_need_combination(program_id: str, body: DesignerNoteRequest | None
             status_code=422,
             detail="ยังไม่มีทักษะที่สกัดไว้ กรุณารัน Skill Extraction ก่อน",
         )
-    state["extracted_skills"] = [s.model_dump(mode="json") for s in skills]
+    # No skill_groups key: need_combination loads the stored groups itself.
 
     async def work() -> NeedRunResult:
         done = await asyncio.wait_for(run_needs(state), timeout=300)

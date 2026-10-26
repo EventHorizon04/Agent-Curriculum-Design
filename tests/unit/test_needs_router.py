@@ -24,6 +24,18 @@ from curriculum_agent.stages import skill_extraction
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 
+@pytest.fixture(autouse=True)
+def _grouping_passes_state_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about the routes, not about clustering: the grouping stage
+    the routes now call after extraction is a pass-through unless a test says
+    otherwise."""
+
+    async def passthrough(state):  # noqa: ANN001, ANN202
+        return state
+
+    monkeypatch.setattr("curriculum_agent.stages.skill_grouping.run", passthrough)
+
+
 def _need() -> Need:
     return Need(
         need_id="N1",
@@ -571,7 +583,9 @@ async def test_combine_run_feeds_stored_skills_into_the_stage(
         job = await _finish(response, jobs_store, spawned)
 
     assert extracted is False
-    assert [s["skill_id"] for s in seen["extracted_skills"]] == ["S1"]
+    # Agent 2 loads the stored groups itself, so the route hands it neither.
+    assert "skill_groups" not in seen
+    assert "extracted_skills" not in seen
     assert "classified_evidence" not in seen
     assert job.result["needs"][0]["need_id"] == "N1"
 

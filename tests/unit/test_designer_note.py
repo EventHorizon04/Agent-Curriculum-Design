@@ -22,7 +22,8 @@ from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
 from curriculum_agent.prompts.summarize_need import build_summarize_need_prompt
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import plo_synthesis as ps
-from tests.support.needs import RATIONALE_TH
+from curriculum_agent.stages import skill_grouping as sg
+from tests.support.needs import RATIONALE_TH, run_need_pipeline_from_skills
 from tests.support.smart_agent import set_soft_judge
 
 NOTE = "เน้นทักษะด้าน AI และการวิเคราะห์ข้อมูลขนาดใหญ่"
@@ -155,7 +156,7 @@ async def test_need_combination_forwards_the_note_to_the_summarize_prompt(
             rationale_th=RATIONALE_TH,
         )
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
     # Stub every persistence call the stage makes, not only bulk_insert.
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
@@ -174,7 +175,7 @@ async def test_need_combination_forwards_the_note_to_the_summarize_prompt(
         confidence=0.9,
         importance_score=0.5,
     )
-    await nc.run(
+    await run_need_pipeline_from_skills(
         {
             "program_id": "p1",
             "designer_note": NOTE,

@@ -15,7 +15,8 @@ import pytest
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages import need_combination as nc
-from tests.support.needs import RATIONALE_TH
+from curriculum_agent.stages import skill_grouping as sg
+from tests.support.needs import RATIONALE_TH, run_need_pipeline_from_skills
 
 _METADATA = {
     "program_id": "nursing",
@@ -63,7 +64,7 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
             rationale_th=RATIONALE_TH,
         )
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
@@ -77,7 +78,7 @@ async def _run(metadata: dict[str, object] | None, captured: dict[str, object]) 
     }
     if metadata is not None:
         state["metadata"] = metadata
-    await nc.run(state)  # type: ignore[arg-type]
+    await run_need_pipeline_from_skills(state)  # type: ignore[arg-type]
 
 
 async def test_clustering_is_told_which_program_it_is_grouping_for(

@@ -103,6 +103,7 @@ class _Stages:
     def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self.seen_by_skills: dict[str, object] = {}
         self.seen_by_needs: dict[str, object] = {}
+        self.seen_by_grouping: dict[str, object] = {}
 
         async def fake_skills(state: dict[str, object]) -> dict[str, object]:
             self.seen_by_skills.update(state)
@@ -120,9 +121,15 @@ class _Stages:
                 "dropped_ungrounded_count": 3,
             }
 
+        async def fake_grouping(state: dict[str, object]) -> dict[str, object]:
+            self.seen_by_grouping.update(state)
+            return {**state, "skill_groups": []}
+
         self.skills = AsyncMock(side_effect=fake_skills)
+        self.grouping = AsyncMock(side_effect=fake_grouping)
         self.needs = AsyncMock(side_effect=fake_needs)
         monkeypatch.setattr("curriculum_agent.stages.skill_extraction.run", self.skills)
+        monkeypatch.setattr("curriculum_agent.stages.skill_grouping.run", self.grouping)
         monkeypatch.setattr("curriculum_agent.stages.need_combination.run", self.needs)
 
     def for_url(self, url: str) -> AsyncMock:
@@ -189,6 +196,7 @@ def test_needs_run_result_is_the_old_need_run_result_body(
     # Both stages ran, in order, and the result carries the second one's Needs
     # and the drop count of the state it left behind.
     stages.skills.assert_awaited_once()
+    stages.grouping.assert_awaited_once()
     stages.needs.assert_awaited_once()
     assert "extracted_skills" in stages.seen_by_needs
     job = jobs_store.rows[r.json()["job_id"]]
@@ -202,7 +210,9 @@ def test_skills_run_result_is_the_old_skill_run_result_body(
     r = client.post("/programs/cs-test/needs/skills/run")
     spawned.drain()
 
-    # The stored Needs are left alone: this route stops before need_combination.
+    # The stored Needs are left alone: this route stops before need_combination,
+    # but the groups are rebuilt so they never lag behind the skills.
+    stages.grouping.assert_awaited_once()
     stages.needs.assert_not_awaited()
     job = jobs_store.rows[r.json()["job_id"]]
     assert [s["skill_id"] for s in job.result["skills"]] == ["S1"]
@@ -216,7 +226,10 @@ def test_combine_run_result_is_the_old_need_run_result_body(
     spawned.drain()
 
     stages.skills.assert_not_awaited()
-    assert [s["skill_id"] for s in stages.seen_by_needs["extracted_skills"]] == ["S1"]
+    stages.grouping.assert_not_awaited()
+    # Agent 2 loads the stored groups itself.
+    assert "skill_groups" not in stages.seen_by_needs
+    assert "extracted_skills" not in stages.seen_by_needs
     assert "classified_evidence" not in stages.seen_by_needs
     job = jobs_store.rows[r.json()["job_id"]]
     assert [n["need_id"] for n in job.result["needs"]] == ["N1"]

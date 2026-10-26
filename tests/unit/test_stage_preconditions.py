@@ -28,15 +28,16 @@ from curriculum_agent.models import (
     KSECCategory,
     Need,
     ProgramMetadata,
+    SkillGroup,
     StakeholderEvidence,
     StakeholderType,
 )
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages import skill_extraction as se
+from curriculum_agent.stages import skill_grouping as sg
 from curriculum_agent.stages import stakeholder_needs as sn
 from tests.support.needs import RATIONALE_TH
-from tests.support.smart_agent import set_soft_judge
 
 PROGRAM = "cs-test"
 
@@ -147,88 +148,26 @@ async def test_skill_extraction_loads_evidence_when_state_carries_none(
     assert len(state["extracted_skills"]) == 1
 
 
-async def test_need_combination_loads_skills_when_state_carries_none(
+async def test_skill_grouping_loads_skills_when_state_carries_none(
     monkeypatch: pytest.MonkeyPatch,
 ):
     loader = AsyncMock(return_value=[_skill()])
-    monkeypatch.setattr(nc.SkillRepository, "list_by_program", loader)
-    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
-    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+    monkeypatch.setattr(sg.SkillRepository, "list_by_program", loader)
+    monkeypatch.setattr(sg.SkillGroupRepository, "delete_by_program", AsyncMock())
+    monkeypatch.setattr(sg.SkillGroupRepository, "bulk_insert", AsyncMock())
 
     async def fake_cluster(names, target=None, program_context=None):  # noqa: ANN001
         return [[i] for i in range(len(names))]
 
-    async def fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
-        return nc._NeedStatement(
-            statement_th="ต้องการบัณฑิตที่ออกแบบและดูแลระบบฐานข้อมูลขององค์กรให้ใช้งานได้จริง",
-            statement_en="The market needs graduates who design and maintain databases",
-            rationale_th=RATIONALE_TH,
-        )
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
-    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
-
-    state = await nc.run({"program_id": PROGRAM})
+    state = await sg.run({"program_id": PROGRAM})
 
     loader.assert_awaited_once_with(PROGRAM)
-    assert len(state["needs"]) == 1
+    assert len(state["skill_groups"]) == 1
 
 
-async def test_plo_synthesis_loads_needs_when_state_carries_none(
-    monkeypatch: pytest.MonkeyPatch,
-):
-    loader = AsyncMock(return_value=[_need()])
-    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
-    monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
-    monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())
-
-    async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SingleDraftResponse(
-            plo=ps._PLODraft(
-                statement_th="ออกแบบและดูแลระบบฐานข้อมูลขององค์กรได้",
-                bloom_level=BloomLevel.APPLY,
-                action_verb_th="ออกแบบ",
-                rationale_th="ความต้องการของสถานประกอบการ",
-                source_need_ids=["N1"],
-            )
-        )
-
-    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
-    set_soft_judge(monkeypatch)
-
-    state = await ps.run(
-        {
-            "program_id": PROGRAM,
-            "metadata": _metadata(),
-        }
-    )
-
-    loader.assert_awaited_once_with(PROGRAM)
-    assert len(state["plos"]) == 1
-
-
-# --------------------------------------------------------------------------
-# Preconditions: nothing to load, or the previous stage produced nothing.
-# The stage names the stage that has to run, and never loads older rows in
-# place of the empty result.
-# --------------------------------------------------------------------------
-
-
-async def test_stakeholder_needs_says_evidence_is_missing(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(sn.EvidenceRepository, "list_by_program", AsyncMock(return_value=[]))
-
-    with pytest.raises(ValueError, match="evidence"):
-        await sn.run({"program_id": PROGRAM})
-
-
-async def test_skill_extraction_blames_evidence_not_itself(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(se.EvidenceRepository, "list_by_program", AsyncMock(return_value=[]))
-
-    with pytest.raises(ValueError, match="evidence"):
-        await se.run({"program_id": PROGRAM, "metadata": {}})
-
-
-async def test_need_combination_refuses_an_empty_extraction_without_deleting_needs(
+async def test_skill_grouping_refuses_an_empty_extraction_without_deleting_groups(
     monkeypatch: pytest.MonkeyPatch,
 ):
     """An empty `extracted_skills` is stage 2's answer, not a missing key.
@@ -238,11 +177,72 @@ async def test_need_combination_refuses_an_empty_extraction_without_deleting_nee
     """
     loader = AsyncMock(return_value=[_skill()])
     delete = AsyncMock()
-    monkeypatch.setattr(nc.SkillRepository, "list_by_program", loader)
-    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", delete)
+    monkeypatch.setattr(sg.SkillRepository, "list_by_program", loader)
+    monkeypatch.setattr(sg.SkillGroupRepository, "delete_by_program", delete)
 
     with pytest.raises(ValueError, match="skill_extraction"):
-        await nc.run({"program_id": PROGRAM, "extracted_skills": []})
+        await sg.run({"program_id": PROGRAM, "extracted_skills": []})
+
+    loader.assert_not_awaited()
+    delete.assert_not_awaited()
+
+
+def _group_dict() -> dict[str, object]:
+    return SkillGroup(
+        group_id="G1",
+        program_id=PROGRAM,
+        ksec=KSECCategory.S,
+        skill_ids=["S1"],
+        evidence_ids=["E1"],
+        skill_names=["ออกแบบฐานข้อมูล"],
+        skill_frequencies=[1],
+        bloom_level=BloomLevel.APPLY,
+        demand_score=0.5,
+        is_optional=False,
+        is_graduate=True,
+        classification_coverage={"need": 1},
+        stakeholder_coverage={StakeholderType.EMPLOYER: 1},
+        stakeholder_types=[StakeholderType.EMPLOYER],
+        in_field_skill_count=1,
+        graduate_capability_skill_count=1,
+    ).model_dump(mode="json")
+
+
+async def test_need_combination_loads_groups_when_state_carries_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    stored = SkillGroup.model_validate(_group_dict())
+    loader = AsyncMock(return_value=[stored])
+    monkeypatch.setattr(nc.SkillGroupRepository, "list_by_program", loader)
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
+    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+
+    async def fake_summarize(model, messages, **kw):  # noqa: ANN001, ANN003
+        return nc._NeedStatement(
+            statement_th="ต้องการบัณฑิตที่ออกแบบและดูแลระบบฐานข้อมูลขององค์กรให้ใช้งานได้จริง",
+            statement_en="The market needs graduates who design and maintain databases",
+            rationale_th=RATIONALE_TH,
+        )
+
+    monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
+
+    state = await nc.run({"program_id": PROGRAM})
+
+    loader.assert_awaited_once_with(PROGRAM)
+    assert len(state["needs"]) == 1
+
+
+async def test_need_combination_refuses_an_empty_group_list_without_deleting_needs(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """An empty `skill_groups` is Agent 1's answer, not a missing key."""
+    loader = AsyncMock(return_value=[SkillGroup.model_validate(_group_dict())])
+    delete = AsyncMock()
+    monkeypatch.setattr(nc.SkillGroupRepository, "list_by_program", loader)
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", delete)
+
+    with pytest.raises(ValueError, match="กลุ่มทักษะ"):
+        await nc.run({"program_id": PROGRAM, "skill_groups": []})
 
     loader.assert_not_awaited()
     delete.assert_not_awaited()

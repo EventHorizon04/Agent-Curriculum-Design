@@ -19,8 +19,9 @@ import pytest
 
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import skill_extraction as se
+from curriculum_agent.stages import skill_grouping as sg
 from curriculum_agent.stages.demand import PRACTITIONER_WEIGHT
-from tests.support.needs import RATIONALE_TH
+from tests.support.needs import RATIONALE_TH, run_need_pipeline_from_skills
 
 _SPANS = {
     "E1": "สถานประกอบการต้องการผู้ที่ออกแบบฐานข้อมูลเชิงสัมพันธ์ได้",
@@ -101,12 +102,14 @@ async def test_the_silent_evidence_item_is_out_of_both_corpora(extracted, monkey
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize_stub)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 
-    state = await nc.run({"program_id": "prog-1", "extracted_skills": extracted})
+    state = await run_need_pipeline_from_skills(
+        {"program_id": "prog-1", "extracted_skills": extracted}
+    )
     needs = state["needs"]
     assert len(needs) == 2
 
@@ -127,12 +130,14 @@ async def test_a_single_skill_need_scores_exactly_what_its_skill_did(extracted, 
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize_stub)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 
-    state = await nc.run({"program_id": "prog-1", "extracted_skills": extracted})
+    state = await run_need_pipeline_from_skills(
+        {"program_id": "prog-1", "extracted_skills": extracted}
+    )
 
     importance_by_skill_id = {s["skill_id"]: s["importance_score"] for s in extracted}
     for need in state["needs"]:
