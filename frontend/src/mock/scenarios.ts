@@ -74,14 +74,14 @@ export function classifyEvidence(stakeholderType: string): 'requirement' | 'gene
 /** The graph's interrupt values, verbatim — what a suspended session shows. */
 export const INTERRUPT_MESSAGE: Record<string, string> = {
   stakeholder_needs: 'Stage 1 complete — review classified evidence before clustering',
-  skill_extraction: 'Stage 2 complete — review raw skills and distilled Needs',
+  need_analysis: 'Stage 2 complete — review raw skills and distilled Needs',
   plo_synthesis: 'Stage 3 complete — review/edit PLOs before PLO report',
 }
 
 /** The review gates a session suspends at, in order (REVIEW_NODE_STAGE). The
  *  last one is the PLO checkpoint: resuming it runs plo_report and plo_review
  *  straight through to END, with no gate after them. */
-export const CHECKPOINTS = ['stakeholder_needs', 'skill_extraction', 'plo_synthesis']
+export const CHECKPOINTS = ['stakeholder_needs', 'need_analysis', 'plo_synthesis']
 
 // ----------------------------------------------------------------------------
 // Deterministic ids
@@ -283,7 +283,7 @@ interface PloSeed {
 
 interface NeedSeed {
   key: string
-  ksec: NeedRow['ksec_category']
+  ksec: NeedRow['ksec_categories'][number]
   bloom: string
   statement_th: string
   statement_en: string | null
@@ -740,9 +740,13 @@ export function combineNeeds(
       rationale_th: seed.fallback
         ? `${REVIEW_MARKER_TH} ไม่มีเหตุผลประกอบ เพราะขั้นเขียนประโยคไม่สำเร็จ ผู้ออกแบบหลักสูตรต้องเขียนทั้งประโยคและเหตุผลเอง`
         : seed.rationale_th,
-      ksec_category: seed.ksec,
+      ksec_categories: [seed.ksec],
       bloom_level: seed.bloom,
       member_skill_ids: members.map((m) => m.skill_id),
+      top_skill_ids: members.slice(0, 3).map((m) => m.skill_id),
+      merged_from: [],
+      merged_into: null,
+      merge_reason_th: '',
       source_evidence_ids: evidenceIds,
       stakeholder_coverage: coverage,
       source_stakeholder_types: STAKEHOLDER_TYPES.filter((t) => t in coverage),
@@ -754,7 +758,7 @@ export function combineNeeds(
       graduate_capability_skill_count: members.filter((m) => m.is_graduate_capability).length,
     })
   }
-  return sortNeeds(needs)
+  return sortNeeds(mergeMockDuplicates(needs, idFor(`${programId}:need:merged`)))
 }
 
 /** is_optional_group: a mandate makes a group core, a group of nothing but
@@ -764,6 +768,95 @@ function isOptionalGroup(classCoverage: Record<string, number>, evidenceCount: n
   const total = Object.values(classCoverage).reduce((a, b) => a + b, 0)
   if (total > 0 && (classCoverage.unclassified ?? 0) === total) return true
   return evidenceCount <= 1
+}
+
+/** Needs the downstream stages read: merged ones and never-merged ones, not the
+ *  originals a merge folded away (`NeedRepository.list_active_by_program`). */
+export function activeNeeds(needs: NeedRow[]): NeedRow[] {
+  return needs.filter((n) => n.merged_into === null)
+}
+
+/** The scenario's one merged Need: Agent 2 judged "ปรับเนื้อหาสู่ผู้ใช้ไทย"
+ *  (S) and "จรรยาบรรณ" (E) to ask for one capability, so the two originals stay
+ *  stored, marked `merged_into`, and a third row carries both tags. Applies only
+ *  when both originals exist. */
+const MERGE_PAIR = ['l10n', 'ethics'] as const
+
+function mergeMockDuplicates(needs: NeedRow[], mergedId: string): NeedRow[] {
+  const [a, b] = MERGE_PAIR.map((key) => {
+    const seed = NEED_BY_KEY.get(key)
+    return needs.find((n) => seed !== undefined && n.statement_th === seed.statement_th)
+  })
+  if (!a || !b) return needs
+  const merged: NeedRow = {
+    ...a,
+    need_id: mergedId,
+    ksec_categories: [...new Set([...a.ksec_categories, ...b.ksec_categories])],
+    member_skill_ids: [...a.member_skill_ids, ...b.member_skill_ids],
+    top_skill_ids: [...a.top_skill_ids.slice(0, 2), ...b.top_skill_ids.slice(0, 2)],
+    source_evidence_ids: [...new Set([...a.source_evidence_ids, ...b.source_evidence_ids])],
+    source_stakeholder_types: STAKEHOLDER_TYPES.filter(
+      (t) => a.source_stakeholder_types.includes(t) || b.source_stakeholder_types.includes(t),
+    ),
+    freq: a.freq + b.freq,
+    demand_score: Math.max(a.demand_score, b.demand_score),
+    is_optional: a.is_optional && b.is_optional,
+    in_field_skill_count: a.in_field_skill_count + b.in_field_skill_count,
+    graduate_capability_skill_count: a.graduate_capability_skill_count + b.graduate_capability_skill_count,
+    merged_from: [a.need_id, b.need_id],
+    merged_into: null,
+    merge_reason_th:
+      'ทั้งสองข้อพูดถึงการทำงานกับผู้ว่าจ้างและผู้ใช้ชาวไทยอย่างรับผิดชอบ ผู้มีส่วนได้ส่วนเสียเอ่ยถึงสิ่งเดียวกันคนละมุม จึงรวมเป็นความสามารถเดียว',
+  }
+  return needs
+    .map((n) => (n === a || n === b ? { ...n, merged_into: merged.need_id } : n))
+    .concat(merged)
+}
+
+/** Agent 1's stored output: the skills grouped inside one KSEC bucket (E and C
+ *  share `EC`), the way the Need seeds group them. */
+export function skillGroupsOf(programId: string, skills: SkillRow[]) {
+  const byKey = new Map<string, SkillRow[]>()
+  for (const s of skills) {
+    const key = NEED_KEY_BY_SKILL_NAME.get(s.skill_name_th)
+    if (!key) continue
+    byKey.set(key, [...(byKey.get(key) ?? []), s])
+  }
+  const corpus = scoringCorpus(skills.map((s) => [s.source_evidence_id, s.source_stakeholder_type]))
+  return TRANSLATION_NEEDS.flatMap((seed) => {
+    const members = byKey.get(seed.key)
+    if (!members?.length) return []
+    const freq = new Map<string, number>()
+    for (const m of members) freq.set(m.skill_name_th, (freq.get(m.skill_name_th) ?? 0) + 1)
+    const names = [...freq.entries()].sort((x, y) => y[1] - x[1])
+    const evidenceIds = [...new Set(members.map((m) => m.source_evidence_id))]
+    const coverage: Record<string, number> = {}
+    const classCoverage: Record<string, number> = {}
+    for (const m of members) {
+      coverage[m.source_stakeholder_type] = (coverage[m.source_stakeholder_type] ?? 0) + 1
+      classCoverage[m.classification] = (classCoverage[m.classification] ?? 0) + 1
+    }
+    return [
+      {
+        group_id: newId(),
+        program_id: programId,
+        is_graduate: members.every((m) => m.is_graduate_capability),
+        ksec: seed.ksec === 'E' || seed.ksec === 'C' ? 'EC' : seed.ksec,
+        skill_ids: members.map((m) => m.skill_id),
+        evidence_ids: evidenceIds,
+        skill_names: names.map(([n]) => n),
+        skill_frequencies: names.map(([, c]) => c),
+        bloom_level: seed.bloom,
+        demand_score: demandScore(evidenceIds, corpus),
+        is_optional: isOptionalGroup(classCoverage, evidenceIds.length),
+        classification_coverage: classCoverage,
+        stakeholder_coverage: coverage,
+        stakeholder_types: STAKEHOLDER_TYPES.filter((t) => t in coverage),
+        in_field_skill_count: members.filter((m) => m.is_field_relevant).length,
+        graduate_capability_skill_count: members.filter((m) => m.is_graduate_capability).length,
+      },
+    ]
+  })
 }
 
 export function sortNeeds(needs: NeedRow[]): NeedRow[] {
@@ -859,7 +952,7 @@ export function makePlo(
  * for a list of words.
  */
 export function synthesizePlos(programId: string, needs: NeedRow[], skills: SkillRow[]): PloRow[] {
-  const usable = sortNeeds(needs).filter(
+  const usable = sortNeeds(activeNeeds(needs)).filter(
     (n) => scopeVerdict(n) === 'in_scope' && !n.statement_th.startsWith(REVIEW_MARKER_TH),
   )
   const core = usable.filter((n) => !n.is_optional).slice(0, MAX_CORE_PLOS)
@@ -901,14 +994,16 @@ export function buildMockReview(
 ): PLOSetReview {
   const sorted = sortPlos(plos)
   const needById = new Map(needs.map((n) => [n.need_id, n]))
+  needs = activeNeeds(needs)
   const currentOf = (p: PloRow): string[] => {
     const found = new Set<string>()
     for (const id of p.source_need_ids) {
-      const k = needById.get(id)?.ksec_category
-      if (k === 'EC') {
-        found.add('E')
-        found.add('C')
-      } else if (k) found.add(k)
+      for (const k of needById.get(id)?.ksec_categories ?? []) {
+        if (k === 'EC') {
+          found.add('E')
+          found.add('C')
+        } else found.add(k)
+      }
     }
     return ['K', 'S', 'E', 'C'].filter((d) => found.has(d))
   }
@@ -969,7 +1064,7 @@ export function buildMockReview(
         need_id: n.need_id,
         statement_th: n.statement_th,
         demand_score: n.demand_score,
-        ksec_category: n.ksec_category,
+        ksec_categories: n.ksec_categories,
         stakeholder_types: n.source_stakeholder_types,
         exclusion: n.statement_th.startsWith(REVIEW_MARKER_TH)
           ? 'unwritten'
@@ -1233,11 +1328,11 @@ function seedCheckpoint(): MockDb {
   db.sessions.push(
     session(TRANSLATION_PROGRAM_ID, 'current', {
       status: 'suspended',
-      current_stage: 'skill_extraction',
-      suspended_message: INTERRUPT_MESSAGE.skill_extraction,
+      current_stage: 'need_analysis',
+      suspended_message: INTERRUPT_MESSAGE.need_analysis,
       created_at: '2026-10-04T02:40:00',
       updated_at: '2026-10-04T02:46:31',
-      target: CHECKPOINTS.indexOf('skill_extraction') + 1,
+      target: CHECKPOINTS.indexOf('need_analysis') + 1,
     }),
   )
   return db

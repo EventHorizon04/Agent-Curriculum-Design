@@ -31,6 +31,7 @@ import {
   CHECKPOINTS,
   INTERRUPT_MESSAGE,
   STAKEHOLDER_TYPES,
+  activeNeeds,
   classifyEvidence,
   combineNeeds,
   extractSkills,
@@ -39,6 +40,7 @@ import {
   makePlo,
   mergedPloSeed,
   passingCheck,
+  skillGroupsOf,
   sortNeeds,
   sortPlos,
   stripOutcomePrefix,
@@ -110,7 +112,8 @@ function stageReached(pid: string): string {
     return 'plo_review'
   }
   if (of(db.plos, pid).length) return 'plo_synthesis'
-  if (of(db.skills, pid).length || of(db.needs, pid).length) return 'skill_extraction'
+  if (of(db.needs, pid).length) return 'need_analysis'
+  if (of(db.skills, pid).length) return 'skill_extraction'
   if (of(db.evidence, pid).length) return 'stakeholder_needs'
   return 'intake'
 }
@@ -279,8 +282,8 @@ function runStageForSession(pid: string, stage: string): void {
       for (const e of evidence) e.classification = classifyEvidence(e.stakeholder_type)
       return
     }
-    case 'skill_extraction': {
-      // skill_extraction and need_combination, back to back behind one gate.
+    case 'need_analysis': {
+      // Agent 1 then Agent 2, back to back; the gate is after Agent 2.
       const { skills } = extractSkills(pid, of(db.evidence, pid))
       if (!skills.length) throw new Error('ไม่มีทักษะที่สกัดได้จาก evidence ของโปรแกรมนี้')
       replaceRows('skills', pid, skills)
@@ -288,7 +291,7 @@ function runStageForSession(pid: string, stage: string): void {
       return
     }
     case 'plo_synthesis': {
-      const needs = of(db.needs, pid)
+      const needs = activeNeeds(of(db.needs, pid))
       if (!needs.length) throw new Error('ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน')
       replaceRows('plos', pid, synthesizePlos(pid, needs, of(db.skills, pid)))
       return
@@ -399,6 +402,9 @@ interface MockJob {
    *  and what it answered. Runs when the job finishes, not when it starts. A
    *  status of 400 or more is the job's failure, its detail the `error_th`. */
   work: () => MockResponse
+  /** Started the moment this job succeeds, with no busy check: `/needs/run` is
+   *  an Agent 1 job followed by an Agent 2 job, and nothing else gets between. */
+  next?: MockJob
 }
 
 /** start_job: record a `running` job, answer 202 with it, and let it finish on
@@ -407,6 +413,10 @@ interface MockJob {
 function startJob(spec: MockJob): MockResponse {
   const busy = busyReason(spec.pid)
   if (busy) return detail(409, busy)
+  return ok(launchJob(spec), 202)
+}
+
+function launchJob(spec: MockJob): JobInfo {
   // Consumed here, by the click that armed it, and spent by this job.
   const doomed = consumeFailNextRun()
   const job: JobInfo = {
@@ -423,14 +433,14 @@ function startJob(spec: MockJob): MockResponse {
   }
   getDb().jobs.push(job)
   const work = doomed ? () => detail(500, spec.failure) : spec.work
-  window.setTimeout(() => finishJob(job.job_id, work), jobDuration())
-  return ok(job, 202)
+  window.setTimeout(() => finishJob(job.job_id, work, spec.next), jobDuration())
+  return job
 }
 
 /** Runs the job's work and records the outcome. Looks the job up again rather
  *  than holding the row: the panel's reset or a deleted program replaces the db
  *  under a pending timer, and a job that is gone has nothing to finish. */
-function finishJob(jobId: string, work: () => MockResponse): void {
+function finishJob(jobId: string, work: () => MockResponse, next?: MockJob): void {
   const job = getDb().jobs.find((j) => j.job_id === jobId)
   if (!job || job.status !== 'running') return
   let outcome: MockResponse
@@ -445,6 +455,7 @@ function finishJob(jobId: string, work: () => MockResponse): void {
     // A snapshot, as the backend stores one: the result must not follow the rows
     // it describes when a later edit changes them.
     job.result = outcome.data === undefined ? null : clone(outcome.data)
+    if (next) launchJob(next)
   } else {
     const reason = (outcome.data as { detail?: unknown } | undefined)?.detail
     job.status = 'failed'
@@ -612,7 +623,32 @@ export function buildRouter(): Router {
 
   // --- needs ----------------------------------------------------------------
 
-  r.get('/programs/:pid/needs', (req) => ok(sortNeeds(of(getDb().needs, req.params.pid))))
+  r.get('/programs/:pid/needs', (req) => {
+    const rows = sortNeeds(of(getDb().needs, req.params.pid))
+    return ok(req.query.get('active_only') === 'true' ? activeNeeds(rows) : rows)
+  })
+
+  r.get('/programs/:pid/needs/skill-groups', (req) =>
+    ok(skillGroupsOf(req.params.pid, of(getDb().skills, req.params.pid))),
+  )
+
+  /** NeedRepository.split, refused in the real route's order: 404, 422, 409. */
+  r.post('/programs/:pid/needs/:nid/split', (req) => {
+    const { pid, nid } = req.params
+    const db = getDb()
+    const need = of(db.needs, pid).find((n) => n.need_id === nid)
+    if (!need) return detail(404, 'ไม่พบ Need นี้')
+    if (need.merged_from.length === 0) return detail(422, 'Need นี้ไม่ได้มาจากการรวม จึงแยกไม่ได้')
+    if (of(db.plos, pid).some((p) => p.source_need_ids.includes(nid))) {
+      return detail(409, 'Need นี้ถูกใช้สร้าง PLO แล้ว — แยกก่อนสร้าง PLO หรือรันสังเคราะห์ PLO ใหม่หลังแยก')
+    }
+    const busy = busyReason(pid)
+    if (busy) return detail(409, busy)
+    const originals = of(db.needs, pid).filter((n) => need.merged_from.includes(n.need_id))
+    for (const o of originals) o.merged_into = null
+    db.needs = db.needs.filter((n) => n.need_id !== nid)
+    return ok(sortNeeds(originals))
+  })
 
   r.get('/programs/:pid/needs/skills', (req) => ok(of(getDb().skills, req.params.pid)))
 
@@ -647,15 +683,24 @@ export function buildRouter(): Router {
     if (refused) return refused
     return startJob({
       pid,
-      kind: 'needs_pipeline',
+      kind: 'skill_extraction',
       params: { note_th: body<{ note_th: string }>(req).note_th ?? null },
       failure: runFailureText('skill_extraction'),
       work: () => {
         const { skills, dropped } = extractSkills(pid, of(getDb().evidence, pid))
-        const needs = combineNeeds(pid, skills)
         replaceRows('skills', pid, skills)
-        replaceRows('needs', pid, needs)
-        return ok({ needs, dropped_ungrounded_count: dropped })
+        return ok({ skills, dropped_ungrounded_count: dropped })
+      },
+      next: {
+        pid,
+        kind: 'need_combination',
+        params: { note_th: body<{ note_th: string }>(req).note_th ?? null },
+        failure: runFailureText('need_combination'),
+        work: () => {
+          const needs = combineNeeds(pid, of(getDb().skills, pid))
+          replaceRows('needs', pid, needs)
+          return ok({ needs, dropped_ungrounded_count: 0 })
+        },
       },
     })
   })
@@ -714,7 +759,7 @@ export function buildRouter(): Router {
         p.plo_id,
         p.statement_th,
         p.bloom_level,
-        [...new Set(p.source_need_ids.map((id) => needs.get(id)?.ksec_category ?? '?'))].join(', '),
+        [...new Set(p.source_need_ids.flatMap((id) => needs.get(id)?.ksec_categories ?? ['?']))].join(', '),
         p.is_optional ? 'เสริม' : 'หลัก',
         p.smart_escalated ? 'ต้องแก้ด้วยมือ' : 'ผ่าน',
       ]),

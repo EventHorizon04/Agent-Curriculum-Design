@@ -20,7 +20,7 @@ interface NeedSummary {
   need_id: string
   statement_th: string
   statement_en: string | null
-  ksec_category: string
+  ksec_categories: string[]
   bloom_level: string
   demand_score: number
   source_evidence_ids: string[]
@@ -55,7 +55,7 @@ const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate']
 /** The jobs that change what this page lists, whichever page started them: the
  *  PLOs it shows are written by the first two, the Needs it offers for merging
  *  by the last two. */
-const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate', 'needs_pipeline', 'need_combination']
+const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate', 'needs_pipeline', 'skill_extraction', 'need_combination']
 
 export default function PloSynthesis() {
   const { programId } = useProgram()
@@ -114,7 +114,7 @@ export default function PloSynthesis() {
       try {
         const [ploRes, needRes] = await Promise.all([
           api.get<PLO[]>(`/programs/${programId}/plos/`),
-          api.get<NeedListItem[]>(`/programs/${programId}/needs/`),
+          api.get<NeedListItem[]>(`/programs/${programId}/needs/?active_only=true`),
         ])
         setPlos(ploRes.data)
         setNeeds(needRes.data)
@@ -232,7 +232,7 @@ export default function PloSynthesis() {
   return (
     <div>
       <div className="mb-6">
-        <p className="eyebrow">ขั้นที่ 4</p>
+        <p className="eyebrow">ขั้นที่ 5</p>
         <h1 className="page-title">สังเคราะห์ PLO</h1>
         <p className="mt-1 text-sm text-pencil">ตรวจสอบและแก้ไข Program Learning Outcomes ที่ AI สังเคราะห์</p>
         <p className="data mt-1 text-xs text-lead">{programId}</p>
@@ -443,7 +443,7 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
                 </span>
               </div>
               <p className="mt-1.5 text-xs text-pencil">
-                <span className="data">{c.source_evidence_ids.length}</span> evidence · {ksecLabel(c.ksec_category)} · {c.bloom_level}
+                <span className="data">{c.source_evidence_ids.length}</span> evidence · {c.ksec_categories.map(ksecLabel).join(' + ')} · {c.bloom_level}
               </p>
             </div>
           ))}

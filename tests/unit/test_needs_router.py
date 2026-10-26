@@ -17,6 +17,7 @@ from curriculum_agent.models import (
     KSECCategory,
     Need,
     ProgramMetadata,
+    SkillGroup,
     SMARTCheck,
     StakeholderEvidence,
 )
@@ -117,6 +118,35 @@ async def test_list_needs_returns_repository_rows(
     body = response.json()
     assert [n["need_id"] for n in body] == ["N1"]
     assert body[0]["ksec_categories"] == ["S"]
+
+
+async def test_list_skill_groups_route(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
+    group = SkillGroup(
+        group_id="G1",
+        program_id="cs-test",
+        ksec=KSECCategory.S,
+        skill_ids=["S1"],
+        evidence_ids=["E1"],
+        skill_names=["วิเคราะห์ข้อมูล"],
+        skill_frequencies=[2],
+        bloom_level=BloomLevel.ANALYZE,
+        demand_score=0.5,
+        is_optional=False,
+        is_graduate=True,
+        classification_coverage={"need": 1},
+        stakeholder_coverage={},
+        stakeholder_types=[],
+        in_field_skill_count=1,
+        graduate_capability_skill_count=0,
+    )
+    monkeypatch.setattr(
+        needs_route.SkillGroupRepository, "list_by_program", AsyncMock(return_value=[group])
+    )
+    response = await client.get("/programs/cs-test/needs/skill-groups")
+    assert response.status_code == 200
+    body = response.json()
+    assert [g["group_id"] for g in body] == ["G1"]
+    assert body[0]["ksec"] == "S"
 
 
 async def test_list_skills_exposes_span_and_importance(

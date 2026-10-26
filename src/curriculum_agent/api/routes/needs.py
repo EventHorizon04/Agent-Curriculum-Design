@@ -22,6 +22,7 @@ from curriculum_agent.models import (
     ExtractedSkill,
     JobInfo,
     Need,
+    SkillGroup,
     StakeholderEvidence,
 )
 
@@ -95,6 +96,12 @@ async def split_need(program_id: str, need_id: str) -> list[Need]:
 @router.get("/skills", response_model=list[ExtractedSkill])
 async def list_skills(program_id: str) -> list[ExtractedSkill]:
     return await SkillRepository().list_by_program(program_id)
+
+
+@router.get("/skill-groups", response_model=list[SkillGroup])
+async def list_skill_groups(program_id: str) -> list[SkillGroup]:
+    """Agent 1's output as stored: the KSEC-bucketed skill groups Agent 2 reads."""
+    return await SkillGroupRepository().list_by_program(program_id)
 
 
 @router.get("/{need_id}/trace", response_model=NeedTrace)

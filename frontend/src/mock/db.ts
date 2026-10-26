@@ -91,9 +91,18 @@ export interface NeedRow {
   statement_th: string
   statement_en: string | null
   rationale_th: string
-  ksec_category: 'K' | 'S' | 'EC' | 'E' | 'C'
+  /** Every tag the Need carries: one for a single-bucket Need, several for one
+   *  Agent 2 merged from Needs of different buckets. */
+  ksec_categories: ('K' | 'S' | 'EC' | 'E' | 'C')[]
   bloom_level: string
   member_skill_ids: string[]
+  /** The few member skills that carry the Need, for the card's chips. */
+  top_skill_ids: string[]
+  /** Originals folded into this Need; empty unless it is a merge. */
+  merged_from: string[]
+  /** The merged Need this one was folded into, or null while it is active. */
+  merged_into: string | null
+  merge_reason_th: string
   source_evidence_ids: string[]
   stakeholder_coverage: Record<string, number>
   source_stakeholder_types: string[]

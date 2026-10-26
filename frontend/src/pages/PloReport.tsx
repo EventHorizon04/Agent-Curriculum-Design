@@ -21,7 +21,7 @@ import type { PLO } from '../types/plo'
 interface NeedSummary {
   need_id: string
   statement_th?: string
-  ksec_category: string
+  ksec_categories: string[]
   demand_score?: number
   /** Members that passed each scope axis. Absent on the report's own
    *  needs_by_id payload for older rows; treated as "passed" when missing, the
@@ -79,7 +79,7 @@ interface TraceNeed {
    *  statement and labelled as such — the evidence count beside it is the trail;
    *  this is not. Optional: rows predating the field carry "". */
   rationale_th?: string
-  ksec_category: string
+  ksec_categories: string[]
   bloom_level: string
   demand_score: number
   source_evidence_ids: string[]
@@ -256,7 +256,7 @@ export default function PloReport() {
     try {
       const [ploRes, needRes] = await Promise.all([
         api.get<PLO[]>(`/programs/${programId}/plos/`),
-        api.get<NeedSummary[]>(`/programs/${programId}/needs/`),
+        api.get<NeedSummary[]>(`/programs/${programId}/needs/?active_only=true`),
       ])
       setPlos(ploRes.data)
       setNeedsById(Object.fromEntries(needRes.data.map((n) => [n.need_id, n])))
@@ -336,7 +336,7 @@ export default function PloReport() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="eyebrow">ขั้นที่ 5</p>
+        <p className="eyebrow">ขั้นที่ 6</p>
         <h1 className="page-title">รายงาน PLO</h1>
         <p className="mt-1 text-sm text-pencil">
           ผลลัพธ์การเรียนรู้ทั้งชุด พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
@@ -358,7 +358,7 @@ export default function PloReport() {
           <p className="record text-lg">ยังไม่มี PLO ให้รายงาน</p>
           <p className="mx-auto mt-2 max-w-md text-sm text-pencil">
             รายงานประกอบขึ้นจาก PLO ที่สังเคราะห์ไว้แล้ว ถ้ายังไม่ได้สังเคราะห์
-            ให้กลับไปที่ขั้นที่ 4 ก่อน
+            ให้กลับไปที่ขั้นที่ 5 ก่อน
           </p>
           <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
             <button onClick={runReport} disabled={busy} className="btn btn-primary">
@@ -598,9 +598,7 @@ function PloRow({
 
   const ksecTags = [
     ...new Set(
-      p.source_need_ids
-        .map((id) => needsById[id]?.ksec_category)
-        .filter((c): c is string => Boolean(c))
+      p.source_need_ids.flatMap((id) => needsById[id]?.ksec_categories ?? [])
     ),
   ]
 
@@ -741,7 +739,7 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
             )}
             <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-lead">
               <span className="data text-graphite">{c.need_id}</span>
-              <span>{ksecLabel(c.ksec_category)}</span>
+              <span>{c.ksec_categories.map(ksecLabel).join(' + ')}</span>
               <span className="data">{c.bloom_level}</span>
               <span>หลักฐาน {c.source_evidence_ids.length} ชิ้น</span>
             </p>

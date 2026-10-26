@@ -23,7 +23,8 @@ interface Session {
  *  not recognise. */
 const CHECKPOINT_TH: Record<string, string> = {
   stakeholder_needs: 'รวบรวมหลักฐานเสร็จแล้ว — ตรวจการจำแนกหลักฐานก่อนสกัดทักษะ',
-  skill_extraction: 'สกัดทักษะและรวม Need เสร็จแล้ว — ตรวจทักษะและ Need ก่อนสังเคราะห์ PLO',
+  skill_extraction: 'สกัดทักษะเสร็จแล้ว — ตรวจทักษะก่อนวิเคราะห์ Need',
+  need_analysis: 'วิเคราะห์ Need เสร็จแล้ว — ตรวจ Need ที่รวมกันก่อนสังเคราะห์ PLO',
   plo_synthesis: 'สังเคราะห์ PLO เสร็จแล้ว — ตรวจและแก้ PLO ก่อนสร้างรายงานและตรวจคุณภาพ',
 }
 

@@ -40,7 +40,7 @@ export interface UnusedNeedFinding {
   need_id: string
   statement_th: string
   demand_score: number
-  ksec_category: string
+  ksec_categories: string[]
   stakeholder_types: string[]
   /** `lost_on_demand` | `out_of_scope` | `unwritten`. */
   exclusion: string

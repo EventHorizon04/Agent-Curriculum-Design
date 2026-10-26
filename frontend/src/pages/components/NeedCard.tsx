@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import api from '../../api/client'
-import { stakeholderLabel } from '../../constants/stakeholder'
+import { ksecLabel, stakeholderLabel } from '../../constants/stakeholder'
 import {
   DEMAND_LABEL_TH,
   DEMAND_SCORE_TITLE_TH,
@@ -15,10 +15,11 @@ import {
 } from '../../constants/needPolicy'
 
 /**
- * `ksec_category` and `bloom_level` stay on the row — the pipeline groups and
- * drafts PLOs from them — but they are not rendered. They describe how a Need
- * was derived, not what the designer decides about it; the statement, who asked
- * for it, and how often carry that.
+ * `ksec_categories` and `bloom_level` stay on the row — the pipeline groups and
+ * drafts PLOs from them — and are not rendered on an ordinary Need: they
+ * describe how it was derived, not what the designer decides about it. A merged
+ * Need is the exception, because its tags are the evidence that two buckets
+ * were folded into one.
  */
 export interface NeedRow {
   need_id: string
@@ -31,9 +32,19 @@ export interface NeedRow {
    *  inside the "ดูที่มา" panel, which is the trail. Empty on rows written
    *  before the field existed and on ones the migration backfilled a marker into. */
   rationale_th: string
-  ksec_category: string
+  ksec_categories: string[]
   bloom_level: string
   member_skill_ids: string[]
+  /** The member skills that carry the Need, shown as chips on a merged card. */
+  top_skill_ids: string[]
+  /** Originals Agent 2 folded into this Need; empty unless it is a merge. */
+  merged_from: string[]
+  /** Set on an original that has been folded away; such rows are not listed as
+   *  Needs, only under the merged card that replaced them. */
+  merged_into: string | null
+  /** Why the model judged the originals duplicates. The model's account, like
+   *  `rationale_th`, and labelled so; the trail is `source_evidence_ids`. */
+  merge_reason_th: string
   source_evidence_ids: string[]
   source_stakeholder_types: string[]
   freq: number
@@ -62,9 +73,28 @@ interface NeedTrace {
   evidence: { evidence_id: string; source_name: string; classification: string }[]
 }
 
-export default function NeedCard({ programId, need }: { programId: string; need: NeedRow }) {
+export default function NeedCard({
+  programId,
+  need,
+  originals = [],
+  skillNames = {},
+  onSplit,
+  disabled = false,
+}: {
+  programId: string
+  need: NeedRow
+  /** The stored originals of a merged Need, matched on `merged_into`. */
+  originals?: NeedRow[]
+  /** skill_id to name, for the top-skill chips. */
+  skillNames?: Record<string, string>
+  /** Split the merge back. The page owns the request and its error notice. */
+  onSplit?: (need: NeedRow) => void
+  disabled?: boolean
+}) {
   const [trace, setTrace] = useState<NeedTrace | null>(null)
   const [open, setOpen] = useState(false)
+  const [showOriginals, setShowOriginals] = useState(false)
+  const isMerged = need.merged_from.length > 0
   const [error, setError] = useState('')
   // The guard runs at plo_synthesis, not here — so the badge says "จะไม่ถูกส่งต่อ",
   // future tense. This checkpoint is the last point at which fixing the scope
@@ -121,7 +151,28 @@ export default function NeedCard({ programId, need }: { programId: string; need:
             เสริม
           </span>
         )}
+        {isMerged && (
+          <span className="chip chip-marker shrink-0">รวมจาก {need.merged_from.length} ข้อ</span>
+        )}
       </div>
+      {isMerged && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+          {need.ksec_categories.map(k => (
+            <span key={k} className="chip chip-neutral">{ksecLabel(k)}</span>
+          ))}
+          {need.top_skill_ids.map(id =>
+            skillNames[id] ? (
+              <span key={id} className="chip chip-neutral">{skillNames[id]}</span>
+            ) : null,
+          )}
+        </div>
+      )}
+      {isMerged && need.merge_reason_th && (
+        <p className="mt-2 border-l-2 border-hair pl-2.5 text-xs leading-relaxed text-pencil">
+          <span className="eyebrow mr-1">เหตุผลของโมเดล: </span>
+          {need.merge_reason_th}
+        </p>
+      )}
       {fallback && (
         <p className="notice notice-warn mt-2 text-xs">
           {FALLBACK_ACTION_TH[fallback]}
@@ -151,6 +202,40 @@ export default function NeedCard({ programId, need }: { programId: string; need:
           {open ? 'ซ่อนที่มา' : 'ดูที่มา'}
         </button>
       </div>
+      {isMerged && (
+        <div className="mt-3 border-t border-hair pt-3 text-xs">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setShowOriginals(v => !v)}
+              aria-expanded={showOriginals}
+              className="link"
+            >
+              {showOriginals ? 'ซ่อนข้อความเดิม' : `ดูข้อความเดิม (${originals.length})`}
+            </button>
+            {onSplit && (
+              <button
+                onClick={() => onSplit(need)}
+                disabled={disabled}
+                className="btn btn-sm btn-secondary ml-auto"
+              >
+                แยกกลับ
+              </button>
+            )}
+          </div>
+          {showOriginals && (
+            <ul className="mt-2 list-disc space-y-1 pl-4 text-graphite">
+              {originals.map(o => (
+                <li key={o.need_id}>
+                  {withoutMarker(o.statement_th)}
+                  <span className="ml-1.5 text-lead">
+                    {o.ksec_categories.map(ksecLabel).join(' + ')}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       {open && (
         <div className="mt-3 space-y-2 border-t border-hair pt-3 text-xs">
           {error && <p className="text-mandate">{error}</p>}

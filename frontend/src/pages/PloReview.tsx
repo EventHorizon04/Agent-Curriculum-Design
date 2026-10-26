@@ -153,7 +153,7 @@ export default function PloReview() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="eyebrow">ขั้นที่ 6</p>
+        <p className="eyebrow">ขั้นที่ 7</p>
         <h1 className="page-title">ตรวจคุณภาพชุด PLO</h1>
         <p className="mt-1 text-sm text-pencil">
           QA agent อ่าน PLO ทั้งชุดที่ทำเสร็จแล้ว แล้วให้คำแนะนำ — ไม่ได้แก้ PLO ให้
@@ -540,7 +540,7 @@ function UnusedNeeds({ review }: { review: PLOSetReview }) {
               <p className="record text-base">{n.statement_th}</p>
               <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-pencil">
                 <span className="data">demand {n.demand_score.toFixed(2)}</span>
-                <span>{ksecLabel(n.ksec_category)}</span>
+                <span>{n.ksec_categories.map(ksecLabel).join(' + ')}</span>
                 {n.stakeholder_types.length > 0 && (
                   <span>{n.stakeholder_types.map(stakeholderLabel).join(' · ')}</span>
                 )}

@@ -70,23 +70,14 @@ function GateLegend() {
   )
 }
 
-/** Two engine stages, one review gate — drawn, because it is the one thing
- *  about this pipeline that surprises people. Without it, a designer hunts for
- *  a "Need" page that does not exist. */
-function SharedGate({ stage }: { stage: StageDef }) {
-  if (!stage.engineStages) return null
+/** The one stage that carries the review gate says so under its name. */
+function GateNote({ stage }: { stage: StageDef }) {
+  if (!stage.gateNote) return null
   return (
     <div className="mt-1 hidden pl-6 lg:block">
-      <div className="ml-2 border-l border-dashed border-hair-strong pl-3">
-        <ul className="space-y-0.5">
-          {stage.engineStages.map((name) => (
-            <li key={name} className="text-xs leading-snug text-pencil">
-              {name}
-            </li>
-          ))}
-        </ul>
-      </div>
-      <p className="mt-1 ml-2 pl-3 text-[0.6875rem] leading-snug text-lead">{stage.gateNote}</p>
+      <p className="ml-2 border-l border-dashed border-hair-strong pl-3 text-[0.6875rem] leading-snug text-lead">
+        {stage.gateNote}
+      </p>
     </div>
   )
 }
@@ -144,7 +135,7 @@ function StageRail({ reached }: { reached: number }) {
                 </>
               )}
             </NavLink>
-            <SharedGate stage={stage} />
+            <GateNote stage={stage} />
           </li>
         )
       })}

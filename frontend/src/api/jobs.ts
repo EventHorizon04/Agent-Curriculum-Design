@@ -3,7 +3,7 @@ import api from './client'
 /** The seven stage runs the backend carries out in the background
  *  (src/curriculum_agent/api/jobs.py). Spelled exactly as the API does. */
 export type JobKind =
-  | 'needs_pipeline'
+  | 'needs_pipeline' // old rows only: a run before the two agents became two jobs
   | 'skill_extraction'
   | 'need_combination'
   | 'plo_synthesis'
@@ -31,12 +31,11 @@ export interface JobInfo {
 }
 
 /** Which page owns each kind of job: where the designer goes to see its outcome.
- *  Skill extraction and need combination share one page because they share one
- *  review gate; the SMART revalidation is a button on the synthesis page. */
+ *  Skill extraction and Need analysis are two pages; the SMART revalidation is a button on the synthesis page. */
 export const JOB_PAGE: Record<JobKind, { path: string }> = {
   needs_pipeline: { path: '/skill-extraction' },
   skill_extraction: { path: '/skill-extraction' },
-  need_combination: { path: '/skill-extraction' },
+  need_combination: { path: '/need-analysis' },
   plo_synthesis: { path: '/plo-synthesis' },
   plo_revalidate: { path: '/plo-synthesis' },
   plo_review: { path: '/plo-review' },
