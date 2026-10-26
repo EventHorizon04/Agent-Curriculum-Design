@@ -162,7 +162,7 @@ async def test_copy_program_adds_every_group_and_commits_once(
     added = [c.args[0] for c in session.add.call_args_list]
     assert added == [built.program, built.review]
     groups = [c.args[0] for c in session.add_all.call_args_list]
-    assert groups == [built.evidence, built.skills, built.needs, built.plos]
+    assert groups == [built.evidence, built.skills, built.skill_groups, built.needs, built.plos]
 
 
 async def test_copy_program_commits_nothing_when_an_insert_fails(
@@ -171,7 +171,9 @@ async def test_copy_program_commits_nothing_when_an_insert_fails(
     session = AsyncMock()
     session.add_all = MagicMock()
     session.add = MagicMock()
-    session.flush = AsyncMock(side_effect=[None, None, None, RuntimeError("needs insert failed")])
+    session.flush = AsyncMock(
+        side_effect=[None, None, None, None, RuntimeError("needs insert failed")]
+    )
     built = pc.ProgramRows(
         program=MagicMock(),
         evidence=[],

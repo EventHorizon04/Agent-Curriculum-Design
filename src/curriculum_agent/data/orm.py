@@ -117,6 +117,29 @@ class NeedTable(Base):
     merge_reason_th: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
 
 
+class SkillGroupTable(Base):
+    __tablename__ = "skill_groups"
+
+    group_id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
+    # Stored order: list_by_program sorts on this, set at insert.
+    ordinal: Mapped[int] = mapped_column(Integer, default=0)
+    ksec: Mapped[str] = mapped_column(String(2))
+    skill_ids: Mapped[list[str]] = mapped_column(JSONB)
+    evidence_ids: Mapped[list[str]] = mapped_column(JSONB)
+    skill_names: Mapped[list[str]] = mapped_column(JSONB)
+    skill_frequencies: Mapped[list[int]] = mapped_column(JSONB)
+    bloom_level: Mapped[str] = mapped_column(String(20))
+    demand_score: Mapped[float] = mapped_column(Float)
+    is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_graduate: Mapped[bool] = mapped_column(Boolean, default=False)
+    classification_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    stakeholder_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    stakeholder_types: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    in_field_skill_count: Mapped[int] = mapped_column(Integer, default=0)
+    graduate_capability_skill_count: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class PLOTable(Base):
     __tablename__ = "plos"
 

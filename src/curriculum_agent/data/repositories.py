@@ -19,6 +19,7 @@ from curriculum_agent.data.orm import (
     PLOTable,
     ProgramTable,
     SessionTable,
+    SkillGroupTable,
     SkillTable,
 )
 from curriculum_agent.data.postgres import AsyncSessionLocal
@@ -33,6 +34,7 @@ from curriculum_agent.models import (
     ProgramMetadata,
     ProgramSummary,
     SessionInfo,
+    SkillGroup,
     StageCheckpoint,
     StakeholderEvidence,
 )
@@ -190,11 +192,15 @@ class ProgramRepository:
     async def delete_cascade(self, program_id: str) -> bool:
         """Hard-delete a program and everything under it, in one transaction.
 
-        Deletes skills before evidence because SkillTable.source_evidence_id
+        Deletes skill_groups before skills (their ids point at skill rows), and skills
+        before evidence because SkillTable.source_evidence_id
         is a FK into EvidenceTable. Returns False (no-op) if program_id
         doesn't exist — the eight prior deletes affect zero rows either way.
         """
         async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(SkillGroupTable).where(SkillGroupTable.program_id == program_id)
+            )
             await session.execute(delete(SkillTable).where(SkillTable.program_id == program_id))
             await session.execute(delete(NeedTable).where(NeedTable.program_id == program_id))
             await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
@@ -313,6 +319,43 @@ class SkillRepository:
             )
             rows = result.scalars().all()
             return [ExtractedSkill.model_validate(_row_to_dict(row)) for row in rows]
+
+
+class SkillGroupRepository:
+    async def delete_by_program(self, program_id: str) -> int:
+        """Drop every skill group for a program. Returns the row count removed."""
+        async with AsyncSessionLocal() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    delete(SkillGroupTable).where(SkillGroupTable.program_id == program_id)
+                ),
+            )
+            await session.commit()
+            return result.rowcount
+
+    async def bulk_insert(self, groups: list[SkillGroup]) -> None:
+        """Upsert by group_id; `ordinal` records the list position."""
+        async with AsyncSessionLocal() as session:
+            for ordinal, group in enumerate(groups):
+                data = group.model_dump(mode="json")
+                existing = await session.get(SkillGroupTable, group.group_id)
+                if existing is None:
+                    session.add(SkillGroupTable(**data, ordinal=ordinal))
+                else:
+                    for k, v in data.items():
+                        setattr(existing, k, v)
+                    existing.ordinal = ordinal
+            await session.commit()
+
+    async def list_by_program(self, program_id: str) -> list[SkillGroup]:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(SkillGroupTable)
+                .where(SkillGroupTable.program_id == program_id)
+                .order_by(SkillGroupTable.ordinal)
+            )
+            return [SkillGroup.model_validate(_row_to_dict(row)) for row in result.scalars().all()]
 
 
 class NeedRepository:

@@ -3,9 +3,9 @@
 A copy exists so one synthesis run's results survive the next (the run
 comparison spec, docs/superpowers/specs/2026-10-06-run-comparison-design.md).
 
-evidence_id, skill_id and need_id are single-column, global primary keys, so a
-copy cannot reuse them; plo_id is per program since migration e4b6d19a3f72 and
-is kept. One old->new map covers the three id kinds. `_clone` runs `remap_ids`
+evidence_id, skill_id, need_id and group_id (skill groups) are single-column,
+global primary keys, so a copy cannot reuse them; plo_id is per program since
+migration e4b6d19a3f72 and is kept. One old->new map covers the three id kinds. `_clone` runs `remap_ids`
 only over the named reference columns (`source_evidence_id`,
 `member_skill_ids`, `source_evidence_ids`, `source_need_ids`) and over every
 JSONB column — not over every column — because a client-supplied id like
@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, TypeVar
 
@@ -45,6 +45,7 @@ from curriculum_agent.data.orm import (
     PLOReviewTable,
     PLOTable,
     ProgramTable,
+    SkillGroupTable,
     SkillTable,
 )
 from curriculum_agent.data.postgres import AsyncSessionLocal
@@ -63,6 +64,7 @@ class ProgramRows:
     needs: list[NeedTable]
     plos: list[PLOTable]
     review: PLOReviewTable | None
+    skill_groups: list[SkillGroupTable] = field(default_factory=list)
 
 
 def _uuid4() -> str:
@@ -149,6 +151,8 @@ def build_copy(
         id_map[s.skill_id] = new_uuid()
     for n in src.needs:
         id_map[n.need_id] = new_uuid()
+    for g in src.skill_groups:
+        id_map[g.group_id] = new_uuid()
 
     program = _clone(
         src.program,
@@ -167,6 +171,9 @@ def build_copy(
     ]
     skills = [_clone(s, id_map, program_id=new_id, skill_id=id_map[s.skill_id]) for s in src.skills]
     needs = [_clone(n, id_map, program_id=new_id, need_id=id_map[n.need_id]) for n in src.needs]
+    skill_groups = [
+        _clone(g, id_map, program_id=new_id, group_id=id_map[g.group_id]) for g in src.skill_groups
+    ]
     plos = [_clone(p, id_map, program_id=new_id) for p in src.plos]
 
     review: PLOReviewTable | None = None
@@ -182,7 +189,13 @@ def build_copy(
         review = _clone(src.review, id_map, program_id=new_id, plo_fingerprint=fingerprint)
 
     return ProgramRows(
-        program=program, evidence=evidence, skills=skills, needs=needs, plos=plos, review=review
+        program=program,
+        evidence=evidence,
+        skills=skills,
+        needs=needs,
+        plos=plos,
+        review=review,
+        skill_groups=skill_groups,
     )
 
 
@@ -203,6 +216,7 @@ async def load_rows(session: AsyncSession, program_id: str) -> ProgramRows | Non
         needs=await _all(NeedTable, NeedTable.program_id),
         plos=await _all(PLOTable, PLOTable.program_id),
         review=await session.get(PLOReviewTable, program_id),
+        skill_groups=await _all(SkillGroupTable, SkillGroupTable.program_id),
     )
 
 
@@ -227,7 +241,7 @@ async def copy_program(source_id: str, new_id: str, *, now: datetime | None = No
         copy = build_copy(src, new_id, now=now or datetime.utcnow())
         session.add(copy.program)
         await session.flush()
-        for group in (copy.evidence, copy.skills, copy.needs, copy.plos):
+        for group in (copy.evidence, copy.skills, copy.skill_groups, copy.needs, copy.plos):
             session.add_all(group)
             await session.flush()
         if copy.review is not None:
@@ -235,7 +249,8 @@ async def copy_program(source_id: str, new_id: str, *, now: datetime | None = No
         await session.commit()
     logger.info(
         f"program copy: {source_id} -> {new_id} ({len(copy.evidence)} evidence, "
-        f"{len(copy.skills)} skills, {len(copy.needs)} Needs, {len(copy.plos)} PLOs, "
+        f"{len(copy.skills)} skills, {len(copy.skill_groups)} skill groups, "
+        f"{len(copy.needs)} Needs, {len(copy.plos)} PLOs, "
         f"review={'yes' if copy.review is not None else 'no'})"
     )
     return True

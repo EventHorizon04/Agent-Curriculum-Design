@@ -423,6 +423,35 @@ class Need(BaseModel):
 # --------------------------- Stage 3 -----------------------------
 
 
+class SkillGroup(BaseModel):
+    """A cluster of extracted skills that agent 1 hands to agent 2.
+
+    Stored between the two agents so Need writing can start from the groups in
+    a separate job. Fields mirror the candidate group `need_combination` builds
+    before a Need's sentence is written; `is_graduate` records whether the
+    group is a graduate capability rather than a purely in-field one.
+    """
+
+    group_id: str
+    program_id: str
+    ksec: KSECCategory
+    skill_ids: list[str]
+    evidence_ids: list[str]
+    # Most-mentioned first; skill_frequencies[i] is how many member rows
+    # collapsed into skill_names[i].
+    skill_names: list[str]
+    skill_frequencies: list[int]
+    bloom_level: BloomLevel
+    demand_score: float
+    is_optional: bool
+    is_graduate: bool
+    classification_coverage: dict[str, int]
+    stakeholder_coverage: dict[StakeholderType, int]
+    stakeholder_types: list[StakeholderType]
+    in_field_skill_count: int
+    graduate_capability_skill_count: int
+
+
 class SmartFinding(BaseModel):
     """One thing the validator found wrong with a PLO, and why.
 
@@ -666,6 +695,7 @@ class UnusedNeedFinding(BaseModel):
             data = {**data}
             data["ksec_categories"] = [data.pop("ksec_category")]
         return data
+
     # How many of the review's runs said this (stages/plo_review_consensus.py).
     # 1 for a one-run review and for rows written before the field existed.
     agreed_runs: int = 1
