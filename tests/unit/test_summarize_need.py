@@ -3,10 +3,10 @@ from __future__ import annotations
 import pytest
 
 from curriculum_agent.models import KSECCategory
-from curriculum_agent.prompts.summarize_need import _KSEC_LABEL_TH, build_summarize_need_prompt
+from curriculum_agent.prompts.summarize_need import KSEC_LABEL_TH, build_summarize_need_prompt
 from tests.support.needs import RATIONALE_TH
 
-# Expected labels, written independently of _KSEC_LABEL_TH: if a test asserted
+# Expected labels, written independently of KSEC_LABEL_TH: if a test asserted
 # against the module's own dict value, a mistyped entry would still make the
 # test pass (both sides would read the same wrong string). Hardcoding the
 # expectation here is what makes a mistyped or dropped entry visible.
@@ -25,21 +25,21 @@ def test_expected_labels_cover_every_ksec_category() -> None:
 
 
 def test_ksec_label_th_covers_every_category() -> None:
-    """A direct, pytest-visible check of the completeness _KSEC_LABEL_TH must hold.
+    """A direct, pytest-visible check of the completeness KSEC_LABEL_TH must hold.
 
     summarize_need.py also asserts this at import time (raising before any test
     can even collect), so a dropped entry surfaces as a collection error rather
     than a red test here. This test exists so "the dict must cover the enum" is
     also a normal, readable assertion, not only an import-time crash.
     """
-    assert set(_KSEC_LABEL_TH) == {c.value for c in KSECCategory}
+    assert set(KSEC_LABEL_TH) == {c.value for c in KSECCategory}
 
 
 @pytest.mark.parametrize("ksec", list(KSECCategory))
 def test_prompt_carries_the_thai_label_not_the_raw_code(ksec: KSECCategory) -> None:
     """build_summarize_need_prompt must put the Thai label in the prompt.
 
-    Regression test for the bug where _KSEC_LABEL_TH was keyed by the removed
+    Regression test for the bug where KSEC_LABEL_TH was keyed by the removed
     GS/SS and had no S/EC entries: build_summarize_need_prompt(..., "S", ...)
     or (..., "EC", ...) rendered the bare code straight into the Thai prompt
     text via the ksec.get(ksec, ksec) fallback, with nothing failing.
@@ -295,9 +295,9 @@ def test_the_apply_label_no_longer_carries_a_verb_to_copy() -> None:
     new wrapper rule legitimately names "ประยุกต์ใช้" as the forbidden shape, so
     a blanket `not in system` would fail on the fix meant to prevent the bug.
     """
-    from curriculum_agent.prompts.summarize_need import _BLOOM_LABEL_TH
+    from curriculum_agent.prompts.summarize_need import BLOOM_LABEL_TH
 
-    assert "ประยุกต์ใช้" not in _BLOOM_LABEL_TH["apply"]
+    assert "ประยุกต์ใช้" not in BLOOM_LABEL_TH["apply"]
 
 
 def test_the_apply_group_user_turn_does_not_carry_the_old_verb_either() -> None:

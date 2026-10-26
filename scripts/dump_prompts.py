@@ -127,6 +127,7 @@ def _build() -> str:
             "apply",
             "<เหตุผลที่ตรวจพบว่าซ้ำกัน>",
             program_context="<program context>",
+            skill_frequencies=[3, 1],
         )
     )
     review = _render(
@@ -546,15 +547,16 @@ tag หรือระดับ Bloom ที่เก็บไว้จริง
 
 | | |
 |---|---|
-| **builder** | `prompts/merged_need.py` → `build_merged_need_prompt(top_skill_names, ksec_tags, bloom_level, reason_th, *, program_context)` |
+| **builder** | `prompts/merged_need.py` → `build_merged_need_prompt(top_skill_names, ksec_tags, bloom_level, reason_th, *, program_context, skill_frequencies)` |
 | **ผู้เรียก** | `stages/need_merge.py` → `_write_merged` (หนึ่งครั้งต่อกลุ่มที่ขั้น dedup รับ) |
 | **slot / wrapper** | `need_combination` → `complete_need_combination` (`max_retries=3`) |
 | **response model** | `NeedStatement` (เดียวกับข้อ 4) |
 | **cache** | ไม่มี |
 
-กฎการเขียนประโยคใช้ชุดเดียวกับข้อ 4 (`NEED_SENTENCE_RULES_HEAD_TH` / `NEED_SENTENCE_RULES_TAIL_TH` ใน
+กฎการเขียนประโยคใช้ชุดเดียวกับข้อ 4 (`NEED_SENTENCE_RULES_HEAD_TH` / `NEED_SENTENCE_RULES_TAIL_TH` /
+`NEED_SENTENCE_CONTEXT_RULE_TH` / `NEED_SPECIFICITY_CHECK_TH` / `NEED_SUPPORTING_INDICES_RULE_TH` ใน
 `prompts/summarize_need.py`) เพราะคำตอบถูกตรวจด้วย `NeedStatement` ตัวเดียวกัน · ที่ต่างคือ input: ไม่ใช่ชื่อสมาชิกทั้งกลุ่ม
-แต่เป็น**ทักษะเด่น** (คะแนน importance สูงสุด ไม่เกิน 7) พร้อมเหตุผลที่ขั้น dedup ให้ไว้ · หมวด KSEC ส่งเป็นรายการ
+แต่เป็น**ทักษะเด่น** (คะแนน importance สูงสุด ไม่เกิน 7) พร้อมความถี่ของแต่ละทักษะ (จำนวนแถวสมาชิกที่รวมเป็นชื่อนั้น) และเหตุผลที่ขั้น dedup ให้ไว้ · หมวด KSEC ส่งเป็นรายการ
 เพราะความต้องการเดิมอยู่คนละหมวดได้ · ถ้าเขียนประโยคไม่สำเร็จ กลุ่มนั้นไม่ถูกรวม ความต้องการเดิมยังใช้งานอยู่
 
 {merged_need}

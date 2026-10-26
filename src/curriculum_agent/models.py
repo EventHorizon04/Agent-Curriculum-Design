@@ -127,7 +127,7 @@ class KSECCategory(StrEnum):
 # `_SkillItem.ksec_category: Literal["K", "S", "E", "C"]` in
 # `stages/skill_extraction.py`, which Instructor uses to constrain what the
 # extraction LLM can return. That module asserts its Literal against this
-# frozenset at import time (mirroring the `_KSEC_LABEL_TH` guard in
+# frozenset at import time (mirroring the `KSEC_LABEL_TH` guard in
 # `prompts/summarize_need.py`), so the two cannot silently drift apart.
 SKILL_KSEC = frozenset({KSECCategory.K, KSECCategory.S, KSECCategory.E, KSECCategory.C})
 

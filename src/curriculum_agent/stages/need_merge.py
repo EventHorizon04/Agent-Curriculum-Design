@@ -94,6 +94,19 @@ def rank_top_skills(skills: list[ExtractedSkill]) -> list[ExtractedSkill]:
     return [skill for _, skill in ranked[:TOP_SKILL_CAP]]
 
 
+def pooled_frequencies(pooled: list[ExtractedSkill], top: list[ExtractedSkill]) -> list[int]:
+    """How many pooled member rows collapsed into each top skill, in `top` order.
+
+    The same figure `SkillGroup.skill_frequencies` carries for a stored group, so
+    the merged-Need prompt can weigh by frequency the way the per-group one does.
+    """
+    counts: dict[str, int] = {}
+    for skill in pooled:
+        key = normalize_need_name(skill.skill_name_th)
+        counts[key] = counts.get(key, 0) + 1
+    return [counts[normalize_need_name(s.skill_name_th)] for s in top]
+
+
 def _demand_order(needs: Sequence[Need]) -> list[Need]:
     """Most-demanded first, `need_id` breaking ties so the order is reproducible."""
     return sorted(needs, key=lambda n: (-n.demand_score, n.need_id))
@@ -192,6 +205,7 @@ async def _write_merged(
                 bloom.value,
                 fold.reason_th,
                 program_context=program_context,
+                skill_frequencies=pooled_frequencies(pooled, top),
             ),
             max_retries=_ATTEMPTS,
         )

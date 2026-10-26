@@ -305,3 +305,32 @@ def test_optional_folds_are_never_unfolded_for_the_floor() -> None:
     o1, o2 = _need("O1", 0.05, optional=True), _need("O2", 0.04, optional=True)
 
     assert _kept([*core, o1, o2], [_fold(o1, o2)]) == [["O1", "O2"]]
+
+
+def test_pooled_frequencies_count_rows_per_normalised_name_in_top_order() -> None:
+    pooled = [
+        _skill("a1", "วิเคราะห์ข้อมูล", 0.9, eid="E1"),
+        _skill("a2", " วิเคราะห์ข้อมูล ", 0.9, eid="E2"),
+        _skill("a3", "วิเคราะห์ข้อมูล", 0.9, eid="E3"),
+        _skill("b1", "นำเสนอผลงาน", 0.5, eid="E4"),
+    ]
+
+    assert nm.pooled_frequencies(pooled, nm.rank_top_skills(pooled)) == [3, 1]
+
+
+async def test_the_merged_prompt_is_given_the_pooled_frequencies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    skills = [
+        _skill("s1", "วิเคราะห์ข้อมูล", 0.9, eid="E1"),
+        _skill("s2", "วิเคราะห์ข้อมูล", 0.9, eid="E2"),
+        _skill("s3", "นำเสนอผลงาน", 0.5, eid="E3"),
+    ]
+    a = _need("A", 0.9, skills=["s1", "s3"])
+    b = _need("B", 0.5, skills=["s2"])
+    _, sentence = _patch(monkeypatch, [_fold(a, b)])
+
+    await _merge([a, b, *_fillers()], skills)
+
+    user = sentence.calls[0][-1]["content"]  # type: ignore[attr-defined]
+    assert "0 | วิเคราะห์ข้อมูล | 2" in user and "1 | นำเสนอผลงาน | 1" in user

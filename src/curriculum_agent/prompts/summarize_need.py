@@ -26,7 +26,7 @@ MAX_RATIONALE_CHARS = 240
 # first so that what the cap drops is the rarest of them.
 MAX_LISTED_SKILLS = 30
 
-_KSEC_LABEL_TH: dict[str, str] = {
+KSEC_LABEL_TH: dict[str, str] = {
     "K": "ความรู้",
     "S": "ทักษะ",
     "EC": "คุณธรรมจริยธรรมและคุณลักษณะบุคคล",
@@ -44,7 +44,7 @@ _KSEC_LABEL_TH: dict[str, str] = {
 # copying the label's own verb into the sentence it was asked to write, which is
 # exactly the wrapper shape the rules below now forbid. The replacement names
 # the same cognitive demand without handing back a verb to copy.
-_BLOOM_LABEL_TH: dict[str, str] = {
+BLOOM_LABEL_TH: dict[str, str] = {
     "remember": "ระบุและเรียกคืนข้อมูลได้",
     "understand": "อธิบายและตีความได้",
     "apply": "นำไปลงมือทำงานจริงได้",
@@ -59,13 +59,13 @@ _BLOOM_LABEL_TH: dict[str, str] = {
 # a label that silently falls back to the raw code below — they are what makes
 # the .get(...) fallbacks provably unreachable for every real enum value, not
 # just today's.
-_uncovered_ksec = {c.value for c in KSECCategory} - set(_KSEC_LABEL_TH)
+_uncovered_ksec = {c.value for c in KSECCategory} - set(KSEC_LABEL_TH)
 if _uncovered_ksec:
-    raise AssertionError(f"_KSEC_LABEL_TH is missing label(s) for: {sorted(_uncovered_ksec)}")
+    raise AssertionError(f"KSEC_LABEL_TH is missing label(s) for: {sorted(_uncovered_ksec)}")
 
-_uncovered_bloom = {b.value for b in BloomLevel} - set(_BLOOM_LABEL_TH)
+_uncovered_bloom = {b.value for b in BloomLevel} - set(BLOOM_LABEL_TH)
 if _uncovered_bloom:
-    raise AssertionError(f"_BLOOM_LABEL_TH is missing label(s) for: {sorted(_uncovered_bloom)}")
+    raise AssertionError(f"BLOOM_LABEL_TH is missing label(s) for: {sorted(_uncovered_bloom)}")
 
 
 # The Need-sentence rules, shared by the per-group prompt below and
@@ -127,6 +127,30 @@ NEED_SENTENCE_RULES_TAIL_TH = (
     "- statement_th ต้องเป็นภาษาไทย ห้ามมีชื่อฟังก์ชัน ชื่อตัวแปร "
     "หรือโค้ดปนอยู่ (เช่น getDefault, get_default, obj.method) "
     "ชื่อเทคโนโลยีที่ใช้ในวงการจริง เช่น AI, ESG, Data Science ใช้ได้\n"
+)
+
+# The one rule that only applies alongside a program context line: without one
+# there is nothing to over-read, and the rule would instruct about a field the
+# prompt never named. Shared with prompts/merged_need.py.
+NEED_SENTENCE_CONTEXT_RULE_TH = (
+    "- เขียนโดยตีความทักษะตามบริบทหลักสูตรที่ระบุ แต่บริบทนั้นใช้เลือกถ้อยคำเท่านั้น ห้ามเพิ่มเนื้อหาที่ไม่มีในกลุ่มทักษะ\n"
+)
+
+# The domain-specificity self-check, asked just before the answer. Shared so a
+# merged Need's sentence is held to the same test as any other Need's.
+NEED_SPECIFICITY_CHECK_TH = (
+    "ก่อนตอบ ให้ทดสอบประโยคที่เขียนไว้ด้วยคำถามนี้: "
+    "ถ้าลบชื่อสาขาออก ผู้อ่านยังบอกได้ไหมว่านี่คือความต้องการของสายวิชาชีพใด "
+    "ถ้าประโยคใช้ได้กับหลายสาขาพร้อมกัน เช่น บริหารธุรกิจ นิเทศศาสตร์ การตลาด และรัฐศาสตร์ "
+    "แปลว่ายังกว้างเกินไป ให้เขียนใหม่ก่อนตอบ\n\n"
+)
+
+# What supporting_indices means and the two ways it goes wrong (claiming every
+# member; lengthening the sentence to cover them). Shared with merged_need.py.
+NEED_SUPPORTING_INDICES_RULE_TH = (
+    "ใส่เฉพาะข้อที่ผู้อ่านเห็นได้จากประโยคว่าถูกพูดถึง ไม่ต้องพยายามให้ครบทุกข้อ "
+    "การเว้นข้อที่ประโยคไม่ได้พูดถึงคือคำตอบที่ถูกต้อง "
+    "และห้ามเขียนประโยคให้ยาวขึ้นเพื่อครอบทุกข้อ\n"
 )
 
 
@@ -277,11 +301,7 @@ def build_summarize_need_prompt(
     # Only added alongside a context line: without one there is nothing to
     # over-read, and the rule would be an instruction about a field the prompt
     # never named.
-    context_rule = (
-        "- เขียนโดยตีความทักษะตามบริบทหลักสูตรที่ระบุ แต่บริบทนั้นใช้เลือกถ้อยคำเท่านั้น ห้ามเพิ่มเนื้อหาที่ไม่มีในกลุ่มทักษะ\n"
-        if program_context
-        else ""
-    )
+    context_rule = NEED_SENTENCE_CONTEXT_RULE_TH if program_context else ""
     system = (
         "คุณเป็นผู้เชี่ยวชาญด้านการวิเคราะห์ความต้องการที่มีต่อบัณฑิตและหลักสูตร\n"
         "จากกลุ่มทักษะที่ให้มา จงสรุปเป็น 'ความต้องการ' หนึ่งประโยค "
@@ -294,11 +314,8 @@ def build_summarize_need_prompt(
         + NEED_SENTENCE_RULES_TAIL_TH
         + "- ข้อกำหนดเพิ่มเติมจากผู้ออกแบบหลักสูตร (ถ้ามี) ใช้เลือกถ้อยคำ หรือเลือกเน้นระหว่างทักษะที่มีอยู่ในกลุ่มเท่านั้น\n"
         "  ห้ามใช้เพื่อเพิ่มงาน วัตถุ หรือบริบทที่ไม่มีในทักษะของกลุ่ม ถ้าใช้ ให้ระบุใน designer_input_used\n\n"
-        "ก่อนตอบ ให้ทดสอบประโยคที่เขียนไว้ด้วยคำถามนี้: "
-        "ถ้าลบชื่อสาขาออก ผู้อ่านยังบอกได้ไหมว่านี่คือความต้องการของสายวิชาชีพใด "
-        "ถ้าประโยคใช้ได้กับหลายสาขาพร้อมกัน เช่น บริหารธุรกิจ นิเทศศาสตร์ การตลาด และรัฐศาสตร์ "
-        "แปลว่ายังกว้างเกินไป ให้เขียนใหม่ก่อนตอบ\n\n"
-        "ตอบเป็น JSON object ที่มี field:\n"
+        + NEED_SPECIFICITY_CHECK_TH
+        + "ตอบเป็น JSON object ที่มี field:\n"
         "  statement_th: string (ประโยคภาษาไทย)\n"
         "  statement_en: string (ประโยคภาษาอังกฤษ)\n"
         f"  rationale_th: string ({MIN_RATIONALE_CHARS}-{MAX_RATIONALE_CHARS} ตัวอักษร) "
@@ -307,18 +324,16 @@ def build_summarize_need_prompt(
         "ห้ามตอบกว้าง ๆ ว่า 'เป็นทักษะที่เกี่ยวข้องกัน' หรือ 'อยู่ในสายงานเดียวกัน' "
         "และห้ามอ้างหลักฐานหรือแหล่งที่มาที่ไม่ได้อยู่ในรายชื่อทักษะที่ให้มา\n"
         "  supporting_indices: list[int] เลขลำดับของทักษะที่ประโยคนี้สะท้อนจริง "
-        "ใส่เฉพาะข้อที่ผู้อ่านเห็นได้จากประโยคว่าถูกพูดถึง ไม่ต้องพยายามให้ครบทุกข้อ "
-        "การเว้นข้อที่ประโยคไม่ได้พูดถึงคือคำตอบที่ถูกต้อง "
-        "และห้ามเขียนประโยคให้ยาวขึ้นเพื่อครอบทุกข้อ\n"
-        '  not_covered_indices: list ของ {"index": int, '
+        + NEED_SUPPORTING_INDICES_RULE_TH
+        + '  not_covered_indices: list ของ {"index": int, '
         '"reason_code": "low_freq" | "not_graduate" | "off_task", "note_th": string}\n'
         "    ทักษะที่ประโยคไม่ได้สะท้อนและเหตุผล (low_freq = ความถี่ต่ำ ไม่ใช่สิ่งที่กลุ่มส่วนใหญ่มีร่วมกัน, "
         "not_graduate = เป็นงานของสถาบันหรือองค์กร, off_task = เป็นงานของวิชาชีพอื่นหรือไม่ใช่งานของสาขา)\n"
         '  designer_input_used: {"used": true|false, "detail_th": string} '
         "ใช้ข้อกำหนดจากผู้ออกแบบหรือไม่ และใช้อย่างไร\n\n" + NOTE_POLICY_TH
     )
-    label = _KSEC_LABEL_TH.get(ksec, ksec)
-    bloom_label = _BLOOM_LABEL_TH.get(bloom_level, bloom_level)
+    label = KSEC_LABEL_TH.get(ksec, ksec)
+    bloom_label = BLOOM_LABEL_TH.get(bloom_level, bloom_level)
     shown_names = skill_names[:MAX_LISTED_SKILLS]
     # Only listed alongside the names: a frequency column a caller never passes
     # would be a third column with nothing in it, not a feature.
