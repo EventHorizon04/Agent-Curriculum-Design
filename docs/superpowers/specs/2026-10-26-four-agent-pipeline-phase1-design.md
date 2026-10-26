@@ -93,6 +93,7 @@ Phase 1 is the restructuring the other phases depend on. Three problems drive it
 - Batching `need_dedup` / `plo_review` for very large sets, and token
   accounting (phase 5).
 - Choosing the single model.
+- End-to-end orchestration of the whole run (after the pipeline is tested).
 
 ## Anti-goals (would make this a failure even if it runs)
 
@@ -271,9 +272,19 @@ Phase 1 is the restructuring the other phases depend on. Three problems drive it
 
 - **Graph:** `skill_extraction → need_combination → review_needs_node`, with
   the clustering moved as above.
-- **`DESIGNER_STAGES` and `REVIEW_NODE_STAGE`:** unchanged unless the UI
-  needs a new rail stage. **My call:** keep one "skill_extraction" rail stage
-  and page for both agents, because the designer reviews once.
+- **Two rail stages, two pages (the designer's decision).** Agent 1 and
+  Agent 2 each get their own stage on the rail and their own page, so the
+  designer sees the data flow from skills to Needs. Only the Need page carries
+  the checkpoint. The skill page is a view the run passes through, not a gate.
+  - `DESIGNER_STAGES` gains a stage after `skill_extraction`. **My call:** name
+    it `need_analysis`, after Agent 2.
+  - `REVIEW_NODE_STAGE["review_needs_node"]` becomes `need_analysis`.
+  - `stage_reached`: stored Needs answer `need_analysis`, and skills alone
+    answer `skill_extraction`.
+  - `test_session_stage_mapping.py` and the frontend rail list change with it.
+- **Later, not now:** once the pipeline has been tested, the designer plans to
+  orchestrate the whole run end to end. Phase 1 does not build toward that
+  beyond keeping the two jobs separate and chainable.
 - **`POST /needs/run`:** runs Agent 1 as one job. On success it starts Agent 2
   as a second job. Both appear in `GET /jobs`.
 - **`/needs/skills/run`:** reruns Agent 1 only and does **not** chain into
@@ -320,8 +331,19 @@ Phase 1 is the restructuring the other phases depend on. Three problems drive it
 - **Bounded reasoning stays per call site.** For example, `plo_review`'s
   reasoning cap stays as it is.
 
-### 9. UI: the Need checkpoint (`SkillExtraction.tsx`, `NeedCard`)
+### 9. UI: the skill page and the Need checkpoint page
 
+- **Skill page (`SkillExtraction.tsx`, Agent 1):**
+  - shows the extracted skills and the stored skill groups per KSEC bucket
+  - re-run button for extraction (`/needs/skills/run`)
+  - the stale-Needs banner
+  - no Need cards and no approve action
+  - links on to the Need page
+- **Need page (new, Agent 2):**
+  - the Need cards, the split action, a re-run button for Agent 2
+    (`/needs/combine/run`), and the checkpoint
+  - moves the Need-related parts out of `SkillExtraction.tsx`
+  - the Agent 2 job status
 - **Merged Need card:**
   - a badge "รวมจาก N ข้อ"
   - its KSEC tags, more than one possible
@@ -332,8 +354,8 @@ Phase 1 is the restructuring the other phases depend on. Three problems drive it
 - **Originals:** not listed as separate active cards while merged.
 - **After a split:** the page reloads, and the originals appear as normal cards.
 - **Split refused:** show the 409 or 422 `detail` text.
-- **Job status:** the page shows both jobs while they run, and which one failed
-  if one does.
+- **Job status:** each page shows its own agent's job while it runs, and says
+  so when it fails. The skill page also says when Agent 2 has started.
 - Follow `frontend-visual-identity`: component classes in `index.css`, no
   Tailwind palette.
 
@@ -389,7 +411,7 @@ Rewrite to match the new behaviour:
 - Split is refused while a PLO cites the merged Need.
 - The merge floor (4 core Needs) is kept, now at the Need stage.
 - Need sentence calls run concurrently.
-- One rail stage and page covers both Agent 1 and Agent 2.
+- The new rail stage for Agent 2 is named `need_analysis`.
 - Only `POST /needs/run` (and the graph) chains Agent 1 into Agent 2.
   `/needs/skills/run` stays extract-only.
 - At the Need checkpoint, the graph reloads active Needs from storage when the
