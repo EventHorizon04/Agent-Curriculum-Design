@@ -15,6 +15,7 @@ from curriculum_agent.data.prune_cache import EXTRACTION
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     LLMCacheRepository,
+    SkillGroupRepository,
     SkillRepository,
 )
 from curriculum_agent.graph import AgentState
@@ -609,6 +610,13 @@ async def run(state: AgentState) -> AgentState:
     if removed:
         logger.info(f"Replaced {removed} skill row(s) from a previous run")
     await skill_repo.bulk_insert(extracted)
+    # The stored groups point at the skill ids just deleted. Dropping them here
+    # means a grouping step that then fails leaves no groups at all, so
+    # /needs/combine/run answers its "no groups" 422 instead of writing Needs from
+    # groups whose skills no longer exist.
+    dropped_groups = await SkillGroupRepository().delete_by_program(program_id)
+    if dropped_groups:
+        logger.info(f"Dropped {dropped_groups} stale skill group(s) from a previous run")
 
     state["extracted_skills"] = [s.model_dump(mode="json") for s in extracted]
     state["current_stage"] = "skill_extraction"

@@ -49,6 +49,7 @@ def _stub_repos(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(se.LLMCacheRepository, "get", AsyncMock(return_value=None))
     monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
     monkeypatch.setattr(se.SkillRepository, "delete_by_program", AsyncMock(return_value=0))
+    monkeypatch.setattr(se.SkillGroupRepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
 
 
@@ -157,3 +158,23 @@ async def test_one_failing_item_does_not_sink_the_others(
     )
 
     assert [s["source_evidence_id"] for s in state["extracted_skills"]] == ["E1", "E3", "E4"]
+
+
+async def test_run_drops_stale_skill_groups(
+    monkeypatch: pytest.MonkeyPatch, _stub_repos: None
+) -> None:
+    """Groups point at skill ids that run() deletes. If grouping then fails, the
+    stored groups must already be gone so Agent 2 refuses instead of reading them."""
+    monkeypatch.setattr(se, "complete_extraction", _ConcurrencyTracker())
+    drop = AsyncMock(return_value=3)
+    monkeypatch.setattr(se.SkillGroupRepository, "delete_by_program", drop)
+
+    await se.run(
+        {
+            "program_id": "cs-test",
+            "classified_evidence": [_evidence(1)],
+            "metadata": {"field": "วิทยาการคอมพิวเตอร์"},
+        }
+    )
+
+    drop.assert_awaited_once_with("cs-test")

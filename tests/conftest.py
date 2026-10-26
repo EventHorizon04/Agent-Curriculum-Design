@@ -83,6 +83,18 @@ class _NoStoredReview:
 
 
 @pytest.fixture(autouse=True)
+def _no_skill_group_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """skill_extraction.run drops the program's stored skill groups, which would
+    otherwise reach the database from every test that runs the stage. A test about
+    that drop patches it again — a later `setattr` wins."""
+    from curriculum_agent.stages import skill_extraction  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        skill_extraction.SkillGroupRepository, "delete_by_program", AsyncMock(return_value=0)
+    )
+
+
+@pytest.fixture(autouse=True)
 def _plo_review_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     """The set review runs before every report, and both reach the network and
     the database. Off by default in tests — the same answer as the kill switch,
