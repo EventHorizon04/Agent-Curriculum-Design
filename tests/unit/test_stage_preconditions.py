@@ -38,6 +38,7 @@ from curriculum_agent.stages import skill_extraction as se
 from curriculum_agent.stages import skill_grouping as sg
 from curriculum_agent.stages import stakeholder_needs as sn
 from tests.support.needs import RATIONALE_TH
+from tests.support.smart_agent import set_soft_judge
 
 PROGRAM = "cs-test"
 
@@ -246,6 +247,60 @@ async def test_need_combination_refuses_an_empty_group_list_without_deleting_nee
 
     loader.assert_not_awaited()
     delete.assert_not_awaited()
+
+
+async def test_plo_synthesis_loads_needs_when_state_carries_none(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    loader = AsyncMock(return_value=[_need()])
+    monkeypatch.setattr(ps.NeedRepository, "list_by_program", loader)
+    monkeypatch.setattr(ps.PLORepository, "delete_by_program", AsyncMock(return_value=0))
+    monkeypatch.setattr(ps.PLORepository, "bulk_insert", AsyncMock())
+
+    async def fake_synthesis(model, messages, **kw):  # noqa: ANN001, ANN003
+        return ps._SingleDraftResponse(
+            plo=ps._PLODraft(
+                statement_th="ออกแบบและดูแลระบบฐานข้อมูลขององค์กรได้",
+                bloom_level=BloomLevel.APPLY,
+                action_verb_th="ออกแบบ",
+                rationale_th="ความต้องการของสถานประกอบการ",
+                source_need_ids=["N1"],
+            )
+        )
+
+    monkeypatch.setattr(ps, "complete_plo_synthesis", fake_synthesis)
+    set_soft_judge(monkeypatch)
+
+    state = await ps.run(
+        {
+            "program_id": PROGRAM,
+            "metadata": _metadata(),
+        }
+    )
+
+    loader.assert_awaited_once_with(PROGRAM)
+    assert len(state["plos"]) == 1
+
+
+# --------------------------------------------------------------------------
+# Preconditions: nothing to load, or the previous stage produced nothing.
+# The stage names the stage that has to run, and never loads older rows in
+# place of the empty result.
+# --------------------------------------------------------------------------
+
+
+async def test_stakeholder_needs_says_evidence_is_missing(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(sn.EvidenceRepository, "list_by_program", AsyncMock(return_value=[]))
+
+    with pytest.raises(ValueError, match="evidence"):
+        await sn.run({"program_id": PROGRAM})
+
+
+async def test_skill_extraction_blames_evidence_not_itself(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(se.EvidenceRepository, "list_by_program", AsyncMock(return_value=[]))
+
+    with pytest.raises(ValueError, match="evidence"):
+        await se.run({"program_id": PROGRAM, "metadata": {}})
 
 
 async def test_plo_synthesis_does_not_blame_need_combination_for_an_empty_result(
