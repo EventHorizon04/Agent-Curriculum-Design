@@ -12,6 +12,7 @@ from curriculum_agent.models import (
     ProgramMetadata,
     StakeholderType,
 )
+from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import need_dedup as nd
 from curriculum_agent.stages import need_merge as nm
 from curriculum_agent.stages.need_combination import NeedStatement
@@ -421,3 +422,28 @@ async def test_a_group_whose_names_all_normalise_away_is_left_unmerged(
     assert not any(n.merged_from for n in stored)
     assert all(n.merged_into is None for n in stored)
     assert sentence.calls == []  # type: ignore[attr-defined]
+
+
+async def test_the_merged_sentence_call_sets_an_explicit_output_cap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kwargs: list[dict[str, object]] = []
+
+    async def sentence(
+        model: type[NeedStatement], messages: list[dict[str, str]], **kw: object
+    ) -> NeedStatement:
+        kwargs.append(kw)
+        return NeedStatement(statement_th=_MERGED_SENTENCE, rationale_th=RATIONALE_TH)
+
+    s1 = _skill("s1", "ทักษะหนึ่ง", 0.5, eid="E1")
+    s2 = _skill("s2", "ทักษะสอง", 0.5, eid="E2")
+    a = _need("A", 0.2, skills=["s1"], evidence=["E1"])
+    b = _need("B", 0.2, skills=["s2"], evidence=["E2"])
+    _patch(monkeypatch, [_fold(a, b)], sentence)
+
+    await nm.merge_duplicates(
+        "test", [a, b, *_fillers()], [s1, s2], _METADATA, {"E1": "employer", "E2": "employer"}
+    )
+
+    assert kwargs
+    assert all(kw.get("max_tokens") == nc.STATEMENT_MAX_TOKENS for kw in kwargs)

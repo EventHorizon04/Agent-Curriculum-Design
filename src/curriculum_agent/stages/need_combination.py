@@ -39,6 +39,11 @@ from curriculum_agent.stages.need_grouping import (
 # clears it, and a group that still fails falls back to its skill names.
 _STATEMENT_ATTEMPTS = 3
 
+# Output cap for a Need-sentence call. The provider default (512 on opentyphoon)
+# truncated the JSON: 30 listed members with a note each, plus the statement and
+# rationale, need ~1.6k tokens. Measured finish_reason='length' at 512 on 2026-10-27.
+STATEMENT_MAX_TOKENS = 2048
+
 # Prefixes on a Need whose sentence never got written, both visible in the UI's
 # Need list — which is where the designer decides what to do about it, and the
 # two failures need opposite responses. A rejected sentence is a content problem
@@ -388,6 +393,7 @@ async def _write_statement(
                 skill_frequencies=group.skill_frequencies,
             ),
             max_retries=_STATEMENT_ATTEMPTS,
+            max_tokens=STATEMENT_MAX_TOKENS,
         )
         _log_coverage(group, written)
         return written, False

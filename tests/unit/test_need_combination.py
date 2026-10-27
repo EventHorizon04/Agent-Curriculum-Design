@@ -1010,3 +1010,33 @@ async def test_run_warns_when_metadata_is_incomplete_and_skips_the_merge(
         loguru.logger.remove(sink)
 
     assert any("skipping the duplicate merge" in m for m in warnings)
+
+
+async def test_the_sentence_call_sets_an_explicit_output_cap(monkeypatch: pytest.MonkeyPatch):
+    """The provider default (512 on opentyphoon) truncated the JSON for big groups."""
+    kwargs: list[dict[str, object]] = []
+
+    async def capture(model, messages, **kw):  # noqa: ANN001, ANN003
+        kwargs.append(kw)
+        return await _fake_summarize(model, messages)
+
+    async def one_cluster(
+        names: list[str], target: int | None = None, program_context: str | None = None
+    ) -> list[list[int]]:
+        return [list(range(len(names)))]
+
+    monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
+    monkeypatch.setattr(nc, "complete_need_combination", capture)
+    _patch_repo(monkeypatch)
+
+    await run_need_pipeline_from_skills(
+        {
+            "program_id": "cs-test",
+            "extracted_skills": [
+                _skill("จรรยาบรรณวิชาชีพ", KSECCategory.E, "S1", "E1").model_dump(mode="json")
+            ],
+        }
+    )
+
+    assert kwargs
+    assert all(kw.get("max_tokens") == nc.STATEMENT_MAX_TOKENS for kw in kwargs)

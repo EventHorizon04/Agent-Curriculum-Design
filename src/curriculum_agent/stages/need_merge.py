@@ -44,7 +44,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.merged_need import build_merged_need_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
-from curriculum_agent.stages.need_combination import NeedStatement
+from curriculum_agent.stages.need_combination import STATEMENT_MAX_TOKENS, NeedStatement
 from curriculum_agent.stages.need_dedup import FoldGroup, find_duplicate_groups
 from curriculum_agent.stages.need_grouping import (
     MAX_CORE_PLOS,
@@ -216,6 +216,7 @@ async def _write_merged(
                 skill_frequencies=pooled_frequencies(pooled, top),
             ),
             max_retries=_ATTEMPTS,
+            max_tokens=STATEMENT_MAX_TOKENS,
         )
     except Exception as exc:
         logger.warning(
