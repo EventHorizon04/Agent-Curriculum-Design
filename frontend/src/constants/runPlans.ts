@@ -22,8 +22,10 @@ const COMBINE_STEPS = [
 ]
 
 export const SKILL_RUN_PLANS: Record<'all' | 'skills' | 'needs', RunPlan> = {
+  // Only a legacy `needs_pipeline` row reaches this: new runs are two jobs, a
+  // skill_extraction job and then a need_combination job, each with its own plan.
   all: {
-    title: 'กำลังสกัดทักษะและรวมเป็น Need',
+    title: 'กำลังสกัดทักษะและรวมเป็น Need (งานแบบเก่าที่ทำทั้งสองขั้นในงานเดียว)',
     steps: [...EXTRACT_STEPS, ...COMBINE_STEPS],
     typical: [60, 300],
   },

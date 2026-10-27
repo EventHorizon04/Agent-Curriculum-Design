@@ -79,6 +79,7 @@ export default function NeedCard({
   originals = [],
   skillNames = {},
   onSplit,
+  splitError = '',
   disabled = false,
 }: {
   programId: string
@@ -89,6 +90,9 @@ export default function NeedCard({
   skillNames?: Record<string, string>
   /** Split the merge back. The page owns the request and its error notice. */
   onSplit?: (need: NeedRow) => void
+  /** Why the last split of THIS card was refused, shown under its button: the
+   *  page-level notice is off-screen for a designer scrolled down to the card. */
+  splitError?: string
   disabled?: boolean
 }) {
   const [trace, setTrace] = useState<NeedTrace | null>(null)
@@ -222,6 +226,11 @@ export default function NeedCard({
               </button>
             )}
           </div>
+          {splitError && (
+            <p role="alert" className="notice notice-error mt-2">
+              {splitError}
+            </p>
+          )}
           {showOriginals && (
             <ul className="mt-2 list-disc space-y-1 pl-4 text-graphite">
               {originals.map(o => (

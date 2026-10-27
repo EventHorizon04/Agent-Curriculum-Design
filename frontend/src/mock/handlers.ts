@@ -853,7 +853,9 @@ export function buildRouter(): Router {
         // Read when the job finishes, not when it starts: the report describes
         // whatever the set is by then.
         const plos = sortPlos(of(getDb().plos, pid))
-        const needs = of(getDb().needs, pid)
+        // Active Needs only, like the real report: merged-away originals are
+        // stored but nothing downstream reads them.
+        const needs = of(getDb().needs, pid).filter((n) => n.merged_into === null)
         const cited = new Set(plos.flatMap((p) => p.source_need_ids))
         const notSynthesized = needs.map((n) => n.need_id).filter((id) => !cited.has(id))
         const core = plos.filter((p) => !p.is_optional).length

@@ -17,7 +17,9 @@ import { demandPercent } from '../constants/demand'
 import DesignerNote from './components/DesignerNote'
 
 /** Which run a click starts. 'all' is the first run: Agent 1, then Agent 2 as a
- *  second job. 'skills' re-extracts and stops at the skill groups. */
+ *  second job (the job it starts is a skill_extraction one, so its progress plan
+ *  is 'skills'; the 'all' plan only describes old `needs_pipeline` rows).
+ *  'skills' re-extracts and stops at the skill groups. */
 type RunKind = 'all' | 'skills'
 
 const RUN_PATH: Record<RunKind, string> = {

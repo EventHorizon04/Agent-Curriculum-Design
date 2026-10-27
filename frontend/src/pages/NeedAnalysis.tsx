@@ -32,6 +32,9 @@ export default function NeedAnalysis() {
   const [starting, setStarting] = useState(false)
   const [splitting, setSplitting] = useState(false)
   const [error, setError] = useState('')
+  // A refused split is shown on the card whose button was pressed, not in the
+  // page notice at the top. One at a time: the next action clears it.
+  const [splitError, setSplitError] = useState<{ needId: string; message: string } | null>(null)
   const [note, setNote] = useState('')
 
   const { running, latestOf, started, refresh } = useJobs()
@@ -66,6 +69,7 @@ export default function NeedAnalysis() {
     if (!programId) return
     setStarting(true)
     setError('')
+    setSplitError(null)
     try {
       const job = await startJob(`/programs/${programId}/needs/combine/run`, {
         note_th: note.trim() || null,
@@ -86,6 +90,7 @@ export default function NeedAnalysis() {
       if (!programId) return
       setSplitting(true)
       setError('')
+      setSplitError(null)
       try {
         await api.post(`/programs/${programId}/needs/${need.need_id}/split`)
         await fetchAll()
@@ -93,7 +98,10 @@ export default function NeedAnalysis() {
         // 404 / 422 / 409 all carry a Thai `detail` that says what to do next.
         const res = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response
         const d = res?.data?.detail
-        setError(typeof d === 'string' ? d : 'แยก Need ไม่สำเร็จ')
+        setSplitError({
+          needId: need.need_id,
+          message: typeof d === 'string' ? d : 'แยก Need ไม่สำเร็จ',
+        })
         if (res?.status === 409) void refresh()
       } finally {
         setSplitting(false)
@@ -232,14 +240,11 @@ export default function NeedAnalysis() {
 
           <div className="space-y-3">
             {staleNeedCount > 0 && (
-              <div className="notice notice-warn flex flex-wrap items-center gap-3">
-                <span className="min-w-0 flex-1">
-                  Need {staleNeedCount} รายการมาจากทักษะชุดก่อน — กด “รวม Need ใหม่”
-                  เพื่อรวมใหม่จากทักษะปัจจุบัน
-                </span>
-                <button onClick={rerun} disabled={busy} className="btn btn-sm btn-secondary">
-                  รวม Need ใหม่
-                </button>
+              <div className="notice notice-warn">
+                ทักษะเปลี่ยนไปแล้ว — Need {staleNeedCount} รายการมาจากทักษะชุดก่อน ดูที่หน้า{' '}
+                <Link to="/skill-extraction" className="underline underline-offset-2">
+                  สกัดทักษะ
+                </Link>
               </div>
             )}
             <div
@@ -295,6 +300,7 @@ export default function NeedAnalysis() {
                 originals={originalsOf.get(n.need_id) ?? []}
                 skillNames={skillNames}
                 onSplit={split}
+                splitError={splitError?.needId === n.need_id ? splitError.message : ''}
                 disabled={busy}
               />
             ))}
