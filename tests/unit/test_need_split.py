@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
+from curriculum_agent.api import jobs as jobs_mod
 from curriculum_agent.api.main import app
 from curriculum_agent.api.routes import needs as needs_route
 from curriculum_agent.graph import review_needs
@@ -16,6 +17,8 @@ from curriculum_agent.models import BloomLevel, JobInfo, KSECCategory, Need
 from tests.support.jobs import InMemoryJobs
 
 client = TestClient(app)
+# The autouse jobs_store fixture replaces this; keep the real one for the suspended test.
+_REAL_RUNNING_SESSION = jobs_mod._running_session
 _NOW = datetime(2026, 10, 27, 3, 0, 0)
 
 
@@ -117,6 +120,37 @@ def test_split_refused_while_job_running(
     assert response.status_code == 409
     assert "รอให้เสร็จก่อน" in response.json()["detail"]
     stored["split"].assert_not_awaited()
+
+
+def test_split_busy_409_comes_before_the_need_checks(
+    stored: dict[str, AsyncMock], jobs_store: InMemoryJobs
+) -> None:
+    """The guard is the first thing the route does, so a busy program answers 409
+    even for an id that would otherwise be a 404."""
+    jobs_store.rows["j1"] = JobInfo(
+        job_id="j1", program_id="p", kind="plo_synthesis", status="running", created_at=_NOW
+    )
+
+    response = client.post("/programs/p/needs/NOPE/split")
+
+    assert response.status_code == 409
+    stored["list_by_program"].assert_not_awaited()
+
+
+def test_split_not_blocked_by_suspended_session(
+    stored: dict[str, AsyncMock], jobs_store: InMemoryJobs, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session paused at a checkpoint is not a running writer."""
+    suspended = SimpleNamespace(status="suspended")
+    sessions = SimpleNamespace(list_by_program=AsyncMock(return_value=[suspended]))
+    monkeypatch.setattr(jobs_mod, "SessionRepository", lambda: sessions)
+    monkeypatch.setattr(jobs_mod, "_running_session", _REAL_RUNNING_SESSION)
+
+    response = client.post("/programs/p/needs/M1/split")
+
+    assert response.status_code == 200
+    sessions.list_by_program.assert_awaited()
+    stored["split"].assert_awaited_once_with("p", "M1")
 
 
 def test_list_needs_active_only_hides_originals(

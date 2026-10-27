@@ -163,11 +163,23 @@ async def test_one_failing_item_does_not_sink_the_others(
 async def test_run_drops_stale_skill_groups(
     monkeypatch: pytest.MonkeyPatch, _stub_repos: None
 ) -> None:
-    """Groups point at skill ids that run() deletes. If grouping then fails, the
-    stored groups must already be gone so Agent 2 refuses instead of reading them."""
+    """Groups point at skill ids that run() deletes. They go first, before any
+    skill row is touched, so a failed insert cannot leave groups pointing at
+    deleted skills and a failed grouping leaves Agent 2 refusing."""
     monkeypatch.setattr(se, "complete_extraction", _ConcurrencyTracker())
-    drop = AsyncMock(return_value=3)
+    order: list[str] = []
+
+    def recording(name: str, result: int) -> AsyncMock:
+        async def call(*_: Any) -> int:
+            order.append(name)
+            return result
+
+        return AsyncMock(side_effect=call)
+
+    drop = recording("drop_groups", 3)
     monkeypatch.setattr(se.SkillGroupRepository, "delete_by_program", drop)
+    monkeypatch.setattr(se.SkillRepository, "delete_by_program", recording("delete_skills", 0))
+    monkeypatch.setattr(se.SkillRepository, "bulk_insert", recording("insert_skills", 0))
 
     await se.run(
         {
@@ -178,3 +190,4 @@ async def test_run_drops_stale_skill_groups(
     )
 
     drop.assert_awaited_once_with("cs-test")
+    assert order == ["drop_groups", "delete_skills", "insert_skills"]

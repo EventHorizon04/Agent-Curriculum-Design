@@ -366,7 +366,8 @@ class Need(BaseModel):
     @field_validator("ksec_categories")
     @classmethod
     def _dedupe_and_order_tags(cls, tags: list[KSECCategory]) -> list[KSECCategory]:
-        return [t for t in _KSEC_TAG_ORDER if t in set(tags)]
+        present = set(tags)
+        return [t for t in _KSEC_TAG_ORDER if t in present]
 
     @property
     def is_merged(self) -> bool:
@@ -686,6 +687,9 @@ class UnusedNeedFinding(BaseModel):
     unwritten: bool = False
     verdict: str | None = None
     reason_th: str = ""
+    # How many of the review's runs said this (stages/plo_review_consensus.py).
+    # 1 for a one-run review and for rows written before the field existed.
+    agreed_runs: int = 1
 
     @model_validator(mode="before")
     @classmethod
@@ -695,10 +699,6 @@ class UnusedNeedFinding(BaseModel):
             data = {**data}
             data["ksec_categories"] = [data.pop("ksec_category")]
         return data
-
-    # How many of the review's runs said this (stages/plo_review_consensus.py).
-    # 1 for a one-run review and for rows written before the field existed.
-    agreed_runs: int = 1
 
 
 class ReviewToolCall(BaseModel):

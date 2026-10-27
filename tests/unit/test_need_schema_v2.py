@@ -115,9 +115,7 @@ async def test_split_runs_in_one_session_and_restores_originals() -> None:
     result.scalars.return_value.all.return_value = [a, b]
     session.execute = AsyncMock(return_value=result)
     ctx = _session_ctx(session)
-    with patch(
-        "curriculum_agent.data.repositories.AsyncSessionLocal", return_value=ctx
-    ) as factory:
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=ctx) as factory:
         restored = await NeedRepository().split("p", "M")
 
     assert factory.call_count == 1  # one session, one transaction
@@ -126,3 +124,27 @@ async def test_split_runs_in_one_session_and_restores_originals() -> None:
     assert a.merged_into is None and b.merged_into is None
     session.delete.assert_awaited_once_with(merged)
     session.commit.assert_awaited_once()
+
+
+@pytest.mark.parametrize("found", ["missing", "other_program"])
+async def test_split_of_a_need_not_in_this_program_raises_key_error_and_writes_nothing(
+    found: str,
+) -> None:
+    from curriculum_agent.data.orm import NeedTable
+
+    row = None
+    if found == "other_program":
+        need = Need.model_validate(_data(need_id="M", program_id="other", ksec_categories=["K"]))
+        row = NeedTable(**need.model_dump(mode="json"))
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
+    ctx = _session_ctx(session)
+    with (
+        patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=ctx),
+        pytest.raises(KeyError),
+    ):
+        await NeedRepository().split("p", "M")
+
+    session.execute.assert_not_awaited()
+    session.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()

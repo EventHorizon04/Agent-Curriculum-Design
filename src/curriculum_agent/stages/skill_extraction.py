@@ -602,6 +602,15 @@ async def run(state: AgentState) -> AgentState:
             )
         )
 
+    # The stored groups point at the skill ids about to be deleted, so they go
+    # first, before any skill row is touched: a failed insert then cannot leave
+    # groups pointing at deleted skills, and a grouping step that fails later
+    # leaves no groups at all, so /needs/combine/run answers its "no groups" 422
+    # instead of writing Needs from groups whose skills no longer exist.
+    dropped_groups = await SkillGroupRepository().delete_by_program(program_id)
+    if dropped_groups:
+        logger.info(f"Dropped {dropped_groups} stale skill group(s) from a previous run")
+
     # Replace, don't accumulate: skill_id is a fresh uuid per run and the
     # repository upserts by it, so without the delete a re-run leaves both sets in
     # the table and the Stage 3 skill table shows every skill twice.
@@ -610,13 +619,6 @@ async def run(state: AgentState) -> AgentState:
     if removed:
         logger.info(f"Replaced {removed} skill row(s) from a previous run")
     await skill_repo.bulk_insert(extracted)
-    # The stored groups point at the skill ids just deleted. Dropping them here
-    # means a grouping step that then fails leaves no groups at all, so
-    # /needs/combine/run answers its "no groups" 422 instead of writing Needs from
-    # groups whose skills no longer exist.
-    dropped_groups = await SkillGroupRepository().delete_by_program(program_id)
-    if dropped_groups:
-        logger.info(f"Dropped {dropped_groups} stale skill group(s) from a previous run")
 
     state["extracted_skills"] = [s.model_dump(mode="json") for s in extracted]
     state["current_stage"] = "skill_extraction"

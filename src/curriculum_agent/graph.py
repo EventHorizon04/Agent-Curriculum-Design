@@ -138,6 +138,7 @@ async def review_needs(state: AgentState) -> AgentState:
         state = {**state, **payload}
     # The designer may have split a merged Need while suspended; the checkpoint
     # still holds the pre-split set, so reload what is stored now.
+    # Lazy: data.repositories imports stage_reached from this module (a cycle).
     from curriculum_agent.data.repositories import NeedRepository  # noqa: PLC0415
 
     active = await NeedRepository().list_active_by_program(state["program_id"])
@@ -157,6 +158,7 @@ def review_plos(state: AgentState) -> AgentState:
 # skill_extraction and skill_grouping (Agent 1) report as skill_extraction, with
 # no checkpoint of their own; need_combination (Agent 2) is need_analysis, and
 # the review gate sits after it. Each is its own page and rail stage.
+# `skill_grouping` is a graph node, not a designer stage: it never reaches the API.
 # This is the same list the UI keys its rail off — a value outside it reaches the
 # frontend as "unknown stage" and the program looks like it never started.
 DESIGNER_STAGES: tuple[str, ...] = (

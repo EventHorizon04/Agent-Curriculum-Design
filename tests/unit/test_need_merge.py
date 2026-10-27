@@ -361,8 +361,27 @@ async def test_one_summary_line_reports_the_step_in_numbers(
     (summary,) = [m for m in lines if m.startswith("need_merge: groups proposed")]
     assert summary == (
         "need_merge: groups proposed=3 accepted=1 unfolded_for_floor=0 "
-        "sentence_failed=0 merged=1 multi_tag_merged=1 core_needs=6->5"
+        "sentence_failed=0 merged=1 multi_tag_merged=1 core_needs=6->5 dedup_call=ok"
     )
+
+
+@pytest.mark.parametrize("call", ["failed", "disabled"])
+async def test_summary_line_tells_a_missing_dedup_answer_from_an_empty_one(
+    monkeypatch: pytest.MonkeyPatch, call: str
+) -> None:
+    from loguru import logger  # noqa: PLC0415
+
+    _patch(monkeypatch, nd.AcceptedGroups.with_call(call))  # type: ignore[arg-type]
+    lines: list[str] = []
+    sink = logger.add(lambda m: lines.append(m.record["message"]), level="INFO")
+    try:
+        await _merge([_need("A", 0.9), _need("B", 0.5), *_fillers()], [])
+    finally:
+        logger.remove(sink)
+
+    (summary,) = [m for m in lines if m.startswith("need_merge: groups proposed")]
+    assert "proposed=0 accepted=0" in summary
+    assert summary.endswith(f"dedup_call={call}")
 
 
 async def test_summary_line_counts_a_floor_unfold_and_a_failed_sentence(
@@ -447,3 +466,11 @@ async def test_the_merged_sentence_call_sets_an_explicit_output_cap(
 
     assert kwargs
     assert all(kw.get("max_tokens") == nc.STATEMENT_MAX_TOKENS for kw in kwargs)
+
+
+def test_need_statement_lives_in_a_leaf_and_is_still_exported_from_need_combination() -> None:
+    from curriculum_agent.stages import need_statement as ns  # noqa: PLC0415
+
+    assert nc.NeedStatement is ns.NeedStatement is nc._NeedStatement
+    assert nm.NeedStatement is ns.NeedStatement
+    assert nc.STATEMENT_MAX_TOKENS == ns.STATEMENT_MAX_TOKENS

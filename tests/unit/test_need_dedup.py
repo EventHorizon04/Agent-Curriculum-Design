@@ -167,7 +167,9 @@ async def test_the_kill_switch_makes_no_call(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(nd, "complete_need_dedup", call)
     monkeypatch.setattr(nd.settings, "need_dedup_provider", "")
 
-    assert await find_duplicate_groups([_need("a"), _need("b")], _METADATA) == []
+    folds = await find_duplicate_groups([_need("a"), _need("b")], _METADATA)
+    assert folds == []
+    assert folds.call == "disabled"
     call.assert_not_awaited()
 
 
@@ -184,4 +186,6 @@ async def test_a_failing_call_folds_nothing(monkeypatch: pytest.MonkeyPatch) -> 
     so an outage costs duplicates and never a PLO."""
     monkeypatch.setattr(nd, "complete_need_dedup", AsyncMock(side_effect=RuntimeError("down")))
 
-    assert await find_duplicate_groups([_need("a"), _need("b")], _METADATA) == []
+    folds = await find_duplicate_groups([_need("a"), _need("b")], _METADATA)
+    assert folds == []
+    assert folds.call == "failed"

@@ -402,9 +402,15 @@ def allocate_cluster_targets(
     return targets
 
 
+def join_ksec_tags(tags: Iterable[str]) -> str:
+    """Tags for display, joined with "+" ("K+S"); one tag reads as itself. Takes
+    plain strings so a stored finding, which holds them as strings, shares it."""
+    return "+".join(tags)
+
+
 def ksec_label(need: Need) -> str:
     """The Need's tags for display, joined with "+" ("K+S"); one tag reads as itself."""
-    return "+".join(t.value for t in need.ksec_categories)
+    return join_ksec_tags(t.value for t in need.ksec_categories)
 
 
 def resolve_need_ksec(members: list[ExtractedSkill]) -> KSECCategory:

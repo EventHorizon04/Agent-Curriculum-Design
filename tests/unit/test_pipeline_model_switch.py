@@ -104,3 +104,24 @@ def test_a_slot_env_provider_beats_the_pipeline_pair(monkeypatch: pytest.MonkeyP
 
     assert got["validation"] == ("ollama", _PROVIDER_DEFAULT_MODEL["ollama"])
     assert all(v == ("openrouter", "x/y") for k, v in got.items() if k != "validation")
+
+
+# Read once from `git show main:src/curriculum_agent/config.py` (Settings(_env_file=None)
+# with no slot variable set): what each slot resolved to before PIPELINE_* existed.
+_MAIN_RESOLUTION: dict[str, tuple[str, str]] = {
+    "extraction": ("openrouter", "z-ai/glm-5.3-flash"),
+    "clustering": ("openrouter", "meta-llama/llama-3.3-70b-instruct"),
+    "need_combination": ("opentyphoon", "typhoon-v2.5-30b-a3b-instruct"),
+    "need_dedup": ("openrouter", "z-ai/glm-5.3-flash"),
+    "plo_synthesis": ("opentyphoon", "typhoon-v2.5-30b-a3b-instruct"),
+    "validation": ("openrouter", "z-ai/glm-5.3-flash"),
+    "plo_review": ("openrouter", "z-ai/glm-5.3-flash"),
+}
+
+
+def test_unset_pipeline_resolves_every_slot_exactly_as_main_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_slot_env(monkeypatch)
+
+    assert _resolved(Settings(_env_file=None)) == _MAIN_RESOLUTION

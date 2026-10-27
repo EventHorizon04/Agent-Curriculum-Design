@@ -71,22 +71,23 @@ async def list_needs(program_id: str, active_only: bool = False) -> list[Need]:
 async def split_need(program_id: str, need_id: str) -> list[Need]:
     """Undo a merge at the Need checkpoint: drop the merged Need, free its originals.
 
-    Refused in the order 404 / 422 / 409 (a PLO cites it) / 409 (busy). The write
-    runs as a registered writer so a job or session starting mid-split answers 409.
+    Refused in the order 409 (busy, from `sync_writer`) / 404 / 422 / 409 (a PLO
+    cites it). Every read runs inside the writer, so what was checked is what is
+    split; the registration lets a job or session starting mid-split answer 409.
     """
-    needs = await _repo.list_by_program(program_id)
-    need = next((n for n in needs if n.need_id == need_id), None)
-    if need is None:
-        raise HTTPException(status_code=404, detail="ไม่พบ Need นี้")
-    if not need.is_merged:
-        raise HTTPException(status_code=422, detail="Need นี้ไม่ได้มาจากการรวม จึงแยกไม่ได้")
-    plos = await PLORepository().list_by_program(program_id)
-    if any(need_id in p.source_need_ids for p in plos):
-        raise HTTPException(
-            status_code=409,
-            detail="Need นี้ถูกใช้สร้าง PLO แล้ว — แยกก่อนสร้าง PLO หรือรันสังเคราะห์ PLO ใหม่หลังแยก",
-        )
     async with sync_writer(program_id, "หลักสูตรนี้กำลังแยก Need อยู่ — รอให้เสร็จก่อน"):
+        needs = await _repo.list_by_program(program_id)
+        need = next((n for n in needs if n.need_id == need_id), None)
+        if need is None:
+            raise HTTPException(status_code=404, detail="ไม่พบ Need นี้")
+        if not need.is_merged:
+            raise HTTPException(status_code=422, detail="Need นี้ไม่ได้มาจากการรวม จึงแยกไม่ได้")
+        plos = await PLORepository().list_by_program(program_id)
+        if any(need_id in p.source_need_ids for p in plos):
+            raise HTTPException(
+                status_code=409,
+                detail=("Need นี้ถูกใช้สร้าง PLO แล้ว — แยกก่อนสร้าง PLO หรือรันสังเคราะห์ PLO ใหม่หลังแยก"),
+            )
         try:
             return await _repo.split(program_id, need_id)
         except KeyError as exc:
@@ -182,19 +183,33 @@ def _skill_work(state: AgentState) -> Callable[[], Awaitable[SkillRunResult]]:
 
 
 async def _start_need_job(
-    program_id: str, body: DesignerNoteRequest | None, *, or_409: bool
+    program_id: str,
+    body: DesignerNoteRequest | None,
+    *,
+    or_409: bool,
+    state: AgentState | None = None,
 ) -> JobInfo:
-    """Agent 2 as its own job. Its state is built here, when the job starts, from
-    storage: it is the same job a `/combine/run` re-run would be, not a
-    continuation of Agent 1's in-memory state."""
+    """Agent 2 as its own job. Its state is built from storage when the job
+    starts (or handed in by a caller that already built it for its own 404): it is
+    the same job a `/combine/run` re-run would be, not a continuation of Agent 1's
+    in-memory state."""
     from curriculum_agent.stages.need_combination import run as run_needs  # noqa: PLC0415
 
-    state = await _base_state(program_id, body)
+    if state is None:
+        state = await _base_state(program_id, body)
+    job_state = state
 
     async def work() -> NeedRunResult:
-        done = await asyncio.wait_for(run_needs(state), timeout=300)
+        done = await asyncio.wait_for(run_needs(job_state), timeout=300)
+        # The stage returns the originals too, marked `merged_into`; the result is
+        # the Needs downstream stages read, or a client's count is inflated.
+        active = [
+            n
+            for n in (Need.model_validate(raw) for raw in done.get("needs", []))
+            if n.merged_into is None
+        ]
         return NeedRunResult(
-            needs=[Need.model_validate(n) for n in done.get("needs", [])],
+            needs=active,
             dropped_ungrounded_count=done.get("dropped_ungrounded_count", 0),
         )
 
@@ -257,7 +272,7 @@ async def run_need_combination(program_id: str, body: DesignerNoteRequest | None
     per-evidence LLM pass is exactly what a designer re-running this stage does
     not want repeated. The evidence corpus is not loaded at all.
     """
-    await _base_state(program_id, body)  # 404 for an unknown program
+    state = await _base_state(program_id, body)  # 404 for an unknown program
     if not await SkillRepository().list_by_program(program_id):
         raise HTTPException(
             status_code=422,
@@ -265,4 +280,4 @@ async def run_need_combination(program_id: str, body: DesignerNoteRequest | None
         )
     if not await SkillGroupRepository().list_by_program(program_id):
         raise HTTPException(status_code=422, detail="ยังไม่มีกลุ่มทักษะ กรุณารันสกัดทักษะใหม่ก่อน")
-    return await _start_need_job(program_id, body, or_409=True)
+    return await _start_need_job(program_id, body, or_409=True, state=state)

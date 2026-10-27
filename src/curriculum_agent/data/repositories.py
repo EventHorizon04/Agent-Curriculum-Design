@@ -195,7 +195,7 @@ class ProgramRepository:
         Deletes skill_groups before skills (their ids point at skill rows), and skills
         before evidence because SkillTable.source_evidence_id
         is a FK into EvidenceTable. Returns False (no-op) if program_id
-        doesn't exist — the eight prior deletes affect zero rows either way.
+        doesn't exist — the nine deletes before the program's own affect zero rows either way.
         """
         async with AsyncSessionLocal() as session:
             await session.execute(

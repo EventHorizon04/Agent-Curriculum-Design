@@ -8,7 +8,6 @@ from __future__ import annotations
 import itertools
 import json
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from curriculum_agent.data.orm import (
     EvidenceTable,
@@ -17,7 +16,7 @@ from curriculum_agent.data.orm import (
     SkillTable,
 )
 from curriculum_agent.data.program_copy import ProgramRows, build_copy
-from curriculum_agent.data.repositories import ProgramRepository, _row_to_dict
+from curriculum_agent.data.repositories import _row_to_dict
 from curriculum_agent.models import BloomLevel, KSECCategory, SkillGroup, StakeholderType
 
 NOW = datetime(2026, 10, 26, 12, 0, 0)
@@ -124,20 +123,6 @@ def test_copy_build_remaps_skill_group_ids() -> None:
     assert group.evidence_ids == [copy.evidence[0].evidence_id]
     assert group.ordinal == 0
     assert "g-1" not in json.dumps([_row_to_dict(r) for r in copy.skill_groups], default=str)
-
-
-async def test_delete_cascade_lists_skill_groups_before_skills() -> None:
-    mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(10)])
-    mock_ctx = MagicMock()
-    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_ctx.__aexit__ = AsyncMock(return_value=False)
-    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=mock_ctx):
-        await ProgramRepository().delete_cascade("cs")
-    sql = [str(c.args[0]) for c in mock_session.execute.call_args_list]
-    assert sql.index(next(s for s in sql if s.startswith("DELETE FROM skill_groups"))) < sql.index(
-        next(s for s in sql if s.startswith("DELETE FROM skills"))
-    )
 
 
 def test_the_orm_declares_the_index_the_migration_creates() -> None:

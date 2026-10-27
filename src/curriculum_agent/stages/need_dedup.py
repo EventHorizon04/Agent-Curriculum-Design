@@ -65,12 +65,23 @@ class FoldGroup:
 class AcceptedGroups(list[FoldGroup]):
     """The accepted groups, plus how many the model proposed.
 
-    A plain list to every caller. `proposed` rides along so the merge step's
-    one summary line can say how many groups the rules dropped without
-    `accept_groups` or `find_duplicate_groups` changing what they return.
+    A plain list to every caller. `proposed` and `call` ride along so the merge
+    step's one summary line can say how many groups the rules dropped, and
+    whether an empty answer means "the model found nothing" (`call == "ok"`) or
+    "there was no answer" (`"failed"`, `"disabled"`, `"skipped"` for fewer than
+    two Needs), without `accept_groups` or `find_duplicate_groups` changing what
+    they return.
     """
 
     proposed: int = 0
+    call: str = "ok"
+
+    @classmethod
+    def with_call(cls, call: str) -> AcceptedGroups:
+        """An empty result that says why it is empty."""
+        empty = cls()
+        empty.call = call
+        return empty
 
 
 def label_needs(needs: list[Need]) -> dict[str, Need]:
@@ -90,7 +101,7 @@ def _rejection(known: list[str], taken: set[str]) -> str | None:
     return None
 
 
-def accept_groups(answer: DedupAnswer, labelled: dict[str, Need]) -> list[FoldGroup]:
+def accept_groups(answer: DedupAnswer, labelled: dict[str, Need]) -> AcceptedGroups:
     """The groups that break no structural rule, first group winning a contested Need."""
     order = {label: i for i, label in enumerate(labelled)}
     taken: set[str] = set()
@@ -118,7 +129,7 @@ def accept_groups(answer: DedupAnswer, labelled: dict[str, Need]) -> list[FoldGr
     return accepted
 
 
-async def find_duplicate_groups(needs: list[Need], metadata: ProgramMetadata) -> list[FoldGroup]:
+async def find_duplicate_groups(needs: list[Need], metadata: ProgramMetadata) -> AcceptedGroups:
     """One call over the in-scope Needs, already in synthesis order.
 
     Returns no groups — today's one-slot-per-Need behaviour — when the slot is
@@ -127,9 +138,9 @@ async def find_duplicate_groups(needs: list[Need], metadata: ProgramMetadata) ->
     """
     if not settings.need_dedup_provider:
         logger.info("need_dedup: disabled — every Need gets its own slot")
-        return []
+        return AcceptedGroups.with_call("disabled")
     if len(needs) < 2:
-        return []
+        return AcceptedGroups.with_call("skipped")
 
     labelled = label_needs(needs)
     messages = build_need_dedup_prompt(
@@ -142,5 +153,5 @@ async def find_duplicate_groups(needs: list[Need], metadata: ProgramMetadata) ->
         )
     except Exception as exc:
         logger.warning(f"need_dedup: call failed, folding nothing: {exc}")
-        return []
+        return AcceptedGroups.with_call("failed")
     return accept_groups(answer, labelled)

@@ -313,3 +313,49 @@ def test_plain_columns_are_not_remapped_by_a_coincidental_id_match() -> None:
     assert copy.skills[0].source_stakeholder_type == "employer"
     # The reference column: rewritten to the new evidence id.
     assert copy.skills[0].source_evidence_id == new_evidence_id
+
+
+def _need_row(need_id: str, statement: str, **extra: object) -> NeedTable:
+    return NeedTable(
+        need_id=need_id,
+        program_id="program-2",
+        statement_th=statement,
+        rationale_th="ทุกทักษะในกลุ่มเป็นการสื่อสารกับลูกค้า",
+        ksec_categories=["S"],
+        bloom_level="apply",
+        member_skill_ids=["sk-1"],
+        source_evidence_ids=["ev-1"],
+        stakeholder_coverage={"employer": 1},
+        source_stakeholder_types=["employer"],
+        freq=1,
+        demand_score=0.5,
+        is_optional=False,
+        classification_coverage={"want": 1},
+        in_field_skill_count=1,
+        graduate_capability_skill_count=1,
+        **extra,
+    )
+
+
+def test_a_copied_merge_points_at_the_copys_own_merged_need() -> None:
+    from dataclasses import replace
+
+    src = replace(
+        _source(),
+        needs=[
+            _need_row("o-1", "ต้องการบัณฑิตที่สื่อสารภาษาอังกฤษได้ ข้อ v1", merged_into="m-1"),
+            _need_row("o-2", "ต้องการบัณฑิตที่สื่อสารภาษาอังกฤษได้ ข้อ v2", merged_into="m-1"),
+            _need_row("m-1", "ต้องการบัณฑิตที่สื่อสารภาษาอังกฤษได้ ข้อ vM", merged_from=["o-1", "o-2"]),
+        ],
+        plos=[],
+    )
+
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+
+    by_statement = {n.statement_th.rsplit(" ", 1)[-1]: n for n in copy.needs}
+    first, second, merged = by_statement["v1"], by_statement["v2"], by_statement["vM"]
+    assert {first.need_id, second.need_id, merged.need_id}.isdisjoint({"o-1", "o-2", "m-1"})
+    assert first.merged_into == merged.need_id
+    assert second.merged_into == merged.need_id
+    assert merged.merged_into is None
+    assert merged.merged_from == [first.need_id, second.need_id]

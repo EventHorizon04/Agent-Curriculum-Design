@@ -44,7 +44,6 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.prompts.merged_need import build_merged_need_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
-from curriculum_agent.stages.need_combination import STATEMENT_MAX_TOKENS, NeedStatement
 from curriculum_agent.stages.need_dedup import FoldGroup, find_duplicate_groups
 from curriculum_agent.stages.need_grouping import (
     MAX_CORE_PLOS,
@@ -55,6 +54,7 @@ from curriculum_agent.stages.need_grouping import (
     merge_bloom,
     normalize_need_name,
 )
+from curriculum_agent.stages.need_statement import STATEMENT_MAX_TOKENS, NeedStatement
 from curriculum_agent.stages.skill_grouping import score_members
 
 # How many of a merged Need's pooled skills its sentence is written from and its
@@ -271,7 +271,9 @@ async def merge_duplicates(
     """
     eligible = _demand_order([n for n in needs if is_in_scope(n) and not is_unwritten_need(n)])
     folds = await find_duplicate_groups(eligible, metadata)
+    # A plain list (a test double) carries neither attribute: it is an answer.
     proposed = getattr(folds, "proposed", len(folds))
+    dedup_call = getattr(folds, "call", "ok")
     accepted = len(folds)
     # Before any sentence is written, so an unfolded group costs no call.
     kept = enforce_merge_floor(eligible, folds) if folds else []
@@ -307,12 +309,13 @@ async def merge_duplicates(
         stored += merged
     # One line per run, so the step's effect can be read off the log alone:
     # without it a run that proposed three groups and merged none looks the same
-    # as one the model found nothing in.
+    # as one the model found nothing in, and `dedup_call` separates both from a
+    # call that failed or was switched off (proposed=0 in all three).
     logger.info(
         f"need_merge: groups proposed={proposed} accepted={accepted} "
         f"unfolded_for_floor={accepted - len(kept)} "
         f"sentence_failed={len(kept) - len(merged)} merged={len(merged)} "
         f"multi_tag_merged={sum(1 for m in merged if len(m.ksec_categories) > 1)} "
-        f"core_needs={_core_count(needs)}->{_core_count(stored)}"
+        f"core_needs={_core_count(needs)}->{_core_count(stored)} dedup_call={dedup_call}"
     )
     return stored

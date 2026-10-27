@@ -244,8 +244,17 @@ def test_skills_run_does_not_chain(
 
 
 def test_agent2_failure_keeps_agent1_output_and_old_needs(
-    stages: _Stages, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+    monkeypatch: pytest.MonkeyPatch,
+    stages: _Stages,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
 ) -> None:
+    from curriculum_agent.data.repositories import NeedRepository  # noqa: PLC0415
+
+    need_delete = AsyncMock(return_value=0)
+    need_insert = AsyncMock()
+    monkeypatch.setattr(NeedRepository, "delete_by_program", need_delete)
+    monkeypatch.setattr(NeedRepository, "bulk_insert", need_insert)
     stages.needs.side_effect = RuntimeError("clustering down")
 
     client.post("/programs/cs-test/needs/run")
@@ -255,8 +264,10 @@ def test_agent2_failure_keeps_agent1_output_and_old_needs(
     assert by_kind["skill_extraction"].status == "succeeded"
     assert by_kind["need_combination"].status == "failed"
     assert by_kind["need_combination"].error_th == "clustering down"
-    # The fake need stage raised before returning, so nothing was stored or deleted.
+    # Agent 2 failed before storing: the old Needs were neither deleted nor replaced.
     stages.grouping.assert_awaited_once()
+    need_delete.assert_not_awaited()
+    need_insert.assert_not_awaited()
 
 
 def test_combine_run_422_without_groups(
@@ -307,6 +318,43 @@ def test_combine_run_result_is_the_old_need_run_result_body(
     job = jobs_store.rows[r.json()["job_id"]]
     assert [n["need_id"] for n in job.result["needs"]] == ["N1"]
     assert job.result["dropped_ungrounded_count"] == 3
+
+
+def test_combine_run_result_lists_active_needs_only(
+    stages: _Stages, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    """The stage hands back the originals too (marked `merged_into`); the result's
+    count must be the Needs downstream stages read."""
+    kept = _need()
+    original = kept.model_copy(update={"need_id": "N2", "merged_into": "M1"})
+    merged = kept.model_copy(update={"need_id": "M1", "merged_from": ["N2", "N3"]})
+
+    async def returns_stored(state: dict[str, object]) -> dict[str, object]:
+        stored = [kept, original, merged]
+        return {**state, "needs": [n.model_dump(mode="json") for n in stored]}
+
+    stages.needs.side_effect = returns_stored
+
+    r = client.post("/programs/cs-test/needs/combine/run")
+    spawned.drain()
+
+    job = jobs_store.rows[r.json()["job_id"]]
+    assert [n["need_id"] for n in job.result["needs"]] == ["N1", "M1"]
+
+
+def test_combine_run_builds_its_base_state_once(
+    monkeypatch: pytest.MonkeyPatch,
+    stages: _Stages,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
+) -> None:
+    real = needs_route._base_state
+    built = AsyncMock(side_effect=real)
+    monkeypatch.setattr(needs_route, "_base_state", built)
+
+    client.post("/programs/cs-test/needs/combine/run")
+
+    assert built.await_count == 1
 
 
 @pytest.mark.parametrize(("url", "kind", "key"), ROUTES, ids=ROUTE_IDS)
