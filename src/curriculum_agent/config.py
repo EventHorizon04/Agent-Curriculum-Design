@@ -333,6 +333,11 @@ class Settings(BaseSettings):
     # ceil(N / concurrency) x this, and turns a hung provider into one
     # code-only verdict rather than a stage that never returns.
     validation_timeout_seconds: int = 240
+    # Wall clock for each of the three Agent 1 / Agent 2 job steps (extraction,
+    # grouping, need_combination), one budget apiece. It was 300 until 2026-10-28;
+    # the designer raised it while run time is not a concern on this branch, since
+    # cold GLM runs measured extraction at 240-300 s.
+    need_job_step_timeout_seconds: int = Field(default=900, ge=1)
     # The PLO set review (stages/plo_review.py). Advisory: "" (empty) switches it
     # off and the report says so; None follows LLM_PROVIDER like every slot.
     plo_review_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"

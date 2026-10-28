@@ -9,6 +9,7 @@ closure that does nothing.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from unittest.mock import AsyncMock
 
@@ -375,6 +376,37 @@ def test_a_failing_stage_fails_the_job_not_the_request(
     job = jobs_store.rows[r.json()["job_id"]]
     assert job.status == "failed"
     assert job.error_th == "endpoint down"
+
+
+@pytest.mark.parametrize(
+    ("url", "step"),
+    [
+        (ROUTES[0][0], "skills"),
+        (ROUTES[0][0], "grouping"),
+        (ROUTES[2][0], "needs"),
+    ],
+    ids=["extraction", "grouping", "need_combination"],
+)
+def test_each_step_is_bounded_by_the_timeout_setting(
+    url: str,
+    step: str,
+    stages: _Stages,
+    jobs_store: InMemoryJobs,
+    spawned: SpawnRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def slow(state: dict[str, object]) -> dict[str, object]:
+        await asyncio.sleep(5)
+        return state
+
+    getattr(stages, step).side_effect = slow
+    monkeypatch.setattr(needs_route.settings, "need_job_step_timeout_seconds", 0.05)
+
+    r = client.post(url)
+    assert r.status_code == 202
+    spawned.drain()
+
+    assert jobs_store.rows[r.json()["job_id"]].status == "failed"
 
 
 # --- preconditions stay synchronous and create no job row -------------------

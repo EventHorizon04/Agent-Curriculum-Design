@@ -8,6 +8,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from curriculum_agent.api.jobs import JobConflict, start_job, start_job_or_409, sync_writer
+from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
@@ -167,13 +168,15 @@ async def _build_stage_state(program_id: str, body: DesignerNoteRequest | None) 
 
 
 def _skill_work(state: AgentState) -> Callable[[], Awaitable[SkillRunResult]]:
-    """Agent 1: extraction, then grouping, each under its own 300 s budget."""
+    """Agent 1: extraction, then grouping, each under its own
+    `need_job_step_timeout_seconds` budget."""
     from curriculum_agent.stages.skill_extraction import run as run_skills  # noqa: PLC0415
     from curriculum_agent.stages.skill_grouping import run as run_grouping  # noqa: PLC0415
 
     async def work() -> SkillRunResult:
-        done = await asyncio.wait_for(run_skills(state), timeout=300)
-        done = await asyncio.wait_for(run_grouping(done), timeout=300)
+        budget = settings.need_job_step_timeout_seconds
+        done = await asyncio.wait_for(run_skills(state), timeout=budget)
+        done = await asyncio.wait_for(run_grouping(done), timeout=budget)
         return SkillRunResult(
             skills=[ExtractedSkill.model_validate(s) for s in done.get("extracted_skills", [])],
             dropped_ungrounded_count=done.get("dropped_ungrounded_count", 0),
@@ -200,7 +203,9 @@ async def _start_need_job(
     job_state = state
 
     async def work() -> NeedRunResult:
-        done = await asyncio.wait_for(run_needs(job_state), timeout=300)
+        done = await asyncio.wait_for(
+            run_needs(job_state), timeout=settings.need_job_step_timeout_seconds
+        )
         # The stage returns the originals too, marked `merged_into`; the result is
         # the Needs downstream stages read, or a client's count is inflated.
         active = [
