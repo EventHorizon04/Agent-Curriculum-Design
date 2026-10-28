@@ -165,3 +165,32 @@ async def test_map_reduce_path_batches_then_merges():
     assert llm.call_count == 3  # 2 batch passes + 1 merge
     assert groups == [sorted(range(160))]
     cache.set.assert_called_once()
+
+
+async def test_both_clustering_calls_bound_hidden_reasoning():
+    names = [f"skill-{i}" for i in range(160)]  # 2 batch passes + 1 merge
+    batch_sizes = iter([100, 60])
+
+    async def dispatch(response_model, messages, **kwargs):
+        if response_model is ClusterAssignmentsResponse:
+            size = next(batch_sizes)
+            return ClusterAssignmentsResponse(
+                clusters=[ClusterAssignment(label_th="กลุ่ม", member_indices=list(range(size)))]
+            )
+        return MergeGroupsResponse(groups=[[0, 1]])
+
+    with (
+        patch(
+            "curriculum_agent.stages.llm_clustering.complete_clustering",
+            new=AsyncMock(side_effect=dispatch),
+        ) as llm,
+        patch(
+            "curriculum_agent.stages.llm_clustering.LLMCacheRepository",
+            return_value=_mock_cache(),
+        ),
+    ):
+        await cluster_skill_names(names)
+
+    models = [c.args[0] for c in llm.call_args_list]
+    assert ClusterAssignmentsResponse in models and MergeGroupsResponse in models
+    assert all(c.kwargs.get("reasoning_max_tokens") == 1024 for c in llm.call_args_list)

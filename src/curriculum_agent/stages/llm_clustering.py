@@ -160,6 +160,15 @@ def is_valid_partition(groups: list[list[int]], n: int) -> bool:
     return len(seen) == n
 
 
+# Bounds the model's hidden reasoning on both clustering calls. Unbounded, GLM's
+# reasoning took 234s on one 45-name S-bucket call on 2026-10-28 (375s on an
+# earlier probe), against the 300s Agent 1 grouping budget. The bound is sent
+# only to OpenRouter. `.claude/rules/llm-slots.md` notes this endpoint may treat
+# any bound as reasoning off, so the grouping quality under the bound is still
+# being measured.
+_MAX_REASONING_TOKENS = 1024
+
+
 async def _cluster_pass(
     names: list[str], target_clusters: int | None = None, program_context: str | None = None
 ) -> list[tuple[str, list[int]]]:
@@ -168,6 +177,7 @@ async def _cluster_pass(
         ClusterAssignmentsResponse,
         build_cluster_skills_prompt(names, target_clusters, program_context),
         temperature=0,
+        reasoning_max_tokens=_MAX_REASONING_TOKENS,
     )
     return validate_assignments([(c.label_th, c.member_indices) for c in result.clusters], names)
 
@@ -193,6 +203,7 @@ async def _cluster_map_reduce(
         MergeGroupsResponse,
         build_merge_clusters_prompt(labels, target_clusters),
         temperature=0,
+        reasoning_max_tokens=_MAX_REASONING_TOKENS,
     )
     merged = validate_assignments([("", g) for g in merge.groups], labels)
     return [sorted(i for ci in group for i in labelled[ci][1]) for _, group in merged]
