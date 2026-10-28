@@ -269,6 +269,24 @@ async def test_a_draft_carries_the_authoritative_ids_before_it_leaves(
     assert drafted.source_need_ids == ["N1"]
 
 
+async def test_the_draft_call_bounds_output_and_hidden_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GLM once wrote 131,072 tokens of looping JSON with no cap on this call."""
+    seen: dict[str, object] = {}
+
+    async def spy(model, messages, **kw):  # noqa: ANN001, ANN003
+        seen.update(kw)
+        return ps._SingleDraftResponse(plo=_draft_for("N1"))
+
+    monkeypatch.setattr(ps, "complete_plo_synthesis", spy)
+
+    await ps.draft_from_needs(META, [_need("N1", 0.9)], "PLO1")
+
+    assert seen["max_tokens"] == 4096
+    assert seen["reasoning_max_tokens"] == 1024
+
+
 async def test_a_draft_failure_returns_none_rather_than_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

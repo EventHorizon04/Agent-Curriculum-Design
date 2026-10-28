@@ -75,6 +75,14 @@ _MAX_MALFORMED = 2
 # what may be generated, not what is billed.
 _MAX_STEP_TOKENS = 4096
 
+# Output and hidden-reasoning caps for the PLO draft call (plo_synthesis) and the
+# repair call below. Defined here because plo_synthesis already imports this
+# module, so the reverse import would be a cycle. Without a cap GLM looped while
+# writing the JSON and produced 131,072 completion tokens (finish_reason='length',
+# reasoning_tokens=0); Instructor retried twice more and the stage took 77 minutes.
+PLO_MAX_TOKENS = 4096
+PLO_REASONING_MAX_TOKENS = 1024
+
 # Ceiling on one step's *hidden* reasoning, used only after a step ran away. The
 # validation model on OpenRouter spends one max_tokens on reasoning and answer
 # alike, and nothing stops the first from taking all of it: on stored OPT1 it
@@ -403,6 +411,8 @@ async def _repair(
                 keep_th=action.keep_th,
             ),
             max_retries=2,
+            max_tokens=PLO_MAX_TOKENS,
+            reasoning_max_tokens=PLO_REASONING_MAX_TOKENS,
         )
     except Exception as exc:
         logger.warning(f"  SMART agent {ctx.plo_id}: repair call failed: {exc}")

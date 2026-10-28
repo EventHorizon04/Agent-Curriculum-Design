@@ -27,6 +27,8 @@ from curriculum_agent.stages.need_grouping import (
     is_unwritten_need,
 )
 from curriculum_agent.stages.smart_agent import (
+    PLO_MAX_TOKENS,
+    PLO_REASONING_MAX_TOKENS,
     ValidationReason,
     hard_findings_for,
     run_smart_agent,
@@ -259,6 +261,8 @@ async def draft_from_needs(
             _SingleDraftResponse,
             build_plo_from_need_prompt(metadata, needs, note_th=note_th),
             max_retries=_MAX_RETRIES,
+            max_tokens=PLO_MAX_TOKENS,
+            reasoning_max_tokens=PLO_REASONING_MAX_TOKENS,
         )
     except Exception as exc:
         ids = ", ".join(n.need_id for n in needs)

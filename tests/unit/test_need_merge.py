@@ -465,7 +465,8 @@ async def test_the_merged_sentence_call_sets_an_explicit_output_cap(
     )
 
     assert kwargs
-    assert all(kw.get("max_tokens") == nc.STATEMENT_MAX_TOKENS for kw in kwargs)
+    assert all(kw.get("max_tokens") == 4096 for kw in kwargs)
+    assert all(kw.get("reasoning_max_tokens") == 1024 for kw in kwargs)
 
 
 def test_need_statement_lives_in_a_leaf_and_is_still_exported_from_need_combination() -> None:

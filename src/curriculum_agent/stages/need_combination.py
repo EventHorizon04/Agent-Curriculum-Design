@@ -29,6 +29,7 @@ from curriculum_agent.stages.need_grouping import (
 from curriculum_agent.stages.need_merge import merge_duplicates
 from curriculum_agent.stages.need_statement import (
     STATEMENT_MAX_TOKENS,
+    STATEMENT_REASONING_MAX_TOKENS,
     DesignerInputUse,
     NeedStatement,
     NotCovered,
@@ -177,6 +178,7 @@ async def _write_statement(
             ),
             max_retries=_STATEMENT_ATTEMPTS,
             max_tokens=STATEMENT_MAX_TOKENS,
+            reasoning_max_tokens=STATEMENT_REASONING_MAX_TOKENS,
         )
         _log_coverage(group, written)
         return written, False

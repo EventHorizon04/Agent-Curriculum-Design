@@ -295,6 +295,34 @@ async def test_a_repair_carries_the_new_verb_with_the_new_sentence(
     assert result.action_verb_th == "ประเมิน"
 
 
+async def test_the_repair_call_bounds_output_and_hidden_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _drive(
+        monkeypatch,
+        [
+            sa.RequestRepair(
+                kind="request_repair",
+                instruction_th="แก้คำกริยา",
+                criteria=[SmartFindingCode.M_FORBIDDEN],
+            ),
+            _finish(),
+        ],
+    )
+    seen: dict[str, Any] = {}
+
+    async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
+        seen.update(kw)
+        return ps._SingleDraftResponse(plo=_draft("ประเมินคุณภาพของระบบได้", "ประเมิน"))
+
+    monkeypatch.setattr(sa, "complete_plo_synthesis", fake_repair)
+
+    await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert seen["max_tokens"] == 4096
+    assert seen["reasoning_max_tokens"] == 1024
+
+
 async def test_a_repair_re_pins_the_evidence_trail(monkeypatch: pytest.MonkeyPatch) -> None:
     """Behaviour 4: the gate judges the ids that ship, not the model's echo. A
     replacement draft is a fresh object the model filled in, so the pin has to

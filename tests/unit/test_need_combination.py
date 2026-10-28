@@ -1039,4 +1039,5 @@ async def test_the_sentence_call_sets_an_explicit_output_cap(monkeypatch: pytest
     )
 
     assert kwargs
-    assert all(kw.get("max_tokens") == nc.STATEMENT_MAX_TOKENS for kw in kwargs)
+    assert all(kw.get("max_tokens") == 4096 for kw in kwargs)
+    assert all(kw.get("reasoning_max_tokens") == 1024 for kw in kwargs)

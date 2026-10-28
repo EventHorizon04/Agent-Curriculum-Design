@@ -54,7 +54,11 @@ from curriculum_agent.stages.need_grouping import (
     merge_bloom,
     normalize_need_name,
 )
-from curriculum_agent.stages.need_statement import STATEMENT_MAX_TOKENS, NeedStatement
+from curriculum_agent.stages.need_statement import (
+    STATEMENT_MAX_TOKENS,
+    STATEMENT_REASONING_MAX_TOKENS,
+    NeedStatement,
+)
 from curriculum_agent.stages.skill_grouping import score_members
 
 # How many of a merged Need's pooled skills its sentence is written from and its
@@ -217,6 +221,7 @@ async def _write_merged(
             ),
             max_retries=_ATTEMPTS,
             max_tokens=STATEMENT_MAX_TOKENS,
+            reasoning_max_tokens=STATEMENT_REASONING_MAX_TOKENS,
         )
     except Exception as exc:
         logger.warning(

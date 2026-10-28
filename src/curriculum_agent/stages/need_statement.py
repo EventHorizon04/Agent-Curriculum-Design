@@ -27,7 +27,13 @@ from curriculum_agent.stages.need_grouping import (
 # Output cap for a Need-sentence call. The provider default (512 on opentyphoon)
 # truncated the JSON: 30 listed members with a note each, plus the statement and
 # rationale, need ~1.6k tokens. Measured finish_reason='length' at 512 on 2026-10-27.
-STATEMENT_MAX_TOKENS = 2048
+# At 2048 GLM spent the whole budget on hidden reasoning (15 calls hit
+# finish_reason='length', 4 of 12 Needs fell back, 2026-10-28), so reasoning is
+# now bounded separately and the cap is 4096: the bounded reasoning budget must
+# still leave room for the ~1.6k-token answer.
+STATEMENT_MAX_TOKENS = 4096
+# Hidden-reasoning budget for the same calls, sent only to OpenRouter.
+STATEMENT_REASONING_MAX_TOKENS = 1024
 
 
 # The three reasons a shown member can be left out of the sentence. Checked
