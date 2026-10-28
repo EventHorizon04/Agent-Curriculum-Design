@@ -111,6 +111,7 @@ def test_model_defaults_follow_the_ollama_provider():
     # is the arrangement someone running fully local wants.
     s = Settings(
         _env_file=None,
+        pipeline_provider=None,
         llm_provider="ollama",
         clustering_provider=None,
         plo_synthesis_provider=None,
@@ -143,7 +144,7 @@ def test_the_default_provider_is_thai_first():
     reads back. Heavy, extraction and validation each run on their own endpoint
     for reasons pinned in their own tests.
     """
-    s = Settings(_env_file=None)
+    s = Settings(_env_file=None, pipeline_provider=None)
     assert s.llm_provider == "opentyphoon"
     assert s.need_combination_model == "typhoon-v2.5-30b-a3b-instruct"
 
@@ -167,7 +168,12 @@ def test_the_validation_model_follows_its_own_provider_not_the_default():
     """Each model falls back to *its own* provider's default. Pointing
     validation at Ollama and leaving VALIDATION_MODEL unset must not send a
     Typhoon model name to Ollama."""
-    s = Settings(_env_file=None, llm_provider="opentyphoon", validation_provider="ollama")
+    s = Settings(
+        _env_file=None,
+        pipeline_provider=None,
+        llm_provider="opentyphoon",
+        validation_provider="ollama",
+    )
     assert s.validation_model == "gemma4:31b-cloud"
     assert s.need_combination_model == "typhoon-v2.5-30b-a3b-instruct"
 
@@ -241,7 +247,7 @@ def test_cors_origins_can_be_emptied_for_same_origin_serving():
 def test_clustering_gets_its_own_provider_and_model():
     """Heavy is LLM clustering alone. It reasons over a whole KSEC bucket in one
     context and returns a grouping, not prose, so it runs on the larger model."""
-    s = Settings(_env_file=None)
+    s = Settings(_env_file=None, pipeline_provider=None)
     assert s.llm_provider == "opentyphoon"
     assert s.clustering_provider == "openrouter"
     # Its own choice, not OpenRouter's default: glm's reasoning outran the
@@ -255,7 +261,7 @@ def test_plo_synthesis_gets_its_own_provider_and_model():
     so neither could move without the other — and they want opposite things:
     clustering wants the larger model, while the PLO statement is Thai that goes
     to MHESI over a curriculum designer's name."""
-    s = Settings(_env_file=None)
+    s = Settings(_env_file=None, pipeline_provider=None)
     assert s.plo_synthesis_provider == "opentyphoon"
     assert s.plo_synthesis_model == "typhoon-v2.5-30b-a3b-instruct"
     assert s.clustering_provider == "openrouter"
@@ -284,7 +290,7 @@ def test_plo_synthesis_provider_unset_follows_the_default_provider():
 
 
 def test_an_explicit_plo_synthesis_model_survives_the_provider_default():
-    s = Settings(_env_file=None, plo_synthesis_model="typhoon-v2.5-70b")
+    s = Settings(_env_file=None, pipeline_provider=None, plo_synthesis_model="typhoon-v2.5-70b")
     assert s.plo_synthesis_provider == "opentyphoon"
     assert s.plo_synthesis_model == "typhoon-v2.5-70b"
 

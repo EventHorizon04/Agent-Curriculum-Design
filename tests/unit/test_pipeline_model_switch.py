@@ -14,8 +14,8 @@ def _resolved(s: Settings) -> dict[str, tuple[str, str]]:
     }
 
 
-def test_unset_pipeline_matches_today_per_slot() -> None:
-    baseline = _resolved(Settings(_env_file=None))
+def test_opted_out_pipeline_matches_explicit_none_and_empty_model() -> None:
+    baseline = _resolved(Settings(_env_file=None, pipeline_provider=None))
     explicit = _resolved(Settings(_env_file=None, pipeline_provider=None, pipeline_model=""))
     assert explicit == baseline
 
@@ -65,9 +65,9 @@ def test_pipeline_provider_without_model_uses_slot_defaults() -> None:
     assert got["clustering"][1] == "meta-llama/llama-3.3-70b-instruct"
 
 
-def test_pipeline_model_without_provider_refused() -> None:
+def test_pipeline_model_with_pipeline_off_refused() -> None:
     with pytest.raises(ValidationError):
-        Settings(_env_file=None, pipeline_model="x/y")
+        Settings(_env_file=None, pipeline_provider=None, pipeline_model="x/y")
 
 
 # ----------------------- through the environment, not kwargs -----------------------
@@ -106,8 +106,8 @@ def test_a_slot_env_provider_beats_the_pipeline_pair(monkeypatch: pytest.MonkeyP
     assert all(v == ("openrouter", "x/y") for k, v in got.items() if k != "validation")
 
 
-# Read once from `git show main:src/curriculum_agent/config.py` (Settings(_env_file=None)
-# with no slot variable set): what each slot resolved to before PIPELINE_* existed.
+# What every slot resolves to when the pipeline pair is opted out (PIPELINE_PROVIDER=""):
+# read once from `git show main:src/curriculum_agent/config.py` with no slot variable set.
 _MAIN_RESOLUTION: dict[str, tuple[str, str]] = {
     "extraction": ("openrouter", "z-ai/glm-5.3-flash"),
     "clustering": ("openrouter", "meta-llama/llama-3.3-70b-instruct"),
@@ -119,9 +119,56 @@ _MAIN_RESOLUTION: dict[str, tuple[str, str]] = {
 }
 
 
-def test_unset_pipeline_resolves_every_slot_exactly_as_main_does(
+def test_unset_everything_resolves_every_slot_to_the_glm_pair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _clear_slot_env(monkeypatch)
 
+    assert set(_resolved(Settings(_env_file=None)).values()) == {
+        ("openrouter", "z-ai/glm-5.3-flash")
+    }
+
+
+def test_empty_pipeline_provider_env_resolves_every_slot_as_main_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_slot_env(monkeypatch)
+    monkeypatch.setenv("PIPELINE_PROVIDER", "")
+
     assert _resolved(Settings(_env_file=None)) == _MAIN_RESOLUTION
+
+
+def test_pipeline_provider_none_kwarg_resolves_every_slot_as_main_does(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_slot_env(monkeypatch)
+
+    assert _resolved(Settings(_env_file=None, pipeline_provider=None)) == _MAIN_RESOLUTION
+
+
+def test_pipeline_provider_alone_never_carries_the_glm_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _clear_slot_env(monkeypatch)
+    monkeypatch.setenv("PIPELINE_PROVIDER", "ollama")
+
+    got = _resolved(Settings(_env_file=None))
+
+    assert all(p == "ollama" for p, _ in got.values())
+    assert all(m != "z-ai/glm-5.3-flash" for _, m in got.values())
+
+
+def test_empty_pipeline_provider_with_a_model_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_slot_env(monkeypatch)
+    monkeypatch.setenv("PIPELINE_PROVIDER", "")
+    monkeypatch.setenv("PIPELINE_MODEL", "x/y")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_pipeline_model_alone_means_openrouter(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_slot_env(monkeypatch)
+    monkeypatch.setenv("PIPELINE_MODEL", "x/y")
+
+    assert set(_resolved(Settings(_env_file=None)).values()) == {("openrouter", "x/y")}

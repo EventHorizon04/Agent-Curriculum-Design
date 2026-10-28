@@ -34,6 +34,8 @@ _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
 # forgets MINIO_SECRET_KEY does not fail — it starts, connects to whatever
 # answers, and looks healthy. APP_ENV=production is what turns that into a
 # refusal at startup.
+_BRANCH_PIPELINE_PROVIDER = "openrouter"
+_BRANCH_PIPELINE_MODEL = "z-ai/glm-5.3-flash"
 _DEV_POSTGRES_DSN = "postgresql+asyncpg://curriculum:curriculum_dev@127.0.0.1:5432/curriculum_agent"
 _DEV_MINIO_ACCESS_KEY = "minioadmin"
 _DEV_MINIO_SECRET_KEY = "minioadmin_dev"
@@ -232,12 +234,16 @@ class Settings(BaseSettings):
     # here: a class-body branch on a provider field would be frozen at import
     # time and ignore .env.
     need_combination_model: str = ""
-    # One endpoint (and optionally one model) for every slot that does not set
-    # its own. Precedence per slot: own *_PROVIDER/*_MODEL, then these, then the
-    # slot default, then LLM_PROVIDER. The pair resolves together: the model is
-    # only used by slots whose provider came from PIPELINE_PROVIDER.
-    pipeline_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = None
-    pipeline_model: str = ""
+    # This branch runs every slot on one model, so the GLM pair is the default.
+    # Per slot: own *_PROVIDER/*_MODEL, then these, then slot default, then
+    # LLM_PROVIDER. The pair resolves together: the model only reaches slots whose
+    # provider came from PIPELINE_PROVIDER, and the default model belongs to the
+    # default provider only. PIPELINE_PROVIDER="" turns the pair off and every slot
+    # resolves per slot, as on main.
+    pipeline_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = (
+        _BRANCH_PIPELINE_PROVIDER  # type: ignore[assignment]
+    )
+    pipeline_model: str = _BRANCH_PIPELINE_MODEL
     # The Need sentence, and only that: `need_combination` calls this slot once
     # per group to write the Thai statement a PLO is later drafted from. It was
     # the `light` slot, named for a size rather than a job, and its docstring
@@ -414,10 +420,28 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
-    def _require_pipeline_provider_with_model(self) -> Settings:
-        """PIPELINE_MODEL alone is refused: a model name must not guess its endpoint."""
-        if self.pipeline_model and self.pipeline_provider is None:
-            raise ValueError("PIPELINE_MODEL requires PIPELINE_PROVIDER to be set as well.")
+    def _resolve_pipeline_pair(self) -> Settings:
+        """Normalise the pipeline pair, then refuse a model with the pair turned off.
+
+        Runs before `_apply_provider_model_defaults` (validators run in definition
+        order), so that sees only a resolved pair. "" means off and becomes None,
+        keeping every later `is None` test. The default model belongs to the
+        default provider: a provider set on its own drops it, so GLM's name never
+        lands on another endpoint. A model set explicitly while the pair is off is
+        an error, since it would silently do nothing.
+        """
+        if self.pipeline_provider == "":
+            self.pipeline_provider = None
+        fields = self.model_fields_set
+        if "pipeline_provider" in fields and "pipeline_model" not in fields:
+            self.pipeline_model = ""
+        if self.pipeline_provider is None:
+            if self.pipeline_model and "pipeline_model" in fields:
+                raise ValueError(
+                    "PIPELINE_MODEL requires PIPELINE_PROVIDER to be non-empty; "
+                    "an empty PIPELINE_PROVIDER turns the pipeline pair off."
+                )
+            self.pipeline_model = ""
         return self
 
     @model_validator(mode="after")
