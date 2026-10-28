@@ -24,6 +24,11 @@ _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "opentyphoon": "typhoon-v2.5-30b-a3b-instruct",
 }
 
+# Branch feat/four-agent-pipeline runs every slot on one model so research runs
+# compare cleanly; PIPELINE_PROVIDER="" restores the per-slot choices below.
+_BRANCH_PIPELINE_PROVIDER = "openrouter"
+_BRANCH_PIPELINE_MODEL = "z-ai/glm-5.3-flash"
+
 # The credentials this file ships so a checkout runs against the compose stack
 # with no .env at all. They are named here rather than written inline on the
 # fields because `_refuse_development_credentials_in_production` has to compare
@@ -34,8 +39,6 @@ _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
 # forgets MINIO_SECRET_KEY does not fail — it starts, connects to whatever
 # answers, and looks healthy. APP_ENV=production is what turns that into a
 # refusal at startup.
-_BRANCH_PIPELINE_PROVIDER = "openrouter"
-_BRANCH_PIPELINE_MODEL = "z-ai/glm-5.3-flash"
 _DEV_POSTGRES_DSN = "postgresql+asyncpg://curriculum:curriculum_dev@127.0.0.1:5432/curriculum_agent"
 _DEV_MINIO_ACCESS_KEY = "minioadmin"
 _DEV_MINIO_SECRET_KEY = "minioadmin_dev"
