@@ -33,7 +33,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Sequence
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, TypeVar
 
 from instructor.core.exceptions import IncompleteOutputException, InstructorRetryException
 from loguru import logger
@@ -46,10 +46,12 @@ from curriculum_agent.models import ProgramMetadata, SmartFinding
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
+    build_closing_instruction,
     build_refusal_observation,
     build_repair_observation,
     build_smart_agent_prompt,
     build_tool_observation,
+    build_turns_left_note,
 )
 from curriculum_agent.smart_vocabulary import HARD_CODES, SmartFindingCode
 from curriculum_agent.stages.smart_agent_tools import (
@@ -109,6 +111,9 @@ _MAX_REASONING_TOKENS = 1024
 # Retrying objects carry state.
 _STEP_ATTEMPTS = 2
 
+# Turns remaining at or below which each observation says so.
+_TURNS_LEFT_WARNING = 2
+
 
 def _step_retrying() -> AsyncRetrying:
     return AsyncRetrying(
@@ -117,7 +122,14 @@ def _step_retrying() -> AsyncRetrying:
     )
 
 
-async def _ask_step(messages: list[dict[str, Any]], ctx: ValidationContext) -> ValidationStep:
+_StepT = TypeVar("_StepT", bound=BaseModel)
+
+
+async def _ask_step(
+    messages: list[dict[str, Any]],
+    ctx: ValidationContext,
+    response_model: type[_StepT],
+) -> _StepT:
     """One validation step, with hidden reasoning bounded only once it ran away.
 
     A truncation on an unbounded step is re-asked at once with reasoning bounded,
@@ -127,9 +139,9 @@ async def _ask_step(messages: list[dict[str, Any]], ctx: ValidationContext) -> V
     answer itself outgrew the step cap, and the loop treats that as malformed.
     """
 
-    async def ask(reasoning_max_tokens: int | None) -> ValidationStep:
+    async def ask(reasoning_max_tokens: int | None) -> _StepT:
         return await complete_validation(
-            ValidationStep,
+            response_model,
             messages,
             max_retries=_step_retrying(),
             temperature=0,
@@ -205,6 +217,8 @@ class ValidationReason(StrEnum):
     """Why the loop stopped. Reported, logged, and folded into the diagnosis."""
 
     FINISHED = "finished"
+    # The turns ran out and one Finish-only call still produced the verdict.
+    FINISHED_AT_BUDGET = "finished_at_budget"
     TURN_BUDGET = "turn_budget"
     REPAIR_BUDGET = "repair_budget"
     PROVIDER_ERROR = "provider_error"
@@ -285,6 +299,17 @@ class ValidationStep(BaseModel):
 
     reasoning_th: str = Field(min_length=1, max_length=800)
     action: Annotated[CallTool | RequestRepair | Finish, Field(discriminator="kind")]
+
+
+class ClosingStep(BaseModel):
+    """The call made when the turns are spent: a `Finish` and nothing else.
+
+    No tool and no repair can be named, so the schema, not the prompt, is what
+    stops the model spending the extra call on more work.
+    """
+
+    reasoning_th: str = Field(min_length=1, max_length=800)
+    action: Finish
 
 
 class SmartAgentResult(BaseModel):
@@ -491,6 +516,14 @@ async def run_smart_agent(
         )
 
 
+def _with_turns_left(observation: str, turn: int) -> str:
+    """Append the turns-left note once two or fewer turns remain after this one."""
+    turns_left = settings.validation_max_turns - turn
+    if 1 <= turns_left <= _TURNS_LEFT_WARNING:
+        return f"{observation}\n{build_turns_left_note(turns_left)}"
+    return observation
+
+
 async def _loop(
     draft: Any,
     ctx: ValidationContext,
@@ -523,7 +556,7 @@ async def _loop(
     turn = 0
     for turn in range(1, settings.validation_max_turns + 1):
         try:
-            step = await _ask_step(messages, ctx)
+            step = await _ask_step(messages, ctx, ValidationStep)
         # InstructorRetryException is what a schema failure actually reaches
         # here as: instructor re-asks internally and, once the retries are
         # spent, wraps the last ValidationError rather than re-raising it. It
@@ -549,7 +582,12 @@ async def _loop(
                     turns=turn,
                 )
             messages.append(
-                {"role": "user", "content": build_refusal_observation("รูปแบบคำตอบไม่ถูกต้อง")}
+                {
+                    "role": "user",
+                    "content": _with_turns_left(
+                        build_refusal_observation("รูปแบบคำตอบไม่ถูกต้อง"), turn
+                    ),
+                }
             )
             continue
         except Exception as exc:
@@ -588,9 +626,12 @@ async def _loop(
                 messages.append(
                     {
                         "role": "user",
-                        "content": build_refusal_observation(
-                            f"แก้ไขได้ไม่เกิน {settings.validation_max_repairs} รอบ "
-                            "— สรุปผลตรวจด้วย finish"
+                        "content": _with_turns_left(
+                            build_refusal_observation(
+                                f"แก้ไขได้ไม่เกิน {settings.validation_max_repairs} รอบ "
+                                "— สรุปผลตรวจด้วย finish"
+                            ),
+                            turn,
                         ),
                     }
                 )
@@ -603,11 +644,16 @@ async def _loop(
             repaired = await _repair(draft, action, ctx, metadata)
             if repaired is None:
                 messages.append(
-                    {"role": "user", "content": build_refusal_observation("แก้ไขประโยคไม่สำเร็จ")}
+                    {
+                        "role": "user",
+                        "content": _with_turns_left(
+                            build_refusal_observation("แก้ไขประโยคไม่สำเร็จ"), turn
+                        ),
+                    }
                 )
                 continue
             draft, observation = repaired
-            messages.append({"role": "user", "content": observation})
+            messages.append({"role": "user", "content": _with_turns_left(observation, turn)})
             continue
 
         fingerprint = call_fingerprint(
@@ -624,8 +670,12 @@ async def _loop(
             messages.append(
                 {
                     "role": "user",
-                    "content": build_refusal_observation(
-                        f"เรียก {action.tool.value} ด้วยอาร์กิวเมนต์เดิมไปแล้ว — ใช้ข้อมูลที่มีหรือสรุปด้วย finish"
+                    "content": _with_turns_left(
+                        build_refusal_observation(
+                            f"เรียก {action.tool.value} ด้วยอาร์กิวเมนต์เดิมไปแล้ว "
+                            "— ใช้ข้อมูลที่มีหรือสรุปด้วย finish"
+                        ),
+                        turn,
                     ),
                 }
             )
@@ -645,7 +695,38 @@ async def _loop(
             "ok" if observation_result.ok else f"refused: {observation_result.error_th or ''}"
         )
         logger.debug(f"  SMART agent {ctx.plo_id} turn {turn}: {action.tool.value} {outcome_th}")
-        messages.append({"role": "user", "content": build_tool_observation(observation_result)})
+        messages.append(
+            {
+                "role": "user",
+                "content": _with_turns_left(build_tool_observation(observation_result), turn),
+            }
+        )
+
+    # The turns are spent without a Finish. Discarding the run loses every soft
+    # verdict for work the model did do, so ask once more for a Finish and
+    # nothing else. This call is not a turn.
+    messages.append({"role": "user", "content": build_closing_instruction(turn)})
+    try:
+        closing = await _ask_step(messages, ctx, ClosingStep)
+    except Exception as exc:
+        logger.warning(
+            f"  SMART agent {ctx.plo_id}: closing call failed ({type(exc).__name__}): "
+            f"{_schema_failure_reason(exc)}"
+        )
+    else:
+        closing_action = closing.action
+        logger.info(
+            f"  SMART agent {ctx.plo_id}: closed at the budget turns={turn} repairs={repairs} "
+            f"evidence_reads={len(ctx.budget.evidence_reads)}"
+        )
+        return _result_from_draft(
+            draft,
+            soft_findings=_soft_findings(closing_action),
+            diagnosis_th=closing_action.diagnosis_th,
+            repair_count=repairs,
+            turns=turn,
+            reason=ValidationReason.FINISHED_AT_BUDGET,
+        )
 
     logger.warning(
         f"  SMART agent {ctx.plo_id}: turn budget exhausted after {turn} turns "

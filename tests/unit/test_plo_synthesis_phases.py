@@ -483,3 +483,40 @@ def test_every_adopted_draft_loses_the_graduate_prefix() -> None:
     adopted = ps._adopt(draft, ["N1"])
 
     assert adopted.statement_th == "วิเคราะห์ระบบสารสนเทศสำหรับงาน N1 ได้"
+
+
+async def test_a_plo_closed_at_the_budget_gets_the_code_disagrees_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A verdict the agent produced at the budget is still the agent's: when code
+    then escalates the PLO, the diagnosis says code disagreed."""
+    from curriculum_agent.stages.smart_agent import ValidationReason
+    from tests.support.smart_agent import agent_verdict
+
+    async def closes_at_budget(draft, ctx, metadata, **kw):  # noqa: ANN001, ANN003
+        return agent_verdict(
+            draft, diagnosis_th="ปิดรอบ", reason=ValidationReason.FINISHED_AT_BUDGET
+        )
+
+    monkeypatch.setattr(ps, "run_smart_agent", closes_at_budget)
+
+    plo = await ps.validate_and_build(
+        ps._PLODraft(
+            statement_th="เข้าใจหลักการออกแบบระบบสารสนเทศ",
+            bloom_level=BloomLevel.UNDERSTAND,
+            action_verb_th="เข้าใจ",
+            source_need_ids=["N1"],
+            rationale_th="เหตุผล",
+        ),
+        metadata=META,
+        needs=[_need("N1", 0.9)],
+        program_id="cs-test",
+        plo_id="PLO1",
+        known_need_ids={"N1"},
+    )
+
+    assert plo is not None
+    assert plo.smart_escalated is True
+    assert plo.smart_validated_by == "agent"
+    assert plo.smart_diagnosis_th is not None
+    assert plo.smart_diagnosis_th.startswith("โค้ดตรวจประโยคสุดท้ายแล้วยังไม่ผ่าน")

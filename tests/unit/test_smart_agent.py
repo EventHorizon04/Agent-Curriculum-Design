@@ -123,8 +123,11 @@ class FakeToolModel:
     to stub the tools.
     """
 
-    def __init__(self, script: list[Any]) -> None:
+    def __init__(self, script: list[Any], closing: Any = None) -> None:
         self._script = list(script)
+        # What the Finish-only closing call answers with: a Finish, an Exception
+        # to raise, or None for "this fake has no closing answer" (it raises).
+        self._closing = closing
         self.turns = 0
         self.tools_called: list[str] = []
         self.messages_seen: list[list[dict[str, Any]]] = []
@@ -133,6 +136,12 @@ class FakeToolModel:
     async def __call__(self, response_model, messages, **kwargs):  # noqa: ANN001, ANN003
         self.messages_seen.append([dict(m) for m in messages])
         self.kwargs_seen.append(dict(kwargs))
+        if response_model is sa.ClosingStep:
+            if isinstance(self._closing, sa.Finish):
+                return sa.ClosingStep(reasoning_th="หมดรอบ สรุปผล", action=self._closing)
+            raise (
+                self._closing if isinstance(self._closing, Exception) else RuntimeError("no close")
+            )
         self.turns += 1
         step = self._script[min(self.turns - 1, len(self._script) - 1)]
         if isinstance(step, Exception):
@@ -154,8 +163,10 @@ def _finish(**overrides: Any) -> sa.Finish:
     return sa.Finish(kind="finish", **overrides)
 
 
-def _drive(monkeypatch: pytest.MonkeyPatch, script: list[Any]) -> FakeToolModel:
-    fake = FakeToolModel(script)
+def _drive(
+    monkeypatch: pytest.MonkeyPatch, script: list[Any], closing: Any = None
+) -> FakeToolModel:
+    fake = FakeToolModel(script, closing)
     monkeypatch.setattr(sa, "complete_validation", fake)
     return fake
 
@@ -405,6 +416,53 @@ async def test_the_turn_budget_ends_the_loop_rather_than_hanging(
         sa.ValidationReason.TURN_BUDGET,
         sa.ValidationReason.REPAIR_BUDGET,
     )
+
+
+async def test_the_closing_call_turns_an_exhausted_budget_into_a_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Eight turns of tools and no finish used to discard every soft verdict. One
+    Finish-only call after the budget keeps them, and the verdict is the agent's."""
+    closing = _finish(
+        measurable_ok=False, findings_th={"M_assessable": "วัดไม่ได้"}, diagnosis_th="ปิดรอบ"
+    )
+    fake = _drive(monkeypatch, [("check_hard", {})], closing=closing)
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.reason is sa.ValidationReason.FINISHED_AT_BUDGET
+    assert result.ran is True
+    assert [f.criterion.value for f in result.soft_findings] == ["M_assessable"]
+    assert result.turns == 8
+    assert len(fake.messages_seen) == 9, "eight turns plus exactly one closing call"
+    assert "finish" in fake.messages_seen[-1][-1]["content"]
+
+
+async def test_a_failed_closing_call_falls_back_to_the_code_only_verdict(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _drive(monkeypatch, [("check_hard", {})], closing=RuntimeError("endpoint down"))
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.ran is False
+    assert result.reason is sa.ValidationReason.TURN_BUDGET
+    assert result.soft_findings == []
+    assert len(fake.messages_seen) == 9
+
+
+async def test_the_turns_left_note_appears_only_in_the_last_two_turns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake = _drive(monkeypatch, [("check_hard", {})])
+
+    await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    note_seen = ["เหลืออีก" in m[-1]["content"] for m in fake.messages_seen[:8]]
+    # messages_seen[i] is the conversation sent on turn i + 1.
+    assert note_seen == [False, False, False, False, False, False, True, True]
+    assert "เหลืออีก 2 รอบ" in fake.messages_seen[6][-1]["content"]
+    assert "เหลืออีก 1 รอบ" in fake.messages_seen[7][-1]["content"]
 
 
 async def test_a_provider_error_leaves_every_soft_verdict_true(

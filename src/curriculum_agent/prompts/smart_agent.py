@@ -181,6 +181,18 @@ def build_refusal_observation(reason_th: str) -> str:
     return f"ระบบปฏิเสธคำสั่งล่าสุด: {reason_th}"
 
 
+def build_turns_left_note(turns_left: int) -> str:
+    """Said near the end, because the model is otherwise never told the budget."""
+    return f"เหลืออีก {turns_left} รอบ — เตรียมสรุปผลตรวจด้วย finish จากข้อมูลที่มีแล้ว ไม่ต้องเรียกเครื่องมือเพิ่ม"
+
+
+def build_closing_instruction(turns: int) -> str:
+    """The one extra call after the turns are used up: a Finish and nothing else."""
+    return (
+        f"ใช้ครบ {turns} รอบแล้ว สรุปผลตรวจด้วย finish ตอนนี้จากข้อมูลที่มีอยู่ ห้ามเรียกเครื่องมือและห้ามขอแก้ประโยคอีก"
+    )
+
+
 def build_repair_observation(
     *,
     before_statement: str,
