@@ -290,6 +290,9 @@ export default function Pipeline() {
   // Null until the count is known, so the button is not disabled while loading.
   const [evidenceCount, setEvidenceCount] = useState<number | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Changes when a session appears or moves status, which is when its model calls
+  // have changed: the usage panel reloads on it instead of polling on its own.
+  const sessionsKey = sessions.map((s) => `${s.session_id}:${s.status}`).join(',')
 
   async function fetchSessions() {
     if (!programId) return
@@ -433,7 +436,7 @@ export default function Pipeline() {
         </div>
       )}
 
-      {programId && <UsagePanel programId={programId} />}
+      {programId && <UsagePanel programId={programId} refreshKey={sessionsKey} />}
 
       {sessions.map((s) => (
         <SessionCard

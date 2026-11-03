@@ -23,8 +23,17 @@ export interface JobUsage {
   by_slot: SlotUsage[]
 }
 
+/** Calls made by a graph session ("รันทั้งชุด"): a session row and no job. */
+export interface SessionUsage {
+  session_id: string
+  started: string
+  total: UsageTotals
+  by_slot: SlotUsage[]
+}
+
 export interface UsageSummary {
   total: UsageTotals
   by_slot: SlotUsage[]
   by_job: JobUsage[]
+  by_session: SessionUsage[]
 }

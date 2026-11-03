@@ -8,7 +8,7 @@
  * (classification, demand, the SMART hard gate, the 6-10 band) are mirrored.
  */
 import type { JobInfo, JobKind } from '../api/jobs'
-import type { JobUsage, SlotUsage, UsageSummary, UsageTotals } from '../api/usage'
+import type { JobUsage, SessionUsage, SlotUsage, UsageSummary, UsageTotals } from '../api/usage'
 import type { SMARTCheck, SmartFinding } from '../types/plo'
 import type { FeedbackAction, PLOSetReview } from '../types/ploReview'
 import { MAX_CORE_PLOS, MAX_MERGE_NEEDS, fallbackKind } from '../constants/needPolicy'
@@ -522,6 +522,18 @@ function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
   }
 }
 
+/** What a graph session calls, in pipeline order; a running one has only got through
+ *  the first two. */
+const SESSION_SLOTS: Array<[string, number]> = [
+  ['extraction', 24],
+  ['clustering', 3],
+  ['need_combination', 8],
+  ['need_dedup', 5],
+  ['plo_synthesis', 8],
+  ['validation', 8],
+  ['plo_review', 5],
+]
+
 const NO_USAGE: UsageTotals = {
   calls: 0,
   failed_calls: 0,
@@ -563,8 +575,39 @@ function mockUsage(pid: string): UsageSummary {
     })).reverse()
   }
   const by_job: JobUsage[] = []
+  const by_session: SessionUsage[] = []
   const slotTotals = new Map<string, SlotUsage>()
   let total = NO_USAGE
+  const addSlots = (by_slot: SlotUsage[]): UsageTotals => {
+    const blockTotal = by_slot.reduce<UsageTotals>((acc, s) => addTotals(acc, s), NO_USAGE)
+    total = addTotals(total, blockTotal)
+    for (const s of by_slot) {
+      const prev = slotTotals.get(s.slot)
+      slotTotals.set(s.slot, prev ? { ...addTotals(prev, s), slot: s.slot } : s)
+    }
+    return blockTotal
+  }
+  // Session calls carry a session id and no job id, as in the real table.
+  for (const sess of [...of(getDb().sessions, pid)].sort((a, b) =>
+    b.created_at.localeCompare(a.created_at),
+  )) {
+    const slots = sess.status === 'running' ? SESSION_SLOTS.slice(0, 2) : SESSION_SLOTS
+    const by_slot: SlotUsage[] = slots.map(([slot, calls]) => ({
+      slot,
+      calls,
+      failed_calls: sess.status === 'failed' && slot === slots[slots.length - 1][0] ? 1 : 0,
+      prompt_tokens: calls * 1850,
+      completion_tokens: calls * 420,
+      reasoning_tokens: calls * 130,
+      latency_ms: calls * 2300,
+    }))
+    by_session.push({
+      session_id: sess.session_id,
+      started: sess.created_at,
+      total: addSlots(by_slot),
+      by_slot,
+    })
+  }
   for (const job of sources) {
     const by_slot: SlotUsage[] = JOB_SLOTS[job.kind].map(([slot, calls]) => ({
       slot,
@@ -576,12 +619,7 @@ function mockUsage(pid: string): UsageSummary {
       latency_ms: calls * 2300,
     }))
     if (by_slot.length === 0) continue
-    const jobTotal = by_slot.reduce<UsageTotals>((acc, s) => addTotals(acc, s), NO_USAGE)
-    total = addTotals(total, jobTotal)
-    for (const s of by_slot) {
-      const prev = slotTotals.get(s.slot)
-      slotTotals.set(s.slot, prev ? { ...addTotals(prev, s), slot: s.slot } : s)
-    }
+    const jobTotal = addSlots(by_slot)
     by_job.push({
       job_id: job.job_id,
       kind: job.kind,
@@ -591,7 +629,9 @@ function mockUsage(pid: string): UsageSummary {
       by_slot,
     })
   }
-  return { total, by_slot: [...slotTotals.values()], by_job }
+  // The server sorts by_slot by slot name.
+  const by_slot = [...slotTotals.values()].sort((a, b) => a.slot.localeCompare(b.slot))
+  return { total, by_slot, by_job, by_session }
 }
 
 /** How long a job runs before it finishes. Short enough to click through, long
@@ -823,6 +863,8 @@ export function buildRouter(): Router {
     const pid = req.params.pid
     const db = getDb()
     if (!findProgram(pid)) return detail(404, 'ไม่พบหลักสูตรนี้')
+    const busy = busyReason(pid)
+    if (busy) return detail(409, busy)
     db.programs = db.programs.filter((p) => p.program_id !== pid)
     db.evidence = db.evidence.filter((r2) => r2.program_id !== pid)
     db.skills = db.skills.filter((r2) => r2.program_id !== pid)
