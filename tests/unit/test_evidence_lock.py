@@ -130,3 +130,70 @@ def test_lock_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     assert client.get(f"{BASE}/lock").json() == {"locked": False, "reason_th": None}
     _state(monkeypatch, skills=True)
     assert client.get(f"{BASE}/lock").json() == {"locked": True, "reason_th": EVIDENCE_LOCKED_TH}
+
+
+def test_put_clears_rationale_and_english_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    _state(monkeypatch)
+    old = _stored().model_copy(
+        update={"classification_rationale_th": "เหตุผลเดิม", "raw_text_en": "old text"}
+    )
+    with (
+        patch.object(evidence_module._repo, "get", new=AsyncMock(return_value=old)),
+        patch.object(evidence_module._repo, "bulk_insert", new=AsyncMock()),
+    ):
+        body = client.put(f"{BASE}/ev-1", json=_PUT_BODY).json()
+    assert body["classification_rationale_th"] is None
+    assert body["raw_text_en"] is None
+
+
+async def test_mutations_wait_for_the_program_lock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Check and write share program_lock; without it a job could start between them."""
+    import asyncio
+
+    from curriculum_agent.api.jobs import program_lock
+
+    _state(monkeypatch)
+    insert = AsyncMock()
+    delete = AsyncMock(return_value=True)
+    monkeypatch.setattr(evidence_module._repo, "bulk_insert", insert)
+    monkeypatch.setattr(evidence_module._repo, "get", AsyncMock(return_value=_stored()))
+    monkeypatch.setattr(evidence_module._repo, "delete", delete)
+    update = evidence_module.EvidenceUpdate(
+        stakeholder_type="professional_council", source_name="x", raw_text_th="y"
+    )
+    calls = [
+        lambda: evidence_module.upload_evidence("cs-2025", _stored()),
+        lambda: evidence_module.update_evidence("cs-2025", "ev-1", update),
+        lambda: evidence_module.delete_evidence("cs-2025", "ev-1"),
+    ]
+    for call in calls:
+        insert.reset_mock()
+        delete.reset_mock()
+        async with program_lock("cs-2025"):
+            task = asyncio.create_task(call())
+            await asyncio.sleep(0.05)
+            assert not task.done()
+            insert.assert_not_awaited()
+            delete.assert_not_awaited()
+        await task
+
+
+async def test_classify_stream_registers_as_writer_while_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from curriculum_agent.api.jobs import program_busy
+
+    monkeypatch.setattr(evidence_module, "program_busy", AsyncMock(return_value=None))
+    monkeypatch.setattr(evidence_module.SkillRepository, "has_any", AsyncMock(return_value=False))
+    monkeypatch.setattr(evidence_module.NeedRepository, "has_any", AsyncMock(return_value=False))
+    monkeypatch.setattr(
+        evidence_module.EvidenceRepository, "list_by_program", AsyncMock(return_value=[_stored()])
+    )
+    monkeypatch.setattr(evidence_module.EvidenceRepository, "bulk_insert", AsyncMock())
+    resp = await evidence_module.classify_evidence_stream("cs-busy")
+    it = resp.body_iterator.__aiter__()
+    await it.__anext__()  # "started": registered now
+    assert await program_busy("cs-busy") is not None
+    async for _ in it:
+        pass
+    assert await program_busy("cs-busy") is None

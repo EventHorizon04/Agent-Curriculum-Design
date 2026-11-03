@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.api.jobs import program_busy
+from curriculum_agent.api.jobs import program_busy, program_lock, sync_writer
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
@@ -95,9 +95,12 @@ async def upload_evidence(program_id: str, evidence: StakeholderEvidence) -> Sta
     Classification did exist, in `GET /classify-stream`, as a separate step the
     designer had to know to run. A field the code owns cannot depend on that.
     """
-    await _refuse_if_locked(program_id)
-    classified = await classify_single(evidence)
-    await _repo.bulk_insert([classified])
+    # Check and write under one lock, like every other short writer: a job that
+    # started between them would read the old text while this commit lands.
+    async with program_lock(program_id):
+        await _refuse_if_locked(program_id)
+        classified = await classify_single(evidence)
+        await _repo.bulk_insert([classified])
     return classified
 
 
@@ -108,20 +111,25 @@ async def update_evidence(
     program_id: str, evidence_id: str, body: EvidenceUpdate
 ) -> StakeholderEvidence:
     """Edit what the designer typed; the id stays and the class is re-derived."""
-    await _refuse_if_locked(program_id)
-    existing = await _repo.get(program_id, evidence_id)
-    if existing is None:
-        raise HTTPException(status_code=404, detail="ไม่พบหลักฐานนี้")
-    updated = existing.model_copy(
-        update={
-            "stakeholder_type": body.stakeholder_type,
-            "source_name": body.source_name,
-            "raw_text_th": body.raw_text_th,
-            "source_url": body.source_url,
-            "classification": classify_evidence_type(body.stakeholder_type),
-        }
-    )
-    await _repo.bulk_insert([updated])
+    async with program_lock(program_id):
+        await _refuse_if_locked(program_id)
+        existing = await _repo.get(program_id, evidence_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="ไม่พบหลักฐานนี้")
+        # The rationale and the English text described the old text and type, so
+        # they go back to their defaults rather than outliving what they explain.
+        updated = existing.model_copy(
+            update={
+                "stakeholder_type": body.stakeholder_type,
+                "source_name": body.source_name,
+                "raw_text_th": body.raw_text_th,
+                "source_url": body.source_url,
+                "classification": classify_evidence_type(body.stakeholder_type),
+                "classification_rationale_th": None,
+                "raw_text_en": None,
+            }
+        )
+        await _repo.bulk_insert([updated])
     return updated
 
 
@@ -131,29 +139,36 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
     await _refuse_if_locked(program_id)
 
     async def _generate() -> AsyncGenerator[str, None]:
-        repo = EvidenceRepository()
-        items = await repo.list_by_program(program_id)
-        to_classify = items
-        total = len(to_classify)
+        # Registered for the whole stream: it rewrites evidence item by item, and
+        # a job starting mid-stream would read a half-rewritten set. The
+        # registration is dropped when the stream ends or the client disconnects.
+        try:
+            async with sync_writer(program_id, "กำลังจัดประเภท evidence — รอให้เสร็จก่อน"):
+                repo = EvidenceRepository()
+                to_classify = await repo.list_by_program(program_id)
+                total = len(to_classify)
 
-        yield f"data: {json.dumps({'status': 'started', 'total': total})}\n\n"
+                yield f"data: {json.dumps({'status': 'started', 'total': total})}\n\n"
 
-        for i, evidence in enumerate(to_classify, 1):
-            updated = await classify_single(evidence)
-            await repo.bulk_insert([updated])
-            event = json.dumps(
-                {
-                    "status": "progress",
-                    "index": i,
-                    "total": total,
-                    "evidence_id": updated.evidence_id,
-                    "source_name": updated.source_name,
-                    "classification": updated.classification,
-                }
-            )
-            yield f"data: {event}\n\n"
+                for i, evidence in enumerate(to_classify, 1):
+                    updated = await classify_single(evidence)
+                    await repo.bulk_insert([updated])
+                    event = json.dumps(
+                        {
+                            "status": "progress",
+                            "index": i,
+                            "total": total,
+                            "evidence_id": updated.evidence_id,
+                            "source_name": updated.source_name,
+                            "classification": updated.classification,
+                        }
+                    )
+                    yield f"data: {event}\n\n"
 
-        yield f"data: {json.dumps({'status': 'done', 'total': total})}\n\n"
+                yield f"data: {json.dumps({'status': 'done', 'total': total})}\n\n"
+        except HTTPException as exc:
+            # A writer slipped in after the pre-check; the status line is already sent.
+            yield f"data: {json.dumps({'status': 'error', 'detail': exc.detail})}\n\n"
 
     return StreamingResponse(
         _generate(),
@@ -167,13 +182,14 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
 
 @router.delete("/{evidence_id}", status_code=204, dependencies=[Depends(require_api_key)])
 async def delete_evidence(program_id: str, evidence_id: str) -> None:
-    await _refuse_if_locked(program_id)
-    try:
-        deleted = await _repo.delete(program_id, evidence_id)
-    except IntegrityError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail="ลบไม่ได้ — หลักฐานนี้ถูกใช้ในการสกัดทักษะแล้ว",
-        ) from exc
+    async with program_lock(program_id):
+        await _refuse_if_locked(program_id)
+        try:
+            deleted = await _repo.delete(program_id, evidence_id)
+        except IntegrityError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="ลบไม่ได้ — หลักฐานนี้ถูกใช้ในการสกัดทักษะแล้ว",
+            ) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="ไม่พบหลักฐานนี้")
