@@ -119,7 +119,10 @@ export default function PloSynthesis() {
       try {
         const [ploRes, supersededRes, needRes] = await Promise.all([
           api.get<PLO[]>(`/programs/${programId}/plos/`),
-          api.get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`),
+          // The replaced list is secondary: its failure must not blank the PLOs.
+          api
+            .get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`)
+            .catch(() => ({ data: [] as SupersededPLO[] })),
           api.get<NeedListItem[]>(`/programs/${programId}/needs/?active_only=true`),
         ])
         setPlos(ploRes.data)
@@ -332,6 +335,14 @@ export default function PloSynthesis() {
               </button>
             </div>
           </div>
+          {/* Whatever cards the merge replaces, the call itself takes a while:
+              this is the one line that says so, and the one that is announced. */}
+          {mergeFlight && (
+            <PendingLine
+              pending={{ label: 'กำลังร่าง PLO จาก Need ที่เลือก', since: mergeFlight.since }}
+              announce
+            />
+          )}
           <div className="space-y-4">
             {plos.map(p => (
               <PLOCard
@@ -386,7 +397,7 @@ export default function PloSynthesis() {
                 disabled={selected.size < 2 || busy}
                 className="btn btn-primary"
               >
-                รวมเป็น PLO เดียว ({selected.size})
+                {merging ? 'กำลังร่าง PLO ใหม่...' : `รวมเป็น PLO เดียว (${selected.size})`}
               </button>
             </div>
           )}
@@ -508,7 +519,7 @@ interface Pending {
   since: number
 }
 
-function PendingLine({ pending }: { pending: Pending }) {
+function PendingLine({ pending, announce = false }: { pending: Pending; announce?: boolean }) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 1000)
@@ -517,7 +528,7 @@ function PendingLine({ pending }: { pending: Pending }) {
   const since = Number.isFinite(pending.since) ? pending.since : now
   const seconds = Math.max(0, Math.floor((now - since) / 1000))
   return (
-    <div className="mb-3" role="status" aria-live="polite">
+    <div className="mb-3" role={announce ? 'status' : undefined} aria-live={announce ? 'polite' : undefined}>
       <div className="relative h-1 overflow-hidden rounded-[2px] bg-sunk ring-1 ring-hair ring-inset">
         <span className="animate-run-sweep absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-stamp/25 to-transparent" />
       </div>
@@ -587,7 +598,7 @@ function PLOCard({
       } ${pending ? 'opacity-60' : ''}`}
       aria-busy={pending ? true : undefined}
     >
-      {pending && <PendingLine pending={pending} />}
+      {pending && <PendingLine pending={pending} announce={pending.label === REVALIDATING_LABEL} />}
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="flex-1 min-w-0">
@@ -670,6 +681,7 @@ function PLOCard({
               draft={draft}
               setDraft={setDraft}
               saving={saving}
+              disabled={Boolean(pending)}
               saveError={saveError}
               onSave={handleSave}
               onCancel={() => { setEditing(false); setDraft(p); setSaveError('') }}
@@ -797,6 +809,7 @@ function EditForm({
   draft,
   setDraft,
   saving,
+  disabled,
   saveError,
   onSave,
   onCancel,
@@ -804,6 +817,8 @@ function EditForm({
   draft: PLO
   setDraft: React.Dispatch<React.SetStateAction<PLO>>
   saving: boolean
+  /** A job is working on this outcome: nothing here may be saved meanwhile. */
+  disabled: boolean
   saveError: string
   onSave: () => void
   onCancel: () => void
@@ -816,6 +831,7 @@ function EditForm({
         </label>
         <textarea
           className="input record resize-none"
+          disabled={disabled}
           rows={3}
           value={draft.statement_th}
           onChange={e => setDraft(d => ({ ...d, statement_th: e.target.value }))}
@@ -826,6 +842,7 @@ function EditForm({
         <label className="field-label">Action Verb (Thai)</label>
         <input
           className="input"
+          disabled={disabled}
           value={draft.action_verb_th}
           onChange={e => setDraft(d => ({ ...d, action_verb_th: e.target.value }))}
         />
@@ -834,6 +851,7 @@ function EditForm({
         <label className="field-label">Rationale (Thai)</label>
         <textarea
           className="input resize-none"
+          disabled={disabled}
           rows={2}
           value={draft.rationale_th}
           onChange={e => setDraft(d => ({ ...d, rationale_th: e.target.value }))}
@@ -847,7 +865,7 @@ function EditForm({
       <div className="flex flex-wrap gap-2 pt-1">
         <button
           onClick={onSave}
-          disabled={saving}
+          disabled={saving || disabled}
           className="btn btn-sm btn-primary"
         >
           {saving ? 'กำลังบันทึก...' : 'บันทึก'}

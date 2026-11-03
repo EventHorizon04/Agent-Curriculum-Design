@@ -996,6 +996,8 @@ export function buildRouter(): Router {
           }
         }
         replaceRows('plos', pid, plos)
+        // A re-synthesis starts the set over, as the server's delete_by_program does.
+        getDb().superseded = (getDb().superseded ?? []).filter((x) => x.program_id !== pid)
         return ok(plos)
       },
     })
