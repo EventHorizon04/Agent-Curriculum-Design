@@ -307,6 +307,19 @@ class PLO(BaseModel):
     is_optional: bool = False  # PLO from want-dominant Need(s), exempt from the core-Need count
 ```
 
+**`SupersededPLO` — history of replaced outcomes.** `POST /plos/from-needs` replaces every PLO citing a selected Need; `PLORepository.replace` snapshots each removed row into `superseded_plos` in the same transaction as the delete. Read-only: nothing restores from it.
+
+```python
+class SupersededPLO(BaseModel):
+    id: str
+    program_id: str
+    superseded_by: str       # plo_id of the PLO that replaced it
+    superseded_at: datetime  # naive UTC in the DB; "+00:00" in JSON output
+    plo: PLO                 # the row as it stood when removed (JSONB snapshot)
+```
+
+`GET /programs/{id}/plos/superseded` lists newest first (ties by `plo_id`) and skips, with a warning, a snapshot that no longer passes `PLO.model_validate`. The table is cleared with the program's PLOs and cascade-deleted with the program; a full program copy clones it (fresh ids, remapped), `evidence_only` copies none.
+
 **One Need → one PLO, with a designer escape hatch.** `stages/plo_synthesis.run()` drafts exactly one PLO per Need — a single focused LLM call each, not a batch call over all Needs. A designer can also merge several Needs into one PLO via `POST /programs/{id}/plos/from-needs`, which calls the same `synthesize_from_needs()` function with more than one Need; that function is shared by both paths so both get identical SMART enforcement and evidence handling. When multiple Needs feed one PLO, `is_optional` is true only if *every* contributing Need is optional. `plo_report` no longer classifies the result generic vs specific — that split (and the `SS`/`GS` KSEC tags it read) no longer exists; the report shows each PLO's actual KSEC tag (`K`/`S`/`EC`/`E`/`C`) instead.
 
 **`plo_id` is assigned by code, never requested from the model.** `PLO1`..`PLOn` for the main set, ordered by descending `Need.demand_score` with `need_id` breaking ties, so `PLO1` is the capability the labour market asked for most and the numbering reproduces across re-runs on the same Needs. Supplementary outcomes from want-dominant Needs get their own `OPT1`..`OPTn` series. Helpers live in `stages/plo_synthesis.py`: `format_plo_id`, `next_plo_id` (for the designer-driven merge endpoint, which creates one outcome at a time), and `synthesis_order`.
