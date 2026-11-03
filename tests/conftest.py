@@ -103,6 +103,9 @@ def _plo_review_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
 
     monkeypatch.setattr(settings, "plo_review_provider", "")
+    # Send-back redrafts PLOs through the database and an LLM; its own tests
+    # (test_plo_feedback.py) turn it on and fake both.
+    monkeypatch.setattr(settings, "plo_review_send_back", False)
     monkeypatch.setattr(plo_review, "PLOReviewRepository", _NoStoredReview)
 
 

@@ -39,6 +39,7 @@ from curriculum_agent.models import (
     PLO,
     BloomFinding,
     BloomLevel,
+    FeedbackAction,
     KsecFinding,
     Need,
     PLOSetReview,
@@ -47,6 +48,7 @@ from curriculum_agent.models import (
     UnusedNeedFinding,
 )
 from curriculum_agent.prompts.program_context import build_program_context_th
+from curriculum_agent.stages.plo_feedback import send_back
 from curriculum_agent.stages.plo_review_agent import (
     ReviewFinish,
     UnusedVerdict,
@@ -341,7 +343,26 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
 
 
 async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
-    """Always runs, always stores. Raises ReviewAlreadyRunning or a database error."""
+    """Always runs, always stores, then sends the agreed findings back (phase 4).
+
+    Raises ReviewAlreadyRunning or a database error. The graph tail uses this form
+    and has no use for the round's trail; the REST job wants it and calls
+    `fresh_review_with_feedback`.
+    """
+    review, _feedback = await fresh_review_with_feedback(program_id, plos)
+    return review
+
+
+async def fresh_review_with_feedback(
+    program_id: str, plos: Sequence[PLO]
+) -> tuple[PLOSetReview, list[FeedbackAction]]:
+    """`fresh_review`, also returning the send-back actions of this round.
+
+    The review is stored before send-back starts and is returned whatever send-back
+    does: `send_back` does not raise, and a failure here is logged, not propagated.
+    The in-flight guard stays held through send-back, so a second review cannot
+    start against a set that is being redrafted.
+    """
     if program_id in _REVIEW_IN_FLIGHT:
         raise ReviewAlreadyRunning(
             f"กำลังตรวจชุด PLO ของโปรแกรม '{program_id}' อยู่ — รอให้รอบเดิมเสร็จก่อน"
@@ -350,7 +371,12 @@ async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
     try:
         review = await _review(program_id, plos)
         await PLOReviewRepository().upsert(review)
-        return review
+        feedback: list[FeedbackAction] = []
+        try:
+            feedback = await send_back(program_id, review)
+        except Exception as exc:
+            logger.warning(f"plo_review: send-back for {program_id} failed: {exc!r}")
+        return review, feedback
     finally:
         _REVIEW_IN_FLIGHT.discard(program_id)
 

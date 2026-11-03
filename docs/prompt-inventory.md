@@ -27,6 +27,7 @@
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
 | 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
 | 10 | เขียนประโยค Need ที่รวมจากหลายข้อ | `build_merged_need_prompt` | `stages/need_merge.py` → `_write_merged` | `need_combination` | `NeedStatement` | ❌ |
+| 11 | โน้ตสั่งเขียน PLO ใหม่ตามระดับ Bloom ที่ผู้ตรวจเสนอ | `build_bloom_redraft_note_th` | `stages/plo_feedback.py` → `_send_bloom` | `plo_synthesis` (ผ่าน `note_th` ของข้อ 5) | `_SingleDraftResponse` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -797,6 +798,25 @@ Need สำคัญที่ไม่ได้เป็น PLO:
 ทักษะเด่น (เลขลำดับ | ทักษะ | ความถี่):
 0 | <skill a> | 3
 1 | <skill b> | 1
+```
+
+---
+
+## 11. โน้ตส่งกลับเมื่อผู้ตรวจเสนอระดับ Bloom ใหม่
+
+| | |
+|---|---|
+| **builder** | `prompts/plo_feedback.py` → `build_bloom_redraft_note_th(suggested, reason_th)` |
+| **ผู้เรียก** | `stages/plo_feedback.py` → `_send_bloom` |
+| **slot / wrapper** | ไม่เรียก LLM เอง — เป็นข้อความที่ไปต่อท้าย user message ของข้อ 5 ผ่าน `note_th` (slot `plo_synthesis`) |
+| **response model** | `_SingleDraftResponse` (เดียวกับข้อ 5) |
+| **cache** | ไม่มี |
+
+คืน string ไม่ใช่ messages: ระบุระดับ Bloom ที่ผู้ตรวจเสนอและยกเหตุผลของผู้ตรวจมาตรง ๆ · ถูกอ่านเป็นแนวทางเลือกถ้อยคำ
+ตาม `NOTE_POLICY_TH` ด่าน SMART ยังมีคำสุดท้าย จึงบันทึกทั้งระดับที่ขอและระดับที่ได้ไว้ใน `plo_feedback_actions`
+
+```text
+ผู้ตรวจชุด PLO เห็นว่า PLO ข้อนี้ควรอยู่ระดับ Bloom: วิเคราะห์ (analyze) กรุณาเขียนผลลัพธ์การเรียนรู้ใหม่ในระดับนี้ โดยใช้กริยาที่วัดผลได้ในระดับนั้นเพียงตัวเดียว เหตุผลของผู้ตรวจ: "<เหตุผลของผู้ตรวจ>"
 ```
 
 ---

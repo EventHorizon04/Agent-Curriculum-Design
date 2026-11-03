@@ -350,6 +350,10 @@ class Settings(BaseSettings):
     # How many times the QA agent reads the same dossier, in parallel; the stored
     # review keeps what a majority agrees on. 1 restores the single-run review.
     plo_review_runs: int = Field(default=5, ge=1)
+    # Phase 4: after a fresh agent review, send its agreed redundancy / Bloom /
+    # unused-Need findings back as redrafts (stages/plo_feedback.py), each with a
+    # trail row. False restores the advisory-only review.
+    plo_review_send_back: bool = True
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
     # fans out a call per evidence item, and now one per window of each item

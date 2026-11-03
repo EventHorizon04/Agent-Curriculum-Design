@@ -12,6 +12,7 @@ from curriculum_agent.api.routes import plos as plos_route
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
+    FeedbackAction,
     KSECCategory,
     Need,
     ProgramMetadata,
@@ -179,6 +180,34 @@ def test_list_superseded_returns_repository_rows(monkeypatch: pytest.MonkeyPatch
     assert body[0]["superseded_by"] == "PLO1"
     assert body[0]["superseded_at"].endswith("+00:00")
     assert body[0]["plo"]["plo_id"] == "PLO2"
+
+
+def test_list_feedback_404_unknown_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=None))
+    response = client.get("/programs/nope/plos/feedback")
+    assert response.status_code == 404
+
+
+def test_list_feedback_returns_the_trail(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = FeedbackAction(
+        id="f-1",
+        program_id="cs-test",
+        review_created_at=datetime(2026, 11, 3, 12, 0, 0),
+        kind="bloom",
+        outcome="skipped",
+        outcome_reason_th="ไม่พบ PLO นี้ในชุดปัจจุบัน",
+    )
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.PLOFeedbackRepository, "list_by_program", AsyncMock(return_value=[row])
+    )
+
+    response = client.get("/programs/cs-test/plos/feedback")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [r["id"] for r in body] == ["f-1"]
+    assert body[0]["review_created_at"].endswith("+00:00")
 
 
 def test_merging_out_of_scope_needs_is_allowed_rather_than_refused(

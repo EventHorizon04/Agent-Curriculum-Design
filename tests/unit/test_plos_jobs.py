@@ -23,6 +23,7 @@ from curriculum_agent.config import settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
+    FeedbackAction,
     JobInfo,
     KSECCategory,
     Need,
@@ -149,12 +150,14 @@ class _Env:
         self.synth = AsyncMock(side_effect=synth_run)
         self.review_run = AsyncMock(side_effect=review_run)
         self.report = AsyncMock(side_effect=report_run)
-        self.fresh_review = AsyncMock(return_value=_review())
+        self.fresh_review = AsyncMock(return_value=(_review(), []))
         self.validate = AsyncMock(side_effect=validate)
         monkeypatch.setattr("curriculum_agent.stages.plo_synthesis.run", self.synth)
         monkeypatch.setattr("curriculum_agent.stages.plo_review.run", self.review_run)
         monkeypatch.setattr("curriculum_agent.stages.plo_report.run", self.report)
-        monkeypatch.setattr("curriculum_agent.stages.plo_review.fresh_review", self.fresh_review)
+        monkeypatch.setattr(
+            "curriculum_agent.stages.plo_review.fresh_review_with_feedback", self.fresh_review
+        )
         monkeypatch.setattr(
             "curriculum_agent.stages.plo_synthesis.validate_and_build", self.validate
         )
@@ -279,6 +282,24 @@ def test_review_result_is_the_old_review_body(
     assert job.result["review"]["summary_th"] == "ดีแล้ว"
     assert job.result["stale"] is False
     assert job.result["review_enabled"] is True
+
+
+def test_review_result_carries_this_rounds_feedback(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    action = FeedbackAction(
+        program_id="cs-test",
+        review_created_at=datetime(2026, 10, 8),
+        kind="redundancy",
+        outcome="applied",
+        result_plo_id="PLO1",
+    )
+    env.fresh_review.return_value = (_review(), [action])
+
+    job = _finish(client.post(f"{BASE}/review/run"), jobs_store, spawned)
+
+    assert job.status == "succeeded", job.error_th
+    assert [f["result_plo_id"] for f in job.result["feedback"]] == ["PLO1"]
 
 
 def test_revalidate_result_is_the_old_plo_body_and_it_is_stored(

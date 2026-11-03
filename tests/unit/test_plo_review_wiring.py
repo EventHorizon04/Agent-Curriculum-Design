@@ -79,7 +79,7 @@ def test_get_review_with_none_stored() -> None:
     # conftest's kill switch has the slot off for every test, so review_enabled
     # reads false here — it answers "is the slot on", independent of whether a
     # row was ever stored.
-    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False, "feedback": []}
 
 
 def test_get_review_review_enabled_true_when_the_slot_is_on(monkeypatch) -> None:
@@ -107,7 +107,7 @@ def test_get_review_guards_a_storage_read_failure() -> None:
         rr.return_value.get = AsyncMock(side_effect=RuntimeError("db down"))
         resp = client.get("/programs/p1/plos/review")
     assert resp.status_code == 200
-    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False, "feedback": []}
 
 
 def test_get_review_with_a_failed_need_load_returns_the_review_as_stale() -> None:
@@ -139,7 +139,7 @@ def test_get_review_with_a_failed_need_load_and_no_review_stays_empty() -> None:
         rr.return_value.get = AsyncMock(return_value=None)
         needs.return_value.list_active_by_program = AsyncMock(side_effect=RuntimeError("db down"))
         resp = client.get("/programs/p1/plos/review")
-    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False, "feedback": []}
 
 
 def test_review_run_422_without_plos() -> None:
@@ -153,8 +153,8 @@ def test_review_run_with_the_slot_off_is_a_job(monkeypatch, jobs_store, spawned)
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch(
-            "curriculum_agent.stages.plo_review.fresh_review",
-            AsyncMock(return_value=_review(plo_fingerprint([_PLO], {}))),
+            "curriculum_agent.stages.plo_review.fresh_review_with_feedback",
+            AsyncMock(return_value=(_review(plo_fingerprint([_PLO], {})), [])),
         ),
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
@@ -170,7 +170,7 @@ def test_review_run_job_fails_when_the_review_raised(monkeypatch, jobs_store, sp
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch(
-            "curriculum_agent.stages.plo_review.fresh_review",
+            "curriculum_agent.stages.plo_review.fresh_review_with_feedback",
             AsyncMock(side_effect=RuntimeError("db")),
         ),
     ):
@@ -193,10 +193,10 @@ def test_review_run_409_while_a_job_is_running_on_the_program(
         status="running",
         created_at=datetime(2026, 10, 8, 3, 0),
     )
-    fresh = AsyncMock(return_value=_review(plo_fingerprint([_PLO], {})))
+    fresh = AsyncMock(return_value=(_review(plo_fingerprint([_PLO], {})), []))
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
-        patch("curriculum_agent.stages.plo_review.fresh_review", fresh),
+        patch("curriculum_agent.stages.plo_review.fresh_review_with_feedback", fresh),
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
         resp = client.post("/programs/p1/plos/review/run")
@@ -216,7 +216,7 @@ def test_review_run_job_fails_with_the_stage_message_when_its_own_guard_fires(
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
         patch(
-            "curriculum_agent.stages.plo_review.fresh_review",
+            "curriculum_agent.stages.plo_review.fresh_review_with_feedback",
             AsyncMock(side_effect=ReviewAlreadyRunning("กำลังตรวจ")),
         ),
     ):
@@ -231,7 +231,10 @@ def test_review_run_returns_the_fresh_review(monkeypatch, jobs_store, spawned) -
     fresh = _review(plo_fingerprint([_PLO], {}))
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
-        patch("curriculum_agent.stages.plo_review.fresh_review", AsyncMock(return_value=fresh)),
+        patch(
+            "curriculum_agent.stages.plo_review.fresh_review_with_feedback",
+            AsyncMock(return_value=(fresh, [])),
+        ),
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(return_value=[_PLO])
@@ -257,7 +260,10 @@ def test_review_run_reports_staleness_from_the_set_read_after_the_call(
     fresh = _review(plo_fingerprint([_PLO], {}))
     with (
         patch("curriculum_agent.api.routes.plos._repo") as repo,
-        patch("curriculum_agent.stages.plo_review.fresh_review", AsyncMock(return_value=fresh)),
+        patch(
+            "curriculum_agent.stages.plo_review.fresh_review_with_feedback",
+            AsyncMock(return_value=(fresh, [])),
+        ),
         patch("curriculum_agent.api.routes.plos.NeedRepository") as needs,
     ):
         repo.list_by_program = AsyncMock(side_effect=[[_PLO], [plo_b]])

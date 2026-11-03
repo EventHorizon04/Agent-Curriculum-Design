@@ -12,6 +12,7 @@ from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
+    PLOFeedbackRepository,
     PLORepository,
     PLOReviewRepository,
     ProgramRepository,
@@ -23,6 +24,7 @@ from curriculum_agent.models import (
     PLO,
     BloomLevel,
     DesignerNoteRequest,
+    FeedbackAction,
     JobInfo,
     Need,
     PLOSetReview,
@@ -151,6 +153,14 @@ async def list_superseded_plos(program_id: str) -> list[SupersededPLO]:
     return await SupersededPLORepository().list_by_program(program_id)
 
 
+@router.get("/feedback", response_model=list[FeedbackAction])
+async def list_feedback_actions(program_id: str) -> list[FeedbackAction]:
+    """What the PLO set review sent back, newest first — the trail of its changes."""
+    if await ProgramRepository().get(program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return await PLOFeedbackRepository().list_by_program(program_id)
+
+
 @router.get("/{plo_id}/trace", response_model=PLOTrace)
 async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     plos = await _repo.list_by_program(program_id)
@@ -275,6 +285,11 @@ class PLOReviewResponse(BaseModel):
     # Whether the agent half of the slot can run right now. "" (off) still
     # stores the code facts, so this tells "facts only" apart from "judged".
     review_enabled: bool = False
+    # What the review sent back this round (phase 4): empty when send-back is off,
+    # the review is code-only, or nothing agreed was actionable. Only the job that
+    # ran the review fills it; `GET /review` leaves it empty — `GET /feedback`
+    # has the whole trail.
+    feedback: list[FeedbackAction] = Field(default_factory=list)
 
 
 @router.get("/review", response_model=PLOReviewResponse)
@@ -328,7 +343,7 @@ async def run_plo_review(program_id: str) -> JobInfo:
 
     async def work() -> PLOReviewResponse:
         try:
-            review = await plo_review.fresh_review(program_id, plos)
+            review, feedback = await plo_review.fresh_review_with_feedback(program_id, plos)
         except plo_review.ReviewAlreadyRunning as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         # The agent can run for up to plo_review_timeout_seconds (300s); judge
@@ -339,6 +354,7 @@ async def run_plo_review(program_id: str) -> JobInfo:
             review=review,
             stale=is_stale(review, plos_now, need_demands(needs_now)),
             review_enabled=bool(settings.plo_review_provider),
+            feedback=feedback,
         )
 
     return await start_job_or_409(program_id, "plo_review", {}, work)

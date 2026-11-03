@@ -34,6 +34,7 @@ from curriculum_agent.prompts.designer_note import NOTE_HEADER_TH, NOTE_POLICY_T
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.merged_need import build_merged_need_prompt
 from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
+from curriculum_agent.prompts.plo_feedback import build_bloom_redraft_note_th
 from curriculum_agent.prompts.plo_review import (
     ReviewItem,
     build_plo_review_prompt,
@@ -206,6 +207,7 @@ def _build() -> str:
             keep_th="<สาระที่ต้องคงไว้>",
         )
     )
+    bloom_note = build_bloom_redraft_note_th(BloomLevel.ANALYZE, "<เหตุผลของผู้ตรวจ>")
     context_line = build_program_context_th({"field": "<สาขาวิชา>", "degree_level": "bachelor"})
     repair_observation = build_repair_observation(
         before_statement="<ประโยคเดิม>",
@@ -223,6 +225,7 @@ def _build() -> str:
         plo=plo,
         dedup=dedup,
         merged_need=merged_need,
+        bloom_note=bloom_note,
         review=review,
         review_observation=review_observation,
         review_refusal=review_refusal,
@@ -268,6 +271,7 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
 | 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
 | 10 | เขียนประโยค Need ที่รวมจากหลายข้อ | `build_merged_need_prompt` | `stages/need_merge.py` → `_write_merged` | `need_combination` | `NeedStatement` | ❌ |
+| 11 | โน้ตสั่งเขียน PLO ใหม่ตามระดับ Bloom ที่ผู้ตรวจเสนอ | `build_bloom_redraft_note_th` | `stages/plo_feedback.py` → `_send_bloom` | `plo_synthesis` (ผ่าน `note_th` ของข้อ 5) | `_SingleDraftResponse` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -560,6 +564,25 @@ tag หรือระดับ Bloom ที่เก็บไว้จริง
 เพราะความต้องการเดิมอยู่คนละหมวดได้ · ถ้าเขียนประโยคไม่สำเร็จ กลุ่มนั้นไม่ถูกรวม ความต้องการเดิมยังใช้งานอยู่
 
 {merged_need}
+
+---
+
+## 11. โน้ตส่งกลับเมื่อผู้ตรวจเสนอระดับ Bloom ใหม่
+
+| | |
+|---|---|
+| **builder** | `prompts/plo_feedback.py` → `build_bloom_redraft_note_th(suggested, reason_th)` |
+| **ผู้เรียก** | `stages/plo_feedback.py` → `_send_bloom` |
+| **slot / wrapper** | ไม่เรียก LLM เอง — เป็นข้อความที่ไปต่อท้าย user message ของข้อ 5 ผ่าน `note_th` (slot `plo_synthesis`) |
+| **response model** | `_SingleDraftResponse` (เดียวกับข้อ 5) |
+| **cache** | ไม่มี |
+
+คืน string ไม่ใช่ messages: ระบุระดับ Bloom ที่ผู้ตรวจเสนอและยกเหตุผลของผู้ตรวจมาตรง ๆ · ถูกอ่านเป็นแนวทางเลือกถ้อยคำ
+ตาม `NOTE_POLICY_TH` ด่าน SMART ยังมีคำสุดท้าย จึงบันทึกทั้งระดับที่ขอและระดับที่ได้ไว้ใน `plo_feedback_actions`
+
+```text
+{bloom_note}
+```
 
 ---
 
