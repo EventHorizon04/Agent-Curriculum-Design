@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from curriculum_agent.models import (
     Need,
     ProgramMetadata,
     SMARTCheck,
+    SupersededPLO,
 )
 from curriculum_agent.stages import plo_synthesis as ps_module
 from curriculum_agent.stages.need_grouping import PROVIDER_MARKER_TH, REVIEW_MARKER_TH
@@ -115,6 +117,66 @@ def merge_env(monkeypatch: pytest.MonkeyPatch) -> Callable[..., PLO]:
         return merged
 
     return _install
+
+
+def test_from_needs_refuses_six_needs(
+    merge_env: Callable[..., PLO], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    needs = [_need(f"N{i}") for i in range(1, 7)]
+    merge_env(needs, [])
+    synth = AsyncMock()
+    monkeypatch.setattr("curriculum_agent.stages.plo_synthesis.synthesize_from_needs", synth)
+    program_get = AsyncMock(return_value=_program())
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", program_get)
+
+    response = client.post(
+        "/programs/cs-test/plos/from-needs", json={"need_ids": [n.need_id for n in needs]}
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "เลือก Need 2-5 ข้อเพื่อรวมเป็น PLO"
+    synth.assert_not_called()
+    program_get.assert_not_called()
+    plos_route.PLORepository.replace.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_from_needs_accepts_five(merge_env: Callable[..., PLO]) -> None:
+    needs = [_need(f"N{i}") for i in range(1, 6)]
+    merge_env(needs, [])
+
+    response = client.post(
+        "/programs/cs-test/plos/from-needs", json={"need_ids": [n.need_id for n in needs]}
+    )
+
+    assert response.status_code == 200, response.text
+
+
+def test_list_superseded_404_unknown_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=None))
+    response = client.get("/programs/nope/plos/superseded")
+    assert response.status_code == 404
+
+
+def test_list_superseded_returns_repository_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    row = SupersededPLO(
+        id="h-1",
+        program_id="cs-test",
+        superseded_by="PLO1",
+        superseded_at=datetime(2026, 11, 3, 12, 0, 0),
+        plo=_plo("PLO2", ["N1"]),
+    )
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+    monkeypatch.setattr(
+        plos_route.SupersededPLORepository, "list_by_program", AsyncMock(return_value=[row])
+    )
+
+    response = client.get("/programs/cs-test/plos/superseded")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert [r["id"] for r in body] == ["h-1"]
+    assert body[0]["superseded_by"] == "PLO1"
+    assert body[0]["plo"]["plo_id"] == "PLO2"
 
 
 def test_merging_out_of_scope_needs_is_allowed_rather_than_refused(

@@ -15,6 +15,7 @@ from curriculum_agent.data.repositories import (
     PLORepository,
     PLOReviewRepository,
     ProgramRepository,
+    SupersededPLORepository,
 )
 from curriculum_agent.exporters.excel_matrix import export_matrix_xlsx
 from curriculum_agent.graph import AgentState
@@ -28,7 +29,9 @@ from curriculum_agent.models import (
     ProgramMetadata,
     SMARTCheck,
     StakeholderEvidence,
+    SupersededPLO,
 )
+from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.plo_review_facts import is_stale, need_demands
 
 router = APIRouter()
@@ -138,6 +141,14 @@ async def get_validation_status(program_id: str) -> ValidationStatusResponse:
     return ValidationStatusResponse(
         enabled=enabled, model=settings.validation_model if enabled else ""
     )
+
+
+@router.get("/superseded", response_model=list[SupersededPLO])
+async def list_superseded_plos(program_id: str) -> list[SupersededPLO]:
+    """PLOs a designer's merge replaced, newest first — read-only history."""
+    if await ProgramRepository().get(program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return await SupersededPLORepository().list_by_program(program_id)
 
 
 @router.get("/{plo_id}/trace", response_model=PLOTrace)
@@ -357,6 +368,11 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     behind two PLOs. The registration makes every other writer answer 409 for the
     length of the call without this route holding `program_lock` across it.
     """
+    # First, so an oversized request costs no lock, no read and no LLM call. The
+    # lower bound is the model's `min_length`; the upper one is the dedup group cap.
+    if len(body.need_ids) > MAX_GROUP_SIZE:
+        raise HTTPException(status_code=422, detail=f"เลือก Need 2-{MAX_GROUP_SIZE} ข้อเพื่อรวมเป็น PLO")
+
     program = await ProgramRepository().get(program_id)
     if program is None:
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
