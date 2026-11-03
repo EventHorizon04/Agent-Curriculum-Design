@@ -10,10 +10,11 @@ paths:
 Moved out of the root CLAUDE.md so it loads only when working on the files above.
 These are standing project rules, not suggestions — same weight as CLAUDE.md.
 
-- **The QA review advises; nothing reads it back, and the agent is given little
-  on purpose.** `stages/plo_review.py` stores findings and the stage 06 page
-  shows them, and no code path turns a finding into a change — a KSEC suggestion
-  is not a PLO KSEC field and a redundancy is not a merge. **Every number is
+- **The agent is given little on purpose, and the review changes nothing
+  itself.** `stages/plo_review.py` stores findings and the stage 06 page shows
+  them; the only thing that turns a finding into a change is send-back (last
+  bullet), run by code after the review is stored. A KSEC suggestion is never a
+  PLO KSEC field. **Every number is
   code's:** `stages/plo_review_facts.py` computes the dossier, the KSEC coverage
   and the Bloom histogram (both count every PLO, optional ones included — the
   designer's decision of 2026-10-12 — while `core_count` against the 6-10 band
@@ -47,3 +48,30 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   one as stage 06. Entries `accept_review` refuses are counted in
   `dropped_findings` and the stage 06 page warns, because the agent's
   `summary_th` is not re-checked and can still mention a dropped finding.
+- **Send-back (Agent 4) acts on a review in code, once, and the trail is the
+  safety.** `fresh_review_with_feedback` (`stages/plo_review.py`; `fresh_review`
+  wraps it, so the graph tail and the REST job both get it) runs
+  `stages/plo_feedback.py` right after a *fresh agent* review is stored. A reused
+  stored review, a `code_only` review and `plo_review_send_back=False` send
+  nothing. Only **agreed** findings count (`agreed_runs >= agreement_threshold`);
+  a 2/5 Bloom finding is ignored. Order: redundancy, then Bloom (only when
+  `suggested_level` is set and differs), then an unused Need with verdict
+  `consider` (skipped when unwritten or out of scope, or when a PLO already cites
+  it this round). KSEC findings stay advisory. **Every action goes through
+  `stages/plo_redraft.redraft_from_needs`**, the designer's merge core with
+  `cause="review"`, so `MAX_GROUP_SIZE`, the merge floor and the SMART gate all
+  apply; a redundancy whose Need union exceeds `MAX_GROUP_SIZE` is skipped
+  ("รวมแล้วเกิน 5 Need"). **Before each action the live PLO set is re-read**; a finding naming a PLO
+  replaced earlier in the round is skipped ("PLO นี้ถูกแทนที่ไปแล้วในรอบนี้"), checked *before* "not
+  found" because a freed `plo_id` is reused (lowest free) by the new outcome, so
+  a redraft can renumber an outcome. Known one-round limit: overlapping redundancy groups
+  (PLO1+PLO6, then PLO3+PLO6) apply the first and skip the second; a later review
+  may catch PLO3. **The trail:** one `plo_feedback_actions` row per considered
+  actionable finding (`applied` / `skipped` / `failed`, with a Thai reason),
+  written right after its action so an applied change is never left without a
+  row if the round stops later; a failed trail write is logged at error level and
+  the round continues. Any exception inside an action records it `failed`;
+  nothing in send-back fails the review job or the session. The Bloom redraft
+  note (`prompts/plo_feedback.build_bloom_redraft_note_th`) names the level in
+  English plus up to 3 example verbs and must never contain a forbidden PLO word
+  — a Thai label for Remember/Understand would be จำ/เข้าใจ; a test checks every level.

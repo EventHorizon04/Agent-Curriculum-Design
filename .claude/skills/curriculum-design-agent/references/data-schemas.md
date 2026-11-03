@@ -307,7 +307,7 @@ class PLO(BaseModel):
     is_optional: bool = False  # PLO from want-dominant Need(s), exempt from the core-Need count
 ```
 
-**`SupersededPLO` — history of replaced outcomes.** `POST /plos/from-needs` replaces every PLO citing a selected Need; `PLORepository.replace` snapshots each removed row into `superseded_plos` in the same transaction as the delete. Read-only: nothing restores from it.
+**`SupersededPLO` — history of replaced outcomes.** `POST /plos/from-needs` (and review send-back, `cause=review`) replaces every PLO citing a selected Need; `PLORepository.replace` snapshots each removed row into `superseded_plos` in the same transaction as the delete. Read-only: nothing restores from it.
 
 ```python
 class SupersededPLO(BaseModel):
@@ -316,6 +316,7 @@ class SupersededPLO(BaseModel):
     superseded_by: str       # plo_id of the PLO that replaced it
     superseded_at: datetime  # naive UTC in the DB; "+00:00" in JSON output
     plo: PLO                 # the row as it stood when removed (JSONB snapshot)
+    cause: str | None = None # designer | review; None (older rows) reads as designer
 ```
 
 `GET /programs/{id}/plos/superseded` lists newest first (ties by `plo_id`) and skips, with a warning, a snapshot that no longer passes `PLO.model_validate`. The table is cleared with the program's PLOs and cascade-deleted with the program; a full program copy clones it (fresh ids, remapped), `evidence_only` copies none.
@@ -335,7 +336,7 @@ Validation rules for PLO (enforce in code):
 - `soft_flags` stays `list[str]`, not the enum. A row carrying a code this build no longer knows would otherwise raise on read, and `R_alignment` was emitted for months. The typed detail is in `findings`; a validator keeps the flat list and the soft findings in step, exempting a row that has flags but no findings (that is what `legacy` means).
 - `smart_validated_by` distinguishes four facts the UI must not conflate: `agent` (judged and this is the verdict), `code_only` (the validator could not run; the pure checks decided alone), `stale` (a designer edited the statement and nothing has re-judged it — set by `PUT /plos/{id}`), `legacy` (predates the validator). `POST /plos/{id}/revalidate` is what moves a `stale` row back to `agent`.
 
-## Stage 6: PLO QA review (advisory)
+## Stage 6: PLO QA review (advisory findings, acted on by send-back)
 
 ```python
 class RedundancyFinding(BaseModel):
@@ -425,7 +426,24 @@ class PLOSetReview(BaseModel):
 
 `plo_reviews` is one row per program (`program_id` primary key, FK to `programs.program_id`, cascade-deleted with it), holding `plo_fingerprint`, `model`, `created_at`, and the rest of `PLOSetReview` in a single JSONB `review` column — no migration needed for a new finding field, the same reasoning as `SMARTCheck.findings`.
 
-**Advisory only.** The QA agent reads the finished PLO set as a whole, after the report (it is stage 06; the graph runs `plo_synthesis → [PLO checkpoint] → plo_report → plo_review → END`), and writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table and nothing else. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. The stage 06 page shows a stored review and labels it stale once `plo_fingerprint` no longer matches the current PLO set and Needs (the fingerprint hashes the PLOs plus the program's `(need_id, demand_score)` pairs); `plo_report` no longer carries a review. Every number and the unused-Need selection are code's (`stages/plo_review_facts.py`); only the judgements are the agent's. A review that could not run (slot disabled, failure, timeout) is stored with `reviewed_by="code_only"`, a `code_only_reason`, the code facts and no agent finding — none is manufactured — and never blocks anything. Every new field defaults, so rows written before them still read; no migration (JSONB, the `SMARTCheck.findings` reasoning).
+**The agent only advises.** The QA agent reads the finished PLO set as a whole, after the report (it is stage 06; the graph runs `plo_synthesis → [PLO checkpoint] → plo_report → plo_review → END`), and itself writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table. Agreed redundancy, Bloom and unused-Need findings are then acted on by code (send-back, `stages/plo_feedback.py`, through `plo_redraft`) and recorded as `FeedbackAction` below; KSEC findings stay advisory. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. The stage 06 page shows a stored review and labels it stale once `plo_fingerprint` no longer matches the current PLO set and Needs (the fingerprint hashes the PLOs plus the program's `(need_id, demand_score)` pairs); `plo_report` no longer carries a review. Every number and the unused-Need selection are code's (`stages/plo_review_facts.py`); only the judgements are the agent's. A review that could not run (slot disabled, failure, timeout) is stored with `reviewed_by="code_only"`, a `code_only_reason`, the code facts and no agent finding — none is manufactured — and never blocks anything. Every new field defaults, so rows written before them still read; no migration (JSONB, the `SMARTCheck.findings` reasoning).
+
+**`FeedbackAction` — the send-back trail.** One row per actionable finding Agent 4 considered, written right after its action; table `plo_feedback_actions`, same life as `superseded_plos` (cleared with the program's PLOs, cascade-deleted, cloned by a full copy, not by `evidence_only`). `GET /programs/{id}/plos/feedback` lists newest first.
+
+```python
+class FeedbackAction(BaseModel):
+    id: str
+    program_id: str
+    review_created_at: datetime   # the review the finding came from
+    kind: str                     # redundancy | bloom | unused_need (plain string: a new kind needs no migration)
+    plo_ids: list[str] = []
+    need_ids: list[str] = []
+    finding_reason_th: str = ""   # the reviewer's reason
+    instruction_th: str = ""      # what was sent to the redraft
+    outcome: str                  # applied | skipped | failed
+    outcome_reason_th: str = ""
+    result_plo_id: str | None = None   # the PLO written, when applied
+```
 
 ## Cross-stage: human-in-the-loop checkpoint
 
