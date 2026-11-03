@@ -675,6 +675,17 @@ export function buildRouter(): Router {
     }
     const busy = busyReason(pid)
     if (busy) return detail(409, busy)
+    // Worst case: the merged Need counts as core whenever any member is.
+    const active = activeNeeds(of(db.needs, pid))
+    const currentCore = active.filter((n) => !n.is_optional).length
+    const selectedCore = picked.filter((n) => !n.is_optional).length
+    const projected = currentCore - selectedCore + (selectedCore > 0 ? 1 : 0)
+    if (projected < MIN_CORE_AFTER_MERGE && projected < currentCore) {
+      return detail(
+        422,
+        `การรวมนี้จะเหลือ Need หลัก ${projected} ข้อ ต่ำกว่าขั้นต่ำ ${MIN_CORE_AFTER_MERGE} ข้อ`,
+      )
+    }
     const merged: NeedRow = {
       ...picked[0],
       need_id: newId(),
@@ -721,6 +732,9 @@ export function buildRouter(): Router {
     const { pid, nid } = req.params
     const need = of(getDb().needs, pid).find((n) => n.need_id === nid)
     if (!need) return detail(404, 'ไม่พบ Need นี้')
+    if (need.merged_into !== null) {
+      return detail(422, 'Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — ตัด Need ที่รวมแล้วแทน')
+    }
     if (need.excluded_at === null) return detail(422, 'Need นี้ไม่ได้ถูกตัดออก')
     const busy = busyReason(pid)
     if (busy) return detail(409, busy)

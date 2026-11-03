@@ -61,6 +61,12 @@ export default function NeedAnalysis() {
         api.get<SkillName[]>(`/programs/${programId}/needs/skills`),
       ])
       setAllNeeds(needRes.data)
+      // A Need that left the active list (restored ones come back unticked) is
+      // dropped from the pick, so a stale tick never survives a reload.
+      const active = new Set(
+        needRes.data.filter(n => n.merged_into === null && n.excluded_at === null).map(n => n.need_id),
+      )
+      setSelected(prev => new Set([...prev].filter(id => active.has(id))))
       setSkills(skillRes.data)
     } catch {
       setError('โหลดข้อมูล Need ไม่สำเร็จ')
@@ -100,6 +106,7 @@ export default function NeedAnalysis() {
       if (!programId) return
       setActing(true)
       setError('')
+      setMergeError('')
       setActionError(null)
       try {
         await api.post(`/programs/${programId}/needs/${need.need_id}/${verb}`)
@@ -120,6 +127,7 @@ export default function NeedAnalysis() {
   const restore = useCallback((n: NeedRow) => cardAction(n, 'restore', 'คืน Need ไม่สำเร็จ'), [cardAction])
 
   const toggleSelect = useCallback((need: NeedRow, on: boolean) => {
+    setMergeError('')
     setSelected(prev => {
       const next = new Set(prev)
       if (on) next.add(need.need_id)
@@ -150,6 +158,9 @@ export default function NeedAnalysis() {
         const d = res?.data?.detail
         setMergeError(typeof d === 'string' ? d : 'รวม Need ไม่สำเร็จ')
         if (res?.status === 409) void refresh()
+        // The list may be what the refusal is about (a Need merged or excluded
+        // elsewhere), so show the reason and then reload it.
+        if (res?.status === 422) await fetchAll()
       } finally {
         setMerging(false)
       }
@@ -175,10 +186,7 @@ export default function NeedAnalysis() {
     () => needs.filter(n => selected.has(n.need_id)).map(n => n.need_id),
     [needs, selected],
   )
-  const originalsFor = useCallback(
-    (needId: string) => allNeeds.filter(n => n.merged_into === needId),
-    [allNeeds],
-  )
+
   const originalsOf = useMemo(() => {
     const byParent = new Map<string, NeedRow[]>()
     for (const n of allNeeds) {
@@ -187,6 +195,7 @@ export default function NeedAnalysis() {
     }
     return byParent
   }, [allNeeds])
+  const originalsFor = useCallback((needId: string) => originalsOf.get(needId) ?? [], [originalsOf])
   const skillNames = useMemo(
     () => Object.fromEntries(skills.map(s => [s.skill_id, s.skill_name_th])),
     [skills],

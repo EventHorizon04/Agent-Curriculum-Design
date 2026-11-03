@@ -42,14 +42,14 @@ export interface NeedRow {
   /** Set on an original that has been folded away; such rows are not listed as
    *  Needs, only under the merged card that replaced them. */
   merged_into: string | null
-  /** Why the model judged the originals duplicates. The model's account, like
-   *  `rationale_th`, and labelled so; the trail is `source_evidence_ids`. */
   /** Who made the merge, so the card can say whether the AI or the designer
    *  folded these Needs together. Null on a Need that is not a merge. */
   merged_by: 'agent' | 'designer' | null
   /** Set while the designer has taken the Need out of the pool; null otherwise.
    *  An excluded Need is stored and traceable but no stage reads it. */
   excluded_at: string | null
+  /** Why the model judged the originals duplicates. The model's account, like
+   *  `rationale_th`, and labelled so; the trail is `source_evidence_ids`. */
   merge_reason_th: string
   source_evidence_ids: string[]
   source_stakeholder_types: string[]
