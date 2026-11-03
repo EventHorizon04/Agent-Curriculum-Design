@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, cast
 
 from loguru import logger
+from pydantic import ValidationError
 from sqlalchemy import CursorResult, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -669,7 +670,10 @@ class SupersededPLORepository:
                     await session.execute(
                         select(SupersededPLOTable)
                         .where(SupersededPLOTable.program_id == program_id)
-                        .order_by(SupersededPLOTable.superseded_at.desc())
+                        .order_by(
+                            SupersededPLOTable.superseded_at.desc(),
+                            SupersededPLOTable.plo_id,
+                        )
                     )
                 )
                 .scalars()
@@ -687,7 +691,7 @@ class SupersededPLORepository:
                         plo=PLO.model_validate(row.snapshot),
                     )
                 )
-            except Exception as exc:  # noqa: BLE001
+            except ValidationError as exc:
                 logger.warning(f"superseded PLO {row.id} ({row.plo_id}) skipped: {exc!r}")
         return out
 
