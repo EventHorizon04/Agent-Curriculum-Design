@@ -46,6 +46,7 @@ from curriculum_agent.models import ProgramMetadata, SmartFinding
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
+    build_closing_after_malformed_instruction,
     build_closing_instruction,
     build_refusal_observation,
     build_repair_observation,
@@ -219,6 +220,8 @@ class ValidationReason(StrEnum):
     FINISHED = "finished"
     # The turns ran out and one Finish-only call still produced the verdict.
     FINISHED_AT_BUDGET = "finished_at_budget"
+    # Malformed steps ran out and one Finish-only call still produced the verdict.
+    FINISHED_AFTER_MALFORMED = "finished_after_malformed"
     TURN_BUDGET = "turn_budget"
     REPAIR_BUDGET = "repair_budget"
     PROVIDER_ERROR = "provider_error"
@@ -273,7 +276,7 @@ class RequestRepair(BaseModel):
     """
 
     kind: Literal["request_repair"]
-    instruction_th: str = Field(min_length=1, max_length=400)
+    instruction_th: str = Field(min_length=1, max_length=800)
     criteria: list[SmartFindingCode] = Field(default_factory=list)
     keep_th: str | None = Field(default=None, max_length=200)
 
@@ -577,6 +580,17 @@ async def _loop(
                 f"({malformed}/{_MAX_MALFORMED}): {_schema_failure_reason(exc)}"
             )
             if malformed >= _MAX_MALFORMED:
+                salvaged = await _closing_call(
+                    draft,
+                    ctx,
+                    messages,
+                    build_closing_after_malformed_instruction(),
+                    ValidationReason.FINISHED_AFTER_MALFORMED,
+                    repairs=repairs,
+                    turns=turn,
+                )
+                if salvaged is not None:
+                    return salvaged
                 return code_only_result(
                     draft,
                     ValidationReason.MALFORMED,
@@ -708,28 +722,17 @@ async def _loop(
     # The turns are spent without a Finish. Discarding the run loses every soft
     # verdict for work the model did do, so ask once more for a Finish and
     # nothing else. This call is not a turn.
-    messages.append({"role": "user", "content": build_closing_instruction(turn)})
-    try:
-        closing = await _ask_step(messages, ctx, ClosingStep)
-    except Exception as exc:
-        logger.warning(
-            f"  SMART agent {ctx.plo_id}: closing call failed ({type(exc).__name__}): "
-            f"{_schema_failure_reason(exc)}"
-        )
-    else:
-        closing_action = closing.action
-        logger.info(
-            f"  SMART agent {ctx.plo_id}: closed at the budget turns={turn} repairs={repairs} "
-            f"evidence_reads={len(ctx.budget.evidence_reads)}"
-        )
-        return _result_from_draft(
-            draft,
-            soft_findings=_soft_findings(closing_action),
-            diagnosis_th=closing_action.diagnosis_th,
-            repair_count=repairs,
-            turns=turn,
-            reason=ValidationReason.FINISHED_AT_BUDGET,
-        )
+    closed = await _closing_call(
+        draft,
+        ctx,
+        messages,
+        build_closing_instruction(turn),
+        ValidationReason.FINISHED_AT_BUDGET,
+        repairs=repairs,
+        turns=turn,
+    )
+    if closed is not None:
+        return closed
 
     logger.warning(
         f"  SMART agent {ctx.plo_id}: turn budget exhausted after {turn} turns "
@@ -743,6 +746,45 @@ async def _loop(
         f"ไม่ได้ตรวจครบ (ใช้ครบ {turn} รอบแล้วยังไม่สรุปผล)",
         repair_count=repairs,
         turns=turn,
+    )
+
+
+async def _closing_call(
+    draft: Any,
+    ctx: Any,
+    messages: list[dict[str, Any]],
+    instruction: str,
+    reason: ValidationReason,
+    *,
+    repairs: int,
+    turns: int,
+) -> SmartAgentResult | None:
+    """One Finish-only call that salvages the verdict when the loop cannot go on.
+
+    Used when the turns run out and when malformed steps run out. Returns None
+    when the call itself fails, so the caller falls back to its code-only verdict.
+    """
+    messages.append({"role": "user", "content": instruction})
+    try:
+        closing = await _ask_step(messages, ctx, ClosingStep)
+    except Exception as exc:
+        logger.warning(
+            f"  SMART agent {ctx.plo_id}: closing call failed ({type(exc).__name__}): "
+            f"{_schema_failure_reason(exc)}"
+        )
+        return None
+    closing_action = closing.action
+    logger.info(
+        f"  SMART agent {ctx.plo_id}: closed ({reason.value}) turns={turns} repairs={repairs} "
+        f"evidence_reads={len(ctx.budget.evidence_reads)}"
+    )
+    return _result_from_draft(
+        draft,
+        soft_findings=_soft_findings(closing_action),
+        diagnosis_th=closing_action.diagnosis_th,
+        repair_count=repairs,
+        turns=turns,
+        reason=reason,
     )
 
 

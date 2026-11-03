@@ -365,6 +365,7 @@ async def validate_and_build(
     if escalated and result.reason in (
         ValidationReason.FINISHED,
         ValidationReason.FINISHED_AT_BUDGET,
+        ValidationReason.FINISHED_AFTER_MALFORMED,
     ):
         # The agent signed off and code disagreed. Say so, or the diagnosis
         # reads as an explanation of a PLO that passed.

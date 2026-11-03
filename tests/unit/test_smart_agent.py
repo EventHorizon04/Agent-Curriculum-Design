@@ -21,6 +21,7 @@ from instructor.core.exceptions import IncompleteOutputException
 from pydantic import ValidationError
 
 from curriculum_agent.models import BloomLevel, Need, ProgramMetadata, StakeholderEvidence
+from curriculum_agent.prompts.smart_agent import build_closing_after_malformed_instruction
 from curriculum_agent.smart_vocabulary import SmartFindingCode
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages import smart_agent as sa
@@ -715,6 +716,45 @@ async def test_check_hard_reads_the_pure_function(monkeypatch: pytest.MonkeyPatc
     observation = fake.messages_seen[-1][-1]["content"]
     assert "M_forbidden" in observation
     assert '"passed": false' in observation
+
+
+async def test_a_repair_instruction_may_run_to_800_characters() -> None:
+    """The cap was 400 and a live run lost a verdict to two over-long instructions."""
+    ok = sa.RequestRepair(kind="request_repair", instruction_th="ก" * 600)
+    assert len(ok.instruction_th) == 600
+    with pytest.raises(ValidationError):
+        sa.RequestRepair(kind="request_repair", instruction_th="ก" * 801)
+
+
+async def test_the_closing_call_salvages_a_malformed_exhaustion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = ValidationError.from_exception_data("ValidationStep", [])
+    closing = _finish(
+        measurable_ok=False, findings_th={"M_assessable": "วัดไม่ได้"}, diagnosis_th="ปิดรอบ"
+    )
+    fake = _drive(monkeypatch, [error, error], closing=closing)
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.reason is sa.ValidationReason.FINISHED_AFTER_MALFORMED
+    assert result.ran is True
+    assert [f.criterion.value for f in result.soft_findings] == ["M_assessable"]
+    assert len(fake.messages_seen) == 3, "two malformed steps plus exactly one closing call"
+    assert fake.messages_seen[-1][-1]["content"] == build_closing_after_malformed_instruction()
+
+
+async def test_a_failed_closing_call_after_malformed_steps_stays_code_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    error = ValidationError.from_exception_data("ValidationStep", [])
+    _drive(monkeypatch, [error, error], closing=RuntimeError("endpoint down"))
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.reason is sa.ValidationReason.MALFORMED
+    assert result.ran is False
+    assert result.soft_findings == []
 
 
 async def test_a_malformed_step_twice_ends_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -193,6 +193,14 @@ def build_closing_instruction(turns: int) -> str:
     )
 
 
+def build_closing_after_malformed_instruction() -> str:
+    """The one extra call after repeated malformed answers: a Finish and nothing else."""
+    return (
+        "คำตอบก่อนหน้านี้ไม่ตรงรูปแบบ "
+        "สรุปผลตรวจด้วย finish ตอนนี้จากข้อมูลที่มีอยู่ ห้ามเรียกเครื่องมือและห้ามขอแก้ประโยคอีก"
+    )
+
+
 def build_repair_observation(
     *,
     before_statement: str,
