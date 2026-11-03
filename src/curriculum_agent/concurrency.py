@@ -17,7 +17,12 @@ from typing import TypeVar
 T = TypeVar("T")
 
 
-async def gather_bounded(limit: int, factories: Sequence[Callable[[], Awaitable[T]]]) -> list[T]:
+async def gather_bounded(
+    limit: int,
+    factories: Sequence[Callable[[], Awaitable[T]]],
+    *,
+    cancel_on_error: bool = False,
+) -> list[T]:
     """`asyncio.gather` with at most `limit` awaitables running at once.
 
     Input order is preserved, exactly as `gather`'s is. Callers number their
@@ -29,6 +34,11 @@ async def gather_bounded(limit: int, factories: Sequence[Callable[[], Awaitable[
     slot. A list of pre-created coroutines would all be constructed up front,
     which is harmless today and stops being harmless the moment a caller does
     work in the coroutine's first statement.
+
+    A failure propagates as `gather` propagates it, but `gather` leaves the other
+    awaitables running, still spending tokens for a result nobody will read.
+    `cancel_on_error` cancels them (and waits for the cancellation) before the
+    same exception is raised.
     """
     if not factories:
         return []
@@ -38,4 +48,13 @@ async def gather_bounded(limit: int, factories: Sequence[Callable[[], Awaitable[
         async with sem:
             return await factory()
 
-    return list(await asyncio.gather(*(_run(f) for f in factories)))
+    if not cancel_on_error:
+        return list(await asyncio.gather(*(_run(f) for f in factories)))
+    tasks = [asyncio.ensure_future(_run(f)) for f in factories]
+    try:
+        return list(await asyncio.gather(*tasks))
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise

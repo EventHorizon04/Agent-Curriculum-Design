@@ -34,3 +34,26 @@ def test_usage_returns_repository_summary(monkeypatch: pytest.MonkeyPatch) -> No
     assert body["total"]["calls"] == 2
     assert body["by_slot"][0]["slot"] == "clustering"
     assert body["by_job"] == []
+
+
+def test_usage_fills_the_thai_label_of_each_job_kind(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime
+
+    from curriculum_agent.models import JobUsage
+
+    started = datetime(2026, 11, 3, tzinfo=UTC)
+    summary = UsageSummary(
+        total=UsageTotals(calls=2),
+        by_job=[
+            JobUsage(job_id="a", kind="plo_synthesis", started=started),
+            JobUsage(job_id="b", kind="no_such_kind", started=started),
+            JobUsage(job_id="c", kind="", started=started),
+        ],
+    )
+    monkeypatch.setattr(programs_route.ProgramRepository, "exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        programs_route.LLMUsageRepository, "summary", AsyncMock(return_value=summary)
+    )
+    body = client.get("/programs/cs-test/usage").json()
+    labels = [j["label_th"] for j in body["by_job"]]
+    assert labels == ["สังเคราะห์ PLO", "", ""]

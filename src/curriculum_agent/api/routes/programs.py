@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.api.jobs import program_busy, program_lock
+from curriculum_agent.api.jobs import JOB_KIND_LABEL_TH, program_busy, program_lock
 from curriculum_agent.data.program_copy import CopyMode, copy_program
 from curriculum_agent.data.repositories import (
     LLMUsageRepository,
@@ -180,7 +180,10 @@ async def get_program_usage(program_id: str) -> UsageSummary:
     """What the program's model calls cost: overall, per slot, per job."""
     if not await ProgramRepository().exists(program_id):
         raise HTTPException(status_code=404, detail="Program not found")
-    return await LLMUsageRepository().summary(program_id)
+    summary = await LLMUsageRepository().summary(program_id)
+    for job in summary.by_job:
+        job.label_th = JOB_KIND_LABEL_TH.get(job.kind, "")
+    return summary
 
 
 @router.put(

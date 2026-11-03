@@ -724,6 +724,8 @@ class JobUsage(BaseModel):
 
     job_id: str
     kind: str = ""
+    # Filled by the route from api/jobs.py JOB_KIND_LABEL_TH; "" for an unknown kind.
+    label_th: str = ""
     started: datetime
     total: UsageTotals = Field(default_factory=UsageTotals)
     by_slot: list[SlotUsage] = Field(default_factory=list)

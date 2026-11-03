@@ -531,18 +531,45 @@ const NO_USAGE: UsageTotals = {
   latency_ms: 0,
 }
 
+/** The runs a seeded program with PLOs implicitly went through, oldest first,
+ *  so the usage panel shows in the mock before anything has been run. */
+const SEEDED_USAGE_KINDS: JobKind[] = ['skill_extraction', 'need_combination', 'plo_synthesis', 'plo_review']
+
+interface UsageJobSource {
+  job_id: string
+  kind: JobKind
+  started: string
+  failed: boolean
+}
+
 /** GET /programs/{id}/usage, derived from the program's own jobs so a run in
- *  the mock shows up in the panel. Numbers are deterministic per call count. */
+ *  the mock shows up in the panel. A program that has PLOs but no mock jobs
+ *  (the seeded 'complete' scenario) gets a believable history instead. Numbers
+ *  are deterministic per call count. */
 function mockUsage(pid: string): UsageSummary {
-  const jobs = [...of(getDb().jobs, pid)].reverse()
+  let sources: UsageJobSource[] = [...of(getDb().jobs, pid)].reverse().map((job) => ({
+    job_id: job.job_id,
+    kind: job.kind,
+    started: job.created_at,
+    failed: job.status === 'failed',
+  }))
+  if (sources.length === 0 && of(getDb().plos, pid).length > 0) {
+    const now = Date.now()
+    sources = SEEDED_USAGE_KINDS.map((kind, i) => ({
+      job_id: `seed-usage-${pid}-${kind}`,
+      kind,
+      started: new Date(now - (SEEDED_USAGE_KINDS.length - i) * 3_600_000).toISOString(),
+      failed: false,
+    })).reverse()
+  }
   const by_job: JobUsage[] = []
   const slotTotals = new Map<string, SlotUsage>()
   let total = NO_USAGE
-  for (const job of jobs) {
+  for (const job of sources) {
     const by_slot: SlotUsage[] = JOB_SLOTS[job.kind].map(([slot, calls]) => ({
       slot,
       calls,
-      failed_calls: job.status === 'failed' && slot === JOB_SLOTS[job.kind][0][0] ? 1 : 0,
+      failed_calls: job.failed && slot === JOB_SLOTS[job.kind][0][0] ? 1 : 0,
       prompt_tokens: calls * 1850,
       completion_tokens: calls * 420,
       reasoning_tokens: calls * 130,
@@ -555,7 +582,14 @@ function mockUsage(pid: string): UsageSummary {
       const prev = slotTotals.get(s.slot)
       slotTotals.set(s.slot, prev ? { ...addTotals(prev, s), slot: s.slot } : s)
     }
-    by_job.push({ job_id: job.job_id, kind: job.kind, started: job.created_at, total: jobTotal, by_slot })
+    by_job.push({
+      job_id: job.job_id,
+      kind: job.kind,
+      label_th: JOB_LABEL_TH[job.kind] ?? '',
+      started: job.started,
+      total: jobTotal,
+      by_slot,
+    })
   }
   return { total, by_slot: [...slotTotals.values()], by_job }
 }

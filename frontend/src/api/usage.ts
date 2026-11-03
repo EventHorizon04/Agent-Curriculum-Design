@@ -16,6 +16,8 @@ export interface JobUsage {
   job_id: string
   /** From the jobs row; empty when that row is gone. */
   kind: string
+  /** Thai name of the kind, filled by the server; empty for an unknown kind. */
+  label_th: string
   started: string
   total: UsageTotals
   by_slot: SlotUsage[]

@@ -1,31 +1,11 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import api from '../../api/client'
-import type { JobKind } from '../../api/jobs'
+import { JOB_PAGE, type JobKind } from '../../api/jobs'
 import type { JobUsage, UsageSummary, UsageTotals } from '../../api/usage'
 import { useReloadOnJobs } from '../../hooks/useReloadOnJobs'
 
 /** Every kind: a job of any of them can have made model calls. */
-const ALL_KINDS: JobKind[] = [
-  'needs_pipeline',
-  'skill_extraction',
-  'need_combination',
-  'plo_synthesis',
-  'plo_review',
-  'plo_report',
-  'plo_revalidate',
-]
-
-/** The backend's JOB_KIND_LABEL_TH, for a usage row whose job is not in the
- *  page's job list (the list keeps only the latest 20). */
-const KIND_LABEL_TH: Record<string, string> = {
-  needs_pipeline: 'สกัดทักษะและรวมความต้องการ',
-  skill_extraction: 'สกัดทักษะ',
-  need_combination: 'รวมความต้องการ',
-  plo_synthesis: 'สังเคราะห์ PLO',
-  plo_review: 'ตรวจคุณภาพชุด PLO',
-  plo_report: 'ออกรายงาน PLO',
-  plo_revalidate: 'ตรวจ SMART ซ้ำ',
-}
+const ALL_KINDS = Object.keys(JOB_PAGE) as JobKind[]
 
 const SHOWN_JOBS = 5
 
@@ -46,7 +26,7 @@ function JobBlock({ job }: { job: JobUsage }) {
     <li className="border-t border-hair py-2.5">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <span className="text-sm font-semibold text-graphite">
-          {KIND_LABEL_TH[job.kind] ?? (job.kind || 'งานที่ไม่พบแล้ว')}
+          {job.label_th || job.kind || 'งานที่ไม่พบแล้ว'}
         </span>
         <span className="data text-xs text-pencil">
           {new Date(job.started).toLocaleString('th-TH')}
@@ -74,6 +54,12 @@ export default function UsagePanel({ programId }: { programId: string }) {
   const [usage, setUsage] = useState<UsageSummary | null>(null)
   const [showAll, setShowAll] = useState(false)
 
+  // The program the page is on now; a response for any other is dropped.
+  const currentId = useRef(programId)
+  useLayoutEffect(() => {
+    currentId.current = programId
+  }, [programId])
+
   const load = useCallback(async () => {
     if (!programId) {
       setUsage(null)
@@ -81,9 +67,9 @@ export default function UsagePanel({ programId }: { programId: string }) {
     }
     try {
       const res = await api.get<UsageSummary>(`/programs/${programId}/usage`)
-      setUsage(res.data)
+      if (currentId.current === programId) setUsage(res.data)
     } catch {
-      setUsage(null)
+      if (currentId.current === programId) setUsage(null)
     }
   }, [programId])
 

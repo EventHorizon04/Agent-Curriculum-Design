@@ -232,6 +232,7 @@ async def build_skill_groups(
     raw_clusters = await gather_bounded(
         settings.llm_max_concurrency,
         [_cluster_factory(ksec, is_grad) for ksec, is_grad, _ in jobs],
+        cancel_on_error=True,
     )
 
     for (ksec, is_grad, bucket), raw in zip(jobs, raw_clusters, strict=True):

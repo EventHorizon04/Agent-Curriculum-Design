@@ -285,3 +285,32 @@ async def test_bucket_clustering_respects_the_concurrency_ceiling(
     monkeypatch.setattr(sg, "cluster_skill_names", counting)
     await sg.build_skill_groups(PROGRAM, _mixed_skills(), {"E1": "employer"})
     assert peak == 2
+
+
+async def test_a_failing_bucket_cancels_the_other_in_flight_buckets(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    started = 0
+    cancelled = 0
+    first_ran = asyncio.Event()
+
+    async def one_fails(names, target=None, program_context=None):  # noqa: ANN001
+        nonlocal started, cancelled
+        started += 1
+        if started == 1:
+            first_ran.set()
+            raise RuntimeError("clustering down")
+        try:
+            await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            cancelled += 1
+            raise
+        return [list(range(len(names)))]
+
+    monkeypatch.setattr(settings, "llm_max_concurrency", 5)
+    monkeypatch.setattr(sg, "cluster_skill_names", one_fails)
+    with pytest.raises(RuntimeError, match="clustering down"):
+        await sg.build_skill_groups(PROGRAM, _mixed_skills(), {"E1": "employer"})
+    assert first_ran.is_set()
+    assert started >= 3
+    assert cancelled == started - 1
