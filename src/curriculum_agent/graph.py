@@ -125,11 +125,23 @@ async def stage_5_plo_report(state: AgentState) -> AgentState:
 # -------------------- Human-in-the-loop nodes --------------------
 
 
-def review_stakeholder_needs(state: AgentState) -> AgentState:
+async def review_stakeholder_needs(state: AgentState) -> AgentState:
     payload = interrupt("Stage 1 complete — review classified evidence before clustering")
     if isinstance(payload, dict):
-        return {**state, **payload}
-    return state
+        state = {**state, **payload}
+    # Evidence is not locked while a session is paused here (no skills exist yet,
+    # and a suspended session is not a running writer), so the designer may have
+    # edited, added or deleted items; the checkpoint still holds the old corpus,
+    # and skill_extraction would cite rows that now say something else. Reload
+    # what is stored and classify it the way stage 1 does.
+    # Lazy: data.repositories imports stage_reached from this module, and
+    # stakeholder_needs imports AgentState from it (cycles).
+    from curriculum_agent.data.repositories import EvidenceRepository  # noqa: PLC0415
+    from curriculum_agent.stages.stakeholder_needs import classify_single  # noqa: PLC0415
+
+    stored = await EvidenceRepository().list_by_program(state["program_id"])
+    classified = [await classify_single(e) for e in stored]
+    return {**state, "classified_evidence": [e.model_dump(mode="json") for e in classified]}
 
 
 async def review_needs(state: AgentState) -> AgentState:
