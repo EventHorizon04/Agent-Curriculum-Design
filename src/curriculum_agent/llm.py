@@ -229,6 +229,15 @@ def _on_parse_error(_error: Exception) -> None:
         attempts[-1].ok = False
 
 
+def _on_completion_error(_error: Exception) -> None:
+    # A truncated response (IncompleteOutputException) takes this path, not
+    # parse:error, and instructor retries it. With no response in this attempt the
+    # last entry is an earlier attempt, which already failed, so this is idempotent.
+    attempts = _attempts.get()
+    if attempts:
+        attempts[-1].ok = False
+
+
 def _ensure_usage_hooks(client: instructor.AsyncInstructor) -> None:
     """Register the recorder's hooks once per client (the client is cached)."""
     if getattr(client, "_usage_hooks_installed", False):
@@ -236,6 +245,7 @@ def _ensure_usage_hooks(client: instructor.AsyncInstructor) -> None:
     client.on("completion:kwargs", _on_kwargs)
     client.on("completion:response", _on_response)
     client.on("parse:error", _on_parse_error)
+    client.on("completion:error", _on_completion_error)
     client._usage_hooks_installed = True  # type: ignore[attr-defined]
 
 
@@ -323,6 +333,8 @@ async def _complete(
         failed = False
         return result
     finally:
+        # Intended under cancellation too (a job's time budget): the last attempt is
+        # marked failed and its rows are still written while the cancel propagates.
         _attempts.reset(token)
         if failed and attempts and attempts[-1].ok:
             # The last response arrived but the call still raised (a truncation, or

@@ -250,3 +250,71 @@ async def test_hooks_are_installed_once_per_client(
     await llm._complete("openrouter", "m", _Answer, _MSG, slot="clustering")
 
     assert len(usage_rows) == 2
+
+
+async def test_a_truncated_response_that_is_retried_is_recorded_failed(
+    monkeypatch: pytest.MonkeyPatch, usage_rows: list[LLMUsage]
+) -> None:
+    """finish_reason=length raises IncompleteOutputException, which instructor
+    retries through `completion:error`, not `parse:error`."""
+
+    def script(n: int) -> dict[str, Any]:
+        body = _completion("" if n == 1 else _GOOD, _USAGE)
+        if n == 1:
+            body["choices"][0]["finish_reason"] = "length"
+        return body
+
+    _use(monkeypatch, _client(script))
+
+    result = await llm._complete("openrouter", "m", _Answer, _MSG, slot="validation", max_retries=2)
+
+    assert result.value == "ok"
+    assert [r.ok for r in usage_rows] == [False, True]
+
+
+async def test_latency_is_measured_per_response(
+    monkeypatch: pytest.MonkeyPatch, usage_rows: list[LLMUsage]
+) -> None:
+    _use(monkeypatch, _client(lambda n: _completion(_GOOD, _USAGE), delay=0.05))
+
+    await llm._complete("openrouter", "m", _Answer, _MSG, slot="clustering")
+
+    assert usage_rows[0].latency_ms >= 40
+
+
+async def test_a_parse_error_marks_only_its_own_calls_attempt(
+    monkeypatch: pytest.MonkeyPatch, usage_rows: list[LLMUsage]
+) -> None:
+    """Two interleaved calls on one client; only the first call's first response
+    is invalid. Rows are told apart by program."""
+    seen: dict[str, int] = {}
+
+    async def handle(request: httpx.Request) -> httpx.Response:
+        text = json.loads(request.content)["messages"][-1]["content"]
+        seen[text] = seen.get(text, 0) + 1
+        await asyncio.sleep(0.02)
+        bad = text == "bad" and seen[text] == 1
+        return httpx.Response(200, json=_completion(_BAD if bad else _GOOD, _USAGE))
+
+    raw = AsyncOpenAI(
+        base_url="http://test.invalid/v1",
+        api_key="test",
+        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handle)),
+    )
+    _use(monkeypatch, instructor.from_openai(raw, mode=instructor.Mode.JSON))
+
+    async def call(program_id: str, text: str) -> None:
+        with llm_scope(program_id=program_id):
+            await llm._complete(
+                "openrouter",
+                "m",
+                _Answer,
+                [{"role": "user", "content": text}],
+                slot="clustering",
+                max_retries=2,
+            )
+
+    await asyncio.gather(call("p-bad", "bad"), call("p-good", "good"))
+
+    by_program = {p: [r.ok for r in usage_rows if r.program_id == p] for p in ("p-bad", "p-good")}
+    assert by_program == {"p-bad": [False, True], "p-good": [True]}
