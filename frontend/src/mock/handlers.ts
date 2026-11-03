@@ -8,6 +8,7 @@
  * (classification, demand, the SMART hard gate, the 6-10 band) are mirrored.
  */
 import type { JobInfo, JobKind } from '../api/jobs'
+import type { JobUsage, SlotUsage, UsageSummary, UsageTotals } from '../api/usage'
 import type { SMARTCheck, SmartFinding } from '../types/plo'
 import type { FeedbackAction, PLOSetReview } from '../types/ploReview'
 import { MAX_CORE_PLOS, MAX_MERGE_NEEDS, fallbackKind } from '../constants/needPolicy'
@@ -498,6 +499,67 @@ const JOB_LABEL_TH: Record<JobKind, string> = {
   plo_revalidate: 'ตรวจ SMART ซ้ำ',
 }
 
+/** Which slots a job of each kind calls (config.py SLOTS), with a rough call
+ *  count — a mock stands in for the usage rows the real LLM client writes. */
+const JOB_SLOTS: Record<JobKind, Array<[string, number]>> = {
+  needs_pipeline: [['extraction', 24], ['clustering', 3]],
+  skill_extraction: [['extraction', 24], ['clustering', 3]],
+  need_combination: [['need_combination', 8], ['need_dedup', 5]],
+  plo_synthesis: [['plo_synthesis', 8], ['validation', 8]],
+  plo_review: [['plo_review', 5]],
+  plo_report: [],
+  plo_revalidate: [['validation', 1]],
+}
+
+function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
+  return {
+    calls: a.calls + b.calls,
+    failed_calls: a.failed_calls + b.failed_calls,
+    prompt_tokens: a.prompt_tokens + b.prompt_tokens,
+    completion_tokens: a.completion_tokens + b.completion_tokens,
+    reasoning_tokens: a.reasoning_tokens + b.reasoning_tokens,
+    latency_ms: a.latency_ms + b.latency_ms,
+  }
+}
+
+const NO_USAGE: UsageTotals = {
+  calls: 0,
+  failed_calls: 0,
+  prompt_tokens: 0,
+  completion_tokens: 0,
+  reasoning_tokens: 0,
+  latency_ms: 0,
+}
+
+/** GET /programs/{id}/usage, derived from the program's own jobs so a run in
+ *  the mock shows up in the panel. Numbers are deterministic per call count. */
+function mockUsage(pid: string): UsageSummary {
+  const jobs = [...of(getDb().jobs, pid)].reverse()
+  const by_job: JobUsage[] = []
+  const slotTotals = new Map<string, SlotUsage>()
+  let total = NO_USAGE
+  for (const job of jobs) {
+    const by_slot: SlotUsage[] = JOB_SLOTS[job.kind].map(([slot, calls]) => ({
+      slot,
+      calls,
+      failed_calls: job.status === 'failed' && slot === JOB_SLOTS[job.kind][0][0] ? 1 : 0,
+      prompt_tokens: calls * 1850,
+      completion_tokens: calls * 420,
+      reasoning_tokens: calls * 130,
+      latency_ms: calls * 2300,
+    }))
+    if (by_slot.length === 0) continue
+    const jobTotal = by_slot.reduce<UsageTotals>((acc, s) => addTotals(acc, s), NO_USAGE)
+    total = addTotals(total, jobTotal)
+    for (const s of by_slot) {
+      const prev = slotTotals.get(s.slot)
+      slotTotals.set(s.slot, prev ? { ...addTotals(prev, s), slot: s.slot } : s)
+    }
+    by_job.push({ job_id: job.job_id, kind: job.kind, started: job.created_at, total: jobTotal, by_slot })
+  }
+  return { total, by_slot: [...slotTotals.values()], by_job }
+}
+
 /** How long a job runs before it finishes. Short enough to click through, long
  *  enough that the page is seen waiting and the 2-second poll sees it end. */
 function jobDuration(): number {
@@ -650,6 +712,11 @@ export function buildRouter(): Router {
     const p = findProgram(req.params.pid)
     return p ? ok({ ...p, copied_from: p.copied_from ?? null }) : detail(404, 'Program not found')
   })
+
+  /** GET /programs/{id}/usage — what the program's model calls cost. */
+  r.get('/programs/:pid/usage', (req) =>
+    findProgram(req.params.pid) ? ok(mockUsage(req.params.pid)) : detail(404, 'Program not found'),
+  )
 
   /** POST /programs/{id}/copy — data/program_copy.py. Every evidence, skill and
    *  Need id is re-minted and every reference to one rewritten (the backend's

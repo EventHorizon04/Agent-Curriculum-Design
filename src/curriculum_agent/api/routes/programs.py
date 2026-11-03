@@ -11,9 +11,18 @@ from sqlalchemy.exc import IntegrityError
 from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.api.jobs import program_busy, program_lock
 from curriculum_agent.data.program_copy import CopyMode, copy_program
-from curriculum_agent.data.repositories import ProgramRepository, SessionRepository
+from curriculum_agent.data.repositories import (
+    LLMUsageRepository,
+    ProgramRepository,
+    SessionRepository,
+)
 from curriculum_agent.graph import discard_thread
-from curriculum_agent.models import ProgramCreateRequest, ProgramMetadata, ProgramSummary
+from curriculum_agent.models import (
+    ProgramCreateRequest,
+    ProgramMetadata,
+    ProgramSummary,
+    UsageSummary,
+)
 
 router = APIRouter()
 
@@ -164,6 +173,14 @@ async def get_program(program_id: str) -> ProgramMetadata:
     if result is None:
         raise HTTPException(status_code=404, detail="Program not found")
     return result
+
+
+@router.get("/{program_id}/usage", response_model=UsageSummary)
+async def get_program_usage(program_id: str) -> UsageSummary:
+    """What the program's model calls cost: overall, per slot, per job."""
+    if not await ProgramRepository().exists(program_id):
+        raise HTTPException(status_code=404, detail="Program not found")
+    return await LLMUsageRepository().summary(program_id)
 
 
 @router.put(

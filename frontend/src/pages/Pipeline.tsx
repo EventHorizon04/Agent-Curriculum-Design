@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import { SESSION_STATUS_LABELS, STAGES } from '../constants/stages'
+import UsagePanel from './components/UsagePanel'
 
 type SessionStatus = 'running' | 'suspended' | 'completed' | 'rejected' | 'failed'
 
@@ -431,6 +432,8 @@ export default function Pipeline() {
           </p>
         </div>
       )}
+
+      {programId && <UsagePanel programId={programId} />}
 
       {sessions.map((s) => (
         <SessionCard
