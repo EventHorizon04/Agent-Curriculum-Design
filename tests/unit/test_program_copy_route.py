@@ -230,3 +230,26 @@ async def test_copy_program_returns_false_when_the_source_is_gone(
     with patch.object(pc, "AsyncSessionLocal", return_value=_session_ctx(session)):
         assert await pc.copy_program("gone", "gone-run-1") is False
     session.commit.assert_not_awaited()
+
+
+async def test_copy_route_evidence_only_unlocked(
+    env,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The point of the mode: the copy's evidence can be edited again."""
+    from curriculum_agent.api.routes import evidence as evidence_module
+
+    r = client.post("/programs/program-2/copy", json={"mode": "evidence_only"})
+    assert r.status_code == 200
+    assert env["copy"].await_args.kwargs["mode"] == "evidence_only"
+
+    # Nothing but evidence is stored for the copy, so the Task 4 lock is open.
+    monkeypatch.setattr(evidence_module, "program_busy", AsyncMock(return_value=None))
+    monkeypatch.setattr(evidence_module.SkillRepository, "has_any", AsyncMock(return_value=False))
+    monkeypatch.setattr(evidence_module.NeedRepository, "has_any", AsyncMock(return_value=False))
+    assert await evidence_module.evidence_lock_reason("program-2-run-1") is None
+
+
+def test_copy_route_without_body_is_full(env) -> None:  # noqa: ANN001
+    assert client.post("/programs/program-2/copy").status_code == 200
+    assert env["copy"].await_args.kwargs["mode"] == "full"

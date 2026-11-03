@@ -359,3 +359,20 @@ def test_a_copied_merge_points_at_the_copys_own_merged_need() -> None:
     assert second.merged_into == merged.need_id
     assert merged.merged_into is None
     assert merged.merged_from == [first.need_id, second.need_id]
+
+
+def test_build_copy_evidence_only() -> None:
+    src = _with_review(_source(), fingerprint="0" * 64)
+    copy = build_copy(
+        src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
+    )
+    assert copy.program.program_id == "program-2-run-1"
+    assert copy.program.copied_from == "program-2"
+    assert len(copy.evidence) == len(src.evidence) == 1
+    assert {e.evidence_id for e in copy.evidence}.isdisjoint({e.evidence_id for e in src.evidence})
+    assert all(e.program_id == "program-2-run-1" for e in copy.evidence)
+    assert copy.skills == []
+    assert copy.needs == []
+    assert copy.plos == []
+    assert copy.skill_groups == []
+    assert copy.review is None

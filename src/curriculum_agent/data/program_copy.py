@@ -31,7 +31,7 @@ import uuid
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from loguru import logger
 from sqlalchemy import select
@@ -54,6 +54,11 @@ from curriculum_agent.models import PLO
 from curriculum_agent.stages.plo_review_facts import plo_fingerprint
 
 _Row = TypeVar("_Row", bound=Base)
+
+# "evidence_only" copies the program row and its evidence and nothing derived
+# from it: the way to change evidence after extraction, since an evidence edit
+# is refused once skills or Needs exist (api/routes/evidence.py).
+CopyMode = Literal["full", "evidence_only"]
 
 
 @dataclass(frozen=True)
@@ -139,11 +144,24 @@ def build_copy(
     *,
     now: datetime,
     new_uuid: Callable[[], str] = _uuid4,
+    mode: CopyMode = "full",
 ) -> ProgramRows:
     """New ORM rows for `new_id`, every evidence/skill/Need id fresh and rewired.
 
-    Pure: reads `src`, mutates nothing, touches no session.
+    Pure: reads `src`, mutates nothing, touches no session. In `evidence_only`
+    mode the derived rows (skills, groups, Needs, PLOs, review) are left out, so
+    nothing is re-keyed or re-fingerprinted for them.
     """
+    if mode == "evidence_only":
+        src = ProgramRows(
+            program=src.program,
+            evidence=src.evidence,
+            skills=[],
+            needs=[],
+            plos=[],
+            review=None,
+            skill_groups=[],
+        )
     id_map: dict[str, str] = {}
     for e in src.evidence:
         id_map[e.evidence_id] = new_uuid()
@@ -220,7 +238,9 @@ async def load_rows(session: AsyncSession, program_id: str) -> ProgramRows | Non
     )
 
 
-async def copy_program(source_id: str, new_id: str, *, now: datetime | None = None) -> bool:
+async def copy_program(
+    source_id: str, new_id: str, *, now: datetime | None = None, mode: CopyMode = "full"
+) -> bool:
     """Copy `source_id` to `new_id` in one session. False if the source is gone.
 
     One commit at the end, so a failure anywhere leaves nothing behind. A flush
@@ -238,7 +258,7 @@ async def copy_program(source_id: str, new_id: str, *, now: datetime | None = No
         src = await load_rows(session, source_id)
         if src is None:
             return False
-        copy = build_copy(src, new_id, now=now or datetime.utcnow())
+        copy = build_copy(src, new_id, now=now or datetime.utcnow(), mode=mode)
         session.add(copy.program)
         await session.flush()
         for group in (copy.evidence, copy.skills, copy.skill_groups, copy.needs, copy.plos):
@@ -248,7 +268,7 @@ async def copy_program(source_id: str, new_id: str, *, now: datetime | None = No
             session.add(copy.review)
         await session.commit()
     logger.info(
-        f"program copy: {source_id} -> {new_id} ({len(copy.evidence)} evidence, "
+        f"program copy ({mode}): {source_id} -> {new_id} ({len(copy.evidence)} evidence, "
         f"{len(copy.skills)} skills, {len(copy.skill_groups)} skill groups, "
         f"{len(copy.needs)} Needs, {len(copy.plos)} PLOs, "
         f"review={'yes' if copy.review is not None else 'no'})"
