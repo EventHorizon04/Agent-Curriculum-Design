@@ -330,7 +330,7 @@ export default function Programs() {
                         type="button"
                         onClick={() => { setCopyError(null); setCopyChoiceId(p.program_id) }}
                         disabled={copyingId !== null}
-                        title="คัดลอกหลักสูตรนี้พร้อมหลักฐาน ทักษะ Need และ PLO — ใช้เก็บผลรอบนี้ไว้เทียบกับรอบถัดไป"
+                        title="คัดลอกหลักสูตรนี้ — เลือกได้ว่าจะคัดลอกทั้งหมด (หลักฐาน ทักษะ Need PLO เก็บผลรอบนี้ไว้เทียบกับรอบถัดไป) หรือเฉพาะข้อมูลนำเข้าและหลักฐาน (แก้ evidence ได้)"
                         className="btn btn-sm btn-quiet"
                       >
                         {copyingId === p.program_id ? 'กำลังคัดลอก...' : 'คัดลอก'}

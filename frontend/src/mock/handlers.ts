@@ -393,10 +393,10 @@ function busyReason(pid: string): string | null {
 }
 
 /** why evidence cannot change, or null. The busy reason wins, then the
- *  skills-or-Needs rule (data/evidence_lock.py): once extraction has read the
+ *  skills-or-Needs rule (api/routes/evidence.py, evidence_lock_reason): once extraction has read the
  *  evidence, editing it would leave the rows downstream describing text that
  *  is gone, so the way to change it is an evidence-only copy. */
-function evidenceLockReason(pid: string): string | null {
+export function evidenceLockReason(pid: string): string | null {
   const busy = busyReason(pid)
   if (busy) return busy
   const db = getDb()
@@ -680,49 +680,57 @@ export function buildRouter(): Router {
     ok(skillGroupsOf(req.params.pid, of(getDb().skills, req.params.pid))),
   )
 
-  /** NeedRepository.split, refused in the real route's order: 404, 422, 409. */
+  /** NeedRepository.split, refused in the real route's order: 409 busy
+   *  (sync_writer), 404, 422 excluded, 422 not merged, 409 for a PLO. */
   r.post('/programs/:pid/needs/:nid/split', (req) => {
     const { pid, nid } = req.params
     const db = getDb()
+    const busy = busyReason(pid)
+    if (busy) return detail(409, busy)
     const need = of(db.needs, pid).find((n) => n.need_id === nid)
     if (!need) return detail(404, 'ไม่พบ Need นี้')
-    if (need.merged_from.length === 0) return detail(422, 'Need นี้ไม่ได้มาจากการรวม จึงแยกไม่ได้')
     if (need.excluded_at !== null) return detail(422, 'คืน Need ก่อนแยก')
+    if (need.merged_from.length === 0) return detail(422, 'Need นี้ไม่ได้มาจากการรวม จึงแยกไม่ได้')
     if (of(db.plos, pid).some((p) => p.source_need_ids.includes(nid))) {
       return detail(409, 'Need นี้ถูกใช้สร้าง PLO แล้ว — แยกก่อนสร้าง PLO หรือรันสังเคราะห์ PLO ใหม่หลังแยก')
     }
-    const busy = busyReason(pid)
-    if (busy) return detail(409, busy)
     const originals = of(db.needs, pid).filter((n) => need.merged_from.includes(n.need_id))
     for (const o of originals) o.merged_into = null
     db.needs = db.needs.filter((n) => n.need_id !== nid)
     return ok(sortNeeds(originals))
   })
 
-  /** The designer's merge, refused in the route's order: 422 on the request's
-   *  shape and the rows, then 409 for a PLO or a busy program. The sentence is
-   *  faked: the real route asks the model for it and answers 502 when it fails. */
+  /** The designer's merge, refused in the route's order: 409 busy
+   *  (sync_writer), 422 on the request's shape and the rows, 409 for a PLO,
+   *  422 for the core floor. The sentence is faked: the real route asks the
+   *  model for it and answers 502 when it fails. */
   r.post('/programs/:pid/needs/merge', (req) => {
     const { pid } = req.params
     const db = getDb()
-    const body = (req.body ?? {}) as { need_ids?: string[]; reason_th?: string | null }
-    const ids = body.need_ids ?? []
-    if (new Set(ids).size !== ids.length) return detail(422, 'เลือก Need ซ้ำกัน')
-    if (ids.length < 2 || ids.length > 5) return detail(422, 'เลือก Need 2-5 ข้อเพื่อรวม')
-    const rows = ids.map((id) => of(db.needs, pid).find((n) => n.need_id === id))
-    if (rows.some((n) => !n)) return detail(422, 'ไม่พบ Need ที่เลือกบางข้อ')
-    const picked = rows as NeedRow[]
-    if (picked.some((n) => n.merged_into !== null || n.excluded_at !== null)) {
-      return detail(422, 'รวมได้เฉพาะ Need ที่ยังใช้งานอยู่')
-    }
-    if (picked.some((n) => fallbackKind(n.statement_th))) {
-      return detail(422, 'Need ที่ยังเขียนประโยคไม่สำเร็จรวมไม่ได้ — เขียนประโยคก่อน')
-    }
-    if (of(db.plos, pid).some((p) => p.source_need_ids.some((id) => ids.includes(id)))) {
-      return detail(409, 'Need ที่เลือกถูกใช้สร้าง PLO แล้ว — ลบ PLO นั้นก่อนจึงจะรวมได้')
-    }
     const busy = busyReason(pid)
     if (busy) return detail(409, busy)
+    const body = (req.body ?? {}) as { need_ids?: string[]; reason_th?: string | null }
+    const ids = body.need_ids ?? []
+    if (new Set(ids).size !== ids.length) return detail(422, 'เลือก Need ซ้ำ')
+    if (ids.length < 2 || ids.length > 5) return detail(422, 'เลือก Need 2-5 ข้อเพื่อรวม')
+    const missing = ids.filter((id) => !of(db.needs, pid).some((n) => n.need_id === id))
+    if (missing.length) return detail(422, `ไม่พบ Need: ${missing.join(', ')}`)
+    const picked = ids.map((id) => of(db.needs, pid).find((n) => n.need_id === id)) as NeedRow[]
+    const inactive = picked.find((n) => n.merged_into !== null || n.excluded_at !== null)
+    if (inactive) return detail(422, `Need ${inactive.need_id} ไม่อยู่ในชุดที่ใช้งาน`)
+    const unwritten = picked.filter((n) => fallbackKind(n.statement_th))
+    if (unwritten.length) {
+      return detail(
+        422,
+        'ยังไม่ได้เขียนประโยคสำหรับ Need: ' +
+          `${unwritten.map((n) => n.need_id).join(', ')} — ผู้ออกแบบหลักสูตรต้องเขียนประโยคเอง ` +
+          'หรือรันขั้นรวมทักษะเป็น Need ใหม่ ก่อนนำมารวม',
+      )
+    }
+    const cited = ids.filter((id) => of(db.plos, pid).some((p) => p.source_need_ids.includes(id)))
+    if (cited.length) {
+      return detail(409, `มี PLO อ้างถึง Need: ${cited.join(', ')} — ลบหรือรวม PLO ก่อนรวม Need`)
+    }
     // Worst case: the merged Need counts as core whenever any member is.
     const active = activeNeeds(of(db.needs, pid))
     const currentCore = active.filter((n) => !n.is_optional).length
@@ -752,40 +760,43 @@ export function buildRouter(): Router {
       merged_into: null,
       merged_by: 'designer',
       excluded_at: null,
-      merge_reason_th: body.reason_th?.trim() || '',
+      merge_reason_th: body.reason_th?.trim() || 'ผู้ออกแบบหลักสูตรเลือกรวม Need เหล่านี้',
     }
     for (const n of picked) n.merged_into = merged.need_id
     db.needs.push(merged)
     return ok(merged)
   })
 
-  /** NeedRepository.exclude: 404, 422 for a row that is not active, 409 for a PLO or a busy program. */
+  /** NeedRepository.set_excluded, refused in the real route's order: 409 busy
+   *  (sync_writer), 404, 422 for a row that is not active, 409 for a PLO. */
   r.post('/programs/:pid/needs/:nid/exclude', (req) => {
     const { pid, nid } = req.params
     const db = getDb()
-    const need = of(db.needs, pid).find((n) => n.need_id === nid)
-    if (!need) return detail(404, 'ไม่พบ Need นี้')
-    if (need.merged_into !== null) return detail(422, 'Need นี้ถูกรวมไปแล้ว — ตัดออกได้เฉพาะข้อที่ยังใช้งานอยู่')
-    if (need.excluded_at !== null) return detail(422, 'Need นี้ถูกตัดออกไปแล้ว')
-    if (of(db.plos, pid).some((p) => p.source_need_ids.includes(nid))) {
-      return detail(409, 'Need นี้ถูกใช้สร้าง PLO แล้ว — ลบ PLO นั้นก่อนจึงจะตัดออกได้')
-    }
     const busy = busyReason(pid)
     if (busy) return detail(409, busy)
+    const need = of(db.needs, pid).find((n) => n.need_id === nid)
+    if (!need) return detail(404, 'ไม่พบ Need นี้')
+    if (need.merged_into !== null) {
+      return detail(422, 'Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — ตัด Need ที่รวมแล้วแทน')
+    }
+    if (need.excluded_at !== null) return detail(422, 'Need นี้ถูกตัดออกอยู่แล้ว')
+    if (of(db.plos, pid).some((p) => p.source_need_ids.includes(nid))) {
+      return detail(409, 'มี PLO อ้างถึง Need นี้ — ลบหรือรวม PLO ก่อนตัด Need')
+    }
     need.excluded_at = new Date().toISOString()
     return ok(need)
   })
 
   r.post('/programs/:pid/needs/:nid/restore', (req) => {
     const { pid, nid } = req.params
+    const busy = busyReason(pid)
+    if (busy) return detail(409, busy)
     const need = of(getDb().needs, pid).find((n) => n.need_id === nid)
     if (!need) return detail(404, 'ไม่พบ Need นี้')
     if (need.merged_into !== null) {
       return detail(422, 'Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — ตัด Need ที่รวมแล้วแทน')
     }
     if (need.excluded_at === null) return detail(422, 'Need นี้ไม่ได้ถูกตัดออก')
-    const busy = busyReason(pid)
-    if (busy) return detail(409, busy)
     need.excluded_at = null
     return ok(need)
   })
