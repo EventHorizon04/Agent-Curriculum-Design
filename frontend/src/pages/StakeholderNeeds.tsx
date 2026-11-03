@@ -10,6 +10,8 @@ interface EvidenceItem {
   stakeholder_type: string
   source_name: string
   raw_text_th: string
+  /** Not shown, but the PUT body replaces it: omitting it would null it. */
+  source_url?: string | null
   classification: string
 }
 
@@ -61,6 +63,9 @@ export default function StakeholderNeeds() {
       ])
       setItems(res.data)
       setLock(lockRes.data)
+      // A form left open when the lock closed must not come back, stale, if the
+      // lock later opens again (e.g. on another copy's page).
+      if (lockRes.data.locked) handleCancelEdit()
     } catch {
       setError('โหลดหลักฐานไม่ได้ — ตรวจสอบว่า backend รันอยู่')
     } finally {
@@ -71,6 +76,14 @@ export default function StakeholderNeeds() {
   useEffect(() => {
     if (programId) fetchEvidence(programId)
   }, [programId, fetchEvidence])
+
+  /** A refused mutation may mean the lock closed under the page (an extraction
+   *  job started elsewhere), so every failure re-reads list and lock. The read
+   *  clears the error banner, hence the message is set after it. */
+  async function failAndRefresh(pid: string, message: string) {
+    await fetchEvidence(pid)
+    setError(message)
+  }
 
   async function postEvidence(payload: EvidencePayload) {
     setSubmitting(true)
@@ -85,7 +98,10 @@ export default function StakeholderNeeds() {
       if (axiosErr.response) {
         const detail = axiosErr.response.data?.detail
         // The 409s carry Thai detail meant to be shown as-is (locked, busy).
-        setError(typeof detail === 'string' ? detail : `API error ${axiosErr.response.status}`)
+        await failAndRefresh(
+          payload.program_id,
+          typeof detail === 'string' ? detail : `API error ${axiosErr.response.status}`,
+        )
       } else {
         setError('เชื่อมต่อ API ไม่ได้')
       }
@@ -106,6 +122,7 @@ export default function StakeholderNeeds() {
 
   function handleCancelEdit() {
     setEditingId(null)
+    setStakeholderType('employer')
     setSourceName('')
     setRawText('')
   }
@@ -119,6 +136,8 @@ export default function StakeholderNeeds() {
         stakeholder_type: stakeholderType,
         source_name: sourceName.trim(),
         raw_text_th: rawText.trim(),
+        // The route writes the body as given, so the stored URL is sent back.
+        source_url: items.find(i => i.evidence_id === evidenceId)?.source_url ?? null,
       })
       setSuccess('แก้ไขหลักฐานสำเร็จ')
       handleCancelEdit()
@@ -126,9 +145,7 @@ export default function StakeholderNeeds() {
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: unknown } } }
       const detail = axiosErr.response?.data?.detail
-      setError(typeof detail === 'string' ? detail : 'แก้ไขหลักฐานไม่สำเร็จ')
-      // A 409 may mean the lock closed under the form; the list says which.
-      await fetchEvidence(pid)
+      await failAndRefresh(pid, typeof detail === 'string' ? detail : 'แก้ไขหลักฐานไม่สำเร็จ')
     } finally {
       setSubmitting(false)
     }
@@ -200,7 +217,7 @@ export default function StakeholderNeeds() {
       setSuccess('ลบหลักฐานสำเร็จ')
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } }
-      setError(axiosErr.response?.data?.detail ?? 'ลบหลักฐานไม่สำเร็จ')
+      await failAndRefresh(programId, axiosErr.response?.data?.detail ?? 'ลบหลักฐานไม่สำเร็จ')
     }
   }
 
@@ -216,7 +233,10 @@ export default function StakeholderNeeds() {
       )
       if (!response.ok) {
         const body = await response.json().catch(() => null) as { detail?: unknown } | null
-        setError(typeof body?.detail === 'string' ? body.detail : `classify-stream error: ${response.status}`)
+        await failAndRefresh(
+          programId,
+          typeof body?.detail === 'string' ? body.detail : `classify-stream error: ${response.status}`,
+        )
         return
       }
       const reader = response.body?.getReader()
