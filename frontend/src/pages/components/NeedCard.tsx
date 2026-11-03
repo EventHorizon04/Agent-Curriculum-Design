@@ -272,7 +272,10 @@ export default function NeedCard({
       )}
       {isMerged && need.merge_reason_th && (
         <p className="mt-2 border-l-2 border-hair pl-2.5 text-xs leading-relaxed text-pencil">
-          <span className="eyebrow mr-1">เหตุผลของโมเดล: </span>
+          {/* null is a row merged before merged_by existed — Agent 2's. */}
+          <span className="eyebrow mr-1">
+            {need.merged_by === 'designer' ? 'เหตุผลของผู้ออกแบบ: ' : 'เหตุผลของโมเดล: '}
+          </span>
           {need.merge_reason_th}
         </p>
       )}
