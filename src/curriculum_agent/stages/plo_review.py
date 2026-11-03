@@ -71,6 +71,10 @@ from curriculum_agent.stages.plo_review_facts import (
 
 MAX_REDUNDANCY_GROUP = 3
 
+# The agent reads the whole dossier on every step; past this many PLOs its step
+# budget and the 300 s timeout were never measured (phase 5). A warning only.
+MAX_DOSSIER_PLOS_WARN = 15
+
 
 def _bloom_level(raw: str | None) -> BloomLevel | None:
     if raw is None:
@@ -275,6 +279,11 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
         else None,
         degree_level=metadata.degree_level if metadata else "",
     )
+    if len(dossier.items) > MAX_DOSSIER_PLOS_WARN:
+        logger.warning(
+            f"plo_review: dossier carries {len(dossier.items)} PLOs, above "
+            f"{MAX_DOSSIER_PLOS_WARN}; the review agent was measured on smaller sets"
+        )
     fingerprint = plo_fingerprint(plos, need_demands(needs))
     now = datetime.now(UTC).replace(tzinfo=None)
     if not settings.plo_review_provider:

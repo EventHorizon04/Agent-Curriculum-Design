@@ -177,6 +177,16 @@ if _skill_ksec_literal != _expected_skill_ksec:
     )
 
 
+def _bound_kwargs() -> dict[str, int]:
+    """Output bounds for one extraction call; empty when neither is configured."""
+    bounds: dict[str, int] = {}
+    if settings.extraction_max_tokens is not None:
+        bounds["max_tokens"] = settings.extraction_max_tokens
+    if settings.extraction_reasoning_max_tokens is not None:
+        bounds["reasoning_max_tokens"] = settings.extraction_reasoning_max_tokens
+    return bounds
+
+
 def _extraction_contract_fingerprint() -> str:
     """Short hash of everything that decides the SHAPE of a cached extraction.
 
@@ -361,11 +371,21 @@ async def run(state: AgentState) -> AgentState:
         # key worth preserving — the new schema field moved _EXTRACTION_CONTRACT,
         # so every row written before it is already a miss. A conditional append
         # would buy back nothing and leave a branch to maintain forever.
-        cache_key = hashlib.sha256(
+        #
+        # The output bounds are appended only when set: they change what the model
+        # can return, so a cached unbounded answer must not be replayed for a
+        # bounded run (or the reverse), while leaving them unset keeps today's key
+        # and every row already stored.
+        key_text = (
             f"{chunk}\x00{evidence.classification}\x00{settings.extraction_model}"
             f"\x00{_EXTRACTION_CONTRACT}\x00{field_th}\x00{program_name_th}"
-            f"\x00{scope_th}".encode()
-        ).hexdigest()
+            f"\x00{scope_th}"
+        )
+        if settings.extraction_max_tokens is not None:
+            key_text += f"\x00max_tokens={settings.extraction_max_tokens}"
+        if settings.extraction_reasoning_max_tokens is not None:
+            key_text += f"\x00reasoning_max_tokens={settings.extraction_reasoning_max_tokens}"
+        cache_key = hashlib.sha256(key_text.encode()).hexdigest()
 
         result: _ExtractedSkillsResponse | None = None
         cached = await _cache.get(cache_key)
@@ -392,7 +412,9 @@ async def run(state: AgentState) -> AgentState:
             # for a slot it did not need.
             async with _sem:
                 try:
-                    result = await complete_extraction(_ExtractedSkillsResponse, messages)
+                    result = await complete_extraction(
+                        _ExtractedSkillsResponse, messages, **_bound_kwargs()
+                    )
                     await _cache.set(
                         cache_key,
                         settings.extraction_model,

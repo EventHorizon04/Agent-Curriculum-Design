@@ -63,6 +63,10 @@ _ATTEMPTS = 2
 _MAX_TOKENS = 4096
 _REASONING_MAX_TOKENS = 1024
 
+# One call reads every eligible Need's sentence; past this the prompt is long
+# enough that the vote's agreement is unmeasured (phase 5). A warning only.
+MAX_NEEDS_WARN = 30
+
 _Pair = tuple[str, str]
 
 
@@ -236,6 +240,11 @@ async def find_duplicate_groups(needs: list[Need], metadata: ProgramMetadata) ->
     if len(needs) < 2:
         return AcceptedGroups.with_call("skipped")
 
+    if len(needs) > MAX_NEEDS_WARN:
+        logger.warning(
+            f"need_dedup: {len(needs)} eligible Needs exceeds {MAX_NEEDS_WARN}; "
+            "the duplicate check was measured on far fewer and its prompt grows with every Need"
+        )
     labelled = label_needs(needs)
     messages = build_need_dedup_prompt(
         [(label, ksec_label(n), n.statement_th) for label, n in labelled.items()],

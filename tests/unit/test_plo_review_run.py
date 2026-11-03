@@ -376,3 +376,21 @@ async def test_one_run_setting_is_todays_single_review(
     assert live.await_count == 1
     assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (1, 1, 1)
     assert review.tool_calls[0].tool == "check_verbs"
+
+
+async def test_a_large_dossier_logs_a_size_warning(live: AsyncMock) -> None:
+    from loguru import logger
+
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        many = [
+            _PLOS[0].model_copy(update={"plo_id": f"PLO{i}"})
+            for i in range(1, pr.MAX_DOSSIER_PLOS_WARN + 1)
+        ]
+        await pr.fresh_review("p", many)
+        assert not any("dossier carries" in m for m in messages)
+        await pr.fresh_review("p", [*many, _PLOS[0].model_copy(update={"plo_id": "PLO99"})])
+    finally:
+        logger.remove(sink)
+    assert sum("dossier carries" in m for m in messages) == 1

@@ -8,14 +8,17 @@ targets, `validate_assignments` and scoring are unchanged; the result is a
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from uuid import uuid4
 
 from loguru import logger
 
+from curriculum_agent.concurrency import gather_bounded
+from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import SkillGroupRepository, SkillRepository
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import ExtractedSkill, SkillGroup, StakeholderType
+from curriculum_agent.models import ExtractedSkill, KSECCategory, SkillGroup, StakeholderType
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.stages.demand import (
     build_scoring_corpus,
@@ -199,51 +202,72 @@ async def build_skill_groups(
             )
         )
 
-    for ksec, pair in populations.items():
-        for is_grad, bucket in ((True, pair[0]), (False, pair[1])):
-            names, index_groups, bloom_by_name = deduped[(ksec, is_grad)]
-            if not names:
-                continue
-            target = targets[is_grad].get(ksec)
-            side = "graduate" if is_grad else "institutional"
+    # Every bucket's clustering call is independent of the others (each reads its
+    # own names and target), so they run together under the shared ceiling and the
+    # groups are then built in exactly the order the sequential loop used:
+    # `gather_bounded` returns results in input order. `cluster_skill_names` takes
+    # no semaphore of its own, so there is no nested acquisition to deadlock on.
+    jobs: list[tuple[KSECCategory, bool, list[ExtractedSkill]]] = [
+        (ksec, is_grad, bucket)
+        for ksec, pair in populations.items()
+        for is_grad, bucket in ((True, pair[0]), (False, pair[1]))
+        if deduped[(ksec, is_grad)][0]
+    ]
+
+    def _cluster_factory(
+        ksec: KSECCategory, is_grad: bool
+    ) -> Callable[[], Awaitable[list[list[int]]]]:
+        names = deduped[(ksec, is_grad)][0]
+        target = targets[is_grad].get(ksec)
+        side = "graduate" if is_grad else "institutional"
+
+        async def _call() -> list[list[int]]:
             logger.info(
                 f"Clustering {len(names)} unique {ksec.value} {side} skills into about {target}"
             )
-            name_clusters = validate_assignments(
-                [("", g) for g in await cluster_skill_names(names, target, program_context)],
-                names,
-            )
-            for _, name_indices in name_clusters:
-                member_positions = sorted({p for ni in name_indices for p in index_groups[ni]})
-                members = [bucket[p] for p in member_positions]
-                stats = score_members(members, stakeholder_type_by_evidence)
-                # Stable, so names mentioned equally often keep clustering's order.
-                ranked = sorted(name_indices, key=lambda ni: -len(index_groups[ni]))
-                groups.append(
-                    SkillGroup(
-                        group_id=str(uuid4()),
-                        program_id=program_id,
-                        is_graduate=is_grad,
-                        ksec=resolve_need_ksec(members),
-                        skill_ids=[m.skill_id for m in members],
-                        evidence_ids=stats.evidence_ids,
-                        skill_names=[names[ni] for ni in ranked],
-                        skill_frequencies=[len(index_groups[ni]) for ni in ranked],
-                        # What most of the group asks for, not its top member —
-                        # see group_bloom for how the maximum inflated five PLOs.
-                        bloom_level=group_bloom(
-                            [bloom_by_name[names[ni]] for ni in ranked],
-                            [len(index_groups[ni]) for ni in ranked],
-                        ),
-                        demand_score=stats.demand_score,
-                        is_optional=stats.is_optional,
-                        classification_coverage=stats.classification_coverage,
-                        stakeholder_coverage=stats.stakeholder_coverage,
-                        in_field_skill_count=stats.in_field_skill_count,
-                        graduate_capability_skill_count=stats.graduate_capability_skill_count,
-                        stakeholder_types=stats.stakeholder_types,
-                    )
+            return await cluster_skill_names(names, target, program_context)
+
+        return _call
+
+    raw_clusters = await gather_bounded(
+        settings.llm_max_concurrency,
+        [_cluster_factory(ksec, is_grad) for ksec, is_grad, _ in jobs],
+    )
+
+    for (ksec, is_grad, bucket), raw in zip(jobs, raw_clusters, strict=True):
+        names, index_groups, bloom_by_name = deduped[(ksec, is_grad)]
+        name_clusters = validate_assignments([("", g) for g in raw], names)
+        for _, name_indices in name_clusters:
+            member_positions = sorted({p for ni in name_indices for p in index_groups[ni]})
+            members = [bucket[p] for p in member_positions]
+            stats = score_members(members, stakeholder_type_by_evidence)
+            # Stable, so names mentioned equally often keep clustering's order.
+            ranked = sorted(name_indices, key=lambda ni: -len(index_groups[ni]))
+            groups.append(
+                SkillGroup(
+                    group_id=str(uuid4()),
+                    program_id=program_id,
+                    is_graduate=is_grad,
+                    ksec=resolve_need_ksec(members),
+                    skill_ids=[m.skill_id for m in members],
+                    evidence_ids=stats.evidence_ids,
+                    skill_names=[names[ni] for ni in ranked],
+                    skill_frequencies=[len(index_groups[ni]) for ni in ranked],
+                    # What most of the group asks for, not its top member —
+                    # see group_bloom for how the maximum inflated five PLOs.
+                    bloom_level=group_bloom(
+                        [bloom_by_name[names[ni]] for ni in ranked],
+                        [len(index_groups[ni]) for ni in ranked],
+                    ),
+                    demand_score=stats.demand_score,
+                    is_optional=stats.is_optional,
+                    classification_coverage=stats.classification_coverage,
+                    stakeholder_coverage=stats.stakeholder_coverage,
+                    in_field_skill_count=stats.in_field_skill_count,
+                    graduate_capability_skill_count=stats.graduate_capability_skill_count,
+                    stakeholder_types=stats.stakeholder_types,
                 )
+            )
     return groups
 
 

@@ -196,3 +196,92 @@ async def test_one_failing_statement_falls_back_without_costing_the_others(
 
     marked = [n["statement_th"].startswith(nc._PROVIDER_MARKER_TH) for n in state["needs"]]
     assert marked == [False, True, False]
+
+
+def _mixed_skills() -> list[ExtractedSkill]:
+    return [
+        _skill("S1", "เขียนโปรแกรมเว็บ", KSECCategory.S),
+        _skill("S2", "ออกแบบฐานข้อมูล", KSECCategory.S),
+        _skill("K1", "หลักการวิศวกรรมซอฟต์แวร์", KSECCategory.K),
+        _skill("K2", "โครงสร้างข้อมูล", KSECCategory.K),
+        _skill("C1", "ความรับผิดชอบต่อหน้าที่", KSECCategory.C),
+    ]
+
+
+def _shape(groups: list[SkillGroup]) -> list[tuple]:
+    """Everything but the random group id: membership, order and scores."""
+    return [
+        (
+            g.is_graduate,
+            g.ksec,
+            g.skill_ids,
+            g.skill_names,
+            g.skill_frequencies,
+            g.evidence_ids,
+            g.demand_score,
+        )
+        for g in groups
+    ]
+
+
+async def test_bucket_clustering_calls_overlap_and_groups_match_sequential(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    skills = _mixed_skills()
+    in_flight = 0
+    peak = 0
+    all_started = asyncio.Event()
+
+    async def answer(names, target=None, program_context=None):  # noqa: ANN001
+        # One singleton group per name, reversed, so order is observable.
+        return [[i] for i in reversed(range(len(names)))]
+
+    async def sequential(names, target=None, program_context=None):  # noqa: ANN001
+        return await answer(names, target, program_context)
+
+    monkeypatch.setattr(settings, "llm_max_concurrency", 1)
+    monkeypatch.setattr(sg, "cluster_skill_names", sequential)
+    reference = await sg.build_skill_groups(PROGRAM, skills, {"E1": "employer"})
+    assert len(reference) >= 3
+
+    started = 0
+
+    async def overlapping(names, target=None, program_context=None):  # noqa: ANN001
+        nonlocal in_flight, peak, started
+        in_flight += 1
+        started += 1
+        peak = max(peak, in_flight)
+        if started >= 3:
+            all_started.set()
+        # Completes only once every bucket has started: a sequential loop would
+        # wait here forever, so this fails by timeout rather than by luck.
+        await asyncio.wait_for(all_started.wait(), timeout=2)
+        in_flight -= 1
+        return await answer(names, target, program_context)
+
+    monkeypatch.setattr(settings, "llm_max_concurrency", 5)
+    monkeypatch.setattr(sg, "cluster_skill_names", overlapping)
+    concurrent = await sg.build_skill_groups(PROGRAM, skills, {"E1": "employer"})
+
+    assert peak >= 3
+    assert _shape(concurrent) == _shape(reference)
+
+
+async def test_bucket_clustering_respects_the_concurrency_ceiling(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    in_flight = 0
+    peak = 0
+
+    async def counting(names, target=None, program_context=None):  # noqa: ANN001
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await asyncio.sleep(0.01)
+        in_flight -= 1
+        return [list(range(len(names)))]
+
+    monkeypatch.setattr(settings, "llm_max_concurrency", 2)
+    monkeypatch.setattr(sg, "cluster_skill_names", counting)
+    await sg.build_skill_groups(PROGRAM, _mixed_skills(), {"E1": "employer"})
+    assert peak == 2

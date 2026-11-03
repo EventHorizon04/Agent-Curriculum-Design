@@ -293,3 +293,20 @@ async def test_every_call_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     for c in call.await_args_list:
         assert c.kwargs["max_tokens"] == nd._MAX_TOKENS
         assert c.kwargs["reasoning_max_tokens"] == nd._REASONING_MAX_TOKENS
+
+
+async def test_many_eligible_needs_log_a_size_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    from loguru import logger
+
+    monkeypatch.setattr(nd, "complete_need_dedup", AsyncMock(return_value=DedupAnswer()))
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        await find_duplicate_groups([_need(f"n{i}") for i in range(nd.MAX_NEEDS_WARN)], _METADATA)
+        assert not any("exceeds" in m for m in messages)
+        await find_duplicate_groups(
+            [_need(f"n{i}") for i in range(nd.MAX_NEEDS_WARN + 1)], _METADATA
+        )
+    finally:
+        logger.remove(sink)
+    assert sum("exceeds" in m for m in messages) == 1
