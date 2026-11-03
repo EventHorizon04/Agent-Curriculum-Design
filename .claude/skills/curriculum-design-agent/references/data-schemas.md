@@ -503,6 +503,48 @@ The seven long run routes answer 202 with a `JobInfo` instead of holding the req
 
 **One writer per program.** A `running` job, or a graph session whose status is `running`, blocks every other job and the synchronous writers (`POST /sessions/`, `/approve`, `/plos/from-needs`, `/copy`) with a 409 whose `detail` is a Thai string. Rows still `running` after a restart belong to a dead process and are marked `failed` at startup. A job is an operational record, not an OBE artifact: it carries no evidence trail and no stage reads it.
 
+## Cross-stage: LLM usage accounting
+
+```python
+class LLMUsage(BaseModel):
+    """One provider response and what it cost. Instructor retries are rows too."""
+    id: str
+    program_id: str | None    # null for a call made outside a program
+    job_id: str | None
+    session_id: str | None
+    slot: str                 # the stage-named slot that made the call
+    provider: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int | None  # null when the endpoint does not report it
+    latency_ms: int
+    ok: bool                  # False: the response failed validation or the call errored
+    created_at: datetime      # naive UTC, +00:00 only in JSON
+
+class UsageTotals(BaseModel):  # nulls count as 0
+    calls: int; failed_calls: int
+    prompt_tokens: int; completion_tokens: int; reasoning_tokens: int; latency_ms: int
+
+class SlotUsage(UsageTotals):
+    slot: str
+
+class JobUsage(BaseModel):
+    job_id: str
+    kind: str          # from the jobs row; "" if that row is gone
+    label_th: str      # filled by the API from JOB_KIND_LABEL_TH; "" for an unknown kind
+    started: datetime
+    total: UsageTotals
+    by_slot: list[SlotUsage]
+
+class UsageSummary(BaseModel):  # GET /programs/{id}/usage
+    total: UsageTotals
+    by_slot: list[SlotUsage]
+    by_job: list[JobUsage]      # newest first; rows with no job count in total/by_slot only
+```
+
+`llm_usage` is an operational ledger, like `jobs`: it carries no evidence trail and no stage reads it. It is deleted with its program, not copied by a program copy, and not cleared by a re-run.
+
 ## Versioning
 
 PLOs are mutable objects under designer review. Use this versioning approach:

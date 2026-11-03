@@ -338,3 +338,13 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   (`need_combination` deletes and rewrites every Need) discards manual merges and
   exclusions as it already discarded splits; the Need page says so beside the
   re-run control.
+- **Agent 1's bucket clustering calls run concurrently, and one failure stops the rest.**
+  `skill_grouping.build_skill_groups` hands one call per (KSEC bucket, graduate/
+  institutional side) to `gather_bounded` under `llm_max_concurrency`, which returns in
+  input order, so the groups, ids and numbering are exactly what the sequential loop
+  produced. Each call reads only its own names and target; clustering still never
+  crosses a bucket. It passes `cancel_on_error=True`: when one call raises, the other
+  in-flight calls are cancelled (and awaited) before the same exception propagates,
+  where plain `gather` would leave them spending tokens for a result nobody reads.
+  Measured 2026-11-03: the 4-6 calls finish within 1.5-3.7 s of each other while their
+  summed latency is 9-13 s.

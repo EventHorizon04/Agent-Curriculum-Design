@@ -157,3 +157,17 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   those, and for rows written before any of this existed.
 - **`POST /plos/from-needs` takes 2-5 Needs, and what it replaces is kept.** More than `MAX_GROUP_SIZE` (`stages/need_dedup.py`) answers 422 "เลือก Need 2-5 ข้อเพื่อรวมเป็น PLO" before any lock, DB read or LLM call. `PLORepository.replace` snapshots every removed PLO into `superseded_plos` (`superseded_by` = the new PLO id, naive-UTC `superseded_at`) in the same transaction as the delete; `delete_by_program` and `ProgramRepository.delete_cascade` clear it, a full copy clones it with remapped ids, `evidence_only` copies none. `GET /programs/{id}/plos/superseded` is a read (404 unknown program) and `SupersededPLORepository.list_by_program` skips a snapshot failing `PLO.model_validate`. There is no restore. "Attach a Need to a PLO" in the UI is this same call with the card's `source_need_ids` plus one unused Need, no note. The picker's replaced-PLO preview uses `plosCiting` (`frontend/src/pages/components/plosCiting.ts`), the client mirror of `plos_citing`; the cap is `MAX_MERGE_NEEDS` (`frontend/src/constants/needPolicy.ts`, mirrors `MAX_GROUP_SIZE`) — change each pair together.
 - **`plo_redraft` is the one core behind the designer's merge and Agent 4's send-back, and it takes no lock.** `stages/plo_redraft.redraft_from_needs` (the old `_merge_needs` body) holds every bound and check of the merge and writes through `PLORepository.replace`. It registers no writer: `POST /plos/from-needs` wraps it in `sync_writer` with `cause="designer"`, while send-back runs inside the review job or graph session, which already hold the program busy, and passes `cause="review"` — a second registration there would 409 against itself. `superseded_plos.cause` is `designer` | `review` | null (null reads as designer, for older rows). `plo_feedback_actions` (`GET /programs/{id}/plos/feedback`, newest first) has the life of `superseded_plos`: cleared by `delete_by_program` and program delete, cloned with remapped ids by a full copy, not by `evidence_only`. The review job's result is `PLOReviewRunResponse` (`PLOReviewResponse` plus `feedback`); `GET /review` is unchanged.
+- **`llm_usage` has the life of the program's own rows, not of a run.** One row per
+  provider response (`LLMUsage`, instructor retries included), attributed by
+  `llm_context.llm_scope(program_id=..., job_id=... | session_id=...)`. The scope is set in
+  `jobs._run` (every background job), in the graph session runner (`sessions.py`),
+  and around the two synchronous LLM writers, `POST /plos/from-needs` and
+  `POST /needs/merge`; a call made outside any of them is stored with null
+  attribution and counts nowhere. `ProgramRepository.delete_cascade` deletes the
+  program's rows; a program copy does **not** copy them (the copy has spent
+  nothing); and a re-run does **not** clear them — usage is a ledger of what was
+  spent, and a re-run is more spending. `GET /programs/{id}/usage` (404 unknown
+  program) returns `UsageSummary`: overall, per slot, and per job newest first, with
+  `JobUsage.label_th` filled by the route from `JOB_KIND_LABEL_TH` (empty for an
+  unknown kind, so the page keeps no copy of the map). It is a read; nothing
+  upstream reads usage.

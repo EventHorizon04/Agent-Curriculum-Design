@@ -77,3 +77,32 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   `created_at` is never touched on overwrite, and that is deliberate: everything
   deciding the payload is in the key, so a second write stores the value already
   there and the first computation is the row's real age.
+- **Every provider response is recorded, through instructor's hooks, and the recorder
+  never fails a call** (phase 5). `_ensure_usage_hooks` registers `completion:kwargs`,
+  `completion:response`, `completion:error` and `parse:error` once per cached client;
+  they append each attempt (tokens, latency, `ok`) to a list held in a `ContextVar`,
+  and `_complete` writes the list in its `finally` through `_record_usage` — so a
+  retried call, a truncation and a call that finally raised all leave rows. A
+  `completion:error` or `parse:error` marks the attempt failed (`ok=False`); a
+  truncated response takes the first path, not the second, and instructor retries it.
+  `_record_usage` catches everything and logs a warning: accounting must never change
+  what `_complete` returns or raises. The **warm-up keep-alive is not recorded** — it
+  is a one-token ping to pin an Ollama model, not work done for a program. `_complete`
+  takes a `slot` keyword, passed by every `complete_*` wrapper (`validation` included),
+  so a row says which stage's slot made the call whatever model it resolved to. The
+  scope (program, job, session) comes from `llm_context.llm_scope`; see `api-data.md`
+  for who sets it.
+- **The extraction output bound is on by default, measured, and part of the cache
+  key.** `EXTRACTION_REASONING_MAX_TOKENS=1024` and `EXTRACTION_MAX_TOKENS=4096`.
+  Measured 2026-11-03 on GLM (`.scratch/reports/2026-11-03-phase5-extraction.md`):
+  about 89% of unbounded extraction output was hidden reasoning, and bounding it took
+  Agent 1 from ~255 s to ~47 s for -9.1% skills (82 vs 90, the loss in the long tail
+  of S) and -1.6% grounding (invented spans, which `is_grounded` drops before they
+  reach a Need). `0` means "no bound": the field is not sent and not added to the key,
+  so the key is byte-for-byte the pre-bound one — that is the research setting.
+  A positive bound is appended to the key (`max_tokens=`, `reasoning_tokens=`) because
+  it can change the answer: a cached unbounded extraction must not be replayed for a
+  bounded run. **The default changing therefore re-extracts each program once**; the
+  old rows become unreachable, and `prune_cache --older-than DAYS` is the sweep for
+  them (no column marks them stale). Not measured: whether the ~8 fewer S skills
+  change the Needs and PLOs downstream.
