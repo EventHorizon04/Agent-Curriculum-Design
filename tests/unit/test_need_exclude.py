@@ -114,19 +114,22 @@ async def test_write_merge_links_originals_and_inserts_in_one_session() -> None:
     assert written.need_id == "M"
 
 
-async def test_need_combination_rewrite_clears_manual_state() -> None:
-    """delete_by_program + bulk_insert leaves nothing of a designer's exclusion or merge."""
+async def test_delete_by_program_deletes_needs_scoped_to_the_program() -> None:
+    captured: list[object] = []
     session = AsyncMock()
-    session.get = AsyncMock(return_value=None)
-    session.add = MagicMock()
-    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_ctx(session)):
-        await NeedRepository().delete_by_program("p")
-        await NeedRepository().bulk_insert([_need("N1"), _need("N2")])
 
-    rows = [c.args[0] for c in session.add.call_args_list]
-    assert len(rows) == 2
-    assert all(r.excluded_at is None for r in rows)
-    assert all(r.merged_by != "designer" for r in rows)
+    async def execute(statement: object) -> MagicMock:
+        captured.append(statement)
+        return MagicMock(rowcount=3)
+
+    session.execute = execute
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_ctx(session)):
+        assert await NeedRepository().delete_by_program("prog-1") == 3
+    compiled = captured[0].compile(compile_kwargs={"literal_binds": True})  # type: ignore[attr-defined]
+    sql = str(compiled).lower()
+    assert sql.startswith("delete from needs")
+    assert "program_id = 'prog-1'" in sql
+    session.commit.assert_awaited_once()
 
 
 def test_mark_merged_sets_parent() -> None:

@@ -1041,3 +1041,73 @@ async def test_the_sentence_call_sets_an_explicit_output_cap(monkeypatch: pytest
     assert kwargs
     assert all(kw.get("max_tokens") == 4096 for kw in kwargs)
     assert all(kw.get("reasoning_max_tokens") == 1024 for kw in kwargs)
+
+
+async def test_rewrite_deletes_before_inserting_and_carries_no_manual_state(
+    skills: list[ExtractedSkill], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review Focus 4: a re-run drops a designer's exclusion and manual merge.
+
+    The fake store already holds an excluded Need and a designer-merged one for
+    this program. The stage must clear the program before it writes, and what it
+    writes must carry neither mark.
+    """
+    from datetime import datetime  # noqa: PLC0415
+
+    from curriculum_agent.models import Need  # noqa: PLC0415
+
+    _patch_llm(monkeypatch)
+    stale = [
+        Need(
+            need_id="OLD-EXCLUDED",
+            program_id="cs-test",
+            statement_th="ต้องการบัณฑิตที่ทำงานได้จริงในสถานประกอบการ",
+            ksec_categories=[KSECCategory.S],
+            bloom_level=BloomLevel.APPLY,
+            member_skill_ids=["S1"],
+            source_evidence_ids=["E1"],
+            freq=1,
+            demand_score=0.5,
+            excluded_at=datetime(2026, 11, 1),
+        ),
+        Need(
+            need_id="OLD-MERGED",
+            program_id="cs-test",
+            statement_th="ต้องการบัณฑิตที่ทำงานได้จริงในสถานประกอบการ",
+            ksec_categories=[KSECCategory.S],
+            bloom_level=BloomLevel.APPLY,
+            member_skill_ids=["S2"],
+            source_evidence_ids=["E1"],
+            freq=1,
+            demand_score=0.5,
+            merged_by="designer",
+        ),
+    ]
+    store: list[Need] = list(stale)
+    calls: list[str] = []
+
+    async def delete(self: object, program_id: str) -> int:
+        calls.append("delete")
+        removed = len(store)
+        store.clear()
+        return removed
+
+    async def insert(self: object, needs: list[Need]) -> None:
+        calls.append("insert")
+        store.extend(needs)
+
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", delete)
+    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", insert)
+
+    await run_need_pipeline_from_skills(
+        {
+            "program_id": "cs-test",
+            "extracted_skills": [s.model_dump(mode="json") for s in skills],
+        }
+    )
+
+    assert calls == ["delete", "insert"]
+    assert store, "the stage wrote no Needs"
+    assert not {n.need_id for n in store} & {"OLD-EXCLUDED", "OLD-MERGED"}
+    assert all(n.excluded_at is None for n in store)
+    assert all(n.merged_by in (None, "agent") for n in store)
