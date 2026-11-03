@@ -173,6 +173,23 @@ The designer chose a majority vote. Five parallel calls run with reasoning bound
 - **Much faster.** All five calls together now take 7-29 s, against 30-258 s for one unbounded call.
 - **Caveat on the bound.** The bound may have shifted the model's judgement. Unbounded, N7+N10 was the most frequent pair; bounded, it is N3+N10. Both are borderline, so it is unclear which is right.
 
+### Run 13: full cold run with every fix (at 95afecb)
+
+| Step | Wall time |
+|---|---|
+| Agent 1 | 241 s |
+| Agent 2 | 40 s (was 56-70 s) |
+| PLO synthesis | 167 s |
+| plo_review | 60 s |
+| **Total** | **513 s** |
+
+- **Dedup vote:** 5 of 5 calls were usable. N3+N4 got 3 votes and merged; N3+N7 got 1. Core Needs went from 12 to 11.
+- **PLOs:** 9 core.
+  - All 9 were finished by the agent: 0 `code_only`, 0 escalations, 0 truncations.
+  - One soft flag: PLO5 A_scope.
+- **plo_review:** 4 of 5 runs were usable. Exactly one redundancy finding reached a majority (1-2 per run). Runs 10 and 11 had 1-3 per run.
+- **Weak outcome:** PLO8, "อธิบายหลักการแปลภาษาไทย-ภาษาจีน" (understand), passed SMART but is thin as a program outcome.
+
 ## Open (updated 2026-11-03)
 
 1. ~~SMART turn budget~~, ~~closing call never run live~~, and ~~malformed verdict loss~~ are all done: f7391d6, 11b24ce and 6e471d2.
