@@ -86,3 +86,64 @@ Weak groups:
 - **Reasoning runaway.** Three PLO steps reasoned up to the 4096-token step cap without answering. The existing bounded re-ask recovered all three.
 - **What is not shown.** The closing call never ran live; it is tested by unit tests only. The Finishes at turn 7 (PLO1 and PLO4 in run 6, PLO4 in run 7) came after the turns-left note appeared. Run 5 finished early without any note, though, so the drop from 4 of 7 `code_only` to 0 of 21 cannot be credited to the change alone. GLM's run-to-run variance explains part of it.
 - **Soft verdicts.** PLO4 (A_scope) was flagged in 2 of 3 runs. PLO7 (A_level) agrees with plo_review, which also asks for `create`.
+
+## Follow-up runs (2026-11-03)
+
+### SMART agent
+
+**The closing call has now run live.** With `VALIDATION_MAX_TURNS=1`:
+- 7 of 7 PLOs logged "closed at the budget".
+- Every stored verdict says `smart_validated_by=agent`.
+- PLO4 still received its A_scope flag.
+
+**The turns-left note cut investigation short, and that is fixed in 11b24ce.**
+- Before the fix, with `VALIDATION_MAX_TURNS=3`, the note came with turn 1's observation. Every PLO ran `check_hard` and then finished at turn 2.
+- The note now appears only once half the budget is spent. At the default of 8 nothing changes: it appears on turns 7 and 8.
+- After the fix, with 3 turns, every PLO used all 3 turns (`check_hard`, then `bloom_lookup`, then Finish). PLO4 used the closing call after one repair. 10 of 10 PLOs were finished by the agent.
+
+**A malformed repair instruction lost a verdict, and that is fixed in 6e471d2.**
+- In run 11, PLO4 asked twice for a repair whose `instruction_th` was over 400 characters. Instructor's re-ask, which shows the error, did not help, and the PLO ended `code_only` (MALFORMED).
+- The cap is now 800, the same as `reasoning_th`.
+- When malformed steps are exhausted, the loop now makes the same Finish-only closing call (`finished_after_malformed`) before falling back to the code-only verdict.
+
+### Repeat full runs (10 and 11; cold, 8-turn budget, before 6e471d2)
+
+| | Run 4 | Run 10 | Run 11 |
+|---|---|---|---|
+| Total wall time | 531 s | 477 s | 620 s |
+| Agent 1 | 269 s | 246 s | 280 s |
+| Skill groups | 15 | 13 | 16 |
+| Dedup groups merged (multi-tag) | 5 (3) | 1 (0) | **0** (0) |
+| Active Needs | 10 | 12 | 16 |
+| PLOs (core + optional) | 7 + 0 | 9 + 0 | 9 + 1 |
+| SMART `code_only` | 4 (turn budget, before f7391d6) | 0 | 1 (malformed, see above) |
+| Escalations | 0 | 0 | 0 |
+| `finish_reason='length'` | 0 | 0 | 0 |
+
+- **Every run completed cleanly.** All three finished, with 0 truncations and 0 Need fallbacks. Agent 1 took 246-280 s.
+- **New finding: the dedup check varies a lot.**
+  - Proposed merges went from 5 groups to 1 to 0. Run 11 kept 14 core Needs with no merge at all.
+  - Yet run 11's PLO1 ("แปลและสื่อสาร…"), PLO2 ("แปล… โดยใช้เครื่องมือ AI") and PLO9 ("แก้ปัญหาหน้างานในงานล่ามและการแปล") visibly overlap. plo_review reported 2-3 redundancies on every one of its 5 runs.
+  - The number of core PLOs, and how much they overlap, therefore depends on one stochastic dedup call.
+
+### Grouping: GLM vs llama on the same input
+
+Both models clustered the 89 skills run 11 extracted (`cluster_dump.py`, no DB writes). GLM's result is run 11's own; llama is `meta-llama/llama-3.3-70b-instruct` and took 13.7 s. Each produced 16 groups.
+
+- **GLM's S groups are clearly more coherent.** It keeps legal translation (6), AI post-editing (9), interpreting and negotiation (7), cross-cultural communication (6) and digital marketing (5) apart.
+- **llama's S groups mix things.**
+  - It puts legal translation into its AI group (12).
+  - It puts business-Chinese negotiation into marketing.
+  - It mixes interpreting analysis with business strategy.
+  - Its group 6 is a grab-bag: practical work, accuracy, diplomatic interpreting, certification and lifelong learning.
+- **GLM's weak spots:**
+  - S #7 (14 names) mixes business and entrepreneurship with generic items.
+  - EC is one 11-name grab-bag. llama splits EC into two, which are still mixed.
+- **Verdict.** On identical input, the reasoning-bounded GLM groups at least as well as llama, and better on S. The weak EC/K groups come from those buckets having no single object to group around; a different model would not fix them.
+
+## Open (updated 2026-11-03)
+
+1. ~~SMART turn budget~~, ~~closing call never run live~~, and ~~malformed verdict loss~~ are all done: f7391d6, 11b24ce and 6e471d2.
+2. **The dedup check varies from run to run**, from 5 merges to 0. This is the main source of variation in the PLO set. It needs a look at the need_dedup prompt and call, or a repeat-and-vote design like plo_review's.
+3. The generic EC bucket and GLM's S business grab-bag. A prompt-level change would need its own experiment.
+4. Extraction takes 245-280 s per run. Deferred to phase 5.
