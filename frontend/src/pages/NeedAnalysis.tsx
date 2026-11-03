@@ -10,7 +10,7 @@ import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import NeedCard, { type NeedRow } from './components/NeedCard'
 import { scopeVerdict } from '../constants/scope'
-import { MAX_CORE_PLOS, MIN_CORE_PLOS, fallbackKind } from '../constants/needPolicy'
+import { MAX_CORE_PLOS, MAX_MERGE_NEEDS, MIN_CORE_PLOS, fallbackKind } from '../constants/needPolicy'
 import DesignerNote from './components/DesignerNote'
 
 /** Agent 2 only. Extraction jobs are not this page's: a need_combination job is
@@ -393,7 +393,7 @@ export default function NeedAnalysis() {
               <div className="flex flex-wrap items-end gap-3">
                 <p className="text-sm text-graphite">
                   เลือกแล้ว <span className="data font-semibold">{selectedIds.length}</span> ข้อ
-                  <span className="field-hint ml-2">รวมได้ 2-5 ข้อ</span>
+                  <span className="field-hint ml-2">รวมได้ 2-{MAX_MERGE_NEEDS} ข้อ</span>
                 </p>
                 <div className="min-w-48 flex-1">
                   <label htmlFor="merge-reason" className="field-label">เหตุผลที่รวม (ไม่บังคับ)</label>
@@ -409,7 +409,7 @@ export default function NeedAnalysis() {
                 </div>
                 <button
                   onClick={() => void merge(selectedIds)}
-                  disabled={busy || selectedIds.length < 2 || selectedIds.length > 5}
+                  disabled={busy || selectedIds.length < 2 || selectedIds.length > MAX_MERGE_NEEDS}
                   className="btn btn-primary"
                 >
                   {merging ? 'กำลังรวม...' : `รวม Need ที่เลือก (${selectedIds.length})`}

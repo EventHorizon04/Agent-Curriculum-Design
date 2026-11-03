@@ -11,6 +11,9 @@ import { startJob, type JobKind } from '../api/jobs'
 import DesignerNote from './components/DesignerNote'
 import SupersededPlos from './components/SupersededPlos'
 import { plosCiting } from './components/plosCiting'
+import MergeNeedPicker from './components/MergeNeedPicker'
+import type { PickerNeed } from './components/pickerNeed'
+import AttachNeed from './components/AttachNeed'
 import ValidationToggle, { type ValidationStatus } from './components/ValidationToggle'
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
@@ -45,10 +48,7 @@ interface PLOTrace {
   missing_evidence_ids: string[]
 }
 
-interface NeedListItem {
-  need_id: string
-  statement_th: string
-}
+type NeedListItem = PickerNeed
 
 /** The jobs this page owns: the synthesis run, and the SMART re-check of one
  *  outcome. They are what it shows as running and what its failure notice is
@@ -58,6 +58,10 @@ const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate']
  *  PLOs it shows are written by the first two, the Needs it offers for merging
  *  by the last two. */
 const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate', 'needs_pipeline', 'skill_extraction', 'need_combination']
+
+/** Wall clock, read from an event handler: kept out of the component body so
+ *  the purity lint does not mistake the handler for render. */
+const clockMs = (): number => Date.now()
 
 export default function PloSynthesis() {
   const { programId } = useProgram()
@@ -203,15 +207,17 @@ export default function PloSynthesis() {
 
   // Still synchronous — it is not one of the background jobs — but it is a
   // writer like them, so a 409 here means the program already has one running.
-  const mergeSelected = async () => {
-    if (selected.size < 2 || !programId || busy) return
+  // The picker and the card's attach control both come through here, so the
+  // cards a merge replaces and the page line behave the same for either.
+  const submitMerge = async (needIds: string[]) => {
+    if (needIds.length < 2 || !programId || busy) return
     setMerging(true)
     // Same rule as the server's: every outcome citing a selected Need goes.
-    setMergeFlight({ ids: new Set(plosCiting(plos, selected).map(p => p.plo_id)), since: Date.now() })
+    setMergeFlight({ ids: new Set(plosCiting(plos, needIds).map(p => p.plo_id)), since: clockMs() })
     setError('')
     try {
       await api.post(`/programs/${programId}/plos/from-needs`, {
-        need_ids: [...selected],
+        need_ids: needIds,
         note_th: note.trim() || null,
       })
       setSelected(new Set())
@@ -246,6 +252,11 @@ export default function PloSynthesis() {
       </div>
     )
   }
+
+  const citedNeedIds = new Set(plos.flatMap(p => p.source_need_ids))
+  const unusedNeeds = needs
+    .filter(n => !citedNeedIds.has(n.need_id))
+    .sort((a, b) => (b.demand_score ?? 0) - (a.demand_score ?? 0))
 
   const smartPassCount = plos.filter(p =>
     SMART_KEYS.every(k => p.smart_check[k] === true)
@@ -353,6 +364,8 @@ export default function PloSynthesis() {
                 busy={busy}
                 pending={pendingOf(p.plo_id)}
                 onRevalidate={() => revalidate(p.plo_id)}
+                unusedNeeds={unusedNeeds}
+                onAttach={(needId) => void submitMerge([...p.source_need_ids, needId])}
               />
             ))}
           </div>
@@ -360,46 +373,16 @@ export default function PloSynthesis() {
           <SupersededPlos items={superseded} />
 
           {needs.length >= 2 && (
-            <div className="panel mt-8 bg-sunk p-5">
-              <h2 className="section-title mb-1">
-                รวม Need หลายรายการเป็น PLO เดียว
-              </h2>
-              <p className="mb-3 text-xs text-pencil">
-                เลือก Need ตั้งแต่ 2 รายการที่ต้องการให้ AI สังเคราะห์รวมเป็น PLO เดียว
-              </p>
-              {note.trim() && (
-                <p className="notice notice-info mb-3 text-xs">
-                  ใช้หมายเหตุด้านบน: <span className="text-graphite">{note.trim()}</span>
-                </p>
-              )}
-              <div className="space-y-2 mb-4">
-                {needs.map(n => (
-                  <label
-                    key={n.need_id}
-                    className={`flex cursor-pointer items-start gap-2.5 rounded-[3px] border p-3 transition-colors ${
-                      selected.has(n.need_id)
-                        ? 'border-stamp bg-stamp-wash'
-                        : 'border-hair bg-sheet hover:border-hair-strong'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.has(n.need_id)}
-                      onChange={() => toggleNeed(n.need_id)}
-                      className="mt-1.5 accent-stamp"
-                    />
-                    <span className="record text-base">{n.statement_th}</span>
-                  </label>
-                ))}
-              </div>
-              <button
-                onClick={mergeSelected}
-                disabled={selected.size < 2 || busy}
-                className="btn btn-primary"
-              >
-                {merging ? 'กำลังร่าง PLO ใหม่...' : `รวมเป็น PLO เดียว (${selected.size})`}
-              </button>
-            </div>
+            <MergeNeedPicker
+              needs={needs}
+              plos={plos}
+              selected={selected}
+              onToggle={toggleNeed}
+              note={note}
+              busy={busy}
+              merging={merging}
+              onSubmit={() => void submitMerge([...selected])}
+            />
           )}
         </>
       )}
@@ -546,7 +529,12 @@ function PLOCard({
   busy,
   pending,
   onRevalidate,
+  unusedNeeds,
+  onAttach,
 }: {
+  unusedNeeds: PickerNeed[]
+  /** Redraft this outcome from its Needs plus the chosen one. */
+  onAttach: (needId: string) => void
   plo: PLO
   programId: string
   onUpdate: (plo: PLO) => void
@@ -726,6 +714,12 @@ function PLOCard({
             >
               {pending?.label === REVALIDATING_LABEL ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
             </button>
+            <AttachNeed
+              citedCount={p.source_need_ids.length}
+              unused={unusedNeeds}
+              busy={busy || Boolean(pending)}
+              onAttach={onAttach}
+            />
           </div>
         )}
       </div>
