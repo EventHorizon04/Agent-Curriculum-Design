@@ -20,7 +20,7 @@ export default function SupersededPlos({ items, needs }: { items: SupersededPLO[
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
               <span className="data font-semibold">{s.plo.plo_id}</span>
               <span>
-                แทนที่โดย <span className="data">{s.superseded_by}</span>
+                {s.cause === 'review' ? 'แทนที่ตามผลตรวจโดย' : 'แทนที่โดย'} <span className="data">{s.superseded_by}</span>
                 {s.superseded_by === s.plo.plo_id && ' ฉบับใหม่'}
               </span>
               <span className="data ml-auto text-lead">{localTime(s.superseded_at)}</span>

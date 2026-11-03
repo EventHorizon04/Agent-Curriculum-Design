@@ -9,6 +9,7 @@
  */
 import type { JobInfo, JobKind } from '../api/jobs'
 import type { SMARTCheck, SmartFinding } from '../types/plo'
+import type { FeedbackAction, PLOSetReview } from '../types/ploReview'
 import { MAX_CORE_PLOS, MAX_MERGE_NEEDS, fallbackKind } from '../constants/needPolicy'
 import {
   clone,
@@ -296,6 +297,7 @@ function runStageForSession(pid: string, stage: string): void {
       replaceRows('plos', pid, synthesizePlos(pid, needs, of(db.skills, pid)))
       // A fresh synthesis wipes the history too, as POST /plos/run does.
       db.superseded = (db.superseded ?? []).filter((x) => x.program_id !== pid)
+      db.feedback = (db.feedback ?? []).filter((x) => x.program_id !== pid)
       return
     }
   }
@@ -312,6 +314,126 @@ function finishSession(pid: string): void {
   const degree = db.programs.find((p) => p.program_id === pid)?.degree_level ?? 'bachelor'
   const review = buildMockReview(pid, plos, of(db.needs, pid), degree)
   db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
+  sendBack(pid, review)
+}
+
+/** Replace every outcome citing one of the selected Needs with one drafted from
+ *  them, numbered from what survives, and keep what it replaced. The core of
+ *  POST /plos/from-needs, shared with the review's send-back; the caller has
+ *  already checked the bounds. */
+function replaceFromNeeds(pid: string, selected: NeedRow[], cause: 'designer' | 'review'): PloRow {
+  const db = getDb()
+  const needIds = selected.map((n) => n.need_id)
+  const isOptional = selected.every((n) => n.is_optional)
+  const existing = of(db.plos, pid)
+  const superseded = existing.filter((p) => p.source_need_ids.some((id) => needIds.includes(id)))
+  const supersededIds = new Set(superseded.map((p) => p.plo_id))
+  const surviving = existing.filter((p) => !supersededIds.has(p.plo_id))
+  // Numbered from what survives, so the merge reuses the lowest freed slot.
+  const prefix = isOptional ? 'OPT' : 'PLO'
+  const used = new Set(
+    surviving
+      .map((p) => p.plo_id)
+      .filter((id) => id.startsWith(prefix) && /^\d+$/.test(id.slice(prefix.length)))
+      .map((id) => Number(id.slice(prefix.length))),
+  )
+  let index = 1
+  while (used.has(index)) index++
+  const plo = makePlo(pid, formatPloId(index, isOptional), selected, mergedPloSeed(selected, of(db.skills, pid)), isOptional)
+  db.plos = [...db.plos.filter((p) => !(p.program_id === pid && supersededIds.has(p.plo_id))), plo]
+  // The replaced outcomes are kept, the way the server snapshots them.
+  const at = new Date().toISOString().replace('Z', '+00:00')
+  db.superseded = [
+    ...(db.superseded ?? []),
+    ...superseded.map((old) => ({
+      id: `${pid}:${old.plo_id}:${at}`,
+      program_id: pid,
+      superseded_by: plo.plo_id,
+      superseded_at: at,
+      cause,
+      plo: old,
+    })),
+  ]
+  return plo
+}
+
+/** The review's send-back, as the server runs it after an agent review: one
+ *  agreed redundancy is applied through the same replace a designer's merge
+ *  uses, and the finding it cannot act on is recorded with its reason. A
+ *  code-only review sends nothing back. */
+function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
+  if (review.reviewed_by !== 'agent') return []
+  const db = getDb()
+  // The review's own timestamp is naive; the trail's carries the offset.
+  const reviewAt = /(Z|[+-]\d{2}:?\d{2})$/.test(review.created_at) ? review.created_at : `${review.created_at}+00:00`
+  const rows: FeedbackAction[] = []
+  const push = (
+    r: Pick<FeedbackAction, 'kind' | 'plo_ids' | 'need_ids' | 'finding_reason_th' | 'instruction_th' | 'outcome' | 'outcome_reason_th'> &
+      Partial<FeedbackAction>,
+  ): void => {
+    rows.push({
+      result_plo_id: null,
+      result_statement_th: null,
+      result_bloom_level: null,
+      ...r,
+      id: newId(),
+      program_id: pid,
+      review_created_at: reviewAt,
+      created_at: nowIso(),
+    })
+  }
+
+  const group = review.redundancies.find((g) => (g.agreed_runs ?? 1) >= (review.agreement_threshold ?? 1))
+  if (group) {
+    const plos = of(db.plos, pid)
+    const members = plos.filter((p) => group.plo_ids.includes(p.plo_id))
+    const needById = new Map(of(db.needs, pid).map((n) => [n.need_id, n]))
+    const needs = [...new Set(members.flatMap((p) => p.source_need_ids))]
+      .map((id) => needById.get(id))
+      .filter((n): n is NeedRow => !!n)
+    const coreAfter = plos.filter((p) => !p.is_optional).length - members.filter((p) => !p.is_optional).length + 1
+    const common = {
+      kind: 'redundancy',
+      plo_ids: group.plo_ids,
+      need_ids: needs.map((n) => n.need_id),
+      finding_reason_th: group.reason_th,
+      instruction_th: `รวม Need ของ ${group.plo_ids.join(' และ ')} เป็น PLO ข้อเดียว`,
+    }
+    if (members.length < 2 || needs.length < 2 || needs.length > MAX_MERGE_NEEDS) {
+      push({ ...common, outcome: 'skipped', outcome_reason_th: 'ชุด Need ที่จะรวมไม่อยู่ในช่วง 2-5 ข้อ' })
+    } else if (coreAfter < MIN_CORE_AFTER_MERGE) {
+      push({
+        ...common,
+        outcome: 'skipped',
+        outcome_reason_th: `การรวมจะเหลือ PLO หลัก ${coreAfter} ข้อ ต่ำกว่าขั้นต่ำ ${MIN_CORE_AFTER_MERGE} ข้อ`,
+      })
+    } else {
+      const plo = replaceFromNeeds(pid, needs, 'review')
+      push({
+        ...common,
+        outcome: 'applied',
+        outcome_reason_th: '',
+        result_plo_id: plo.plo_id,
+        result_statement_th: plo.statement_th,
+        result_bloom_level: plo.bloom_level,
+      })
+    }
+  }
+
+  const unused = review.unused_needs.find((n) => n.verdict === 'consider')
+  if (unused) {
+    push({
+      kind: 'unused_need',
+      plo_ids: [],
+      need_ids: [unused.need_id],
+      finding_reason_th: unused.reason_th,
+      instruction_th: 'เพิ่ม Need นี้เข้าไปใน PLO ข้อที่ใกล้เคียงที่สุด',
+      outcome: 'skipped',
+      outcome_reason_th: 'ไม่มี PLO ข้อใดที่ขอบเขตใกล้พอจะรับ Need นี้โดยไม่ทำให้ข้อความกว้างเกินไป จึงไม่ได้แก้',
+    })
+  }
+  db.feedback = [...rows, ...(db.feedback ?? [])]
+  return rows
 }
 
 /**
@@ -575,6 +697,10 @@ export function buildRouter(): Router {
           return { ...copy, id: newId(), plo: { ...copy.plo, program_id: newPid } }
         }),
       ]
+      db.feedback = [
+        ...(db.feedback ?? []),
+        ...of(db.feedback ?? [], src).map((row) => ({ ...remap(row), id: newId() })),
+      ]
     }
     return ok(findProgram(newPid))
   })
@@ -602,6 +728,7 @@ export function buildRouter(): Router {
     db.jobs = db.jobs.filter((r2) => r2.program_id !== pid)
     db.reviews = (db.reviews ?? []).filter((r2) => r2.program_id !== pid)
     db.superseded = (db.superseded ?? []).filter((r2) => r2.program_id !== pid)
+    db.feedback = (db.feedback ?? []).filter((r2) => r2.program_id !== pid)
     return { status: 204 }
   })
 
@@ -919,6 +1046,14 @@ export function buildRouter(): Router {
     )
   })
 
+  // Newest first, as the server orders them.
+  r.get('/programs/:pid/plos/feedback', (req) => {
+    if (!findProgram(req.params.pid)) return detail(404, 'Program not found')
+    return ok(
+      [...of(getDb().feedback ?? [], req.params.pid)].sort((a, b) => b.created_at.localeCompare(a.created_at)),
+    )
+  })
+
   r.get('/programs/:pid/plos/export/matrix.xlsx', (req) => {
     const pid = req.params.pid
     const plos = sortPlos(of(getDb().plos, pid))
@@ -1009,6 +1144,7 @@ export function buildRouter(): Router {
         replaceRows('plos', pid, plos)
         // A re-synthesis starts the set over, as the server's delete_by_program does.
         getDb().superseded = (getDb().superseded ?? []).filter((x) => x.program_id !== pid)
+        getDb().feedback = (getDb().feedback ?? []).filter((x) => x.program_id !== pid)
         return ok(plos)
       },
     })
@@ -1076,7 +1212,8 @@ export function buildRouter(): Router {
         const degree = db.programs.find((p) => p.program_id === pid)?.degree_level ?? 'bachelor'
         const review = buildMockReview(pid, of(db.plos, pid), of(db.needs, pid), degree)
         db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
-        return ok({ review, stale: false, review_enabled: true })
+        const feedback = sendBack(pid, review)
+        return ok({ review, stale: false, review_enabled: true, feedback })
       },
     })
   })
@@ -1124,30 +1261,7 @@ export function buildRouter(): Router {
       }
       if (consumeFailNextRun()) return detail(502, 'สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่')
 
-      // Numbered from what survives, so the merge reuses the lowest freed slot.
-      const prefix = isOptional ? 'OPT' : 'PLO'
-      const used = new Set(
-        surviving
-          .map((p) => p.plo_id)
-          .filter((id) => id.startsWith(prefix) && /^\d+$/.test(id.slice(prefix.length)))
-          .map((id) => Number(id.slice(prefix.length))),
-      )
-      let index = 1
-      while (used.has(index)) index++
-      const plo = makePlo(pid, formatPloId(index, isOptional), selected, mergedPloSeed(selected, of(db.skills, pid)), isOptional)
-      db.plos = [...db.plos.filter((p) => !(p.program_id === pid && supersededIds.has(p.plo_id))), plo]
-      // The replaced outcomes are kept, the way the server snapshots them.
-      const at = new Date().toISOString().replace('Z', '+00:00')
-      db.superseded = [
-        ...(db.superseded ?? []),
-        ...superseded.map((old) => ({
-          id: `${pid}:${old.plo_id}:${at}`,
-          program_id: pid,
-          superseded_by: plo.plo_id,
-          superseded_at: at,
-          plo: old,
-        })),
-      ]
+      const plo = replaceFromNeeds(pid, selected, 'designer')
       return ok(plo)
     },
     'slow',

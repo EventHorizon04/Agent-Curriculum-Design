@@ -88,6 +88,27 @@ export interface PLOSetReview {
   agreement_threshold?: number
 }
 
+/** One thing the review sent back, as `GET /programs/{id}/plos/feedback` sends it (newest first). */
+export interface FeedbackAction {
+  id: string
+  program_id: string
+  /** The review the finding came from; groups rows into a round. */
+  review_created_at: string
+  /** `redundancy` | `bloom` | `unused_need`. */
+  kind: string
+  plo_ids: string[]
+  need_ids: string[]
+  finding_reason_th: string
+  instruction_th: string
+  /** `applied` | `skipped` | `failed`. */
+  outcome: string
+  outcome_reason_th: string
+  result_plo_id: string | null
+  result_statement_th: string | null
+  result_bloom_level: string | null
+  created_at: string
+}
+
 export interface PLOReviewResponse {
   review: PLOSetReview | null
   /** The PLOs or Needs changed after this review was made. */

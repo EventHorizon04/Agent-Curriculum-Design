@@ -9,7 +9,10 @@ import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import { BLOOM_ORDER, bloomLabel } from '../constants/bloom'
 import { ksecLabel, stakeholderLabel } from '../constants/stakeholder'
+import FeedbackTrail from './components/FeedbackTrail'
+import type { SupersededPLO } from '../types/plo'
 import type {
+  FeedbackAction,
   KsecFinding,
   PLOReviewResponse,
   PLOSetReview,
@@ -83,6 +86,8 @@ export default function PloReview() {
   const [read, setRead] = useState<{ programId: string; response: PLOReviewResponse } | null>(null)
   const data = read?.programId === programId ? read.response : null
   const [loadError, setLoadError] = useState('')
+  // The send-back trail and the history it points into. Secondary: a failed read leaves them empty.
+  const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[] } | null>(null)
   const [starting, setStarting] = useState(false)
   const [runError, setRunError] = useState<RunError | null>(null)
 
@@ -101,8 +106,15 @@ export default function PloReview() {
     const mineRead = ++latestRead.current
     setLoadError('')
     try {
-      const res = await api.get<PLOReviewResponse>(`/programs/${programId}/plos/review`)
-      if (mineRead === latestRead.current) setRead({ programId, response: res.data })
+      const [res, fb, sup] = await Promise.all([
+        api.get<PLOReviewResponse>(`/programs/${programId}/plos/review`),
+        api.get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`).catch(() => ({ data: [] as FeedbackAction[] })),
+        api.get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`).catch(() => ({ data: [] as SupersededPLO[] })),
+      ])
+      if (mineRead === latestRead.current) {
+        setRead({ programId, response: res.data })
+        setTrail({ programId, feedback: fb.data, superseded: sup.data })
+      }
     } catch {
       if (mineRead === latestRead.current) {
         setLoadError('โหลดผลตรวจไม่สำเร็จ ตรวจว่า API ทำงานอยู่ แล้วลองใหม่')
@@ -149,6 +161,7 @@ export default function PloReview() {
   const review = data?.review ?? null
   const dropped = droppedNotice(review?.dropped_findings)
   const agentOff = data?.review_enabled === false
+  const trailNow = trail?.programId === programId ? trail : null
 
   return (
     <div className="space-y-6">
@@ -156,7 +169,7 @@ export default function PloReview() {
         <p className="eyebrow">ขั้นที่ 7</p>
         <h1 className="page-title">ตรวจคุณภาพชุด PLO</h1>
         <p className="mt-1 text-sm text-pencil">
-          QA agent อ่าน PLO ทั้งชุดที่ทำเสร็จแล้ว แล้วให้คำแนะนำ — ไม่ได้แก้ PLO ให้
+          QA agent อ่าน PLO ทั้งชุดที่ทำเสร็จแล้ว แล้วให้คำแนะนำ — ข้อที่ตรงกันและแก้ได้จะถูกส่งกลับไปแก้ให้ พร้อมบันทึกว่าแก้อะไร
         </p>
       </header>
 
@@ -207,6 +220,14 @@ export default function PloReview() {
           {review.summary_th && <p className="record text-base">{review.summary_th}</p>}
           {isVoted(review) && review.summary_th && (
             <p className="text-sm text-pencil">สรุปจากรอบที่ตรงกับผลรวมมากที่สุด</p>
+          )}
+
+          {trailNow && (
+            <FeedbackTrail
+              feedback={trailNow.feedback}
+              superseded={trailNow.superseded}
+              review={review}
+            />
           )}
 
           <Overview review={review} />

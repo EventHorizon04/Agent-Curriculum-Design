@@ -10,7 +10,7 @@
  */
 import type { JobInfo } from '../api/jobs'
 import type { PLO, SupersededPLO } from '../types/plo'
-import type { PLOSetReview } from '../types/ploReview'
+import type { FeedbackAction, PLOSetReview } from '../types/ploReview'
 
 export type ScenarioName = 'empty' | 'checkpoint' | 'complete' | 'many'
 
@@ -160,6 +160,8 @@ export interface MockDb {
   reviews?: PLOSetReview[]
   /** PLOs replaced by a merge. Optional for the same reason as `reviews`. */
   superseded?: SupersededRow[]
+  /** What each review sent back, newest first once listed. Optional for the same reason. */
+  feedback?: FeedbackAction[]
 }
 
 export function emptyDb(): MockDb {

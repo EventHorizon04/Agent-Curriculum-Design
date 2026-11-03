@@ -20,6 +20,7 @@ import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttenti
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
 import { BLOOM_LABEL } from '../constants/bloom'
 import type { PLO, SupersededPLO } from '../types/plo'
+import type { FeedbackAction } from '../types/ploReview'
 
 interface NeedSummary {
   need_id: string
@@ -68,6 +69,7 @@ export default function PloSynthesis() {
   const [plos, setPlos] = useState<PLO[]>([])
   const [superseded, setSuperseded] = useState<SupersededPLO[]>([])
   const [needs, setNeeds] = useState<NeedListItem[]>([])
+  const [feedback, setFeedback] = useState<FeedbackAction[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   // Between a click and the job being known, and during the synchronous merge.
@@ -121,17 +123,22 @@ export default function PloSynthesis() {
       if (!quiet) setLoading(true)
       setError('')
       try {
-        const [ploRes, supersededRes, needRes] = await Promise.all([
+        const [ploRes, supersededRes, needRes, feedbackRes] = await Promise.all([
           api.get<PLO[]>(`/programs/${programId}/plos/`),
           // The replaced list is secondary: its failure must not blank the PLOs.
           api
             .get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`)
             .catch(() => ({ data: [] as SupersededPLO[] })),
           api.get<NeedListItem[]>(`/programs/${programId}/needs/?active_only=true`),
+          // The chip is secondary too: no trail, no chip, the PLOs still show.
+          api
+            .get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`)
+            .catch(() => ({ data: [] as FeedbackAction[] })),
         ])
         setPlos(ploRes.data)
         setSuperseded(supersededRes.data)
         setNeeds(needRes.data)
+        setFeedback(feedbackRes.data)
       } catch {
         setError('โหลด PLO ไม่สำเร็จ')
       } finally {
@@ -359,6 +366,12 @@ export default function PloSynthesis() {
                 unusedNeeds={unusedNeeds}
                 needs={needs}
                 onAttach={(needId) => void submitMerge([...p.source_need_ids, needId], null)}
+                reviewFixed={feedback.some(
+                  (f) =>
+                    f.outcome === 'applied' &&
+                    f.result_plo_id === p.plo_id &&
+                    f.result_statement_th === p.statement_th,
+                )}
               />
             ))}
           </div>
@@ -533,7 +546,10 @@ function PLOCard({
   unusedNeeds,
   needs,
   onAttach,
+  reviewFixed,
 }: {
+  /** The current text is what the review's send-back wrote (same id and statement). */
+  reviewFixed: boolean
   unusedNeeds: PickerNeed[]
   /** Every active Need, to tell a cited Need that is no longer in the set. */
   needs: PickerNeed[]
@@ -621,6 +637,11 @@ function PLOCard({
             >
               {p.is_optional ? 'เสริม' : 'หลัก'}
             </span>
+            {reviewFixed && (
+              <Link to="/plo-review" className="chip chip-marker" title="ข้อนี้ถูกส่งกลับไปแก้ตามผลตรวจชุด PLO — ดูรายละเอียดที่หน้าตรวจคุณภาพ">
+                แก้ตามผลตรวจ
+              </Link>
+            )}
             {p.smart_escalated && (
               <span className="chip bg-mandate font-semibold whitespace-normal text-sheet">
                 ไม่ผ่าน SMART หลังแก้ {p.smart_retry_count} รอบ — ต้องแก้ด้วยมือ
