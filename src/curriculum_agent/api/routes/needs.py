@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from curriculum_agent.api.jobs import JobConflict, start_job, start_job_or_409, sync_writer
 from curriculum_agent.config import settings
@@ -26,6 +26,15 @@ from curriculum_agent.models import (
     Need,
     SkillGroup,
     StakeholderEvidence,
+)
+from curriculum_agent.prompts.program_context import build_program_context_th
+from curriculum_agent.stages import need_merge
+from curriculum_agent.stages.demand import build_scoring_corpus
+from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE, FoldGroup
+from curriculum_agent.stages.need_grouping import (
+    MIN_CORE_AFTER_MERGE,
+    is_in_scope,
+    is_unwritten_need,
 )
 from curriculum_agent.stages.plo_synthesis import plos_citing
 
@@ -146,6 +155,108 @@ async def exclude_need(program_id: str, need_id: str) -> Need:
 async def restore_need(program_id: str, need_id: str) -> Need:
     """Bring an excluded Need back. No PLO check: nothing can cite an excluded Need."""
     return await _set_exclusion(program_id, need_id, exclude=False)
+
+
+class ManualMergeRequest(BaseModel):
+    need_ids: list[str]
+    # Blank is absent, like the other designer-typed notes.
+    reason_th: str | None = Field(default=None, max_length=400)
+
+
+_MANUAL_MERGE_REASON_TH = "ผู้ออกแบบหลักสูตรเลือกรวม Need เหล่านี้"
+
+
+@router.post("/merge", response_model=Need)
+async def merge_needs(program_id: str, body: ManualMergeRequest) -> Need:
+    """The designer folds 2-5 active Needs into one merged Need.
+
+    Every refusal runs before the LLM call, inside the writer, so what was checked
+    is what is written. The merged sentence goes through the same `_write_merged`
+    the automatic merge uses (only `merged_by` differs), and the originals are
+    hidden by `merged_into` in one transaction. A selected merged Need is an
+    ordinary member: it keeps its own `merged_from` and only its `merged_into` is
+    set, so splitting the new Need frees it intact.
+    """
+    async with sync_writer(program_id, "หลักสูตรนี้กำลังรวม Need อยู่ — รอให้เสร็จก่อน"):
+        ids = body.need_ids
+        if len(set(ids)) != len(ids):
+            raise HTTPException(status_code=422, detail="เลือก Need ซ้ำ")
+        if not 2 <= len(ids) <= MAX_GROUP_SIZE:
+            raise HTTPException(status_code=422, detail=f"เลือก Need 2-{MAX_GROUP_SIZE} ข้อเพื่อรวม")
+        all_needs = await _repo.list_by_program(program_id)
+        by_id = {n.need_id: n for n in all_needs}
+        missing = [nid for nid in ids if nid not in by_id]
+        if missing:
+            raise HTTPException(status_code=422, detail=f"ไม่พบ Need: {', '.join(missing)}")
+        for nid in ids:
+            n = by_id[nid]
+            if n.merged_into is not None or n.excluded_at is not None:
+                raise HTTPException(status_code=422, detail=f"Need {nid} ไม่อยู่ในชุดที่ใช้งาน")
+        selected = [by_id[nid] for nid in ids]
+        unwritten = [n for n in selected if is_unwritten_need(n)]
+        if unwritten:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "ยังไม่ได้เขียนประโยคสำหรับ Need: "
+                    f"{', '.join(n.need_id for n in unwritten)} — ผู้ออกแบบหลักสูตรต้องเขียนประโยคเอง "
+                    "หรือรันขั้นรวมทักษะเป็น Need ใหม่ ก่อนนำมารวม"
+                ),
+            )
+        plos = await PLORepository().list_by_program(program_id)
+        cited = plos_citing(plos, ids)
+        if cited:
+            cited_ids = [nid for nid in ids if any(nid in p.source_need_ids for p in cited)]
+            raise HTTPException(
+                status_code=409,
+                detail=f"มี PLO อ้างถึง Need: {', '.join(cited_ids)} — ลบหรือรวม PLO ก่อนรวม Need",
+            )
+        # Worst case: the merged Need counts as core whenever any member is.
+        active = [n for n in all_needs if n.merged_into is None and n.excluded_at is None]
+        current_core = sum(1 for n in active if not n.is_optional)
+        selected_core = sum(1 for n in selected if not n.is_optional)
+        projected = current_core - selected_core + (1 if selected_core else 0)
+        if projected < MIN_CORE_AFTER_MERGE and projected < current_core:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"การรวมนี้จะเหลือ Need หลัก {projected} ข้อ ต่ำกว่าขั้นต่ำ {MIN_CORE_AFTER_MERGE} ข้อ"
+                ),
+            )
+        metadata = await ProgramRepository().get(program_id)
+        if metadata is None:
+            raise HTTPException(status_code=422, detail="ไม่พบข้อมูลหลักสูตร จึงเขียนประโยค Need ไม่ได้")
+
+        # Scope is a designer override here, as in /plos/from-needs: logged, allowed.
+        out_of_scope = [n.need_id for n in selected if not is_in_scope(n)]
+        if out_of_scope:
+            logger.info(f"manual merge for {program_id} includes out-of-scope Needs {out_of_scope}")
+
+        skills = await SkillRepository().list_by_program(program_id)
+        # Same corpus need_combination scores against; see build_scoring_corpus.
+        corpus = build_scoring_corpus(
+            (s.source_evidence_id, s.source_stakeholder_type.value) for s in skills
+        )
+        fold = FoldGroup(
+            needs=tuple(need_merge._demand_order(selected)),
+            reason_th=(body.reason_th or "").strip() or _MANUAL_MERGE_REASON_TH,
+        )
+        merged = await need_merge._write_merged(
+            program_id,
+            fold,
+            {s.skill_id: s for s in skills},
+            corpus,
+            build_program_context_th(metadata.model_dump()),
+            merged_by="designer",
+        )
+        if merged is None:
+            raise HTTPException(
+                status_code=502, detail="เขียนประโยค Need ที่รวมแล้วไม่สำเร็จ ลองใหม่อีกครั้ง"
+            )
+        try:
+            return await _repo.write_merge(program_id, list(fold.needs), merged)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="ไม่พบ Need นี้") from exc
 
 
 @router.get("/skills", response_model=list[ExtractedSkill])
