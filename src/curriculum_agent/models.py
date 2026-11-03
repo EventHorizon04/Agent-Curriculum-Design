@@ -616,6 +616,28 @@ class PLO(BaseModel):
         return self
 
 
+class SupersededPLO(BaseModel):
+    """A PLO a designer's merge replaced, read-only history (phase 3).
+
+    `plo` is the snapshot as it stood when it was replaced; `superseded_by` is
+    the plo_id of the merged outcome that took its place.
+    """
+
+    id: str
+    program_id: str
+    superseded_by: str
+    superseded_at: datetime
+    plo: PLO
+
+    # Stored naive UTC; sent with its offset because a browser reads a naive ISO
+    # string as local time. JSON only, like JobInfo.
+    @field_serializer("superseded_at", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
 # ------------------------- PLO set review -------------------------
 
 

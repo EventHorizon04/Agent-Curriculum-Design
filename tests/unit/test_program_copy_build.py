@@ -19,6 +19,7 @@ from curriculum_agent.data.orm import (
     PLOTable,
     ProgramTable,
     SkillTable,
+    SupersededPLOTable,
 )
 from curriculum_agent.data.program_copy import ProgramRows, build_copy, remap_ids
 from curriculum_agent.data.repositories import _row_to_dict
@@ -384,6 +385,55 @@ def test_a_copied_merge_points_at_the_copys_own_merged_need() -> None:
     assert second.merged_into == merged.need_id
     assert merged.merged_into is None
     assert merged.merged_from == [first.need_id, second.need_id]
+
+
+def _with_history(src: ProgramRows) -> ProgramRows:
+    from dataclasses import replace
+
+    snapshot = _row_to_dict(src.plos[0])
+    snapshot["plo_id"] = "PLO2"
+    history = SupersededPLOTable(
+        id="h-1",
+        program_id="program-2",
+        plo_id="PLO2",
+        snapshot=snapshot,
+        superseded_by="PLO1",
+        superseded_at=datetime(2026, 10, 5),
+    )
+    return replace(src, superseded=[history])
+
+
+def test_full_copy_clones_superseded_history() -> None:
+    src = _with_history(_source())
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+
+    assert len(copy.superseded) == 1
+    row = copy.superseded[0]
+    assert row.id != "h-1"
+    assert row.id.startswith("new-")
+    assert row.program_id == "program-2-run-1"
+    assert row.snapshot["program_id"] == "program-2-run-1"
+    assert row.plo_id == "PLO2"
+    assert row.superseded_by == "PLO1"
+    assert row.superseded_at == datetime(2026, 10, 5)
+
+    need_ids = {n.need_id for n in copy.needs}
+    evidence_ids = {e.evidence_id for e in copy.evidence}
+    assert set(row.snapshot["source_need_ids"]) <= need_ids
+    assert set(row.snapshot["source_evidence_ids"]) <= evidence_ids
+    # It still reads back as a PLO.
+    assert PLO.model_validate(row.snapshot).program_id == "program-2-run-1"
+    # The source row is untouched.
+    assert src.superseded[0].snapshot["program_id"] == "program-2"
+    assert src.superseded[0].snapshot["source_need_ids"] == ["nd-1"]
+
+
+def test_evidence_only_copy_has_no_superseded_history() -> None:
+    src = _with_history(_source())
+    copy = build_copy(
+        src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
+    )
+    assert copy.superseded == []
 
 
 def test_build_copy_evidence_only() -> None:

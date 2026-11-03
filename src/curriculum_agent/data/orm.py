@@ -179,6 +179,26 @@ class PLOTable(Base):
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
+class SupersededPLOTable(Base):
+    """A PLO a designer's merge replaced, kept read-only as history.
+
+    The live `plos` table cannot hold it: its key is (program_id, plo_id) and a
+    merge normally reuses the lowest freed plo_id. The whole replaced PLO rides
+    in one JSONB snapshot because nothing queries inside it; `superseded_by` is
+    the plo_id that replaced it.
+    """
+
+    __tablename__ = "superseded_plos"
+    __table_args__ = (Index("ix_superseded_plos_program_id", "program_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
+    plo_id: Mapped[str] = mapped_column(String)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    superseded_by: Mapped[str] = mapped_column(String)
+    superseded_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class PLOReviewTable(Base):
     """The advisory PLO set review, one row per program (stages/plo_review.py).
 

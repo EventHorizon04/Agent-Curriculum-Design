@@ -47,6 +47,7 @@ from curriculum_agent.data.orm import (
     ProgramTable,
     SkillGroupTable,
     SkillTable,
+    SupersededPLOTable,
 )
 from curriculum_agent.data.postgres import AsyncSessionLocal
 from curriculum_agent.data.repositories import _row_to_dict
@@ -70,6 +71,7 @@ class ProgramRows:
     plos: list[PLOTable]
     review: PLOReviewTable | None
     skill_groups: list[SkillGroupTable] = field(default_factory=list)
+    superseded: list[SupersededPLOTable] = field(default_factory=list)
 
 
 def _uuid4() -> str:
@@ -170,6 +172,7 @@ def build_copy(
             plos=[],
             review=None,
             skill_groups=[],
+            superseded=[],
         )
     id_map: dict[str, str] = {}
     for e in src.evidence:
@@ -202,6 +205,13 @@ def build_copy(
         _clone(g, id_map, program_id=new_id, group_id=id_map[g.group_id]) for g in src.skill_groups
     ]
     plos = [_clone(p, id_map, program_id=new_id) for p in src.plos]
+    # The snapshot is JSONB, so remap_ids rewrites its Need/evidence ids; the
+    # program_id inside it is not an id in the map and is set explicitly.
+    superseded = []
+    for old in src.superseded:
+        copied = _clone(old, id_map, id=new_uuid(), program_id=new_id)
+        copied.snapshot = {**copied.snapshot, "program_id": new_id}
+        superseded.append(copied)
 
     review: PLOReviewTable | None = None
     if src.review is not None:
@@ -223,6 +233,7 @@ def build_copy(
         plos=plos,
         review=review,
         skill_groups=skill_groups,
+        superseded=superseded,
     )
 
 
@@ -244,6 +255,7 @@ async def load_rows(session: AsyncSession, program_id: str) -> ProgramRows | Non
         plos=await _all(PLOTable, PLOTable.program_id),
         review=await session.get(PLOReviewTable, program_id),
         skill_groups=await _all(SkillGroupTable, SkillGroupTable.program_id),
+        superseded=await _all(SupersededPLOTable, SupersededPLOTable.program_id),
     )
 
 
@@ -270,7 +282,14 @@ async def copy_program(
         copy = build_copy(src, new_id, now=now or datetime.utcnow(), mode=mode)
         session.add(copy.program)
         await session.flush()
-        for group in (copy.evidence, copy.skills, copy.skill_groups, copy.needs, copy.plos):
+        for group in (
+            copy.evidence,
+            copy.skills,
+            copy.skill_groups,
+            copy.needs,
+            copy.plos,
+            copy.superseded,
+        ):
             session.add_all(group)
             await session.flush()
         if copy.review is not None:
@@ -280,6 +299,7 @@ async def copy_program(
         f"program copy ({mode}): {source_id} -> {new_id} ({len(copy.evidence)} evidence, "
         f"{len(copy.skills)} skills, {len(copy.skill_groups)} skill groups, "
         f"{len(copy.needs)} Needs, {len(copy.plos)} PLOs, "
+        f"{len(copy.superseded)} superseded PLOs, "
         f"review={'yes' if copy.review is not None else 'no'})"
     )
     return True

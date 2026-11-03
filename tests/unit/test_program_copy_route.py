@@ -162,7 +162,14 @@ async def test_copy_program_adds_every_group_and_commits_once(
     added = [c.args[0] for c in session.add.call_args_list]
     assert added == [built.program, built.review]
     groups = [c.args[0] for c in session.add_all.call_args_list]
-    assert groups == [built.evidence, built.skills, built.skill_groups, built.needs, built.plos]
+    assert groups == [
+        built.evidence,
+        built.skills,
+        built.skill_groups,
+        built.needs,
+        built.plos,
+        built.superseded,
+    ]
 
 
 async def test_copy_program_commits_nothing_when_an_insert_fails(

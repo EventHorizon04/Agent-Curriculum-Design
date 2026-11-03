@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any, cast
@@ -21,6 +22,7 @@ from curriculum_agent.data.orm import (
     SessionTable,
     SkillGroupTable,
     SkillTable,
+    SupersededPLOTable,
 )
 from curriculum_agent.data.postgres import AsyncSessionLocal
 from curriculum_agent.graph import stage_reached
@@ -37,6 +39,7 @@ from curriculum_agent.models import (
     SkillGroup,
     StageCheckpoint,
     StakeholderEvidence,
+    SupersededPLO,
 )
 
 
@@ -195,7 +198,7 @@ class ProgramRepository:
         Deletes skill_groups before skills (their ids point at skill rows), and skills
         before evidence because SkillTable.source_evidence_id
         is a FK into EvidenceTable. Returns False (no-op) if program_id
-        doesn't exist — the nine deletes before the program's own affect zero rows either way.
+        doesn't exist — the ten deletes before the program's own affect zero rows either way.
         """
         async with AsyncSessionLocal() as session:
             await session.execute(
@@ -203,6 +206,9 @@ class ProgramRepository:
             )
             await session.execute(delete(SkillTable).where(SkillTable.program_id == program_id))
             await session.execute(delete(NeedTable).where(NeedTable.program_id == program_id))
+            await session.execute(
+                delete(SupersededPLOTable).where(SupersededPLOTable.program_id == program_id)
+            )
             await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
             await session.execute(
                 delete(PLOReviewTable).where(PLOReviewTable.program_id == program_id)
@@ -513,8 +519,14 @@ class PLORepository:
         that yields *fewer* PLOs than the last leaves the surplus behind, and
         need_combination has already deleted the Needs they cited. The result is
         a PLO whose trace resolves to nothing.
+
+        The program's superseded history goes in the same transaction: it hangs
+        off the PLO set the designer is discarding, and a re-run starts clean.
         """
         async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(SupersededPLOTable).where(SupersededPLOTable.program_id == program_id)
+            )
             result = cast(
                 CursorResult[Any],
                 await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id)),
@@ -558,6 +570,35 @@ class PLORepository:
         async with AsyncSessionLocal() as session:
             removed = 0
             if remove_plo_ids:
+                if add:
+                    # History first, in this same transaction: a PLO is either
+                    # live or in superseded_plos, never lost and never both.
+                    # Nothing replaces them when `add` is empty, so there is no
+                    # `superseded_by` to record.
+                    doomed = (
+                        (
+                            await session.execute(
+                                select(PLOTable).where(
+                                    PLOTable.program_id == program_id,
+                                    PLOTable.plo_id.in_(remove_plo_ids),
+                                )
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    now = datetime.utcnow()  # noqa: DTZ003 - naive UTC like every column here
+                    for row in doomed:
+                        session.add(
+                            SupersededPLOTable(
+                                id=str(uuid.uuid4()),
+                                program_id=program_id,
+                                plo_id=row.plo_id,
+                                snapshot=_row_to_dict(row),
+                                superseded_by=add[0].plo_id,
+                                superseded_at=now,
+                            )
+                        )
                 result = cast(
                     CursorResult[Any],
                     await session.execute(
@@ -612,6 +653,43 @@ class PLORepository:
             )
             rows = result.scalars().all()
             return [PLO.model_validate(_row_to_dict(row)) for row in rows]
+
+
+class SupersededPLORepository:
+    """Read side of the PLOs a designer's merge replaced. Writes happen in
+    `PLORepository.replace`, in the same transaction as the delete."""
+
+    async def list_by_program(self, program_id: str) -> list[SupersededPLO]:
+        """Newest first. A snapshot that no longer validates as a PLO (validators
+        tightened since it was written) is skipped with a warning, not raised:
+        history is advisory and must not take the page down."""
+        async with AsyncSessionLocal() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(SupersededPLOTable)
+                        .where(SupersededPLOTable.program_id == program_id)
+                        .order_by(SupersededPLOTable.superseded_at.desc())
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        out: list[SupersededPLO] = []
+        for row in rows:
+            try:
+                out.append(
+                    SupersededPLO(
+                        id=row.id,
+                        program_id=row.program_id,
+                        superseded_by=row.superseded_by,
+                        superseded_at=row.superseded_at,
+                        plo=PLO.model_validate(row.snapshot),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"superseded PLO {row.id} ({row.plo_id}) skipped: {exc!r}")
+        return out
 
 
 # Stored in their own columns; everything else rides in the JSONB body, so a new
