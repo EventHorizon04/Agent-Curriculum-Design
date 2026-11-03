@@ -228,6 +228,37 @@ class PLOFeedbackActionTable(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
+class LLMUsageTable(Base):
+    """One provider response (phase 5). History of spend: kept across re-runs,
+    deleted with the program, not copied by a program copy.
+
+    `job_id`/`session_id` are plain strings, not foreign keys: a job or session
+    row going away must not take the spend record with it.
+    """
+
+    __tablename__ = "llm_usage"
+    __table_args__ = (
+        Index("ix_llm_usage_program_id", "program_id"),
+        Index("ix_llm_usage_job_id", "job_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("programs.program_id"), nullable=True
+    )
+    job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    slot: Mapped[str] = mapped_column(String)
+    provider: Mapped[str] = mapped_column(String, default="")
+    model: Mapped[str] = mapped_column(String, default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
 class PLOReviewTable(Base):
     """The advisory PLO set review, one row per program (stages/plo_review.py).
 

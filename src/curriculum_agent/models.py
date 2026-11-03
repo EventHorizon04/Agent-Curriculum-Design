@@ -673,6 +673,79 @@ class FeedbackAction(BaseModel):
         return value.isoformat()
 
 
+class LLMUsage(BaseModel):
+    """One provider response and what it cost (phase 5).
+
+    Every response is a row, instructor retries included (`ok=False` for a response
+    that failed validation). Attribution fields are null for a call made outside a
+    program, job or session. `reasoning_tokens` is null when the endpoint does not
+    report it.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    program_id: str | None = None
+    job_id: str | None = None
+    session_id: str | None = None
+    slot: str
+    provider: str = ""
+    model: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int | None = None
+    latency_ms: int = 0
+    ok: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
+
+    # Stored naive UTC; sent with its offset like FeedbackAction. JSON only.
+    @field_serializer("created_at", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class UsageTotals(BaseModel):
+    """Summed usage. Nulls count as 0."""
+
+    calls: int = 0
+    failed_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int = 0
+    latency_ms: int = 0
+
+
+class SlotUsage(UsageTotals):
+    slot: str
+
+
+class JobUsage(BaseModel):
+    """One job's usage; `kind` comes from the jobs row ("" if that row is gone)."""
+
+    job_id: str
+    kind: str = ""
+    started: datetime
+    total: UsageTotals = Field(default_factory=UsageTotals)
+    by_slot: list[SlotUsage] = Field(default_factory=list)
+
+    @field_serializer("started", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class UsageSummary(BaseModel):
+    """A program's usage: overall, per slot, and per job (newest job first).
+
+    Rows with no job count toward `total` and `by_slot` only.
+    """
+
+    total: UsageTotals = Field(default_factory=UsageTotals)
+    by_slot: list[SlotUsage] = Field(default_factory=list)
+    by_job: list[JobUsage] = Field(default_factory=list)
+
+
 # ------------------------- PLO set review -------------------------
 
 

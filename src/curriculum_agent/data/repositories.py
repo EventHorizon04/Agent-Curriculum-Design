@@ -7,7 +7,7 @@ from typing import Any, cast
 
 from loguru import logger
 from pydantic import ValidationError
-from sqlalchemy import CursorResult, delete, func, select, update
+from sqlalchemy import CursorResult, case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from curriculum_agent.data.orm import (
@@ -16,6 +16,7 @@ from curriculum_agent.data.orm import (
     EvidenceTable,
     JobTable,
     LLMCacheTable,
+    LLMUsageTable,
     NeedTable,
     PLOFeedbackActionTable,
     PLOReviewTable,
@@ -34,15 +35,20 @@ from curriculum_agent.models import (
     FeedbackAction,
     JobInfo,
     JobStatus,
+    JobUsage,
+    LLMUsage,
     Need,
     PLOSetReview,
     ProgramMetadata,
     ProgramSummary,
     SessionInfo,
     SkillGroup,
+    SlotUsage,
     StageCheckpoint,
     StakeholderEvidence,
     SupersededPLO,
+    UsageSummary,
+    UsageTotals,
 )
 
 
@@ -201,7 +207,7 @@ class ProgramRepository:
         Deletes skill_groups before skills (their ids point at skill rows), and skills
         before evidence because SkillTable.source_evidence_id
         is a FK into EvidenceTable. Returns False (no-op) if program_id
-        doesn't exist — the ten deletes before the program's own affect zero rows either way.
+        doesn't exist — the twelve deletes before the program's own affect zero rows either way.
         """
         async with AsyncSessionLocal() as session:
             await session.execute(
@@ -216,6 +222,9 @@ class ProgramRepository:
                 delete(PLOFeedbackActionTable).where(
                     PLOFeedbackActionTable.program_id == program_id
                 )
+            )
+            await session.execute(
+                delete(LLMUsageTable).where(LLMUsageTable.program_id == program_id)
             )
             await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
             await session.execute(
@@ -752,6 +761,101 @@ class PLOFeedbackRepository:
                 .all()
             )
         return [FeedbackAction.model_validate(_row_to_dict(row)) for row in rows]
+
+
+class LLMUsageRepository:
+    """Token and latency accounting, one row per provider response (phase 5)."""
+
+    async def add(self, row: LLMUsage) -> None:
+        async with AsyncSessionLocal() as session:
+            session.add(LLMUsageTable(**row.model_dump()))
+            await session.commit()
+
+    async def summary(self, program_id: str) -> UsageSummary:
+        """Totals per slot and per job (newest job first), summed in SQL.
+
+        Two grouped queries: per slot, and per (job, slot) joined to `jobs` for the
+        kind. Rows with no job reach `total` and `by_slot` only.
+        """
+        calls = func.count(LLMUsageTable.id)
+        failed = func.coalesce(func.sum(case((LLMUsageTable.ok.is_(False), 1), else_=0)), 0)
+        prompt = func.coalesce(func.sum(LLMUsageTable.prompt_tokens), 0)
+        completion = func.coalesce(func.sum(LLMUsageTable.completion_tokens), 0)
+        reasoning = func.coalesce(func.sum(LLMUsageTable.reasoning_tokens), 0)
+        latency = func.coalesce(func.sum(LLMUsageTable.latency_ms), 0)
+        measures = (calls, failed, prompt, completion, reasoning, latency)
+
+        async with AsyncSessionLocal() as session:
+            slot_rows = (
+                await session.execute(
+                    select(LLMUsageTable.slot, *measures)
+                    .where(LLMUsageTable.program_id == program_id)
+                    .group_by(LLMUsageTable.slot)
+                    .order_by(LLMUsageTable.slot)
+                )
+            ).all()
+            job_rows = (
+                await session.execute(
+                    select(
+                        LLMUsageTable.job_id,
+                        JobTable.kind,
+                        LLMUsageTable.slot,
+                        func.min(LLMUsageTable.created_at),
+                        *measures,
+                    )
+                    .outerjoin(JobTable, JobTable.job_id == LLMUsageTable.job_id)
+                    .where(
+                        LLMUsageTable.program_id == program_id,
+                        LLMUsageTable.job_id.is_not(None),
+                    )
+                    .group_by(LLMUsageTable.job_id, JobTable.kind, LLMUsageTable.slot)
+                    .order_by(LLMUsageTable.job_id, LLMUsageTable.slot)
+                )
+            ).all()
+
+        by_slot = [SlotUsage(slot=r[0], **_totals_kwargs(r[1:])) for r in slot_rows]
+        jobs: dict[str, JobUsage] = {}
+        for r in job_rows:
+            job_id, kind, slot, first_at = r[0], r[1], r[2], r[3]
+            job = jobs.get(job_id)
+            if job is None:
+                job = jobs[job_id] = JobUsage(job_id=job_id, kind=kind or "", started=first_at)
+            elif first_at < job.started:
+                job.started = first_at
+            slot_usage = SlotUsage(slot=slot, **_totals_kwargs(r[4:]))
+            job.by_slot.append(slot_usage)
+            job.total = _add_totals(job.total, slot_usage)
+        total = UsageTotals()
+        for slot_usage in by_slot:
+            total = _add_totals(total, slot_usage)
+        return UsageSummary(
+            total=total,
+            by_slot=by_slot,
+            by_job=sorted(jobs.values(), key=lambda j: j.started, reverse=True),
+        )
+
+
+def _totals_kwargs(values: Sequence[Any]) -> dict[str, int]:
+    names = (
+        "calls",
+        "failed_calls",
+        "prompt_tokens",
+        "completion_tokens",
+        "reasoning_tokens",
+        "latency_ms",
+    )
+    return {n: int(v or 0) for n, v in zip(names, values, strict=True)}
+
+
+def _add_totals(a: UsageTotals, b: UsageTotals) -> UsageTotals:
+    return UsageTotals(
+        calls=a.calls + b.calls,
+        failed_calls=a.failed_calls + b.failed_calls,
+        prompt_tokens=a.prompt_tokens + b.prompt_tokens,
+        completion_tokens=a.completion_tokens + b.completion_tokens,
+        reasoning_tokens=a.reasoning_tokens + b.reasoning_tokens,
+        latency_ms=a.latency_ms + b.latency_ms,
+    )
 
 
 # Stored in their own columns; everything else rides in the JSONB body, so a new
