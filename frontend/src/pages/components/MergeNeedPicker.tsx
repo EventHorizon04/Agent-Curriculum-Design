@@ -1,6 +1,7 @@
 import { plosCiting } from './plosCiting'
 import { MAX_MERGE_NEEDS, withoutMarker } from '../../constants/needPolicy'
-import { unwrittenReason, type PickerNeed } from './pickerNeed'
+import type { ReactNode } from 'react'
+import { unusedNeedsOf, unwrittenReason, type PickerNeed } from './pickerNeed'
 import type { PLO } from '../../types/plo'
 
 function citingIds(plos: PLO[], needId: string): string[] {
@@ -18,6 +19,7 @@ export default function MergeNeedPicker({
   busy,
   merging,
   onSubmit,
+  flight,
 }: {
   needs: PickerNeed[]
   plos: PLO[]
@@ -27,11 +29,11 @@ export default function MergeNeedPicker({
   busy: boolean
   merging: boolean
   onSubmit: () => void
+  /** The merge-in-flight line, shown right above the button that started it. */
+  flight?: ReactNode
 }) {
   const cited = new Set(plos.flatMap((p) => p.source_need_ids))
-  const unused = needs
-    .filter((n) => !cited.has(n.need_id))
-    .sort((a, b) => (b.demand_score ?? 0) - (a.demand_score ?? 0))
+  const unused = unusedNeedsOf(needs, cited)
   const used = needs.filter((n) => cited.has(n.need_id))
 
   const replaced = plosCiting(plos, selected)
@@ -105,6 +107,7 @@ export default function MergeNeedPicker({
           )}
         </div>
       )}
+      {flight}
       <button onClick={onSubmit} disabled={selected.size < 2 || busy} className="btn btn-primary">
         {merging ? 'กำลังร่าง PLO ใหม่...' : `รวมเป็น PLO เดียว (${selected.size})`}
       </button>

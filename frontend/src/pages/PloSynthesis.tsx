@@ -12,8 +12,8 @@ import DesignerNote from './components/DesignerNote'
 import SupersededPlos from './components/SupersededPlos'
 import { plosCiting } from './components/plosCiting'
 import MergeNeedPicker from './components/MergeNeedPicker'
-import type { PickerNeed } from './components/pickerNeed'
-import AttachNeed from './components/AttachNeed'
+import { attachBlockedReason, unusedNeedsOf, type PickerNeed } from './components/pickerNeed'
+import { AttachButton, AttachPanel } from './components/AttachNeed'
 import ValidationToggle, { type ValidationStatus } from './components/ValidationToggle'
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
@@ -209,7 +209,7 @@ export default function PloSynthesis() {
   // writer like them, so a 409 here means the program already has one running.
   // The picker and the card's attach control both come through here, so the
   // cards a merge replaces and the page line behave the same for either.
-  const submitMerge = async (needIds: string[]) => {
+  const submitMerge = async (needIds: string[], mergeNote: string | null) => {
     if (needIds.length < 2 || !programId || busy) return
     setMerging(true)
     // Same rule as the server's: every outcome citing a selected Need goes.
@@ -218,9 +218,8 @@ export default function PloSynthesis() {
     try {
       await api.post(`/programs/${programId}/plos/from-needs`, {
         need_ids: needIds,
-        note_th: note.trim() || null,
+        note_th: mergeNote,
       })
-      setSelected(new Set())
       await fetchPlos()
     } catch (err: unknown) {
       const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
@@ -254,9 +253,7 @@ export default function PloSynthesis() {
   }
 
   const citedNeedIds = new Set(plos.flatMap(p => p.source_need_ids))
-  const unusedNeeds = needs
-    .filter(n => !citedNeedIds.has(n.need_id))
-    .sort((a, b) => (b.demand_score ?? 0) - (a.demand_score ?? 0))
+  const unusedNeeds = unusedNeedsOf(needs, citedNeedIds)
 
   const smartPassCount = plos.filter(p =>
     SMART_KEYS.every(k => p.smart_check[k] === true)
@@ -365,12 +362,12 @@ export default function PloSynthesis() {
                 pending={pendingOf(p.plo_id)}
                 onRevalidate={() => revalidate(p.plo_id)}
                 unusedNeeds={unusedNeeds}
-                onAttach={(needId) => void submitMerge([...p.source_need_ids, needId])}
+                onAttach={(needId) => void submitMerge([...p.source_need_ids, needId], null)}
               />
             ))}
           </div>
 
-          <SupersededPlos items={superseded} />
+          <SupersededPlos items={superseded} needs={needs} />
 
           {needs.length >= 2 && (
             <MergeNeedPicker
@@ -381,7 +378,13 @@ export default function PloSynthesis() {
               note={note}
               busy={busy}
               merging={merging}
-              onSubmit={() => void submitMerge([...selected])}
+              onSubmit={() => void submitMerge([...selected], note.trim() || null).then(() => setSelected(new Set()))}
+              flight={mergeFlight && (
+                <PendingLine
+                  pending={{ label: 'กำลังร่าง PLO จาก Need ที่เลือก', since: mergeFlight.since }}
+                  announce
+                />
+              )}
             />
           )}
         </>
@@ -550,6 +553,7 @@ function PLOCard({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [traceOpen, setTraceOpen] = useState(false)
+  const [attachOpen, setAttachOpen] = useState(false)
 
   const smartPassed = SMART_KEYS.every(k => p.smart_check[k] === true)
 
@@ -714,15 +718,23 @@ function PLOCard({
             >
               {pending?.label === REVALIDATING_LABEL ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
             </button>
-            <AttachNeed
-              citedCount={p.source_need_ids.length}
-              unused={unusedNeeds}
+            <AttachButton
+              blocked={attachBlockedReason(p.source_need_ids.length, unusedNeeds)}
               busy={busy || Boolean(pending)}
-              onAttach={onAttach}
+              onOpen={() => setAttachOpen(true)}
             />
           </div>
         )}
       </div>
+
+      {attachOpen && !editing && (
+        <AttachPanel
+          unused={unusedNeeds}
+          busy={busy || Boolean(pending)}
+          onAttach={onAttach}
+          onClose={() => setAttachOpen(false)}
+        />
+      )}
 
       {/* SMART check */}
       {!editing && (
