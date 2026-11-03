@@ -57,3 +57,31 @@ def test_usage_fills_the_thai_label_of_each_job_kind(monkeypatch: pytest.MonkeyP
     body = client.get("/programs/cs-test/usage").json()
     labels = [j["label_th"] for j in body["by_job"]]
     assert labels == ["สังเคราะห์ PLO", "", ""]
+
+
+def test_usage_route_returns_session_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import UTC, datetime
+
+    from curriculum_agent.models import SessionUsage
+
+    summary = UsageSummary(
+        total=UsageTotals(calls=3),
+        by_session=[
+            SessionUsage(
+                session_id="s1",
+                started=datetime(2026, 11, 3, tzinfo=UTC),
+                total=UsageTotals(calls=3),
+                by_slot=[SlotUsage(slot="extraction", calls=3)],
+            )
+        ],
+    )
+    monkeypatch.setattr(programs_route.ProgramRepository, "exists", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        programs_route.LLMUsageRepository, "summary", AsyncMock(return_value=summary)
+    )
+    body = client.get("/programs/cs-test/usage").json()
+    assert body["by_job"] == []
+    [block] = body["by_session"]
+    assert block["session_id"] == "s1" and block["total"]["calls"] == 3
+    assert block["started"].endswith("+00:00")
+    assert block["by_slot"][0]["slot"] == "extraction"

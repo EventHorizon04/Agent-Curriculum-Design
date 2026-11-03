@@ -737,15 +737,32 @@ class JobUsage(BaseModel):
         return value.isoformat()
 
 
-class UsageSummary(BaseModel):
-    """A program's usage: overall, per slot, and per job (newest job first).
+class SessionUsage(BaseModel):
+    """One graph session's usage: calls attributed to a session and to no job."""
 
-    Rows with no job count toward `total` and `by_slot` only.
+    session_id: str
+    started: datetime
+    total: UsageTotals = Field(default_factory=UsageTotals)
+    by_slot: list[SlotUsage] = Field(default_factory=list)
+
+    @field_serializer("started", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class UsageSummary(BaseModel):
+    """A program's usage: overall, per slot, per job and per session (newest first).
+
+    Rows with a session and no job are grouped in `by_session`; rows with neither
+    count toward `total` and `by_slot` only.
     """
 
     total: UsageTotals = Field(default_factory=UsageTotals)
     by_slot: list[SlotUsage] = Field(default_factory=list)
     by_job: list[JobUsage] = Field(default_factory=list)
+    by_session: list[SessionUsage] = Field(default_factory=list)
 
 
 # ------------------------- PLO set review -------------------------

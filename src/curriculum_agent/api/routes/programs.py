@@ -251,9 +251,14 @@ async def delete_program(program_id: str, request: Request) -> None:
     # Read the thread ids before the cascade, which deletes the session rows they
     # are recorded on. A checkpoint thread nobody has the id of can never be
     # found again, and it still holds that program's evidence and outcomes.
-    threads = [s.thread_id for s in await SessionRepository().list_by_program(program_id)]
-
-    deleted = await repo.delete_cascade(program_id)
+    # A running job or session writes a usage row on every model call, and a row
+    # landing between the cascade's two deletes would fail it with an IntegrityError.
+    # Checked under program_lock like the other writers; the delete runs inside it.
+    async with program_lock(program_id):
+        if (reason := await program_busy(program_id)) is not None:
+            raise HTTPException(status_code=409, detail=reason)
+        threads = [s.thread_id for s in await SessionRepository().list_by_program(program_id)]
+        deleted = await repo.delete_cascade(program_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
 

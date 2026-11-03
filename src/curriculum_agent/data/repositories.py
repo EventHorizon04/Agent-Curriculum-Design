@@ -42,6 +42,7 @@ from curriculum_agent.models import (
     ProgramMetadata,
     ProgramSummary,
     SessionInfo,
+    SessionUsage,
     SkillGroup,
     SlotUsage,
     StageCheckpoint,
@@ -774,8 +775,9 @@ class LLMUsageRepository:
     async def summary(self, program_id: str) -> UsageSummary:
         """Totals per slot and per job (newest job first), summed in SQL.
 
-        Two grouped queries: per slot, and per (job, slot) joined to `jobs` for the
-        kind. Rows with no job reach `total` and `by_slot` only.
+        Three grouped queries: per slot, per (job, slot) joined to `jobs` for the
+        kind, and per (session, slot) for rows with a session and no job. Rows with
+        neither reach `total` and `by_slot` only.
         """
         calls = func.count(LLMUsageTable.id)
         failed = func.coalesce(func.sum(case((LLMUsageTable.ok.is_(False), 1), else_=0)), 0)
@@ -812,6 +814,23 @@ class LLMUsageRepository:
                     .order_by(LLMUsageTable.job_id, LLMUsageTable.slot)
                 )
             ).all()
+            session_rows = (
+                await session.execute(
+                    select(
+                        LLMUsageTable.session_id,
+                        LLMUsageTable.slot,
+                        func.min(LLMUsageTable.created_at),
+                        *measures,
+                    )
+                    .where(
+                        LLMUsageTable.program_id == program_id,
+                        LLMUsageTable.job_id.is_(None),
+                        LLMUsageTable.session_id.is_not(None),
+                    )
+                    .group_by(LLMUsageTable.session_id, LLMUsageTable.slot)
+                    .order_by(LLMUsageTable.session_id, LLMUsageTable.slot)
+                )
+            ).all()
 
         by_slot = [SlotUsage(slot=r[0], **_totals_kwargs(r[1:])) for r in slot_rows]
         jobs: dict[str, JobUsage] = {}
@@ -825,6 +844,17 @@ class LLMUsageRepository:
             slot_usage = SlotUsage(slot=slot, **_totals_kwargs(r[4:]))
             job.by_slot.append(slot_usage)
             job.total = _add_totals(job.total, slot_usage)
+        sessions: dict[str, SessionUsage] = {}
+        for r in session_rows:
+            session_id, slot, first_at = r[0], r[1], r[2]
+            entry = sessions.get(session_id)
+            if entry is None:
+                entry = sessions[session_id] = SessionUsage(session_id=session_id, started=first_at)
+            elif first_at < entry.started:
+                entry.started = first_at
+            slot_usage = SlotUsage(slot=slot, **_totals_kwargs(r[3:]))
+            entry.by_slot.append(slot_usage)
+            entry.total = _add_totals(entry.total, slot_usage)
         total = UsageTotals()
         for slot_usage in by_slot:
             total = _add_totals(total, slot_usage)
@@ -832,6 +862,7 @@ class LLMUsageRepository:
             total=total,
             by_slot=by_slot,
             by_job=sorted(jobs.values(), key=lambda j: j.started, reverse=True),
+            by_session=sorted(sessions.values(), key=lambda x: x.started, reverse=True),
         )
 
 

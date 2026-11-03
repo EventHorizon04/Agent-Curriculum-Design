@@ -16,11 +16,16 @@ T0 = datetime(2026, 11, 3, 12, 0, 0)
 
 
 class _SummarySession(_Session):
-    """Answers the two grouped SELECTs in order with fixed `.all()` rows."""
+    """Answers the three grouped SELECTs in order with fixed `.all()` rows."""
 
-    def __init__(self, slot_rows: list[tuple[Any, ...]], job_rows: list[tuple[Any, ...]]) -> None:
+    def __init__(
+        self,
+        slot_rows: list[tuple[Any, ...]],
+        job_rows: list[tuple[Any, ...]],
+        session_rows: list[tuple[Any, ...]] | None = None,
+    ) -> None:
         super().__init__()
-        self._answers = [slot_rows, job_rows]
+        self._answers = [slot_rows, job_rows, session_rows or []]
 
     async def _execute(self, statement: Any) -> MagicMock:
         self.statements.append(statement)
@@ -68,13 +73,26 @@ async def test_summary_groups_in_sql_and_sums_per_slot_and_job() -> None:
             2000,
         ),
     ]
-    session = _SummarySession(slot_rows, job_rows)
+    session_rows = [
+        ("s-old", "plo_synthesis", T0 + timedelta(hours=2), 2, 0, 50, 5, 0, 300),
+        ("s-new", "validation", T0 + timedelta(hours=5), 1, 1, 10, 1, 0, 100),
+        ("s-new", "extraction", T0 + timedelta(hours=4), 3, 0, 30, 3, None, 200),
+    ]
+    session = _SummarySession(slot_rows, job_rows, session_rows)
     with _patched(session):
         out = await LLMUsageRepository().summary(PID)
 
     sql = session.sql()
-    assert len(sql) == 2 and all("group by" in s for s in sql)
+    assert len(sql) == 3 and all("group by" in s for s in sql)
     assert "left outer join jobs" in sql[1] and "job_id is not null" in sql[1]
+    assert "job_id is null" in sql[2] and "session_id is not null" in sql[2]
+    assert "join" not in sql[2]
+
+    assert [x.session_id for x in out.by_session] == ["s-new", "s-old"]  # newest first
+    newest = out.by_session[0]
+    assert newest.started == T0 + timedelta(hours=4)  # earliest row across its slots
+    assert [s.slot for s in newest.by_slot] == ["validation", "extraction"]
+    assert newest.total.calls == 4 and newest.total.failed_calls == 1
 
     assert [s.slot for s in out.by_slot] == ["clustering", "extraction"]
     assert out.total.calls == 5 and out.total.failed_calls == 1

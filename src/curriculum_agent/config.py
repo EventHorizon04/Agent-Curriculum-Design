@@ -371,6 +371,10 @@ class Settings(BaseSettings):
     # ~255 s to ~47 s for -9.1% skills and -1.6% grounding. 0 means "no bound":
     # nothing is sent and the cache key is the pre-bound one. A positive bound can
     # change what the model returns, so skill_extraction puts it in the cache key.
+    # Measured on GLM via OpenRouter only. `reasoning_max_tokens` is sent only to
+    # OpenRouter (llm.py) while `max_tokens` goes to any provider, so on another
+    # extraction provider the reasoning bound is a no-op that still keys the cache
+    # and the 4096 cap is unmeasured: re-measure before moving extraction there.
     extraction_max_tokens: int = Field(default=4096, ge=0)
     extraction_reasoning_max_tokens: int = Field(default=1024, ge=0)
     # Accepted only to be refused — see _RENAMED_SLOT_SETTINGS and

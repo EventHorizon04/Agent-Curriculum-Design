@@ -318,3 +318,90 @@ async def test_a_parse_error_marks_only_its_own_calls_attempt(
 
     by_program = {p: [r.ok for r in usage_rows if r.program_id == p] for p in ("p-bad", "p-good")}
     assert by_program == {"p-bad": [False, True], "p-good": [True]}
+
+
+# ------------- scope wiring on the other entry points (review M5) -------------
+
+
+async def test_a_graph_session_node_is_attributed_to_its_program_and_session(
+    monkeypatch: pytest.MonkeyPatch, usage_rows: list[LLMUsage]
+) -> None:
+    """`_run_graph` enters the scope and the graph runs its nodes in tasks it creates
+    itself. A task copies the context it is created in, so a call made inside such a
+    node must still carry program and session (and no job)."""
+    from types import SimpleNamespace  # noqa: PLC0415
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    from curriculum_agent.api.routes import sessions as sessions_route  # noqa: PLC0415
+
+    _use(monkeypatch, _client(lambda n: _completion(_GOOD, _USAGE)))
+    monkeypatch.setattr(sessions_route, "SessionRepository", lambda: AsyncMock())
+
+    async def node() -> None:
+        await llm._complete("openrouter", "m", _Answer, _MSG, slot="plo_synthesis")
+
+    class _Graph:
+        async def ainvoke(self, input_: Any, config: Any) -> None:
+            await asyncio.create_task(node())  # how LangGraph runs a node
+
+        async def aget_state(self, config: Any) -> Any:
+            return SimpleNamespace(next=(), tasks=())
+
+    await sessions_route._run_graph(_Graph(), {}, {}, "sess-1", "prog-1")  # type: ignore[arg-type]
+
+    [row] = usage_rows
+    assert (row.program_id, row.session_id, row.job_id) == ("prog-1", "sess-1", None)
+    assert current_scope().program_id is None
+
+
+def test_from_needs_attributes_its_model_call_to_the_program(
+    monkeypatch: pytest.MonkeyPatch, usage_rows: list[LLMUsage]
+) -> None:
+    from unittest.mock import AsyncMock  # noqa: PLC0415
+
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    from curriculum_agent.api.main import app  # noqa: PLC0415
+    from curriculum_agent.api.routes import plos as plos_route  # noqa: PLC0415
+    from tests.unit.test_api_plos import _plo, _program  # noqa: PLC0415
+
+    _use(monkeypatch, _client(lambda n: _completion(_GOOD, _USAGE)))
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+
+    async def redraft(*args: Any, **kwargs: Any) -> tuple[Any, int]:
+        await llm._complete("openrouter", "m", _Answer, _MSG, slot="plo_synthesis")
+        return _plo("PLO1", ["N1", "N2"]), 0
+
+    monkeypatch.setattr(plos_route, "redraft_from_needs", redraft)
+
+    response = TestClient(app).post(
+        "/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]}
+    )
+
+    assert response.status_code == 200, response.text
+    [row] = usage_rows
+    assert (row.program_id, row.job_id, row.session_id) == ("cs-test", None, None)
+
+
+def test_manual_need_merge_attributes_its_model_call_to_the_program(
+    monkeypatch: pytest.MonkeyPatch, usage_rows: list[LLMUsage], jobs_store: Any
+) -> None:
+    from fastapi.testclient import TestClient  # noqa: PLC0415
+
+    from curriculum_agent.api.main import app  # noqa: PLC0415
+    from tests.unit import test_need_manual_merge as t  # noqa: PLC0415
+
+    t._install(monkeypatch, t._pool())
+    _use(monkeypatch, _client(lambda n: _completion(_GOOD, _USAGE)))
+
+    async def write_merged(*args: Any, **kwargs: Any) -> Any:
+        await llm._complete("openrouter", "m", _Answer, _MSG, slot="need_combination")
+        return t._need("M", merged_by="designer", merged_from=["A", "B"])
+
+    monkeypatch.setattr(t.nm, "_write_merged", write_merged)
+
+    response = TestClient(app).post("/programs/p/needs/merge", json={"need_ids": ["A", "B"]})
+
+    assert response.status_code == 200, response.text
+    [row] = usage_rows
+    assert (row.program_id, row.job_id, row.session_id) == ("p", None, None)

@@ -50,6 +50,7 @@ from curriculum_agent.stages.need_grouping import (
 )
 from curriculum_agent.stages.skill_extraction import (
     _compute_skill_importance,
+    _bound_kwargs,
     _ExtractedSkillsResponse,
     chunk_evidence_text,
     classify_skills,
@@ -144,7 +145,11 @@ async def _extract_window(
     )
     async with sem:
         try:
-            result = await complete_extraction(_ExtractedSkillsResponse, messages)
+            # The bounds the pipeline sends (settings, > 0 only), so the eval
+            # measures the extraction that runs.
+            result = await complete_extraction(
+                _ExtractedSkillsResponse, messages, **_bound_kwargs()
+            )
         except Exception as exc:  # noqa: BLE001 — one bad call must not lose the pass
             logger.error(f"{variant.key} {item['evidence_id']}: {exc!r}")
             return []
