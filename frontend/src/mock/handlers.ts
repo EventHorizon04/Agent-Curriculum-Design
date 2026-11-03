@@ -392,6 +392,20 @@ function busyReason(pid: string): string | null {
   return null
 }
 
+/** why evidence cannot change, or null. The busy reason wins, then the
+ *  skills-or-Needs rule (data/evidence_lock.py): once extraction has read the
+ *  evidence, editing it would leave the rows downstream describing text that
+ *  is gone, so the way to change it is an evidence-only copy. */
+function evidenceLockReason(pid: string): string | null {
+  const busy = busyReason(pid)
+  if (busy) return busy
+  const db = getDb()
+  if (of(db.skills, pid).length || of(db.needs, pid).length) {
+    return 'สกัดทักษะจาก evidence แล้ว แก้ เพิ่ม หรือลบ evidence ไม่ได้ — คัดลอกหลักสูตรแบบเฉพาะข้อมูลนำเข้าหากต้องแก้'
+  }
+  return null
+}
+
 interface MockJob {
   pid: string
   kind: JobKind
@@ -522,6 +536,8 @@ export function buildRouter(): Router {
     // A copy taken mid-run would hold half a set: every stage deletes, then inserts.
     const busy = busyReason(src)
     if (busy) return detail(409, busy)
+    // No body means a full copy, as the route reads it.
+    const evidenceOnly = body<{ mode: string }>(req).mode === 'evidence_only'
     let n = 1
     while (db.programs.some((p) => p.program_id === `${src}-run-${n}`)) n++
     const newPid = `${src}-run-${n}`
@@ -544,9 +560,12 @@ export function buildRouter(): Router {
     }
     db.programs.push({ ...source, program_id: newPid, created_at: nowIso(), copied_from: src })
     db.evidence.push(...of(db.evidence, src).map(remap))
-    db.skills.push(...of(db.skills, src).map(remap))
-    db.needs.push(...of(db.needs, src).map(remap))
-    db.plos.push(...of(db.plos, src).map(remap))
+    // evidence_only stops at the inputs: metadata and evidence, nothing derived.
+    if (!evidenceOnly) {
+      db.skills.push(...of(db.skills, src).map(remap))
+      db.needs.push(...of(db.needs, src).map(remap))
+      db.plos.push(...of(db.plos, src).map(remap))
+    }
     return ok(findProgram(newPid))
   })
 
@@ -579,7 +598,34 @@ export function buildRouter(): Router {
 
   r.get('/programs/:pid/evidence', (req) => ok(of(getDb().evidence, req.params.pid)))
 
+  r.get('/programs/:pid/evidence/lock', (req) => {
+    const reason = evidenceLockReason(req.params.pid)
+    return ok({ locked: reason !== null, reason_th: reason })
+  })
+
+  r.put('/programs/:pid/evidence/:eid', (req) => {
+    const { pid, eid } = req.params
+    const locked = evidenceLockReason(pid)
+    if (locked) return detail(409, locked)
+    const row = of(getDb().evidence, pid).find((e) => e.evidence_id === eid)
+    if (!row) return detail(404, 'ไม่พบหลักฐานนี้')
+    const b = body<EvidenceRow>(req)
+    if (!STAKEHOLDER_TYPES.includes(b.stakeholder_type as (typeof STAKEHOLDER_TYPES)[number])) {
+      return invalid([{ loc: ['body', 'stakeholder_type'], msg: 'Input should be a valid StakeholderType', type: 'enum' }])
+    }
+    Object.assign(row, {
+      stakeholder_type: b.stakeholder_type as string,
+      source_name: b.source_name ?? row.source_name,
+      raw_text_th: b.raw_text_th ?? row.raw_text_th,
+      source_url: b.source_url ?? null,
+      classification: classifyEvidence(b.stakeholder_type as string),
+    })
+    return ok(row)
+  })
+
   r.post('/programs/:pid/evidence', (req) => {
+    const locked = evidenceLockReason(req.params.pid)
+    if (locked) return detail(409, locked)
     const b = body<EvidenceRow>(req)
     const errors: { loc: string[]; msg: string; type: string }[] = []
     for (const key of ['evidence_id', 'program_id', 'source_name', 'raw_text_th'] as const) {
@@ -611,6 +657,8 @@ export function buildRouter(): Router {
 
   r.delete('/programs/:pid/evidence/:eid', (req) => {
     const { pid, eid } = req.params
+    const locked = evidenceLockReason(pid)
+    if (locked) return detail(409, locked)
     const db = getDb()
     // SkillTable.source_evidence_id is a foreign key into the evidence table.
     if (db.skills.some((s) => s.source_evidence_id === eid)) {

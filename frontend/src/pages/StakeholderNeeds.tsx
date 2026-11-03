@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import NextStageLink from '../components/NextStageLink'
 import { useProgram } from '../hooks/useProgram'
@@ -11,6 +11,11 @@ interface EvidenceItem {
   source_name: string
   raw_text_th: string
   classification: string
+}
+
+interface EvidenceLock {
+  locked: boolean
+  reason_th: string | null
 }
 
 interface EvidencePayload {
@@ -29,6 +34,11 @@ export default function StakeholderNeeds() {
   const [sourceName, setSourceName] = useState('')
   const [rawText, setRawText] = useState('')
   const [items, setItems] = useState<EvidenceItem[]>([])
+  // The server's answer to "may evidence change now": skills or Needs exist, or
+  // a writer is running. Read with the list, so one failed read is one error.
+  const [lock, setLock] = useState<EvidenceLock>({ locked: false, reason_th: null })
+  // The item whose text the add form currently holds; null means the form adds.
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [loadingList, setLoadingList] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -45,8 +55,12 @@ export default function StakeholderNeeds() {
     setLoadingList(true)
     setError('')
     try {
-      const res = await api.get<EvidenceItem[]>(`/programs/${pid}/evidence/`)
+      const [res, lockRes] = await Promise.all([
+        api.get<EvidenceItem[]>(`/programs/${pid}/evidence/`),
+        api.get<EvidenceLock>(`/programs/${pid}/evidence/lock`),
+      ])
       setItems(res.data)
+      setLock(lockRes.data)
     } catch {
       setError('โหลดหลักฐานไม่ได้ — ตรวจสอบว่า backend รันอยู่')
     } finally {
@@ -67,12 +81,54 @@ export default function StakeholderNeeds() {
       setSuccess('เพิ่มหลักฐานสำเร็จ')
       await fetchEvidence(payload.program_id)
     } catch (err: unknown) {
-      const axiosErr = err as { response?: { status: number } }
+      const axiosErr = err as { response?: { status: number; data?: { detail?: unknown } } }
       if (axiosErr.response) {
-        setError(`API error ${axiosErr.response.status}`)
+        const detail = axiosErr.response.data?.detail
+        // The 409s carry Thai detail meant to be shown as-is (locked, busy).
+        setError(typeof detail === 'string' ? detail : `API error ${axiosErr.response.status}`)
       } else {
         setError('เชื่อมต่อ API ไม่ได้')
       }
+    } finally {
+      setSubmitting(false)
+    }
+  }
+
+  function handleEditClick(item: EvidenceItem) {
+    setEditingId(item.evidence_id)
+    setStakeholderType(item.stakeholder_type)
+    setSourceName(item.source_name)
+    setRawText(item.raw_text_th)
+    setError('')
+    setSuccess('')
+    handleCancelFile()
+  }
+
+  function handleCancelEdit() {
+    setEditingId(null)
+    setSourceName('')
+    setRawText('')
+  }
+
+  async function putEvidence(evidenceId: string, pid: string) {
+    setSubmitting(true)
+    setError('')
+    setSuccess('')
+    try {
+      await api.put(`/programs/${pid}/evidence/${evidenceId}`, {
+        stakeholder_type: stakeholderType,
+        source_name: sourceName.trim(),
+        raw_text_th: rawText.trim(),
+      })
+      setSuccess('แก้ไขหลักฐานสำเร็จ')
+      handleCancelEdit()
+      await fetchEvidence(pid)
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: unknown } } }
+      const detail = axiosErr.response?.data?.detail
+      setError(typeof detail === 'string' ? detail : 'แก้ไขหลักฐานไม่สำเร็จ')
+      // A 409 may mean the lock closed under the form; the list says which.
+      await fetchEvidence(pid)
     } finally {
       setSubmitting(false)
     }
@@ -82,6 +138,7 @@ export default function StakeholderNeeds() {
     e.preventDefault()
     if (!programId) { setError('กรุณาระบุรหัสหลักสูตรก่อน'); return }
     if (!sourceName.trim() || !rawText.trim()) { setError('กรุณากรอกแหล่งที่มาและข้อความหลักฐาน'); return }
+    if (editingId) { await putEvidence(editingId, programId); return }
     await postEvidence({
       evidence_id: crypto.randomUUID(),
       program_id: programId,
@@ -139,6 +196,7 @@ export default function StakeholderNeeds() {
     try {
       await api.delete(`/programs/${programId}/evidence/${evidenceId}`)
       setItems(prev => prev.filter(item => item.evidence_id !== evidenceId))
+      if (editingId === evidenceId) handleCancelEdit()
       setSuccess('ลบหลักฐานสำเร็จ')
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string } } }
@@ -156,7 +214,11 @@ export default function StakeholderNeeds() {
         `/programs/${programId}/evidence/classify-stream`,
         { headers: { 'Accept': 'text/event-stream' } }
       )
-      if (!response.ok) { setError(`classify-stream error: ${response.status}`); return }
+      if (!response.ok) {
+        const body = await response.json().catch(() => null) as { detail?: unknown } | null
+        setError(typeof body?.detail === 'string' ? body.detail : `classify-stream error: ${response.status}`)
+        return
+      }
       const reader = response.body?.getReader()
       if (!reader) return
       const decoder = new TextDecoder()
@@ -239,7 +301,7 @@ export default function StakeholderNeeds() {
             <span className="ml-2 text-pencil">— พบ <span className="data">{items.length}</span> หลักฐาน</span>
           </span>
           <button
-            onClick={() => { setProgramId(''); setItems([]) }}
+            onClick={() => { setProgramId(''); setItems([]); setLock({ locked: false, reason_th: null }); handleCancelEdit() }}
             className="btn btn-sm btn-quiet"
           >
             เปลี่ยน
@@ -260,9 +322,18 @@ export default function StakeholderNeeds() {
         </div>
       )}
 
-      {programId && (
+      {programId && lock.locked && (
+        <div className="notice notice-warn flex flex-wrap items-center justify-between gap-x-4 gap-y-1" role="status">
+          <span>{lock.reason_th ?? 'หลักฐานของหลักสูตรนี้แก้ไม่ได้ในขณะนี้'}</span>
+          <Link to="/" className="font-medium underline underline-offset-2">
+            ไปที่รายการหลักสูตร →
+          </Link>
+        </div>
+      )}
+
+      {programId && !lock.locked && (
         <div className="panel p-4 sm:p-6">
-          <h2 className="section-title mb-4">เพิ่มหลักฐานใหม่</h2>
+          <h2 className="section-title mb-4">{editingId ? 'แก้ไขหลักฐาน' : 'เพิ่มหลักฐานใหม่'}</h2>
           <form onSubmit={handleFormSubmit} className="space-y-4">
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div>
@@ -309,12 +380,21 @@ export default function StakeholderNeeds() {
                 type="submit" disabled={submitting}
                 className="btn btn-primary"
               >
-                {submitting ? 'กำลังบันทึก...' : 'เพิ่มหลักฐาน'}
+                {submitting ? 'กำลังบันทึก...' : editingId ? 'บันทึกการแก้ไข' : 'เพิ่มหลักฐาน'}
               </button>
 
-              <div className="h-4 w-px bg-hair" />
+              {editingId && (
+                <button
+                  type="button" onClick={handleCancelEdit} disabled={submitting}
+                  className="btn btn-secondary"
+                >
+                  ยกเลิกการแก้ไข
+                </button>
+              )}
 
-              {!pendingFile ? (
+              {!editingId && <div className="h-4 w-px bg-hair" />}
+
+              {editingId ? null : !pendingFile ? (
                 <label className="group flex cursor-pointer items-center gap-2 text-sm text-pencil transition-colors hover:text-stamp">
                   <svg
                     className="h-4 w-4 group-hover:text-stamp"
@@ -361,7 +441,7 @@ export default function StakeholderNeeds() {
         <div>
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <h2 className="section-title">หลักฐานทั้งหมด</h2>
-            {items.some(i => i.classification === 'unclassified') && (
+            {!lock.locked && items.some(i => i.classification === 'unclassified') && (
               <button
                 onClick={handleClassify}
                 disabled={classifying}
@@ -397,7 +477,7 @@ export default function StakeholderNeeds() {
             <div className="py-8 text-center text-sm text-pencil">กำลังโหลด...</div>
           ) : items.length === 0 ? (
             <div className="panel border-dashed py-10 text-center text-sm text-pencil">
-              ยังไม่มีหลักฐาน — เพิ่มหลักฐานด้านบน
+              {lock.locked ? 'ยังไม่มีหลักฐาน' : 'ยังไม่มีหลักฐาน — เพิ่มหลักฐานด้านบน'}
             </div>
           ) : (
             <div className="space-y-2">
@@ -416,17 +496,28 @@ export default function StakeholderNeeds() {
                         <span className="truncate text-sm text-pencil">{item.source_name}</span>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteClick(item.evidence_id) }}
-                          className={`btn btn-sm ${
-                            confirmingDeleteId === item.evidence_id
-                              ? 'btn-danger'
-                              : 'btn-danger-quiet'
-                          }`}
-                        >
-                          {confirmingDeleteId === item.evidence_id ? 'ยืนยันลบ?' : 'ลบ'}
-                        </button>
+                        {!lock.locked && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); handleEditClick(item) }}
+                              className="btn btn-sm btn-quiet"
+                            >
+                              แก้ไข
+                            </button>
+                            <button
+                              type="button"
+                              onClick={e => { e.preventDefault(); e.stopPropagation(); handleDeleteClick(item.evidence_id) }}
+                              className={`btn btn-sm ${
+                                confirmingDeleteId === item.evidence_id
+                                  ? 'btn-danger'
+                                  : 'btn-danger-quiet'
+                              }`}
+                            >
+                              {confirmingDeleteId === item.evidence_id ? 'ยืนยันลบ?' : 'ลบ'}
+                            </button>
+                          </>
+                        )}
                         <span className={`chip ${cs.cls}`}>
                           {cs.label}
                         </span>
