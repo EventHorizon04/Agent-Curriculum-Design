@@ -189,3 +189,107 @@ async def test_a_failing_call_folds_nothing(monkeypatch: pytest.MonkeyPatch) -> 
     folds = await find_duplicate_groups([_need("a"), _need("b")], _METADATA)
     assert folds == []
     assert folds.call == "failed"
+
+
+# --------------------------- the vote ---------------------------
+
+
+def _five() -> list[Need]:
+    return [_need(f"n{i}") for i in range(1, 6)]
+
+
+def _fake(monkeypatch: pytest.MonkeyPatch, *answers: DedupAnswer | Exception) -> AsyncMock:
+    call = AsyncMock(side_effect=list(answers))
+    monkeypatch.setattr(nd, "complete_need_dedup", call)
+    monkeypatch.setattr(nd.settings, "need_dedup_runs", len(answers))
+    return call
+
+
+async def test_only_a_pair_a_majority_names_is_merged(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake(
+        monkeypatch,
+        _answer(["N1", "N2"], ["N3", "N4"]),
+        _answer(["N1", "N2"], ["N3", "N4"]),
+        _answer(["N1", "N2"]),
+        _answer(),
+        _answer(),
+    )
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert _ids(folds) == [["n1", "n2"]]
+    assert folds.call == "ok"
+    assert folds.proposed == 5
+    assert folds[0].reason_th == "งานเดียวกัน"
+
+
+async def test_a_group_of_three_survives_when_every_pair_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake(monkeypatch, *[_answer(["N3", "N1", "N2"])] * 3)
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert _ids(folds) == [["n1", "n2", "n3"]]
+
+
+def test_a_component_with_an_unnamed_pair_yields_one_pair_by_support() -> None:
+    runs = [
+        [(["N1", "N2"], "a")],
+        [(["N1", "N2"], "a")],
+        [(["N2", "N3"], "b")],
+        [(["N2", "N3"], "b")],
+        [(["N2", "N3"], "b")],
+    ]
+
+    # N1+N2 and N2+N3 both pass; N1+N3 is never named, so no 3-group forms.
+    voted, support = nd._vote(runs, 2)
+
+    assert voted == [(["N2", "N3"], "b")]
+    assert support[("N2", "N3")] == 3 and support[("N1", "N2")] == 2
+
+
+async def test_failed_calls_do_not_vote(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two of five raise: the threshold is a majority of the three that answered (2)."""
+    _fake(
+        monkeypatch,
+        RuntimeError("down"),
+        _answer(["N1", "N2"]),
+        RuntimeError("down"),
+        _answer(["N1", "N2"]),
+        _answer(),
+    )
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert _ids(folds) == [["n1", "n2"]]
+    assert folds.call == "ok"
+
+
+async def test_every_call_failing_is_a_failed_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake(monkeypatch, *[RuntimeError("down")] * 5)
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert folds == []
+    assert folds.call == "failed"
+
+
+async def test_one_run_keeps_every_accepted_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    call = _fake(monkeypatch, _answer(["N1", "N2"], ["N4", "N5"]))
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert _ids(folds) == [["n1", "n2"], ["n4", "n5"]]
+    assert call.await_count == 1
+
+
+async def test_every_call_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    call = _fake(monkeypatch, *[_answer()] * 3)
+
+    await find_duplicate_groups(_five(), _METADATA)
+
+    assert call.await_count == 3
+    for c in call.await_args_list:
+        assert c.kwargs["max_tokens"] == nd._MAX_TOKENS
+        assert c.kwargs["reasoning_max_tokens"] == nd._REASONING_MAX_TOKENS

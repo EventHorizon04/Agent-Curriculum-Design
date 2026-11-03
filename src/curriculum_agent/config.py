@@ -271,6 +271,9 @@ class Settings(BaseSettings):
     # to — and the baseline any measurement of this step is taken against.
     need_dedup_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"
     need_dedup_model: str = ""
+    # How many times the duplicate check reads the same Needs, in parallel; only
+    # groups a majority agrees on are merged. 1 restores the single call.
+    need_dedup_runs: int = Field(default=5, ge=1)
     clustering_model: str = ""
     # The clustering slot is LLM clustering, and nothing else. It holds a whole KSEC
     # bucket of skills in one context and reasons over it, which is the work a
