@@ -32,6 +32,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from curriculum_agent.data.repositories import JobRepository, SessionRepository
+from curriculum_agent.llm_context import llm_scope
 from curriculum_agent.models import JobInfo, JobKind
 
 # JobRepository is re-exported on purpose: the routes reach the repository through
@@ -148,6 +149,7 @@ def _dump(value: BaseModel | Sequence[BaseModel]) -> Any:
 
 
 async def _run(
+    program_id: str,
     job_id: str,
     kind: str,
     work: Callable[[], Awaitable[BaseModel | Sequence[BaseModel]]],
@@ -157,7 +159,10 @@ async def _run(
     try:
         # The dump is inside the try: a work() that returns something that is not
         # a model would otherwise escape here and leave the job `running` for ever.
-        outcome: dict[str, Any] = {"status": "succeeded", "result": _dump(await work())}
+        # The scope is entered here, inside the spawned task, so every model call the
+        # body makes is attributed to this program and job (phase 5 usage rows).
+        with llm_scope(program_id=program_id, job_id=job_id):
+            outcome: dict[str, Any] = {"status": "succeeded", "result": _dump(await work())}
         logger.info(f"job {job_id} ({kind}) succeeded")
     except Exception as exc:  # noqa: BLE001 - every failure becomes the job's error
         if isinstance(exc, HTTPException):
@@ -207,7 +212,7 @@ async def start_job(
         )
         await JobRepository().insert(job)
     logger.info(f"job {job.job_id} ({kind}) started for {program_id}")
-    spawn(_run(job.job_id, kind, work, on_success))
+    spawn(_run(program_id, job.job_id, kind, work, on_success))
     return with_label(job)
 
 

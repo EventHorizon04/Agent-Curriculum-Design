@@ -19,6 +19,7 @@ from curriculum_agent.data.repositories import (
     SkillRepository,
 )
 from curriculum_agent.graph import AgentState
+from curriculum_agent.llm_context import llm_scope
 from curriculum_agent.models import (
     DesignerNoteRequest,
     ExtractedSkill,
@@ -251,14 +252,15 @@ async def merge_needs(program_id: str, body: ManualMergeRequest) -> Need:
             needs=tuple(need_merge._demand_order(selected)),
             reason_th=(body.reason_th or "").strip() or _MANUAL_MERGE_REASON_TH,
         )
-        merged = await need_merge._write_merged(
-            program_id,
-            fold,
-            {s.skill_id: s for s in skills},
-            corpus,
-            build_program_context_th(metadata.model_dump()),
-            merged_by="designer",
-        )
+        with llm_scope(program_id=program_id):
+            merged = await need_merge._write_merged(
+                program_id,
+                fold,
+                {s.skill_id: s for s in skills},
+                corpus,
+                build_program_context_th(metadata.model_dump()),
+                merged_by="designer",
+            )
         if merged is None:
             raise HTTPException(
                 status_code=502, detail="เขียนประโยค Need ที่รวมแล้วไม่สำเร็จ ลองใหม่อีกครั้ง"

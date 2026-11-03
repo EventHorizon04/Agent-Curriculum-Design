@@ -18,6 +18,7 @@ from curriculum_agent.data.repositories import (
     SessionRepository,
 )
 from curriculum_agent.graph import REVIEW_NODE_STAGE, AgentState, discard_thread
+from curriculum_agent.llm_context import llm_scope
 from curriculum_agent.models import SessionInfo
 
 router = APIRouter()
@@ -28,6 +29,7 @@ async def _run_graph(
     config: RunnableConfig,
     input_: AgentState | Command[Any],
     session_id: str,
+    program_id: str | None = None,
 ) -> None:
     """Run (or resume) the graph in a BackgroundTask.
 
@@ -36,7 +38,8 @@ async def _run_graph(
     """
     repo = SessionRepository()
     try:
-        await graph.ainvoke(input_, config)
+        with llm_scope(program_id=program_id, session_id=session_id):
+            await graph.ainvoke(input_, config)
         snap = await graph.aget_state(config)
         if snap.next:
             msg = "Review required"
@@ -115,7 +118,7 @@ async def create_session(
         "program_id": program_id,
         "metadata": program.model_dump(mode="json"),
     }
-    background_tasks.add_task(_run_graph, graph, config, initial_state, session_id)
+    background_tasks.add_task(_run_graph, graph, config, initial_state, session_id, program_id)
     return session
 
 
@@ -161,7 +164,7 @@ async def approve_session(
     graph = request.app.state.graph
     config: RunnableConfig = {"configurable": {"thread_id": session.thread_id}}
     cmd: Command[Any] = Command(resume={"checkpoint_status": "approved"})
-    background_tasks.add_task(_run_graph, graph, config, cmd, session_id)
+    background_tasks.add_task(_run_graph, graph, config, cmd, session_id, program_id)
     return session
 
 

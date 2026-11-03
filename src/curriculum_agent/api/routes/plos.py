@@ -20,6 +20,7 @@ from curriculum_agent.data.repositories import (
 )
 from curriculum_agent.exporters.excel_matrix import export_matrix_xlsx
 from curriculum_agent.graph import AgentState
+from curriculum_agent.llm_context import llm_scope
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
@@ -401,9 +402,10 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
 
     async with sync_writer(program_id, "หลักสูตรนี้กำลังรวม Need เป็น PLO อยู่ — รอให้เสร็จก่อน"):
         try:
-            plo, _replaced = await redraft_from_needs(
-                program, program_id, body.need_ids, note_th=body.note_th, cause="designer"
-            )
+            with llm_scope(program_id=program_id):
+                plo, _replaced = await redraft_from_needs(
+                    program, program_id, body.need_ids, note_th=body.note_th, cause="designer"
+                )
         except RedraftRefused as exc:
             raise HTTPException(status_code=exc.status, detail=exc.detail_th) from exc
         except RedraftFailed as exc:

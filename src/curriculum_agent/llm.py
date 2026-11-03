@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import functools
+import time
+from contextvars import ContextVar
+from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
 import instructor
@@ -10,6 +13,9 @@ from openai.types.chat import ChatCompletionMessageParam
 from pydantic import BaseModel
 
 from curriculum_agent.config import SLOTS, SlotSpec, settings
+from curriculum_agent.data.repositories import LLMUsageRepository
+from curriculum_agent.llm_context import current_scope
+from curriculum_agent.models import LLMUsage
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -176,12 +182,94 @@ def _get_raw_client(provider: str) -> AsyncOpenAI:
     return AsyncOpenAI(base_url=_base_url(provider), api_key=_api_key(provider))
 
 
+@dataclass
+class _Attempt:
+    """One provider response seen by instructor's hooks."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int | None
+    latency_ms: int
+    ok: bool = True
+
+
+# The attempts of the call running in this task. The client is a cached singleton
+# shared by every concurrent call, so per-call state cannot live on it; the hooks
+# find their call through these variables, which `_complete` sets for its own task.
+_attempts: ContextVar[list[_Attempt] | None] = ContextVar("llm_attempts", default=None)
+_started: ContextVar[float | None] = ContextVar("llm_attempt_started", default=None)
+
+
+def _on_kwargs(*_args: Any, **_kwargs: Any) -> None:
+    _started.set(time.monotonic())
+
+
+def _on_response(response: Any) -> None:
+    attempts = _attempts.get()
+    if attempts is None:
+        return
+    started = _started.get()
+    latency = int((time.monotonic() - started) * 1000) if started is not None else 0
+    usage = getattr(response, "usage", None)
+    details = getattr(usage, "completion_tokens_details", None)
+    reasoning = getattr(details, "reasoning_tokens", None)
+    attempts.append(
+        _Attempt(
+            prompt_tokens=int(getattr(usage, "prompt_tokens", None) or 0),
+            completion_tokens=int(getattr(usage, "completion_tokens", None) or 0),
+            reasoning_tokens=reasoning if isinstance(reasoning, int) else None,
+            latency_ms=latency,
+        )
+    )
+
+
+def _on_parse_error(_error: Exception) -> None:
+    attempts = _attempts.get()
+    if attempts:
+        attempts[-1].ok = False
+
+
+def _ensure_usage_hooks(client: instructor.AsyncInstructor) -> None:
+    """Register the recorder's hooks once per client (the client is cached)."""
+    if getattr(client, "_usage_hooks_installed", False):
+        return
+    client.on("completion:kwargs", _on_kwargs)
+    client.on("completion:response", _on_response)
+    client.on("parse:error", _on_parse_error)
+    client._usage_hooks_installed = True  # type: ignore[attr-defined]
+
+
+async def _record_usage(attempts: list[_Attempt], *, slot: str, provider: str, model: str) -> None:
+    """One row per provider response. Never raises: accounting must not fail a call."""
+    scope = current_scope()
+    for attempt in attempts:
+        try:
+            await LLMUsageRepository().add(
+                LLMUsage(
+                    program_id=scope.program_id,
+                    job_id=scope.job_id,
+                    session_id=scope.session_id,
+                    slot=slot,
+                    provider=provider,
+                    model=model,
+                    prompt_tokens=attempt.prompt_tokens,
+                    completion_tokens=attempt.completion_tokens,
+                    reasoning_tokens=attempt.reasoning_tokens,
+                    latency_ms=attempt.latency_ms,
+                    ok=attempt.ok,
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - best effort by design
+            logger.warning(f"llm usage not recorded ({slot}): {exc!r}")
+
+
 async def _complete(
     provider: str,
     model: str,
     response_model: type[T],
     messages: list[dict[str, Any]],
     *,
+    slot: str,
     reasoning_max_tokens: int | None = None,
     **kwargs: Any,
 ) -> T:
@@ -208,20 +296,39 @@ async def _complete(
     content at all — see `smart_agent._MAX_REASONING_TOKENS`. Elsewhere the field
     means nothing and is not sent, so moving a slot off OpenRouter cannot start
     failing its calls over an unknown parameter.
+
+    `slot` names the stage that called, for the usage rows (phase 5). Every
+    provider response is recorded, instructor's retries included, and the
+    recording never changes what this returns or raises; see `_record_usage`.
     """
     logger.debug(f"LLM call: {model} ({provider})")
     extra_body = _extra_body(provider)
     if reasoning_max_tokens is not None and provider == "openrouter":
         extra_body = {**extra_body, "reasoning": {"max_tokens": reasoning_max_tokens}}
-    return await _get_client(provider).chat.completions.create(
-        model=model,
-        response_model=response_model,
-        # Prompt builders emit OpenAI-shaped role/content dicts; cast to the SDK's
-        # message param type instead of restructuring at runtime.
-        messages=cast(list[ChatCompletionMessageParam], [dict(m) for m in messages]),
-        extra_body=extra_body,
-        **kwargs,
-    )
+    client = _get_client(provider)
+    _ensure_usage_hooks(client)
+    attempts: list[_Attempt] = []
+    token = _attempts.set(attempts)
+    failed = True
+    try:
+        result = await client.chat.completions.create(
+            model=model,
+            response_model=response_model,
+            # Prompt builders emit OpenAI-shaped role/content dicts; cast to the SDK's
+            # message param type instead of restructuring at runtime.
+            messages=cast(list[ChatCompletionMessageParam], [dict(m) for m in messages]),
+            extra_body=extra_body,
+            **kwargs,
+        )
+        failed = False
+        return result
+    finally:
+        _attempts.reset(token)
+        if failed and attempts and attempts[-1].ok:
+            # The last response arrived but the call still raised (a truncation, or
+            # the final validation failure): that response produced nothing.
+            attempts[-1].ok = False
+        await _record_usage(attempts, slot=slot, provider=provider, model=model)
 
 
 async def complete_need_combination(
@@ -238,7 +345,9 @@ async def complete_need_combination(
     caller, `need_combination`, and the sentence it writes is the only thing
     `plo_synthesis` is later handed.
     """
-    return await _complete(*_resolve("need_combination"), response_model, messages, **kwargs)
+    return await _complete(
+        *_resolve("need_combination"), response_model, messages, slot="need_combination", **kwargs
+    )
 
 
 async def complete_need_dedup(
@@ -252,7 +361,9 @@ async def complete_need_dedup(
     run. It answers with labels, never with Thai a designer reads, and whatever
     it answers is judged again in pure code before anything is folded.
     """
-    return await _complete(*_resolve("need_dedup"), response_model, messages, **kwargs)
+    return await _complete(
+        *_resolve("need_dedup"), response_model, messages, slot="need_dedup", **kwargs
+    )
 
 
 async def complete_plo_review(
@@ -265,7 +376,9 @@ async def complete_plo_review(
     One caller, `stages.plo_review`, once per changed PLO set. Its answer is
     advice for the designer and is judged again in pure code before it is stored.
     """
-    return await _complete(*_resolve("plo_review"), response_model, messages, **kwargs)
+    return await _complete(
+        *_resolve("plo_review"), response_model, messages, slot="plo_review", **kwargs
+    )
 
 
 async def complete_clustering(
@@ -274,7 +387,9 @@ async def complete_clustering(
     **kwargs: Any,
 ) -> T:
     """Heavy model, used by LLM clustering — see Settings.clustering_provider."""
-    return await _complete(*_resolve("clustering"), response_model, messages, **kwargs)
+    return await _complete(
+        *_resolve("clustering"), response_model, messages, slot="clustering", **kwargs
+    )
 
 
 async def complete_plo_synthesis(
@@ -290,7 +405,9 @@ async def complete_plo_synthesis(
     SMART repair call go through here, so a repair is never answered by a
     different model than wrote the draft it is repairing.
     """
-    return await _complete(*_resolve("plo_synthesis"), response_model, messages, **kwargs)
+    return await _complete(
+        *_resolve("plo_synthesis"), response_model, messages, slot="plo_synthesis", **kwargs
+    )
 
 
 async def complete_extraction(
@@ -306,7 +423,9 @@ async def complete_extraction(
     on this model name. A stage picking the endpoint per call would put that
     decision somewhere the cache cannot see it.
     """
-    return await _complete(*_resolve("extraction"), response_model, messages, **kwargs)
+    return await _complete(
+        *_resolve("extraction"), response_model, messages, slot="extraction", **kwargs
+    )
 
 
 async def complete_validation(
@@ -338,7 +457,7 @@ async def complete_validation(
         raise RuntimeError(
             "the SMART validation agent is switched off (VALIDATION_PROVIDER is empty)"
         )
-    return await _complete(provider, model, response_model, messages, **kwargs)
+    return await _complete(provider, model, response_model, messages, slot="validation", **kwargs)
 
 
 async def warmup_models() -> None:

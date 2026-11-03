@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 if sys.platform == "win32":
@@ -92,6 +93,23 @@ def _no_skill_group_delete(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         skill_extraction.SkillGroupRepository, "delete_by_program", AsyncMock(return_value=0)
     )
+
+
+@pytest.fixture(autouse=True)
+def usage_rows(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Usage accounting writes a row per provider response. Off the database in
+    tests: the recorder gets an in-memory repository, and the rows it was handed
+    are returned for the tests that care (`test_llm_usage_recording.py`)."""
+    from curriculum_agent import llm  # noqa: PLC0415
+
+    rows: list[Any] = []
+
+    class _MemoryUsage:
+        async def add(self, row: Any) -> None:
+            rows.append(row)
+
+    monkeypatch.setattr(llm, "LLMUsageRepository", _MemoryUsage)
+    return rows
 
 
 @pytest.fixture(autouse=True)
