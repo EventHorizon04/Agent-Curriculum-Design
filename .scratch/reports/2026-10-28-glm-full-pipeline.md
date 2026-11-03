@@ -141,6 +141,23 @@ Both models clustered the 89 skills run 11 extracted (`cluster_dump.py`, no DB w
   - EC is one 11-name grab-bag. llama splits EC into two, which are still mixed.
 - **Verdict.** On identical input, the reasoning-bounded GLM groups at least as well as llama, and better on S. The weak EC/K groups come from those buckets having no single object to group around; a different model would not fix them.
 
+### Dedup replay: same input, six calls
+
+`dedup_replay.py` called `find_duplicate_groups` six times on run 11's 10 eligible Needs. The call is not cached and runs at temperature 0.
+
+| Call | Time | Groups accepted |
+|---|---|---|
+| 1 | 153 s | N6+N9, N7+N10 |
+| 2 | 37 s | none |
+| 3 | 258 s | N1+N5, N7+N10 |
+| 4 | 30 s | none |
+| 5 | 56 s | none |
+| 6 | 47 s | N3+N10 |
+
+- **The variance comes from the model, not from different inputs.** Even at temperature 0, GLM's answer on identical input ranges from 0 to 2 groups. No pair reaches a majority: N7+N10 is the most frequent, at 2 of 6.
+- **The pairs are borderline.** One example is negotiation interpreting (N7) against applying Chinese business etiquette in interpreting (N10). N10 is also paired with N3 in another call, so the answers contradict each other.
+- **The call's hidden reasoning is unbounded.** Time ranged from 30 to 258 s.
+
 ## Open (updated 2026-11-03)
 
 1. ~~SMART turn budget~~, ~~closing call never run live~~, and ~~malformed verdict loss~~ are all done: f7391d6, 11b24ce and 6e471d2.
