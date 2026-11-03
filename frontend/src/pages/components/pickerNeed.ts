@@ -22,8 +22,16 @@ export function unusedNeedsOf(needs: PickerNeed[], citedIds: Set<string>): Picke
 }
 
 /** Why "เพิ่ม Need" is off for an outcome, or null when it can be used. */
-export function attachBlockedReason(citedCount: number, unused: PickerNeed[]): string | null {
-  if (citedCount >= MAX_MERGE_NEEDS) return `PLO นี้มี Need ครบ ${MAX_MERGE_NEEDS} ข้อแล้ว`
+export function attachBlockedReason(
+  citedIds: string[],
+  needs: PickerNeed[],
+  unused: PickerNeed[],
+): string | null {
+  if (citedIds.length >= MAX_MERGE_NEEDS) return `PLO นี้มี Need ครบ ${MAX_MERGE_NEEDS} ข้อแล้ว`
+  const known = new Set(needs.map((n) => n.need_id))
+  if (citedIds.some((id) => !known.has(id))) {
+    return 'PLO นี้อ้าง Need ที่ไม่อยู่ในชุดปัจจุบัน — รวมใหม่จากรายการ Need แทน'
+  }
   if (unused.every((n) => unwrittenReason(n))) return 'ไม่มี Need ที่ยังไม่มี PLO'
   return null
 }

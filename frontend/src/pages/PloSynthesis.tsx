@@ -209,8 +209,9 @@ export default function PloSynthesis() {
   // writer like them, so a 409 here means the program already has one running.
   // The picker and the card's attach control both come through here, so the
   // cards a merge replaces and the page line behave the same for either.
-  const submitMerge = async (needIds: string[], mergeNote: string | null) => {
-    if (needIds.length < 2 || !programId || busy) return
+  /** True only after the POST succeeded. */
+  const submitMerge = async (needIds: string[], mergeNote: string | null): Promise<boolean> => {
+    if (needIds.length < 2 || !programId || busy) return false
     setMerging(true)
     // Same rule as the server's: every outcome citing a selected Need goes.
     setMergeFlight({ ids: new Set(plosCiting(plos, needIds).map(p => p.plo_id)), since: clockMs() })
@@ -221,10 +222,12 @@ export default function PloSynthesis() {
         note_th: mergeNote,
       })
       await fetchPlos()
+      return true
     } catch (err: unknown) {
       const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
       setError(res?.data?.detail ?? 'รวม Need เป็น PLO เดียวไม่สำเร็จ')
       if (res?.status === 409) void refresh()
+      return false
     } finally {
       setMerging(false)
       setMergeFlight(null)
@@ -343,14 +346,6 @@ export default function PloSynthesis() {
               </button>
             </div>
           </div>
-          {/* Whatever cards the merge replaces, the call itself takes a while:
-              this is the one line that says so, and the one that is announced. */}
-          {mergeFlight && (
-            <PendingLine
-              pending={{ label: 'กำลังร่าง PLO จาก Need ที่เลือก', since: mergeFlight.since }}
-              announce
-            />
-          )}
           <div className="space-y-4">
             {plos.map(p => (
               <PLOCard
@@ -362,6 +357,7 @@ export default function PloSynthesis() {
                 pending={pendingOf(p.plo_id)}
                 onRevalidate={() => revalidate(p.plo_id)}
                 unusedNeeds={unusedNeeds}
+                needs={needs}
                 onAttach={(needId) => void submitMerge([...p.source_need_ids, needId], null)}
               />
             ))}
@@ -378,7 +374,7 @@ export default function PloSynthesis() {
               note={note}
               busy={busy}
               merging={merging}
-              onSubmit={() => void submitMerge([...selected], note.trim() || null).then(() => setSelected(new Set()))}
+              onSubmit={() => void submitMerge([...selected], note.trim() || null).then(ok => { if (ok) setSelected(new Set()) })}
               flight={mergeFlight && (
                 <PendingLine
                   pending={{ label: 'กำลังร่าง PLO จาก Need ที่เลือก', since: mergeFlight.since }}
@@ -514,12 +510,14 @@ function PendingLine({ pending, announce = false }: { pending: Pending; announce
   const since = Number.isFinite(pending.since) ? pending.since : now
   const seconds = Math.max(0, Math.floor((now - since) / 1000))
   return (
-    <div className="mb-3" role={announce ? 'status' : undefined} aria-live={announce ? 'polite' : undefined}>
+    <div className="mb-3">
       <div className="relative h-1 overflow-hidden rounded-[2px] bg-sunk ring-1 ring-hair ring-inset">
         <span className="animate-run-sweep absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-stamp/25 to-transparent" />
       </div>
       <p className="mt-1 text-xs text-pencil">
-        {pending.label} · <span className="data tabular-nums">{seconds}</span> วินาที
+        {/* Only the label is announced; the ticking count stays outside the live region. */}
+        <span role={announce ? 'status' : undefined} aria-live={announce ? 'polite' : undefined}>{pending.label}</span>
+        {' · '}<span className="data tabular-nums">{seconds}</span> วินาที
       </p>
     </div>
   )
@@ -533,9 +531,12 @@ function PLOCard({
   pending,
   onRevalidate,
   unusedNeeds,
+  needs,
   onAttach,
 }: {
   unusedNeeds: PickerNeed[]
+  /** Every active Need, to tell a cited Need that is no longer in the set. */
+  needs: PickerNeed[]
   /** Redraft this outcome from its Needs plus the chosen one. */
   onAttach: (needId: string) => void
   plo: PLO
@@ -719,7 +720,7 @@ function PLOCard({
               {pending?.label === REVALIDATING_LABEL ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
             </button>
             <AttachButton
-              blocked={attachBlockedReason(p.source_need_ids.length, unusedNeeds)}
+              blocked={attachBlockedReason(p.source_need_ids, needs, unusedNeeds)}
               busy={busy || Boolean(pending)}
               onOpen={() => setAttachOpen(true)}
             />

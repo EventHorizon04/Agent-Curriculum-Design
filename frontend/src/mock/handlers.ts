@@ -9,7 +9,7 @@
  */
 import type { JobInfo, JobKind } from '../api/jobs'
 import type { SMARTCheck, SmartFinding } from '../types/plo'
-import { MAX_CORE_PLOS, fallbackKind } from '../constants/needPolicy'
+import { MAX_CORE_PLOS, MAX_MERGE_NEEDS, fallbackKind } from '../constants/needPolicy'
 import {
   clone,
   consumeFailNextRun,
@@ -294,6 +294,8 @@ function runStageForSession(pid: string, stage: string): void {
       const needs = activeNeeds(of(db.needs, pid))
       if (!needs.length) throw new Error('ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน')
       replaceRows('plos', pid, synthesizePlos(pid, needs, of(db.skills, pid)))
+      // A fresh synthesis wipes the history too, as POST /plos/run does.
+      db.superseded = (db.superseded ?? []).filter((x) => x.program_id !== pid)
       return
     }
   }
@@ -565,6 +567,14 @@ export function buildRouter(): Router {
       db.skills.push(...of(db.skills, src).map(remap))
       db.needs.push(...of(db.needs, src).map(remap))
       db.plos.push(...of(db.plos, src).map(remap))
+      // History is cloned in full mode: new row ids, new program_id on row and snapshot.
+      db.superseded = [
+        ...(db.superseded ?? []),
+        ...of(db.superseded ?? [], src).map((row) => {
+          const copy = remap(row)
+          return { ...copy, id: newId(), plo: { ...copy.plo, program_id: newPid } }
+        }),
+      ]
     }
     return ok(findProgram(newPid))
   })
@@ -900,6 +910,7 @@ export function buildRouter(): Router {
 
   // Newest first, ties by plo_id, as the server orders them.
   r.get('/programs/:pid/plos/superseded', (req) => {
+    if (!findProgram(req.params.pid)) return detail(404, 'Program not found')
     const rows = of(getDb().superseded ?? [], req.params.pid)
     return ok(
       [...rows].sort(
@@ -1077,7 +1088,7 @@ export function buildRouter(): Router {
       const b = body<{ need_ids: string[]; note_th: string | null }>(req)
       const needIds = Array.isArray(b.need_ids) ? b.need_ids.map(String) : []
       // Checked before anything else, as the server does.
-      if (needIds.length > 5) return detail(422, 'เลือก Need 2-5 ข้อเพื่อรวมเป็น PLO')
+      if (needIds.length > MAX_MERGE_NEEDS) return detail(422, 'เลือก Need 2-5 ข้อเพื่อรวมเป็น PLO')
       if (needIds.length < 2) {
         return invalid([{ loc: ['body', 'need_ids'], msg: 'List should have at least 2 items after validation, not ' + needIds.length, type: 'too_short' }])
       }

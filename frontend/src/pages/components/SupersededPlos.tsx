@@ -32,7 +32,9 @@ export default function SupersededPlos({ items, needs }: { items: SupersededPLO[
                 return text ? (
                   <li key={id} className="truncate" title={text}>{text}</li>
                 ) : (
-                  <li key={id} className="data truncate">{id}</li>
+                  <li key={id} className="truncate">
+                    Need ที่ไม่อยู่ในชุดปัจจุบันแล้ว <span className="data text-lead/70">{id.slice(0, 8)}</span>
+                  </li>
                 )
               })}
             </ul>
