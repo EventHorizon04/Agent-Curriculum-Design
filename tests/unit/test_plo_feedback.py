@@ -371,13 +371,19 @@ async def test_stored_review_is_upserted_once_and_send_back_leaves_it_alone(
     order: list[str] = []
     repo = AsyncMock()
     repo.upsert.side_effect = lambda _r: order.append("upsert")
-    env.redraft.side_effect = lambda *a, **k: order.append("redraft") or env._redraft(*a, **k)
+
+    async def _tracked(*a: object, **k: object) -> tuple[PLO, list[str]]:
+        order.append("redraft")
+        return await env._redraft(*a, **k)  # type: ignore[arg-type]
+
+    env.redraft.side_effect = _tracked
     monkeypatch.setattr(pr, "_review", AsyncMock(return_value=review))
     monkeypatch.setattr(pr, "PLOReviewRepository", lambda: repo)
     got, feedback = await pr.fresh_review_with_feedback("cs-test", [])
     assert got is review and review.model_dump() == before
     repo.upsert.assert_awaited_once_with(review)
-    assert order == ["upsert", "redraft"] and len(feedback) == 1
+    assert order == ["upsert", "redraft"]
+    assert [a.outcome for a in feedback] == ["applied"]
 
 
 async def test_a_reused_stored_review_sends_nothing_back(
