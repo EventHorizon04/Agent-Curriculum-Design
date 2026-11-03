@@ -42,6 +42,7 @@ def _state(
     monkeypatch.setattr(evidence_module, "program_busy", AsyncMock(return_value=busy))
     monkeypatch.setattr(evidence_module.SkillRepository, "has_any", AsyncMock(return_value=skills))
     monkeypatch.setattr(evidence_module.NeedRepository, "has_any", AsyncMock(return_value=needs))
+    monkeypatch.setattr(evidence_module._repo, "program_of", AsyncMock(return_value=None))
 
 
 def test_put_edits_before_lock(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -197,3 +198,43 @@ async def test_classify_stream_registers_as_writer_while_running(
     async for _ in it:
         pass
     assert await program_busy("cs-busy") is None
+
+
+def test_post_refuses_a_body_for_another_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lock is the path program's, so the body may not name a different one."""
+    _state(monkeypatch)
+    insert = AsyncMock()
+    body = _stored().model_copy(update={"program_id": "locked-prog"}).model_dump(mode="json")
+    with patch.object(evidence_module._repo, "bulk_insert", new=insert):
+        resp = client.post(f"{BASE}/", json=body)
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == "program_id ใน body ไม่ตรงกับหลักสูตรที่ระบุ"
+    insert.assert_not_awaited()
+
+
+def test_post_refuses_an_evidence_id_owned_by_another_program(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`evidence_id` is global and bulk_insert upserts by it, so a POST to an
+    unlocked program could otherwise rewrite a locked program's row."""
+    _state(monkeypatch)
+    monkeypatch.setattr(evidence_module._repo, "program_of", AsyncMock(return_value="locked-prog"))
+    insert = AsyncMock()
+    with patch.object(evidence_module._repo, "bulk_insert", new=insert):
+        resp = client.post(f"{BASE}/", json=_stored().model_dump(mode="json"))
+    assert resp.status_code == 409
+    assert resp.json()["detail"] == "evidence_id นี้เป็นของหลักสูตรอื่น"
+    insert.assert_not_awaited()
+
+
+def test_post_still_upserts_an_id_of_the_same_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    _state(monkeypatch)
+    monkeypatch.setattr(evidence_module._repo, "program_of", AsyncMock(return_value="cs-2025"))
+    insert = AsyncMock()
+    body = _stored().model_copy(update={"raw_text_th": "ข้อความที่แก้แล้ว"}).model_dump(mode="json")
+    with patch.object(evidence_module._repo, "bulk_insert", new=insert):
+        resp = client.post(f"{BASE}/", json=body)
+    assert resp.status_code == 200, resp.text
+    stored = insert.await_args.args[0][0]
+    assert stored.evidence_id == "ev-1"
+    assert stored.raw_text_th == "ข้อความที่แก้แล้ว"

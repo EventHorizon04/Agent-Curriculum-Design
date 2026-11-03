@@ -99,6 +99,15 @@ async def upload_evidence(program_id: str, evidence: StakeholderEvidence) -> Sta
     # started between them would read the old text while this commit lands.
     async with program_lock(program_id):
         await _refuse_if_locked(program_id)
+        # The lock above is the path program's, but the row is upserted by the
+        # body's global id under the body's program. Both have to name the path
+        # program, or a POST to an unlocked program could rewrite — or move —
+        # a locked program's evidence while its skills still cite it.
+        if evidence.program_id != program_id:
+            raise HTTPException(status_code=422, detail="program_id ใน body ไม่ตรงกับหลักสูตรที่ระบุ")
+        owner = await _repo.program_of(evidence.evidence_id)
+        if owner is not None and owner != program_id:
+            raise HTTPException(status_code=409, detail="evidence_id นี้เป็นของหลักสูตรอื่น")
         classified = await classify_single(evidence)
         await _repo.bulk_insert([classified])
     return classified

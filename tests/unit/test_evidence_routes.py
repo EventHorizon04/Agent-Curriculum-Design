@@ -18,6 +18,7 @@ client = TestClient(app)
 def _unlocked_program(monkeypatch: pytest.MonkeyPatch) -> None:
     """These tests are about the routes' own behaviour; the lock has its own file."""
     monkeypatch.setattr(evidence_module, "evidence_lock_reason", AsyncMock(return_value=None))
+    monkeypatch.setattr(evidence_module._repo, "program_of", AsyncMock(return_value=None))
 
 
 def test_delete_evidence_success() -> None:

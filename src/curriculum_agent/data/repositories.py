@@ -263,6 +263,20 @@ class EvidenceRepository:
             d["metadata"] = d.pop("extra_metadata")
             return StakeholderEvidence.model_validate(d)
 
+    async def program_of(self, evidence_id: str) -> str | None:
+        """The program an evidence id is stored under, or None when it is new.
+
+        `evidence_id` is global and `bulk_insert` upserts by it alone, so a
+        writer scoped to one program has to ask this before writing: an id that
+        already belongs to another program would otherwise be rewritten, or
+        moved, from outside that program's lock.
+        """
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(EvidenceTable.program_id).where(EvidenceTable.evidence_id == evidence_id)
+            )
+            return result.scalar_one_or_none()
+
     async def delete(self, program_id: str, evidence_id: str) -> bool:
         """Delete one evidence row scoped to its program. Returns False if it
         doesn't exist OR belongs to a different program_id (same 404 either way
