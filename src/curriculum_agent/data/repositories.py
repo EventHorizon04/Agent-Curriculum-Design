@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, cast
 
 from loguru import logger
@@ -588,7 +588,7 @@ class PLORepository:
                         .scalars()
                         .all()
                     )
-                    now = datetime.utcnow()  # noqa: DTZ003 - naive UTC like every column here
+                    now = datetime.now(UTC).replace(tzinfo=None)  # naive UTC like every column here
                     for row in doomed:
                         session.add(
                             SupersededPLOTable(
@@ -672,6 +672,7 @@ class SupersededPLORepository:
                         .where(SupersededPLOTable.program_id == program_id)
                         .order_by(
                             SupersededPLOTable.superseded_at.desc(),
+                            func.length(SupersededPLOTable.plo_id),
                             SupersededPLOTable.plo_id,
                         )
                     )

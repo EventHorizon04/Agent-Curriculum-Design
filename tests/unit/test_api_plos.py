@@ -176,6 +176,7 @@ def test_list_superseded_returns_repository_rows(monkeypatch: pytest.MonkeyPatch
     body = response.json()
     assert [r["id"] for r in body] == ["h-1"]
     assert body[0]["superseded_by"] == "PLO1"
+    assert body[0]["superseded_at"].endswith("+00:00")
     assert body[0]["plo"]["plo_id"] == "PLO2"
 
 

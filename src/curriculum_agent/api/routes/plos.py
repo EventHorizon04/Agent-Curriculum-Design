@@ -359,8 +359,10 @@ class MergeNeedsRequest(DesignerNoteRequest):
 async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO:
     """Synthesize one PLO covering several designer-selected Needs.
 
-    Program is looked up first: a missing program is a 404, not a 422 blaming
-    the Needs. Need ids are validated only after the program exists.
+    The size check runs first (more than `MAX_GROUP_SIZE` ids is a 422 before
+    any lock, read or LLM call). Then the program is looked up: a missing program
+    is a 404, not a 422 blaming the Needs. Need ids are validated only after the
+    program exists.
 
     Everything after that runs as a registered writer (`sync_writer`): the LLM call
     below takes minutes, and a synthesis job that started and finished inside it

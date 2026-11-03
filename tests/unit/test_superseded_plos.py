@@ -180,7 +180,10 @@ async def test_list_is_ordered_newest_first_in_the_query() -> None:
         await SupersededPLORepository().list_by_program(PID)
     sql = session.sql()[0]
     # One merge stamps every row with the same superseded_at; plo_id breaks the tie.
-    assert "order by superseded_plos.superseded_at desc, superseded_plos.plo_id" in sql
+    assert (
+        "order by superseded_plos.superseded_at desc, "
+        "length(superseded_plos.plo_id), superseded_plos.plo_id"
+    ) in sql
 
 
 async def test_list_keeps_the_order_the_database_returned() -> None:
