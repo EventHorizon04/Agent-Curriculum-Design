@@ -398,6 +398,14 @@ async def _merge_needs(program: ProgramMetadata, program_id: str, body: MergeNee
             detail="Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — เลือก Need ที่รวมแล้วแทน",
         )
 
+    # An excluded Need was taken out of the working set by the designer; it comes
+    # back through restore, not by being picked here.
+    if any(n.excluded_at is not None for n in selected):
+        raise HTTPException(
+            status_code=422,
+            detail="Need นี้ถูกตัดออกแล้ว — คืน Need ก่อนนำมารวมเป็น PLO",
+        )
+
     # A fallback Need's statement is a marker plus a comma-joined skill list, not
     # a requirement — there is no PLO to draft it into, merged or otherwise. The
     # scope guard below is a designer override (selecting an out-of-scope Need is

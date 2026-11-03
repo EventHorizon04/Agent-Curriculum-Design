@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException
 from loguru import logger
@@ -26,6 +27,7 @@ from curriculum_agent.models import (
     SkillGroup,
     StakeholderEvidence,
 )
+from curriculum_agent.stages.plo_synthesis import plos_citing
 
 router = APIRouter()
 _repo = NeedRepository()
@@ -81,6 +83,10 @@ async def split_need(program_id: str, need_id: str) -> list[Need]:
         need = next((n for n in needs if n.need_id == need_id), None)
         if need is None:
             raise HTTPException(status_code=404, detail="ไม่พบ Need นี้")
+        # An excluded merged Need is out of the designer's working set; splitting
+        # it would free originals while it still sits excluded, so restore first.
+        if need.excluded_at is not None:
+            raise HTTPException(status_code=422, detail="คืน Need ก่อนแยก")
         if not need.is_merged:
             raise HTTPException(status_code=422, detail="Need นี้ไม่ได้มาจากการรวม จึงแยกไม่ได้")
         plos = await PLORepository().list_by_program(program_id)
@@ -93,6 +99,53 @@ async def split_need(program_id: str, need_id: str) -> list[Need]:
             return await _repo.split(program_id, need_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="ไม่พบ Need นี้") from exc
+
+
+async def _set_exclusion(program_id: str, need_id: str, *, exclude: bool) -> Need:
+    """Shared body of exclude/restore: the refusals run in the order the spec lists
+    them, inside the writer so what was checked is what is written."""
+    async with sync_writer(program_id, "หลักสูตรนี้กำลังแก้ Need อยู่ — รอให้เสร็จก่อน"):
+        needs = await _repo.list_by_program(program_id)
+        need = next((n for n in needs if n.need_id == need_id), None)
+        if need is None:
+            raise HTTPException(status_code=404, detail="ไม่พบ Need นี้")
+        if need.merged_into is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — ตัด Need ที่รวมแล้วแทน",
+            )
+        if exclude:
+            if need.excluded_at is not None:
+                raise HTTPException(status_code=422, detail="Need นี้ถูกตัดออกอยู่แล้ว")
+            plos = await PLORepository().list_by_program(program_id)
+            if plos_citing(plos, [need_id]):
+                raise HTTPException(
+                    status_code=409,
+                    detail="มี PLO อ้างถึง Need นี้ — ลบหรือรวม PLO ก่อนตัด Need",
+                )
+            # The column is a naive DateTime, so store naive UTC.
+            stamp: datetime | None = datetime.now(UTC).replace(tzinfo=None)
+        else:
+            if need.excluded_at is None:
+                raise HTTPException(status_code=422, detail="Need นี้ไม่ได้ถูกตัดออก")
+            stamp = None
+        try:
+            return await _repo.set_excluded(program_id, need_id, stamp)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="ไม่พบ Need นี้") from exc
+
+
+@router.post("/{need_id}/exclude", response_model=Need)
+async def exclude_need(program_id: str, need_id: str) -> Need:
+    """Take a Need out of the working set without deleting it. Refused with 409 when
+    a stored PLO cites it: an outcome has to go (or be merged) first."""
+    return await _set_exclusion(program_id, need_id, exclude=True)
+
+
+@router.post("/{need_id}/restore", response_model=Need)
+async def restore_need(program_id: str, need_id: str) -> Need:
+    """Bring an excluded Need back. No PLO check: nothing can cite an excluded Need."""
+    return await _set_exclusion(program_id, need_id, exclude=False)
 
 
 @router.get("/skills", response_model=list[ExtractedSkill])

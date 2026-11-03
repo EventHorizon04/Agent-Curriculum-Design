@@ -51,6 +51,25 @@ async def test_synthesis_one_slot_per_active_need(monkeypatch: pytest.MonkeyPatc
     assert cited == {"A1", "A2", "A3"}
 
 
+async def test_synthesis_skips_excluded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Entered directly, synthesis reads the active set, which drops excluded Needs."""
+    from datetime import datetime  # noqa: PLC0415
+
+    kept = _need("A1", demand=0.9)
+    dropped = _need("A2", demand=0.8).model_copy(update={"excluded_at": datetime(2026, 11, 3)})
+    _patch_llm(monkeypatch, [kept])
+    stored = [kept, dropped]
+    monkeypatch.setattr(
+        ps.NeedRepository,
+        "list_active_by_program",
+        AsyncMock(return_value=[n for n in stored if n.excluded_at is None]),
+    )
+
+    result = await ps.run({"program_id": "test", "metadata": _METADATA})
+
+    assert {nid for p in result["plos"] for nid in p["source_need_ids"]} == {"A1"}
+
+
 async def test_synthesis_loads_only_active_needs_when_entered_directly(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
