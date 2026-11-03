@@ -100,9 +100,13 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   of S) and -1.6% grounding (invented spans, which `is_grounded` drops before they
   reach a Need). `0` means "no bound": the field is not sent and not added to the key,
   so the key is byte-for-byte the pre-bound one — that is the research setting.
-  A positive bound is appended to the key (`max_tokens=`, `reasoning_tokens=`) because
+  A positive bound is appended to the key (`max_tokens=`, `reasoning_max_tokens=`) because
   it can change the answer: a cached unbounded extraction must not be replayed for a
   bounded run. **The default changing therefore re-extracts each program once**; the
   old rows become unreachable, and `prune_cache --older-than DAYS` is the sweep for
   them (no column marks them stale). Not measured: whether the ~8 fewer S skills
-  change the Needs and PLOs downstream.
+  change the Needs and PLOs downstream. The defaults were measured on GLM via
+  OpenRouter only: `reasoning_max_tokens` is sent only to OpenRouter (the `llm.py`
+  rule) while `max_tokens` is sent to any provider, so re-measure before moving
+  extraction to another provider (elsewhere the reasoning bound is a no-op that
+  still enters the cache key, and 4096 is unmeasured).

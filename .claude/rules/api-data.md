@@ -95,7 +95,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   navigation, never reached a refreshed page, and was cut by the tunnel at
   ~100 s. A running job **or a running graph session** blocks another job and
   the synchronous writers (`POST /sessions/`, `/approve`, `/plos/from-needs`,
-  `/needs/{id}/split`, `/copy`) with a Thai 409 — every stage deletes and rewrites what the next one
+  `/needs/{id}/split`, `/copy`, `DELETE /programs/{id}` — every model call writes a usage row pointing at the program, and a row landing between the cascade's deletes would fail it) with a Thai 409 — every stage deletes and rewrites what the next one
   reads. The check-then-write is serialised per program by `program_lock`
   (in-process; the deployment is one uvicorn process): `start_job` holds it
   around its busy-check and insert, `/sessions/`, `/approve` and `/copy` around
@@ -167,7 +167,9 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   program's rows; a program copy does **not** copy them (the copy has spent
   nothing); and a re-run does **not** clear them — usage is a ledger of what was
   spent, and a re-run is more spending. `GET /programs/{id}/usage` (404 unknown
-  program) returns `UsageSummary`: overall, per slot, and per job newest first, with
+  program) returns `UsageSummary`: overall, per slot, per job newest first, and per graph
+  session (`by_session`: rows with a session and no job; rows with neither stay only in
+  `total`/`by_slot`), with
   `JobUsage.label_th` filled by the route from `JOB_KIND_LABEL_TH` (empty for an
   unknown kind, so the page keeps no copy of the map). It is a read; nothing
   upstream reads usage.
