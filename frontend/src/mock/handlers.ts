@@ -591,6 +591,7 @@ export function buildRouter(): Router {
     db.sessions = db.sessions.filter((r2) => r2.program_id !== pid)
     db.jobs = db.jobs.filter((r2) => r2.program_id !== pid)
     db.reviews = (db.reviews ?? []).filter((r2) => r2.program_id !== pid)
+    db.superseded = (db.superseded ?? []).filter((r2) => r2.program_id !== pid)
     return { status: 204 }
   })
 
@@ -897,6 +898,16 @@ export function buildRouter(): Router {
 
   r.get('/programs/:pid/plos', (req) => ok(sortPlos(of(getDb().plos, req.params.pid))))
 
+  // Newest first, ties by plo_id, as the server orders them.
+  r.get('/programs/:pid/plos/superseded', (req) => {
+    const rows = of(getDb().superseded ?? [], req.params.pid)
+    return ok(
+      [...rows].sort(
+        (a, b) => b.superseded_at.localeCompare(a.superseded_at) || a.plo.plo_id.localeCompare(b.plo.plo_id),
+      ),
+    )
+  })
+
   r.get('/programs/:pid/plos/export/matrix.xlsx', (req) => {
     const pid = req.params.pid
     const plos = sortPlos(of(getDb().plos, pid))
@@ -1063,6 +1074,8 @@ export function buildRouter(): Router {
       const pid = req.params.pid
       const b = body<{ need_ids: string[]; note_th: string | null }>(req)
       const needIds = Array.isArray(b.need_ids) ? b.need_ids.map(String) : []
+      // Checked before anything else, as the server does.
+      if (needIds.length > 5) return detail(422, 'เลือก Need 2-5 ข้อเพื่อรวมเป็น PLO')
       if (needIds.length < 2) {
         return invalid([{ loc: ['body', 'need_ids'], msg: 'List should have at least 2 items after validation, not ' + needIds.length, type: 'too_short' }])
       }
@@ -1110,6 +1123,18 @@ export function buildRouter(): Router {
       while (used.has(index)) index++
       const plo = makePlo(pid, formatPloId(index, isOptional), selected, mergedPloSeed(selected, of(db.skills, pid)), isOptional)
       db.plos = [...db.plos.filter((p) => !(p.program_id === pid && supersededIds.has(p.plo_id))), plo]
+      // The replaced outcomes are kept, the way the server snapshots them.
+      const at = new Date().toISOString().replace('Z', '+00:00')
+      db.superseded = [
+        ...(db.superseded ?? []),
+        ...superseded.map((old) => ({
+          id: `${pid}:${old.plo_id}:${at}`,
+          program_id: pid,
+          superseded_by: plo.plo_id,
+          superseded_at: at,
+          plo: old,
+        })),
+      ]
       return ok(plo)
     },
     'slow',

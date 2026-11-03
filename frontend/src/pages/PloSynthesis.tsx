@@ -9,12 +9,14 @@ import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
 import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import DesignerNote from './components/DesignerNote'
+import SupersededPlos from './components/SupersededPlos'
+import { plosCiting } from './components/plosCiting'
 import ValidationToggle, { type ValidationStatus } from './components/ValidationToggle'
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
 import { BLOOM_LABEL } from '../constants/bloom'
-import type { PLO } from '../types/plo'
+import type { PLO, SupersededPLO } from '../types/plo'
 
 interface NeedSummary {
   need_id: string
@@ -60,12 +62,15 @@ const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate', 'needs_pipel
 export default function PloSynthesis() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
+  const [superseded, setSuperseded] = useState<SupersededPLO[]>([])
   const [needs, setNeeds] = useState<NeedListItem[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   // Between a click and the job being known, and during the synchronous merge.
   const [starting, setStarting] = useState(false)
   const [merging, setMerging] = useState(false)
+  // The cards a merge in flight will replace, and when it began.
+  const [mergeFlight, setMergeFlight] = useState<{ ids: Set<string>; since: number } | null>(null)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [runValidation, setRunValidation] = useState(true)
@@ -112,11 +117,13 @@ export default function PloSynthesis() {
       if (!quiet) setLoading(true)
       setError('')
       try {
-        const [ploRes, needRes] = await Promise.all([
+        const [ploRes, supersededRes, needRes] = await Promise.all([
           api.get<PLO[]>(`/programs/${programId}/plos/`),
+          api.get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`),
           api.get<NeedListItem[]>(`/programs/${programId}/needs/?active_only=true`),
         ])
         setPlos(ploRes.data)
+        setSuperseded(supersededRes.data)
         setNeeds(needRes.data)
       } catch {
         setError('โหลด PLO ไม่สำเร็จ')
@@ -196,6 +203,8 @@ export default function PloSynthesis() {
   const mergeSelected = async () => {
     if (selected.size < 2 || !programId || busy) return
     setMerging(true)
+    // Same rule as the server's: every outcome citing a selected Need goes.
+    setMergeFlight({ ids: new Set(plosCiting(plos, selected).map(p => p.plo_id)), since: Date.now() })
     setError('')
     try {
       await api.post(`/programs/${programId}/plos/from-needs`, {
@@ -210,7 +219,20 @@ export default function PloSynthesis() {
       if (res?.status === 409) void refresh()
     } finally {
       setMerging(false)
+      setMergeFlight(null)
     }
+  }
+
+  /** What a card is waiting on, if anything: its own SMART re-check, or the
+   *  merge that will replace it. */
+  const pendingOf = (ploId: string): Pending | undefined => {
+    if (revalidatingId === ploId && mine) {
+      return { label: REVALIDATING_LABEL, since: Date.parse(mine.created_at) }
+    }
+    if (mergeFlight?.ids.has(ploId)) {
+      return { label: 'กำลังร่าง PLO ใหม่แทนข้อนี้', since: mergeFlight.since }
+    }
+    return undefined
   }
 
   if (!programId) {
@@ -261,8 +283,6 @@ export default function PloSynthesis() {
           plan={synthesis.params.run_validation !== false ? PLO_SYNTHESIS_PLAN : PLO_SYNTHESIS_CODE_ONLY_PLAN}
           since={Date.parse(synthesis.created_at)}
         />
-      ) : merging ? (
-        <RunProgress plan={agentWillRun ? PLO_SYNTHESIS_PLAN : PLO_SYNTHESIS_CODE_ONLY_PLAN} />
       ) : loading ? (
         <LoadingLine />
       ) : plos.length === 0 ? (
@@ -320,11 +340,13 @@ export default function PloSynthesis() {
                 programId={programId}
                 onUpdate={handleUpdate}
                 busy={busy}
-                revalidating={revalidatingId === p.plo_id}
+                pending={pendingOf(p.plo_id)}
                 onRevalidate={() => revalidate(p.plo_id)}
               />
             ))}
           </div>
+
+          <SupersededPlos items={superseded} />
 
           {needs.length >= 2 && (
             <div className="panel mt-8 bg-sunk p-5">
@@ -477,12 +499,41 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
   )
 }
 
+const REVALIDATING_LABEL = 'กำลังตรวจ SMART ใหม่'
+
+/** A card that is waiting on a job: dimmed, its actions off, a sweep line with
+ *  the seconds it has waited. `since` is epoch ms. */
+interface Pending {
+  label: string
+  since: number
+}
+
+function PendingLine({ pending }: { pending: Pending }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  const since = Number.isFinite(pending.since) ? pending.since : now
+  const seconds = Math.max(0, Math.floor((now - since) / 1000))
+  return (
+    <div className="mb-3" role="status" aria-live="polite">
+      <div className="relative h-1 overflow-hidden rounded-[2px] bg-sunk ring-1 ring-hair ring-inset">
+        <span className="animate-run-sweep absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-stamp/25 to-transparent" />
+      </div>
+      <p className="mt-1 text-xs text-pencil">
+        {pending.label} · <span className="data tabular-nums">{seconds}</span> วินาที
+      </p>
+    </div>
+  )
+}
+
 function PLOCard({
   plo: p,
   programId,
   onUpdate,
   busy,
-  revalidating,
+  pending,
   onRevalidate,
 }: {
   plo: PLO
@@ -490,8 +541,9 @@ function PLOCard({
   onUpdate: (plo: PLO) => void
   /** The program has a writer running, whatever it is; nothing here may start another. */
   busy: boolean
-  /** The SMART re-check of *this* outcome is the job that is running. */
-  revalidating: boolean
+  /** A job concerning *this* outcome is running: its SMART re-check, or the
+   *  merge that will replace it. */
+  pending?: Pending
   onRevalidate: () => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -532,8 +584,10 @@ function PLOCard({
     <div
       className={`panel p-4 sm:p-5 ${
         p.smart_escalated ? 'border-mandate border-l-4' : ''
-      }`}
+      } ${pending ? 'opacity-60' : ''}`}
+      aria-busy={pending ? true : undefined}
     >
+      {pending && <PendingLine pending={pending} />}
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="flex-1 min-w-0">
@@ -644,6 +698,7 @@ function PLOCard({
           <div className="flex shrink-0 flex-row flex-wrap gap-1.5 sm:flex-col">
             <button
               onClick={() => setEditing(true)}
+              disabled={Boolean(pending)}
               className="btn btn-sm btn-secondary"
             >
               แก้ไข
@@ -657,7 +712,7 @@ function PLOCard({
               disabled={busy}
               className="btn btn-sm btn-secondary"
             >
-              {revalidating ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
+              {pending?.label === REVALIDATING_LABEL ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
             </button>
           </div>
         )}

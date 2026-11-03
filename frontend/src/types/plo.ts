@@ -50,3 +50,15 @@ export interface PLO {
   smart_diagnosis_th: string | null
   is_optional: boolean
 }
+
+/** A PLO a merge replaced, kept so the designer can see what it said. The live
+ *  list never contains one. */
+export interface SupersededPLO {
+  id: string
+  program_id: string
+  /** plo_id of the outcome that replaced it. */
+  superseded_by: string
+  /** ISO timestamp with an offset. */
+  superseded_at: string
+  plo: PLO
+}

@@ -9,7 +9,7 @@
  * reading another field finds it here the way it would on the real API.
  */
 import type { JobInfo } from '../api/jobs'
-import type { PLO } from '../types/plo'
+import type { PLO, SupersededPLO } from '../types/plo'
 import type { PLOSetReview } from '../types/ploReview'
 
 export type ScenarioName = 'empty' | 'checkpoint' | 'complete' | 'many'
@@ -120,6 +120,9 @@ export interface NeedRow {
 
 export type PloRow = PLO
 
+/** A PLO a merge replaced, newest first once listed. */
+export type SupersededRow = SupersededPLO
+
 export type SessionStatus = 'running' | 'suspended' | 'completed' | 'rejected' | 'failed'
 
 /** SessionInfo, plus the bookkeeping the simulation needs. The extra fields
@@ -155,6 +158,8 @@ export interface MockDb {
    *  stored by an earlier build has none; every read treats a missing list as
    *  empty. */
   reviews?: PLOSetReview[]
+  /** PLOs replaced by a merge. Optional for the same reason as `reviews`. */
+  superseded?: SupersededRow[]
 }
 
 export function emptyDb(): MockDb {
