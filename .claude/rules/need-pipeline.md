@@ -272,7 +272,17 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   KSEC tag" rejection is gone (designer's decision of 2026-10-26): a merge may
   cross buckets, and it is the only thing that produces a multi-tag Need.
   `need_merge.enforce_merge_floor` keeps `MIN_CORE_AFTER_MERGE` (4) at this
-  stage, unfolding the lowest-demand groups first.
+  stage, unfolding the lowest-demand groups first. **One call is not an
+  answer, so the check votes** (designer's decision of 2026-11-03):
+  replayed six times at temperature 0 on the same ten Needs, GLM gave 0-2
+  groups with a different pair each time and no pair reached a majority, and
+  full runs merged 5, 1 and 0 groups. `need_dedup_runs` (5) calls run in
+  parallel, each judged by `accept_groups` on its own, and `_vote` merges a
+  pair only when a majority of the *usable* calls named it — a 3+ group only
+  when every pair inside it passes, as in `plo_review_consensus`. Borderline
+  pairs stay unmerged for the designer. Reasoning is bounded (1024) on every
+  call: unbounded it took 30-258 s, bounded 7-29 s for all five. `1` restores
+  the single call.
 - **A merged Need is built in code from its members, and only its sentence is
   written by a model** (`stages/need_merge.py`). Pooled skills are the union of
   the members' `member_skill_ids`, rows sharing a normalised name collapse to

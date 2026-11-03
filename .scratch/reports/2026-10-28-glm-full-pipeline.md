@@ -158,9 +158,24 @@ Both models clustered the 89 skills run 11 extracted (`cluster_dump.py`, no DB w
 - **The pairs are borderline.** One example is negotiation interpreting (N7) against applying Chinese business etiquette in interpreting (N10). N10 is also paired with N3 in another call, so the answers contradict each other.
 - **The call's hidden reasoning is unbounded.** Time ranged from 30 to 258 s.
 
+### Dedup after the majority vote (e524703)
+
+The designer chose a majority vote. Five parallel calls run with reasoning bounded to 1024, and a pair merges when at least 3 of the usable calls named it. The vote was replayed 3 times on the same run-11 Needs:
+
+| Replay | Time (5 calls) | Pair votes | Merged |
+|---|---|---|---|
+| 1 | 29 s | N1+N5=2, N3+N10=2, N1+N9=2, … | none |
+| 2 | 7 s | N3+N10=3 | N3+N10 |
+| 3 | 7 s | N3+N10=4, N7+N9=2, … | N3+N10 |
+
+- **Fewer distinct outcomes.** A single call had produced four different answers in six tries. The vote gives either nothing or N3+N10.
+- **Not fully stable.** N3+N10 sits right on the threshold (2, 3, 4 votes). A pair that close to even will still flip, and that is the borderline case the designer settles at the checkpoint.
+- **Much faster.** All five calls together now take 7-29 s, against 30-258 s for one unbounded call.
+- **Caveat on the bound.** The bound may have shifted the model's judgement. Unbounded, N7+N10 was the most frequent pair; bounded, it is N3+N10. Both are borderline, so it is unclear which is right.
+
 ## Open (updated 2026-11-03)
 
 1. ~~SMART turn budget~~, ~~closing call never run live~~, and ~~malformed verdict loss~~ are all done: f7391d6, 11b24ce and 6e471d2.
-2. **The dedup check varies from run to run**, from 5 merges to 0. This is the main source of variation in the PLO set. It needs a look at the need_dedup prompt and call, or a repeat-and-vote design like plo_review's.
+2. ~~Dedup varies from run to run~~ is addressed by the majority vote (e524703). Borderline pairs at the threshold remain; they are for the designer.
 3. The generic EC bucket and GLM's S business grab-bag. A prompt-level change would need its own experiment.
 4. Extraction takes 245-280 s per run. Deferred to phase 5.
