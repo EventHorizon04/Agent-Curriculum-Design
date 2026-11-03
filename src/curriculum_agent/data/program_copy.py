@@ -42,6 +42,7 @@ from curriculum_agent.data.orm import (
     Base,
     EvidenceTable,
     NeedTable,
+    PLOFeedbackActionTable,
     PLOReviewTable,
     PLOTable,
     ProgramTable,
@@ -72,6 +73,7 @@ class ProgramRows:
     review: PLOReviewTable | None
     skill_groups: list[SkillGroupTable] = field(default_factory=list)
     superseded: list[SupersededPLOTable] = field(default_factory=list)
+    feedback: list[PLOFeedbackActionTable] = field(default_factory=list)
 
 
 def _uuid4() -> str:
@@ -173,6 +175,7 @@ def build_copy(
             review=None,
             skill_groups=[],
             superseded=[],
+            feedback=[],
         )
     id_map: dict[str, str] = {}
     for e in src.evidence:
@@ -213,6 +216,10 @@ def build_copy(
         copied.snapshot = {**copied.snapshot, "program_id": new_id}
         superseded.append(copied)
 
+    # plo_ids/need_ids are JSONB, so remap_ids follows the Need ids; PLO ids are
+    # per program and stay.
+    feedback = [_clone(f, id_map, id=new_uuid(), program_id=new_id) for f in src.feedback]
+
     review: PLOReviewTable | None = None
     if src.review is not None:
         # The fingerprint hashes source_need_ids, which just changed. A review
@@ -234,6 +241,7 @@ def build_copy(
         review=review,
         skill_groups=skill_groups,
         superseded=superseded,
+        feedback=feedback,
     )
 
 
@@ -256,6 +264,7 @@ async def load_rows(session: AsyncSession, program_id: str) -> ProgramRows | Non
         review=await session.get(PLOReviewTable, program_id),
         skill_groups=await _all(SkillGroupTable, SkillGroupTable.program_id),
         superseded=await _all(SupersededPLOTable, SupersededPLOTable.program_id),
+        feedback=await _all(PLOFeedbackActionTable, PLOFeedbackActionTable.program_id),
     )
 
 
@@ -289,6 +298,7 @@ async def copy_program(
             copy.needs,
             copy.plos,
             copy.superseded,
+            copy.feedback,
         ):
             session.add_all(group)
             await session.flush()
@@ -299,7 +309,7 @@ async def copy_program(
         f"program copy ({mode}): {source_id} -> {new_id} ({len(copy.evidence)} evidence, "
         f"{len(copy.skills)} skills, {len(copy.skill_groups)} skill groups, "
         f"{len(copy.needs)} Needs, {len(copy.plos)} PLOs, "
-        f"{len(copy.superseded)} superseded PLOs, "
+        f"{len(copy.superseded)} superseded PLOs, {len(copy.feedback)} feedback actions, "
         f"review={'yes' if copy.review is not None else 'no'})"
     )
     return True

@@ -197,6 +197,35 @@ class SupersededPLOTable(Base):
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
     superseded_by: Mapped[str] = mapped_column(String)
     superseded_at: Mapped[datetime] = mapped_column(DateTime)
+    # "designer" | "review"; null on rows from before phase 4 (reads as designer).
+    cause: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class PLOFeedbackActionTable(Base):
+    """One finding Agent 4 (the PLO set review) considered, and what came of it.
+
+    Same life as superseded_plos: cleared with the PLO set, copied by a full
+    program copy, not by an evidence-only one. `plo_ids`/`need_ids` are JSONB
+    lists, so a copy remaps the Need ids inside them.
+    """
+
+    __tablename__ = "plo_feedback_actions"
+    __table_args__ = (Index("ix_plo_feedback_actions_program_id", "program_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
+    review_created_at: Mapped[datetime] = mapped_column(DateTime)
+    kind: Mapped[str] = mapped_column(String)
+    plo_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    need_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    finding_reason_th: Mapped[str] = mapped_column(Text, default="")
+    instruction_th: Mapped[str] = mapped_column(Text, default="")
+    outcome: Mapped[str] = mapped_column(String)
+    outcome_reason_th: Mapped[str] = mapped_column(Text, default="")
+    result_plo_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    result_statement_th: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_bloom_level: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class PLOReviewTable(Base):

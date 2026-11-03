@@ -169,6 +169,7 @@ async def test_copy_program_adds_every_group_and_commits_once(
         built.needs,
         built.plos,
         built.superseded,
+        built.feedback,
     ]
 
 

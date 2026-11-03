@@ -15,6 +15,7 @@ from datetime import datetime
 from curriculum_agent.data.orm import (
     EvidenceTable,
     NeedTable,
+    PLOFeedbackActionTable,
     PLOReviewTable,
     PLOTable,
     ProgramTable,
@@ -451,3 +452,47 @@ def test_build_copy_evidence_only() -> None:
     assert copy.plos == []
     assert copy.skill_groups == []
     assert copy.review is None
+
+
+def _with_feedback(src: ProgramRows) -> ProgramRows:
+    from dataclasses import replace
+
+    row = PLOFeedbackActionTable(
+        id="f-1",
+        program_id="program-2",
+        review_created_at=datetime(2026, 10, 5),
+        kind="unused_need",
+        plo_ids=["PLO2"],
+        need_ids=["nd-1"],
+        finding_reason_th="เหตุผล",
+        instruction_th="",
+        outcome="applied",
+        outcome_reason_th="",
+        result_plo_id="PLO2",
+        result_statement_th="ออกแบบระบบได้",
+        result_bloom_level="create",
+        created_at=datetime(2026, 10, 5),
+    )
+    return replace(src, feedback=[row])
+
+
+def test_full_copy_clones_feedback_trail() -> None:
+    src = _with_feedback(_source())
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+    assert len(copy.feedback) == 1
+    row = copy.feedback[0]
+    assert row.id != "f-1" and row.id.startswith("new-")
+    assert row.program_id == "program-2-run-1"
+    assert row.plo_ids == ["PLO2"]
+    assert set(row.need_ids) <= {n.need_id for n in copy.needs}
+    assert row.need_ids != ["nd-1"]
+    assert row.outcome == "applied" and row.result_plo_id == "PLO2"
+    assert src.feedback[0].need_ids == ["nd-1"]
+
+
+def test_evidence_only_copy_has_no_feedback_trail() -> None:
+    src = _with_feedback(_source())
+    copy = build_copy(
+        src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
+    )
+    assert copy.feedback == []

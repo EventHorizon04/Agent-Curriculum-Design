@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -628,10 +629,44 @@ class SupersededPLO(BaseModel):
     superseded_by: str
     superseded_at: datetime
     plo: PLO
+    # Who replaced it: "designer" (a merge on the PLO page) or "review" (Agent 4's
+    # send-back). None on rows written before the column existed; read as designer.
+    cause: str | None = None
 
     # Stored naive UTC; sent with its offset because a browser reads a naive ISO
     # string as local time. JSON only, like JobInfo.
     @field_serializer("superseded_at", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class FeedbackAction(BaseModel):
+    """One finding of the PLO set review that Agent 4 considered (phase 4).
+
+    The trail of what the review sent back: `outcome` is `applied`, `skipped` or
+    `failed`, with the Thai reason. `kind` and `outcome` stay plain strings so a
+    new value needs no migration.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    program_id: str
+    review_created_at: datetime
+    kind: str
+    plo_ids: list[str] = Field(default_factory=list)
+    need_ids: list[str] = Field(default_factory=list)
+    finding_reason_th: str = ""
+    instruction_th: str = ""
+    outcome: str
+    outcome_reason_th: str = ""
+    result_plo_id: str | None = None
+    result_statement_th: str | None = None
+    result_bloom_level: str | None = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
+
+    # Stored naive UTC; sent with its offset like SupersededPLO. JSON only.
+    @field_serializer("review_created_at", "created_at", when_used="json")
     def _utc(self, value: datetime) -> str:
         if value.tzinfo is None:
             value = value.replace(tzinfo=UTC)

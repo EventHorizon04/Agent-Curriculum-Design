@@ -17,6 +17,7 @@ from curriculum_agent.data.orm import (
     JobTable,
     LLMCacheTable,
     NeedTable,
+    PLOFeedbackActionTable,
     PLOReviewTable,
     PLOTable,
     ProgramTable,
@@ -30,6 +31,7 @@ from curriculum_agent.graph import stage_reached
 from curriculum_agent.models import (
     PLO,
     ExtractedSkill,
+    FeedbackAction,
     JobInfo,
     JobStatus,
     Need,
@@ -209,6 +211,11 @@ class ProgramRepository:
             await session.execute(delete(NeedTable).where(NeedTable.program_id == program_id))
             await session.execute(
                 delete(SupersededPLOTable).where(SupersededPLOTable.program_id == program_id)
+            )
+            await session.execute(
+                delete(PLOFeedbackActionTable).where(
+                    PLOFeedbackActionTable.program_id == program_id
+                )
             )
             await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
             await session.execute(
@@ -528,6 +535,11 @@ class PLORepository:
             await session.execute(
                 delete(SupersededPLOTable).where(SupersededPLOTable.program_id == program_id)
             )
+            await session.execute(
+                delete(PLOFeedbackActionTable).where(
+                    PLOFeedbackActionTable.program_id == program_id
+                )
+            )
             result = cast(
                 CursorResult[Any],
                 await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id)),
@@ -552,7 +564,14 @@ class PLORepository:
                         setattr(existing, k, v)
             await session.commit()
 
-    async def replace(self, program_id: str, remove_plo_ids: list[str], add: list[PLO]) -> int:
+    async def replace(
+        self,
+        program_id: str,
+        remove_plo_ids: list[str],
+        add: list[PLO],
+        *,
+        cause: str = "designer",
+    ) -> int:
         """Drop some outcomes and write others, in one transaction.
 
         The designer-driven merge needs both halves to land together: the PLOs it
@@ -565,6 +584,9 @@ class PLORepository:
         identity is (program_id, plo_id) and `next_plo_id` hands back the lowest
         free number within this program, so a merge normally reuses the lowest
         slot it just emptied.
+
+        `cause` is written on each history row: "designer" for a merge on the PLO
+        page, "review" for Agent 4's send-back.
 
         Returns the number of rows removed.
         """
@@ -598,6 +620,7 @@ class PLORepository:
                                 snapshot=_row_to_dict(row),
                                 superseded_by=add[0].plo_id,
                                 superseded_at=now,
+                                cause=cause,
                             )
                         )
                 result = cast(
@@ -690,11 +713,43 @@ class SupersededPLORepository:
                         superseded_by=row.superseded_by,
                         superseded_at=row.superseded_at,
                         plo=PLO.model_validate(row.snapshot),
+                        cause=row.cause,
                     )
                 )
             except ValidationError as exc:
                 logger.warning(f"superseded PLO {row.id} ({row.plo_id}) skipped: {exc!r}")
         return out
+
+
+class PLOFeedbackRepository:
+    """The trail of what the PLO set review sent back (phase 4)."""
+
+    async def add(self, actions: list[FeedbackAction]) -> None:
+        if not actions:
+            return
+        async with AsyncSessionLocal() as session:
+            for action in actions:
+                session.add(PLOFeedbackActionTable(**action.model_dump()))
+            await session.commit()
+
+    async def list_by_program(self, program_id: str) -> list[FeedbackAction]:
+        """Newest first; `id` breaks the tie within one round."""
+        async with AsyncSessionLocal() as session:
+            rows = (
+                (
+                    await session.execute(
+                        select(PLOFeedbackActionTable)
+                        .where(PLOFeedbackActionTable.program_id == program_id)
+                        .order_by(
+                            PLOFeedbackActionTable.created_at.desc(),
+                            PLOFeedbackActionTable.id,
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+        return [FeedbackAction.model_validate(_row_to_dict(row)) for row in rows]
 
 
 # Stored in their own columns; everything else rides in the JSONB body, so a new

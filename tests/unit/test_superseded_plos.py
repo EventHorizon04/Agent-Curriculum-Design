@@ -194,3 +194,24 @@ async def test_list_keeps_the_order_the_database_returned() -> None:
         _history_row("old", snap, now - timedelta(hours=1)),
     ]
     assert [s.id for s in await _list(rows)] == ["new", "old"]
+
+
+async def test_replace_records_cause_review() -> None:
+    session = _Session(select_rows=[_plo_row("PLO1", "ออกแบบระบบ ก ได้")])
+    with _patched(session):
+        await PLORepository().replace(PID, ["PLO1"], [_plo("PLO1")], cause="review")
+    history = [a for a in session.added if isinstance(a, SupersededPLOTable)]
+    assert [h.cause for h in history] == ["review"]
+    assert [s.cause for s in await _list(history)] == ["review"]
+
+
+async def test_replace_default_cause_designer() -> None:
+    session = await _replace([_plo_row("PLO1", "ออกแบบระบบ ก ได้")], ["PLO1"], [_plo("PLO1")])
+    history = [a for a in session.added if isinstance(a, SupersededPLOTable)]
+    assert [h.cause for h in history] == ["designer"]
+
+
+async def test_list_reads_legacy_null_cause_as_none() -> None:
+    snap = _row_to_dict(_plo_row("PLO1", "ออกแบบระบบ ก ได้"))
+    row = _history_row("old", snap, datetime(2026, 11, 3))
+    assert [s.cause for s in await _list([row])] == [None]
