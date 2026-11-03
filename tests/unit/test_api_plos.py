@@ -18,6 +18,7 @@ from curriculum_agent.models import (
     SMARTCheck,
     SupersededPLO,
 )
+from curriculum_agent.stages import plo_redraft
 from curriculum_agent.stages import plo_synthesis as ps_module
 from curriculum_agent.stages.need_grouping import PROVIDER_MARKER_TH, REVIEW_MARKER_TH
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
@@ -222,7 +223,7 @@ def test_merging_out_of_scope_needs_leaves_a_trace_in_the_log(
     which of the selected Needs were out of scope and which were not."""
     merge_env([_need("X1", in_scope=False), _need("N1")], [])
 
-    with patch.object(plos_route, "logger") as mock_logger:
+    with patch.object(plo_redraft, "logger") as mock_logger:
         client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["X1", "N1"]})
 
     warnings = [c.args[0] for c in mock_logger.warning.call_args_list]
@@ -234,7 +235,7 @@ def test_merging_out_of_scope_needs_leaves_a_trace_in_the_log(
 def test_an_all_in_scope_merge_logs_no_scope_warning(merge_env: Callable[..., PLO]) -> None:
     merge_env([_need("N1"), _need("N2")], [])
 
-    with patch.object(plos_route, "logger") as mock_logger:
+    with patch.object(plo_redraft, "logger") as mock_logger:
         client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]})
 
     warnings = [c.args[0] for c in mock_logger.warning.call_args_list]
