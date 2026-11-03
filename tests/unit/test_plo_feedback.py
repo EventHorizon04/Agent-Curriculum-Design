@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, call
 
 import pytest
 
@@ -11,16 +11,20 @@ from curriculum_agent.models import (
     BloomFinding,
     BloomLevel,
     FeedbackAction,
+    KsecFinding,
     PLOSetReview,
     RedundancyFinding,
     UnusedNeedFinding,
 )
 from curriculum_agent.prompts.plo_feedback import build_bloom_redraft_note_th
+from curriculum_agent.smart_vocabulary import forbidden_words_in
 from curriculum_agent.stages import plo_feedback as pf
 from curriculum_agent.stages import plo_review as pr
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused
-from tests.unit.test_api_plos import _plo, _program
+from curriculum_agent.stages.plo_review_facts import need_demands, plo_fingerprint
+from tests.unit.test_api_plos import _need, _plo, _program
+from tests.unit.test_plo_redraft import _install
 
 
 def _unused(nid: str, *, verdict: str | None = "consider", **kw: object) -> UnusedNeedFinding:
@@ -110,7 +114,8 @@ async def test_order_is_redundancy_then_bloom_then_unused(
     assert all(a.outcome == "applied" for a in actions)
     assert [c.args[2] for c in env.redraft.await_args_list] == [["N1", "N2"], ["N3"], ["N7"]]
     assert all(c.kwargs["cause"] == "review" for c in env.redraft.await_args_list)
-    env.trail.add.assert_awaited_once_with(actions)
+    # one write per action, right after it
+    assert env.trail.add.await_args_list == [call([a]) for a in actions]
     assert actions[0].result_plo_id == "PLO1" and actions[0].result_statement_th == "ใหม่ PLO1"
     assert actions[0].review_created_at == datetime(2026, 11, 3, 1, 2, 3)
 
@@ -205,7 +210,7 @@ async def test_refusal_and_failure_are_recorded_with_their_texts(
         ("failed", "ร่าง PLO ไม่สำเร็จ"),
     ]
     assert all(a.result_plo_id is None for a in actions)
-    env.trail.add.assert_awaited_once()
+    assert env.trail.add.await_count == 3
 
 
 async def test_bloom_note_comes_from_the_builder_and_result_level_is_recorded(
@@ -216,7 +221,7 @@ async def test_bloom_note_comes_from_the_builder_and_result_level_is_recorded(
     expected = build_bloom_redraft_note_th(BloomLevel.APPLY, "ระดับสูงเกินไป")
     assert env.redraft.await_args.kwargs["note_th"] == expected
     assert action.instruction_th == expected
-    assert "apply" in expected and "ระดับสูงเกินไป" in expected
+    assert "Apply" in expected and "ระดับสูงเกินไป" in expected
     assert action.plo_ids == ["PLO3"] and action.need_ids == ["N3"]
     assert action.result_bloom_level == "analyze"  # the new PLO's own level
 
@@ -289,6 +294,54 @@ async def test_an_error_outside_the_actions_is_swallowed(
     assert len(actions) == 1 and actions[0].outcome == "applied"
 
 
+async def test_a_failed_trail_write_does_not_stop_the_round(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    env.trail.add.side_effect = [RuntimeError("db"), None]
+    review = _review(unused_needs=[_unused("N7", agreed_runs=2), _unused("N8", agreed_runs=2)])
+    actions = await pf.send_back("cs-test", review)
+    assert [a.outcome for a in actions] == ["applied", "applied"]
+    assert env.trail.add.await_count == 2
+
+
+async def test_a_ksec_finding_writes_no_row(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    review = _review(
+        ksec=[
+            KsecFinding(plo_id="PLO1", current=["S"], suggested=["K"], agrees=False, agreed_runs=5)
+        ]
+    )
+    assert await pf.send_back("cs-test", review) == []
+    env.redraft.assert_not_awaited()
+    env.trail.add.assert_not_awaited()
+
+
+async def test_a_real_refusal_text_passes_through_verbatim(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    """The text comes from the real `redraft_from_needs` check, not a stand-in."""
+    from curriculum_agent.stages.plo_redraft import redraft_from_needs  # noqa: PLC0415
+
+    env = _Env(monkeypatch, plos)
+    merged_away = _need("N7").model_copy(update={"merged_into": "N8"})
+    _install(monkeypatch, [merged_away], [], None)
+    monkeypatch.setattr(pf, "redraft_from_needs", redraft_from_needs)
+    (action,) = await pf.send_back("cs-test", _review(unused_needs=[_unused("N7", agreed_runs=2)]))
+    assert action.outcome == "skipped"
+    assert action.outcome_reason_th == "Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — เลือก Need ที่รวมแล้วแทน"
+    env.trail.add.assert_awaited_once()
+
+
+@pytest.mark.parametrize("level", list(BloomLevel))
+def test_bloom_note_has_no_forbidden_word_for_any_level(level: BloomLevel) -> None:
+    note = build_bloom_redraft_note_th(level, "")
+    assert forbidden_words_in(note) == []
+    assert level.value.capitalize() in note
+
+
 # --------------------- fresh_review wiring ---------------------
 
 
@@ -307,6 +360,50 @@ async def test_fresh_review_returns_the_review_even_when_send_back_raises(
     review, feedback = await pr.fresh_review_with_feedback("cs-test", [])
     assert review is stored and feedback == []
     assert await pr.fresh_review("cs-test", []) is stored
+
+
+async def test_stored_review_is_upserted_once_and_send_back_leaves_it_alone(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    review = _review(unused_needs=[_unused("N7", agreed_runs=2)])
+    before = review.model_dump()
+    order: list[str] = []
+    repo = AsyncMock()
+    repo.upsert.side_effect = lambda _r: order.append("upsert")
+    env.redraft.side_effect = lambda *a, **k: order.append("redraft") or env._redraft(*a, **k)
+    monkeypatch.setattr(pr, "_review", AsyncMock(return_value=review))
+    monkeypatch.setattr(pr, "PLOReviewRepository", lambda: repo)
+    got, feedback = await pr.fresh_review_with_feedback("cs-test", [])
+    assert got is review and review.model_dump() == before
+    repo.upsert.assert_awaited_once_with(review)
+    assert order == ["upsert", "redraft"] and len(feedback) == 1
+
+
+async def test_a_reused_stored_review_sends_nothing_back(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)  # send-back switched on, every repository faked
+    stored = _review(
+        plo_fingerprint=plo_fingerprint(plos, need_demands([])),
+        redundancies=[_red("PLO1", "PLO2")],
+        unused_needs=[_unused("N7", agreed_runs=2)],
+    )
+    monkeypatch.setattr(
+        pr, "PLOReviewRepository", lambda: AsyncMock(get=AsyncMock(return_value=stored))
+    )
+    monkeypatch.setattr(
+        pr, "NeedRepository", lambda: AsyncMock(list_active_by_program=AsyncMock(return_value=[]))
+    )
+    spy = AsyncMock(return_value=[])
+    monkeypatch.setattr(pr, "send_back", spy)
+    fresh = AsyncMock()
+    monkeypatch.setattr(pr, "fresh_review_with_feedback", fresh)
+    assert await pr.review_plo_set("cs-test", plos) is stored
+    spy.assert_not_awaited()
+    fresh.assert_not_awaited()
+    env.redraft.assert_not_awaited()
+    env.trail.add.assert_not_awaited()
 
 
 async def test_fresh_review_with_feedback_returns_this_rounds_actions(

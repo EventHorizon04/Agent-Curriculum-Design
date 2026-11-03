@@ -285,10 +285,14 @@ class PLOReviewResponse(BaseModel):
     # Whether the agent half of the slot can run right now. "" (off) still
     # stores the code facts, so this tells "facts only" apart from "judged".
     review_enabled: bool = False
-    # What the review sent back this round (phase 4): empty when send-back is off,
-    # the review is code-only, or nothing agreed was actionable. Only the job that
-    # ran the review fills it; `GET /review` leaves it empty — `GET /feedback`
-    # has the whole trail.
+
+
+class PLOReviewRunResponse(PLOReviewResponse):
+    """The result of the review job: the review plus what it sent back this round
+    (phase 4). Empty when send-back is off, the review is code-only, or nothing
+    agreed was actionable. `GET /review` stays a `PLOReviewResponse`;
+    `GET /feedback` has the whole trail."""
+
     feedback: list[FeedbackAction] = Field(default_factory=list)
 
 
@@ -327,7 +331,7 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
 @router.post("/review/run", response_model=JobInfo, status_code=202)
 async def run_plo_review(program_id: str) -> JobInfo:
     """Run the closing-stage QA review afresh. Answers 202; the result (a
-    `PLOReviewResponse`) arrives through `GET /jobs`.
+    `PLOReviewRunResponse`) arrives through `GET /jobs`.
 
     It runs with the slot switched off too: the code facts are stored without the
     agent, so there is no disabled-feature 503 — `review_enabled` in the result
@@ -341,7 +345,7 @@ async def run_plo_review(program_id: str) -> JobInfo:
             status_code=422, detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"
         )
 
-    async def work() -> PLOReviewResponse:
+    async def work() -> PLOReviewRunResponse:
         try:
             review, feedback = await plo_review.fresh_review_with_feedback(program_id, plos)
         except plo_review.ReviewAlreadyRunning as exc:
@@ -350,7 +354,7 @@ async def run_plo_review(program_id: str) -> JobInfo:
         # staleness against whatever landed on this program meanwhile.
         plos_now = await _repo.list_by_program(program_id)
         needs_now = await NeedRepository().list_active_by_program(program_id)
-        return PLOReviewResponse(
+        return PLOReviewRunResponse(
             review=review,
             stale=is_stale(review, plos_now, need_demands(needs_now)),
             review_enabled=bool(settings.plo_review_provider),

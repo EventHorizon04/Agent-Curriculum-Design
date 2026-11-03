@@ -251,6 +251,21 @@ async def _send_unused(rnd: _Round, finding: UnusedNeedFinding) -> FeedbackActio
     )
 
 
+async def _record(actions: list[FeedbackAction], action: FeedbackAction) -> None:
+    """Keep the row and write it now, so an applied redraft is never left without
+    its trail row if the round is cancelled later. A failed write is logged at
+    error level with the row, and the round goes on."""
+    actions.append(action)
+    logger.info(
+        f"plo_feedback: {action.kind} {action.plo_ids or action.need_ids} "
+        f"-> {action.outcome} {action.outcome_reason_th}".rstrip()
+    )
+    try:
+        await PLOFeedbackRepository().add([action])
+    except Exception as exc:
+        logger.error(f"plo_feedback: could not write trail row {action.model_dump_json()}: {exc!r}")
+
+
 async def send_back(program_id: str, review: PLOSetReview) -> list[FeedbackAction]:
     """Act on the review's agreed findings; return the trail rows written.
 
@@ -286,7 +301,7 @@ async def send_back(program_id: str, review: PLOSetReview) -> list[FeedbackActio
                     need_ids=[],
                     finding_reason_th=red.reason_th,
                 )
-            actions.append(action)
+            await _record(actions, action)
         for bl in blooms:
             try:
                 action = await _send_bloom(rnd, bl)
@@ -295,7 +310,7 @@ async def send_back(program_id: str, review: PLOSetReview) -> list[FeedbackActio
                 action = rnd.failed(
                     "bloom", plo_ids=[bl.plo_id], need_ids=[], finding_reason_th=bl.reason_th
                 )
-            actions.append(action)
+            await _record(actions, action)
         for un in unused:
             try:
                 action = await _send_unused(rnd, un)
@@ -307,14 +322,7 @@ async def send_back(program_id: str, review: PLOSetReview) -> list[FeedbackActio
                     need_ids=[un.need_id],
                     finding_reason_th=un.reason_th,
                 )
-            actions.append(action)
-
-        for action in actions:
-            logger.info(
-                f"plo_feedback: {action.kind} {action.plo_ids or action.need_ids} "
-                f"-> {action.outcome} {action.outcome_reason_th}".rstrip()
-            )
-        await PLOFeedbackRepository().add(actions)
+            await _record(actions, action)
     except Exception as exc:
         logger.warning(f"plo_feedback: send-back for {program_id} stopped early: {exc!r}")
     return actions

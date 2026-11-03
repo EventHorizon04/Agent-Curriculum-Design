@@ -302,6 +302,25 @@ def test_review_result_carries_this_rounds_feedback(
     assert [f["result_plo_id"] for f in job.result["feedback"]] == ["PLO1"]
 
 
+def test_review_job_succeeds_when_a_send_back_action_failed(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    failed = FeedbackAction(
+        program_id="cs-test",
+        review_created_at=datetime(2026, 10, 8),
+        kind="bloom",
+        outcome="failed",
+        outcome_reason_th="ร่าง PLO ไม่สำเร็จ",
+    )
+    env.fresh_review.return_value = (_review(), [failed])
+
+    job = _finish(client.post(f"{BASE}/review/run"), jobs_store, spawned)
+
+    assert job.status == "succeeded", job.error_th
+    assert job.result["review"]["summary_th"] == "ดีแล้ว"
+    assert job.result["feedback"][0]["outcome"] == "failed"
+
+
 def test_revalidate_result_is_the_old_plo_body_and_it_is_stored(
     env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:

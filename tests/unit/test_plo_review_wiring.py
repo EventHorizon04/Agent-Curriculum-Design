@@ -79,7 +79,7 @@ def test_get_review_with_none_stored() -> None:
     # conftest's kill switch has the slot off for every test, so review_enabled
     # reads false here — it answers "is the slot on", independent of whether a
     # row was ever stored.
-    assert resp.json() == {"review": None, "stale": False, "review_enabled": False, "feedback": []}
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
 
 
 def test_get_review_review_enabled_true_when_the_slot_is_on(monkeypatch) -> None:
@@ -107,7 +107,7 @@ def test_get_review_guards_a_storage_read_failure() -> None:
         rr.return_value.get = AsyncMock(side_effect=RuntimeError("db down"))
         resp = client.get("/programs/p1/plos/review")
     assert resp.status_code == 200
-    assert resp.json() == {"review": None, "stale": False, "review_enabled": False, "feedback": []}
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
 
 
 def test_get_review_with_a_failed_need_load_returns_the_review_as_stale() -> None:
@@ -139,7 +139,7 @@ def test_get_review_with_a_failed_need_load_and_no_review_stays_empty() -> None:
         rr.return_value.get = AsyncMock(return_value=None)
         needs.return_value.list_active_by_program = AsyncMock(side_effect=RuntimeError("db down"))
         resp = client.get("/programs/p1/plos/review")
-    assert resp.json() == {"review": None, "stale": False, "review_enabled": False, "feedback": []}
+    assert resp.json() == {"review": None, "stale": False, "review_enabled": False}
 
 
 def test_review_run_422_without_plos() -> None:
