@@ -61,7 +61,9 @@ class _ConcurrencyTracker:
         self.peak = 0
         self.calls = 0
 
-    async def __call__(self, response_model: Any, messages: list[dict[str, Any]]) -> Any:
+    async def __call__(
+        self, response_model: Any, messages: list[dict[str, Any]], **_kwargs: Any
+    ) -> Any:
         self.calls += 1
         self.live += 1
         self.peak = max(self.peak, self.live)
@@ -141,7 +143,7 @@ async def test_one_failing_item_does_not_sink_the_others(
     """gather(return_exceptions=False) would abort the whole stage on the first
     provider hiccup. Each item's failure has to stay its own."""
 
-    async def flaky(response_model: Any, messages: list[dict[str, Any]]) -> Any:
+    async def flaky(response_model: Any, messages: list[dict[str, Any]], **_kwargs: Any) -> Any:
         n = int(messages[-1]["content"].split("ลำดับที่ ")[1].split(" ")[0])
         if n == 2:
             raise RuntimeError("provider said no")

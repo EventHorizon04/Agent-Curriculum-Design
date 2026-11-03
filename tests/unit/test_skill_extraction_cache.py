@@ -3,7 +3,16 @@ from __future__ import annotations
 import hashlib
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from curriculum_agent.config import settings
+
+
+@pytest.fixture(autouse=True)
+def _unbounded_extraction(monkeypatch):  # noqa: ANN001, ANN202
+    """The cache keys these tests hand-build are the unbounded ones."""
+    monkeypatch.setattr(settings, "extraction_max_tokens", 0)
+    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", 0)
 
 
 async def test_cache_hit_skips_extraction_llm_call():
@@ -345,11 +354,11 @@ async def _run_extraction_miss(monkeypatch) -> tuple[AsyncMock, AsyncMock]:  # n
     return cache, call
 
 
-async def test_unset_extraction_bounds_change_neither_request_nor_key(monkeypatch):
+async def test_zero_extraction_bounds_change_neither_request_nor_key(monkeypatch):
     from curriculum_agent.stages.skill_extraction import _EXTRACTION_CONTRACT
 
-    monkeypatch.setattr(settings, "extraction_max_tokens", None)
-    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", None)
+    monkeypatch.setattr(settings, "extraction_max_tokens", 0)
+    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", 0)
     cache, call = await _run_extraction_miss(monkeypatch)
 
     text = "ต้องการผู้เชี่ยวชาญด้าน Python"
@@ -363,8 +372,8 @@ async def test_unset_extraction_bounds_change_neither_request_nor_key(monkeypatc
 
 
 async def test_set_extraction_bounds_are_sent_and_change_the_key(monkeypatch):
-    monkeypatch.setattr(settings, "extraction_max_tokens", None)
-    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", None)
+    monkeypatch.setattr(settings, "extraction_max_tokens", 0)
+    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", 0)
     unbounded, _ = await _run_extraction_miss(monkeypatch)
     unbounded_key = unbounded.get.call_args.args[0]
 
@@ -376,3 +385,16 @@ async def test_set_extraction_bounds_are_sent_and_change_the_key(monkeypatch):
     assert call.await_args.kwargs["reasoning_max_tokens"] == 512
     assert bounded.get.call_args.args[0] != unbounded_key
     assert bounded.set.call_args.args[0] == bounded.get.call_args.args[0]
+
+
+async def test_default_extraction_bounds_are_sent(monkeypatch):
+    fresh = type(settings)()
+    assert fresh.extraction_max_tokens == 4096
+    assert fresh.extraction_reasoning_max_tokens == 1024
+    monkeypatch.setattr(settings, "extraction_max_tokens", fresh.extraction_max_tokens)
+    monkeypatch.setattr(
+        settings, "extraction_reasoning_max_tokens", fresh.extraction_reasoning_max_tokens
+    )
+    _, call = await _run_extraction_miss(monkeypatch)
+    assert call.await_args.kwargs["max_tokens"] == 4096
+    assert call.await_args.kwargs["reasoning_max_tokens"] == 1024

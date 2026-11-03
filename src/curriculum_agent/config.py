@@ -365,11 +365,14 @@ class Settings(BaseSettings):
     # None means "whatever llm_provider is", for one endpoint end to end.
     extraction_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
     extraction_model: str = ""
-    # Output bounds for the extraction call (phase 5). None sends nothing, which
-    # is today's request. They can change what the model returns, so
-    # skill_extraction puts them in the cache key when set.
-    extraction_max_tokens: int | None = None
-    extraction_reasoning_max_tokens: int | None = None
+    # Output bounds for the extraction call (phase 5). Measured 2026-11-03
+    # (.scratch/reports/2026-11-03-phase5-extraction.md): about 89% of unbounded
+    # extraction output is hidden reasoning, and bounding it took Agent 1 from
+    # ~255 s to ~47 s for -9.1% skills and -1.6% grounding. 0 means "no bound":
+    # nothing is sent and the cache key is the pre-bound one. A positive bound can
+    # change what the model returns, so skill_extraction puts it in the cache key.
+    extraction_max_tokens: int = Field(default=4096, ge=0)
+    extraction_reasoning_max_tokens: int = Field(default=1024, ge=0)
     # Accepted only to be refused — see _RENAMED_SLOT_SETTINGS and
     # _reject_renamed_slot_settings. They hold no value the program reads, and
     # `exclude=True` keeps them out of any dump of this object.

@@ -178,11 +178,11 @@ if _skill_ksec_literal != _expected_skill_ksec:
 
 
 def _bound_kwargs() -> dict[str, int]:
-    """Output bounds for one extraction call; empty when neither is configured."""
+    """Output bounds for one extraction call; empty when both are 0 (unbounded)."""
     bounds: dict[str, int] = {}
-    if settings.extraction_max_tokens is not None:
+    if settings.extraction_max_tokens > 0:
         bounds["max_tokens"] = settings.extraction_max_tokens
-    if settings.extraction_reasoning_max_tokens is not None:
+    if settings.extraction_reasoning_max_tokens > 0:
         bounds["reasoning_max_tokens"] = settings.extraction_reasoning_max_tokens
     return bounds
 
@@ -372,18 +372,18 @@ async def run(state: AgentState) -> AgentState:
         # so every row written before it is already a miss. A conditional append
         # would buy back nothing and leave a branch to maintain forever.
         #
-        # The output bounds are appended only when set: they change what the model
+        # The output bounds are appended only when above 0: they change what the model
         # can return, so a cached unbounded answer must not be replayed for a
-        # bounded run (or the reverse), while leaving them unset keeps today's key
+        # bounded run (or the reverse), while 0 keeps today's key
         # and every row already stored.
         key_text = (
             f"{chunk}\x00{evidence.classification}\x00{settings.extraction_model}"
             f"\x00{_EXTRACTION_CONTRACT}\x00{field_th}\x00{program_name_th}"
             f"\x00{scope_th}"
         )
-        if settings.extraction_max_tokens is not None:
+        if settings.extraction_max_tokens > 0:
             key_text += f"\x00max_tokens={settings.extraction_max_tokens}"
-        if settings.extraction_reasoning_max_tokens is not None:
+        if settings.extraction_reasoning_max_tokens > 0:
             key_text += f"\x00reasoning_max_tokens={settings.extraction_reasoning_max_tokens}"
         cache_key = hashlib.sha256(key_text.encode()).hexdigest()
 
