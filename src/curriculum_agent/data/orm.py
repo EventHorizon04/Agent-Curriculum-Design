@@ -115,6 +115,8 @@ class NeedTable(Base):
     merged_from: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
     merged_into: Mapped[str | None] = mapped_column(String, nullable=True)
     merge_reason_th: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    excluded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    merged_by: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class SkillGroupTable(Base):

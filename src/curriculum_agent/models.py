@@ -347,6 +347,16 @@ class Need(BaseModel):
     merged_from: list[str] = Field(default_factory=list)
     merged_into: str | None = None
     merge_reason_th: str = ""
+    # Set when the designer takes the Need out of the PLO pool. The row stays,
+    # still tracing to its evidence; `list_active_by_program` just skips it, so
+    # no stage needs its own filter. A timestamp rather than a bool so a restore
+    # clears one nullable field and the UI can say when it happened. Defaults to
+    # None for the same reason as the counters above: older rows and suspended
+    # checkpoints arrive without the key.
+    excluded_at: datetime | None = None
+    # Who wrote a merged Need: Agent 2's duplicate check or the designer's manual
+    # merge. None on an original and on rows that predate the field.
+    merged_by: Literal["agent", "designer"] | None = None
 
     @model_validator(mode="before")
     @classmethod

@@ -29,6 +29,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from functools import partial
+from typing import Literal
 
 from loguru import logger
 
@@ -186,6 +187,7 @@ async def _write_merged(
     skills_by_id: dict[str, ExtractedSkill],
     stakeholder_type_by_evidence: dict[str, str],
     program_context: str | None,
+    merged_by: Literal["agent", "designer"] = "agent",
 ) -> Need | None:
     """The merged Need for one fold, or None when it cannot be written."""
     originals = _demand_order(fold.needs)
@@ -251,7 +253,21 @@ async def _write_merged(
         top_skill_ids=[s.skill_id for s in top],
         merged_from=[n.need_id for n in originals],
         merge_reason_th=fold.reason_th,
+        merged_by=merged_by,
     )
+
+
+def mark_merged(needs: list[Need], merged: list[Need]) -> list[Need]:
+    """The originals in their order, `merged_into` set on those a merged Need absorbed.
+
+    Shared by the automatic merge and the designer's manual one, so both hide
+    their originals the same way. Needs no merged Need names pass through as is.
+    """
+    parent_of = {oid: m.need_id for m in merged for oid in m.merged_from}
+    return [
+        n.model_copy(update={"merged_into": parent_of[n.need_id]}) if n.need_id in parent_of else n
+        for n in needs
+    ]
 
 
 def _core_count(needs: Sequence[Need]) -> int:
@@ -304,13 +320,7 @@ async def merge_duplicates(
 
     stored = list(needs)
     if merged:
-        parent_of = {oid: m.need_id for m in merged for oid in m.merged_from}
-        stored = [
-            n.model_copy(update={"merged_into": parent_of[n.need_id]})
-            if n.need_id in parent_of
-            else n
-            for n in needs
-        ]
+        stored = mark_merged(needs, merged)
         stored += merged
     # One line per run, so the step's effect can be read off the log alone:
     # without it a run that proposed three groups and merged none looks the same

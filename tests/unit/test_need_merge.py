@@ -475,3 +475,13 @@ def test_need_statement_lives_in_a_leaf_and_is_still_exported_from_need_combinat
     assert nc.NeedStatement is ns.NeedStatement is nc._NeedStatement
     assert nm.NeedStatement is ns.NeedStatement
     assert nc.STATEMENT_MAX_TOKENS == ns.STATEMENT_MAX_TOKENS
+
+
+async def test_merge_duplicates_sets_merged_by_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    a, b = _need("A", 0.9, skills=["s1"]), _need("B", 0.5, skills=["s2"])
+    skills = [_skill("s1", "ทักษะหนึ่ง", 0.5), _skill("s2", "ทักษะสอง", 0.5)]
+    _patch(monkeypatch, [_fold(a, b)])
+
+    stored = await _merge([a, b, *_fillers()], skills)
+
+    assert stored[-1].merged_by == "agent"

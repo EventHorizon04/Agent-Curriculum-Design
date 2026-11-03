@@ -148,3 +148,8 @@ async def test_split_of_a_need_not_in_this_program_raises_key_error_and_writes_n
     session.execute.assert_not_awaited()
     session.delete.assert_not_awaited()
     session.commit.assert_not_awaited()
+
+
+def test_excluded_at_and_merged_by_default_to_none() -> None:
+    need = Need.model_validate(_data(ksec_categories=["K"]))
+    assert need.excluded_at is None and need.merged_by is None

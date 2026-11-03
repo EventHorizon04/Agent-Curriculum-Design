@@ -395,15 +395,48 @@ class NeedRepository:
             return [Need.model_validate(_row_to_dict(row)) for row in result.scalars().all()]
 
     async def list_active_by_program(self, program_id: str) -> list[Need]:
-        """Needs not folded into a merged Need — what every downstream stage reads."""
+        """Needs neither folded into a merged Need nor excluded by the designer.
+
+        What every downstream stage reads, so an exclusion needs no filter of its own.
+        """
         async with AsyncSessionLocal() as session:
             result = await session.execute(
                 select(NeedTable).where(
                     NeedTable.program_id == program_id,
                     NeedTable.merged_into.is_(None),
+                    NeedTable.excluded_at.is_(None),
                 )
             )
             return [Need.model_validate(_row_to_dict(row)) for row in result.scalars().all()]
+
+    async def set_excluded(
+        self, program_id: str, need_id: str, excluded_at: datetime | None
+    ) -> Need:
+        """Exclude a Need (a timestamp) or restore it (None). KeyError if not this program's."""
+        async with AsyncSessionLocal() as session:
+            row = await session.get(NeedTable, need_id)
+            if row is None or row.program_id != program_id:
+                raise KeyError(need_id)
+            row.excluded_at = excluded_at
+            await session.commit()
+            return Need.model_validate(_row_to_dict(row))
+
+    async def write_merge(self, program_id: str, originals: list[Need], merged: Need) -> Need:
+        """Store a merged Need and hide its originals, in one transaction.
+
+        The same pairing as `split` in reverse: the originals pointing at a parent
+        and the parent existing are one fact, and a half-applied merge would hide
+        Needs under a parent that was never written.
+        """
+        async with AsyncSessionLocal() as session:
+            for original in originals:
+                row = await session.get(NeedTable, original.need_id)
+                if row is None or row.program_id != program_id:
+                    raise KeyError(original.need_id)
+                row.merged_into = merged.need_id
+            session.add(NeedTable(**merged.model_dump(mode="json")))
+            await session.commit()
+            return merged
 
     async def split(self, program_id: str, merged_need_id: str) -> list[Need]:
         """Undo a merge: delete the merged Need and free its originals.
