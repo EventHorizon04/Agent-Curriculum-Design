@@ -443,6 +443,9 @@ class FeedbackAction(BaseModel):
     outcome: str                  # applied | skipped | failed
     outcome_reason_th: str = ""
     result_plo_id: str | None = None   # the PLO written, when applied
+    result_statement_th: str | None = None   # its statement, so the trail still reads after later edits
+    result_bloom_level: str | None = None    # its Bloom level (BloomLevel value)
+    created_at: datetime          # when the row was written; orders actions within a round
 ```
 
 ## Cross-stage: human-in-the-loop checkpoint

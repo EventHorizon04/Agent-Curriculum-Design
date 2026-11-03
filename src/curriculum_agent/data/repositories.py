@@ -733,7 +733,9 @@ class PLOFeedbackRepository:
             await session.commit()
 
     async def list_by_program(self, program_id: str) -> list[FeedbackAction]:
-        """Newest first; `id` breaks the tie within one round."""
+        """Newest first by `created_at`. Rows are written per action, so within one
+        round this is reverse action order; the UI re-sorts a round ascending.
+        `id` is a uuid4, so it only makes an exact tie deterministic, not meaningful."""
         async with AsyncSessionLocal() as session:
             rows = (
                 (

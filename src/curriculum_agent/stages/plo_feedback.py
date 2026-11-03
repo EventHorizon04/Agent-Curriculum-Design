@@ -18,6 +18,7 @@ docs/superpowers/specs/2026-11-03-four-agent-pipeline-phase4-design.md.
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 
 from loguru import logger
@@ -31,6 +32,7 @@ from curriculum_agent.data.repositories import (
 from curriculum_agent.models import (
     PLO,
     BloomFinding,
+    BloomLevel,
     FeedbackAction,
     PLOSetReview,
     ProgramMetadata,
@@ -40,6 +42,7 @@ from curriculum_agent.models import (
 from curriculum_agent.prompts.plo_feedback import build_bloom_redraft_note_th
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused, redraft_from_needs
+from curriculum_agent.stages.plo_synthesis import plos_citing
 
 REASON_DRAFT_FAILED = "ร่าง PLO ไม่สำเร็จ"
 REASON_ALREADY_REPLACED = "PLO นี้ถูกแทนที่ไปแล้วในรอบนี้"
@@ -47,6 +50,9 @@ REASON_PLO_MISSING = "ไม่พบ PLO นี้ในชุดปัจจ�
 REASON_UNUSED_NOT_WRITABLE = "Need นี้ยังไม่มีประโยคหรืออยู่นอกขอบเขตหลักสูตร"
 REASON_NEED_NOW_CITED = "Need นี้มี PLO อ้างถึงแล้วในรอบนี้"
 REASON_GROUP_TOO_BIG = f"รวมแล้วเกิน {MAX_GROUP_SIZE} Need"
+REASON_EDITED_SINCE_REVIEW = "PLO นี้ถูกแก้หลังการตรวจ — ไม่ส่งกลับ"
+REASON_DRAFT_ESCALATED = "ร่างใหม่ไม่ผ่าน SMART — คงข้อเดิมไว้"
+REASON_DRAFT_WRONG_LEVEL = "ร่างใหม่ไม่ได้ระดับ Bloom ที่ขอ — คงข้อเดิมไว้"
 
 
 def _naive_utc(moment: datetime) -> datetime:
@@ -59,8 +65,15 @@ def _naive_utc(moment: datetime) -> datetime:
 class _Round:
     """One send-back round: whom it acts for and which PLOs it has replaced."""
 
-    def __init__(self, program: ProgramMetadata, program_id: str, review: PLOSetReview) -> None:
+    def __init__(
+        self,
+        program: ProgramMetadata,
+        program_id: str,
+        review: PLOSetReview,
+        reviewed: Sequence[PLO],
+    ) -> None:
         self.program = program
+        self.reviewed = {p.plo_id: p for p in reviewed}
         self.program_id = program_id
         self.review_created_at = _naive_utc(review.created_at)
         self.replaced: set[str] = set()
@@ -115,6 +128,7 @@ class _Round:
         need_ids: list[str],
         finding_reason_th: str,
         instruction_th: str = "",
+        accept: Callable[[PLO], str | None] | None = None,
     ) -> FeedbackAction:
         """Run one redraft and turn whatever happens into a trail row."""
         try:
@@ -124,6 +138,7 @@ class _Round:
                 need_ids,
                 note_th=instruction_th or None,
                 cause="review",
+                accept=accept,
             )
         except RedraftRefused as exc:
             return self.skipped(
@@ -160,14 +175,52 @@ class _Round:
     def unavailable_reason(self, named: list[str], live: dict[str, PLO]) -> str | None:
         """Why the named PLOs cannot be acted on now, or None when all are live.
 
-        Replaced is judged first: a freed id can be reused by the new outcome, so
+        Order: replaced this round, edited since the review, then missing. Replaced
+        is judged first: a freed id can be reused by the new outcome, so
         presence in the live set alone would not tell a replaced PLO from a live one.
         """
         if any(pid in self.replaced for pid in named):
             return REASON_ALREADY_REPLACED
+        if any(self._edited_since_review(pid, live) for pid in named):
+            return REASON_EDITED_SINCE_REVIEW
         if any(pid not in live for pid in named):
             return REASON_PLO_MISSING
         return None
+
+    def _edited_since_review(self, pid: str, live: dict[str, PLO]) -> bool:
+        """A live PLO that is not the one the review judged: someone changed it
+        (or a hand edit renumbered it) while the review ran. The review's verdict
+        was about the old text, so it must not be acted on."""
+        now = live.get(pid)
+        if now is None:
+            return False
+        before = self.reviewed.get(pid)
+        return (
+            before is None
+            or before.statement_th != now.statement_th
+            or before.source_need_ids != now.source_need_ids
+        )
+
+
+def _keep_original_unless_better(
+    live: dict[str, PLO], need_ids: list[str], level: BloomLevel | None
+) -> Callable[[PLO], str | None]:
+    """The agent's redraft must not make an approved outcome worse.
+
+    A draft that failed SMART replaces only outcomes that already failed it (a
+    Need nothing cites yet replaces nothing, so it is refused too); for a Bloom
+    action the draft must also land on the level the review asked for.
+    """
+    replaced = plos_citing(live.values(), need_ids)
+
+    def accept(draft: PLO) -> str | None:
+        if draft.smart_escalated and not (replaced and all(p.smart_escalated for p in replaced)):
+            return REASON_DRAFT_ESCALATED
+        if level is not None and draft.bloom_level != level:
+            return REASON_DRAFT_WRONG_LEVEL
+        return None
+
+    return accept
 
 
 async def _live_plos(program_id: str) -> dict[str, PLO]:
@@ -193,7 +246,11 @@ async def _send_redundancy(rnd: _Round, finding: RedundancyFinding) -> FeedbackA
             finding_reason_th=finding.reason_th,
         )
     return await rnd.redraft(
-        "redundancy", plo_ids=named, need_ids=need_ids, finding_reason_th=finding.reason_th
+        "redundancy",
+        plo_ids=named,
+        need_ids=need_ids,
+        finding_reason_th=finding.reason_th,
+        accept=_keep_original_unless_better(live, need_ids, None),
     )
 
 
@@ -220,6 +277,9 @@ async def _send_bloom(rnd: _Round, finding: BloomFinding) -> FeedbackAction:
         need_ids=list(live[finding.plo_id].source_need_ids),
         finding_reason_th=finding.reason_th,
         instruction_th=build_bloom_redraft_note_th(suggested, finding.reason_th),
+        accept=_keep_original_unless_better(
+            live, list(live[finding.plo_id].source_need_ids), suggested
+        ),
     )
 
 
@@ -248,6 +308,7 @@ async def _send_unused(rnd: _Round, finding: UnusedNeedFinding) -> FeedbackActio
         plo_ids=[],
         need_ids=[finding.need_id],
         finding_reason_th=finding.reason_th,
+        accept=_keep_original_unless_better(live, [finding.need_id], None),
     )
 
 
@@ -266,8 +327,14 @@ async def _record(actions: list[FeedbackAction], action: FeedbackAction) -> None
         logger.error(f"plo_feedback: could not write trail row {action.model_dump_json()}: {exc!r}")
 
 
-async def send_back(program_id: str, review: PLOSetReview) -> list[FeedbackAction]:
+async def send_back(
+    program_id: str, review: PLOSetReview, reviewed_plos: Sequence[PLO]
+) -> list[FeedbackAction]:
     """Act on the review's agreed findings; return the trail rows written.
+
+    `reviewed_plos` is the set the review judged; a PLO changed since is not acted on.
+    A finding counts only with a majority of the runs *asked for*, so one run of
+    five that happened to succeed is never enough.
 
     `[]` without any read when the switch is off or the review is not the agent's.
     Never raises: an unexpected error in one action makes that action `failed`; one
@@ -281,8 +348,8 @@ async def send_back(program_id: str, review: PLOSetReview) -> list[FeedbackActio
         if program is None:
             logger.warning(f"plo_feedback: program {program_id} not found, nothing sent back")
             return []
-        rnd = _Round(program, program_id, review)
-        threshold = review.agreement_threshold
+        rnd = _Round(program, program_id, review, reviewed_plos)
+        threshold = max(review.agreement_threshold, review.runs_requested // 2 + 1)
 
         reds = [r for r in review.redundancies if r.agreed_runs >= threshold]
         blooms = [b for b in review.bloom if b.agreed_runs >= threshold and _actionable_bloom(b)]

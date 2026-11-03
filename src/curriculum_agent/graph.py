@@ -228,7 +228,9 @@ def stage_reached(
     already wrote — so a program that has been through it looks exactly like one
     that has not. The QA agent's review does leave one, and only a review current
     for the stored set counts: a stale one means the set changed after it was
-    made, and the next thing to do is the report.
+    made. That includes the review's own send-back: an applied redraft changes the
+    set right after the review is stored, so the rail shows the PLO stage until the
+    designer re-runs the review — the set changed and has not been reviewed.
     """
     if has_current_review:
         return "plo_review"

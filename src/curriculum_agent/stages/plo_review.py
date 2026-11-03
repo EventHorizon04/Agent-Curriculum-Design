@@ -1,11 +1,15 @@
-"""Stage 06: the QA agent's review of the finished PLO set. Advisory only.
+"""Stage 06: the QA agent's review of the finished PLO set.
 
 Every other check reads one PLO against its own Needs; this reads the set —
 redundancy between drafts, a domain that spans KSEC tags, the Bloom
 distribution, the important Needs no PLO cites. It runs after the report, which
-is why it can read the set the report persisted, and it changes nothing: its
-findings are stored per program and shown beside the report. See
-docs/superpowers/specs/2026-10-12-plo-qa-agent-design.md.
+is why it can read the set the report persisted. The review itself only judges:
+its findings are stored per program and shown beside the report. Since phase 4 a
+fresh agent review is followed by `plo_feedback.send_back`, which acts on the
+findings a majority agreed on and records a trail; that is a separate step, and
+the review row is never altered by it. See
+docs/superpowers/specs/2026-10-12-plo-qa-agent-design.md and
+docs/superpowers/specs/2026-11-03-four-agent-pipeline-phase4-design.md.
 
 The review stored is one of three things: the agent's answer, judged entry by
 entry in `accept_review` — the agent runs `plo_review_runs` times and the stored
@@ -373,7 +377,7 @@ async def fresh_review_with_feedback(
         await PLOReviewRepository().upsert(review)
         feedback: list[FeedbackAction] = []
         try:
-            feedback = await send_back(program_id, review)
+            feedback = await send_back(program_id, review, plos)
         except Exception as exc:
             logger.warning(f"plo_review: send-back for {program_id} failed: {exc!r}")
         return review, feedback

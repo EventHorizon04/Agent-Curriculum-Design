@@ -53,8 +53,10 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   wraps it, so the graph tail and the REST job both get it) runs
   `stages/plo_feedback.py` right after a *fresh agent* review is stored. A reused
   stored review, a `code_only` review and `plo_review_send_back=False` send
-  nothing. Only **agreed** findings count (`agreed_runs >= agreement_threshold`);
-  a 2/5 Bloom finding is ignored. Order: redundancy, then Bloom (only when
+  nothing. Only **agreed** findings count: `agreed_runs >= max(agreement_threshold,
+  runs_requested // 2 + 1)` — a majority of the runs *asked for*, not of those
+  that succeeded, so with 5 requested a finding needs 3 votes whatever succeeded
+  (one surviving run of five sends nothing back; 1 requested needs 1). Order: redundancy, then Bloom (only when
   `suggested_level` is set and differs), then an unused Need with verdict
   `consider` (skipped when unwritten or out of scope, or when a PLO already cites
   it this round). KSEC findings stay advisory. **Every action goes through
@@ -70,7 +72,23 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   actionable finding (`applied` / `skipped` / `failed`, with a Thai reason),
   written right after its action so an applied change is never left without a
   row if the round stops later; a failed trail write is logged at error level and
-  the round continues. Any exception inside an action records it `failed`;
+  the round continues.
+  **`send_back` receives the set the review judged** and, before each action,
+  skips a named PLO whose live `statement_th` or `source_need_ids` differ
+  ("PLO นี้ถูกแก้หลังการตรวจ — ไม่ส่งกลับ"); order of skip checks: replaced this
+  round, edited since the review, not found. `PUT /plos/{id}` is not blocked
+  while a review runs; this check is what keeps a hand edit from being
+  redrafted away. **`redraft_from_needs(..., accept=...)`** is called after a
+  successful draft and before `replace`; a returned Thai reason raises
+  `RedraftRefused(422, reason)` with nothing written. `from-needs` passes none.
+  Send-back's accept refuses a `smart_escalated` draft unless every PLO it
+  replaces was already escalated (an unused-Need add replaces nothing, so any
+  escalated draft is refused) and, for Bloom, a draft whose `bloom_level` is not
+  the suggested level; both are `skipped` with a Thai reason. **After an applied
+  send-back the stored review is stale by construction** (the set changed right
+  after the review was stored), so the rail shows the PLO stage until the
+  designer re-runs the review — the set changed and has not been reviewed. A
+  round has no action or time cap and holds the program busy while it runs. Any exception inside an action records it `failed`;
   nothing in send-back fails the review job or the session. The Bloom redraft
   note (`prompts/plo_feedback.build_bloom_redraft_note_th`) names the level in
   English plus up to 3 example verbs and must never contain a forbidden PLO word

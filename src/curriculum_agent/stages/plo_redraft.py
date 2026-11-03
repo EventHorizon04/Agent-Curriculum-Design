@@ -7,6 +7,8 @@ lock — see `redraft_from_needs` — and imports nothing from `api`.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from loguru import logger
 
 from curriculum_agent.data.repositories import NeedRepository, PLORepository
@@ -33,6 +35,7 @@ async def redraft_from_needs(
     *,
     note_th: str | None,
     cause: str,
+    accept: Callable[[PLO], str | None] | None = None,
 ) -> tuple[PLO, list[str]]:
     """Draft one PLO from `need_ids` and swap it in for every PLO citing them.
 
@@ -41,6 +44,10 @@ async def redraft_from_needs(
     the caller already holds the program busy — a route through `sync_writer`, a
     review job or graph session through its own registration — and a second
     registration here would refuse against that.
+
+    `accept`, when given, sees the finished draft before anything is written; a
+    returned Thai reason raises `RedraftRefused(422, reason)`. The designer's route
+    passes none.
     """
     from curriculum_agent.stages.need_grouping import (  # noqa: PLC0415
         MAX_CORE_PLOS,
@@ -193,6 +200,10 @@ async def redraft_from_needs(
         # Nothing has been deleted yet: the supersede and the insert happen
         # together below, so a failed synthesis leaves the set exactly as it was.
         raise RedraftFailed
+    if accept is not None:
+        refusal = accept(plo)
+        if refusal is not None:
+            raise RedraftRefused(422, refusal)
 
     removed = await PLORepository().replace(program_id, sorted(superseded_ids), [plo], cause=cause)
     if removed:

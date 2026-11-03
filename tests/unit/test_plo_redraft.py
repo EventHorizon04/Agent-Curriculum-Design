@@ -78,6 +78,43 @@ async def test_empty_draft_raises_failed_and_replace_is_not_called(
     replace.assert_not_awaited()
 
 
+async def test_accept_reason_refuses_after_the_draft_and_before_replace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    replace, synth = _install(
+        monkeypatch, [_need("N1")], [_plo("PLO1", ["N1"])], _plo("PLO1", ["N1"])
+    )
+    seen: list[PLO] = []
+
+    def accept(draft: PLO) -> str | None:
+        seen.append(draft)
+        return "เหตุผลปฏิเสธ"
+
+    with pytest.raises(RedraftRefused) as info:
+        await redraft_from_needs(
+            _program(), "cs-test", ["N1"], note_th=None, cause="review", accept=accept
+        )
+
+    assert info.value.status == 422 and info.value.detail_th == "เหตุผลปฏิเสธ"
+    synth.assert_awaited_once()
+    assert len(seen) == 1
+    replace.assert_not_awaited()
+
+
+async def test_accept_returning_none_lets_the_replace_happen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    draft = _plo("PLO1", ["N1"])
+    replace, _ = _install(monkeypatch, [_need("N1")], [_plo("PLO1", ["N1"])], draft)
+
+    plo, _replaced = await redraft_from_needs(
+        _program(), "cs-test", ["N1"], note_th=None, cause="review", accept=lambda _d: None
+    )
+
+    assert plo is draft
+    replace.assert_awaited_once()
+
+
 def test_stage_module_imports_nothing_from_api() -> None:
     source = Path(plo_redraft.__file__).read_text(encoding="utf-8")
     assert "curriculum_agent.api" not in source
