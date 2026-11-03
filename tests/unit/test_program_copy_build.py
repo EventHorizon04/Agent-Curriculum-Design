@@ -237,6 +237,31 @@ def test_a_current_review_stays_current_in_the_copy() -> None:
     assert copy.review.plo_fingerprint == _fingerprint(copy.plos, copy.needs)
 
 
+def _active_fingerprint(rows: list[PLOTable], need_rows: list[NeedTable]) -> str:
+    """What plo_review hashes: the PLOs and the *active* Needs only."""
+    active = [n for n in need_rows if n.merged_into is None and n.excluded_at is None]
+    return _fingerprint(rows, active)
+
+
+def test_a_current_review_stays_current_with_inactive_needs() -> None:
+    """The review is fingerprinted over active Needs, so the copy has to be too:
+    counting a merged-away or excluded Need made every such review read stale."""
+    from dataclasses import replace
+
+    src = _source()
+    base = _row_to_dict(src.needs[0])
+    merged_away = NeedTable(**{**base, "need_id": "nd-2", "merged_into": "nd-1"})
+    excluded = NeedTable(**{**base, "need_id": "nd-3", "excluded_at": datetime(2026, 10, 1)})
+    src = replace(src, needs=[*src.needs, merged_away, excluded])
+    src = _with_review(src, fingerprint=_active_fingerprint(src.plos, src.needs))
+
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+
+    assert copy.review is not None
+    assert len(copy.needs) == 3
+    assert copy.review.plo_fingerprint == _active_fingerprint(copy.plos, copy.needs)
+
+
 def test_a_stale_review_stays_stale_in_the_copy() -> None:
     src = _with_review(_source(), fingerprint="0" * 64)
     copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())

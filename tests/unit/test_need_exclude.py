@@ -114,6 +114,36 @@ async def test_write_merge_links_originals_and_inserts_in_one_session() -> None:
     assert written.need_id == "M"
 
 
+@pytest.mark.parametrize("stored", [False, True], ids=["insert", "update"])
+async def test_bulk_insert_writes_excluded_at_as_a_datetime(stored: bool) -> None:
+    """A json dump turns excluded_at into an ISO string, which the DateTime
+    column rejects; the repository has to parse it back, on both paths."""
+    need = _need("N1", excluded_at=_NOW)
+    existing = NeedTable(**_data()) if stored else None
+    session = AsyncMock()
+    session.get = AsyncMock(return_value=existing)
+    session.add = MagicMock()
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_ctx(session)):
+        await NeedRepository().bulk_insert([need])
+
+    row = existing if stored else session.add.call_args.args[0]
+    assert row.excluded_at == _NOW
+    assert isinstance(row.excluded_at, datetime)
+
+
+async def test_write_merge_writes_excluded_at_as_a_datetime() -> None:
+    a, b = _need("A"), _need("B")
+    merged = _need("M", merged_from=["A", "B"], excluded_at=_NOW)
+    rows = {n.need_id: NeedTable(**_data(need_id=n.need_id)) for n in (a, b)}
+    session = AsyncMock()
+    session.get = AsyncMock(side_effect=lambda _cls, key: rows[key])
+    session.add = MagicMock()
+    with patch("curriculum_agent.data.repositories.AsyncSessionLocal", return_value=_ctx(session)):
+        await NeedRepository().write_merge("p", [a, b], merged)
+
+    assert session.add.call_args.args[0].excluded_at == _NOW
+
+
 async def test_delete_by_program_deletes_needs_scoped_to_the_program() -> None:
     captured: list[object] = []
     session = AsyncMock()

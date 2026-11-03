@@ -416,7 +416,8 @@ class NeedRepository:
     async def bulk_insert(self, needs: list[Need]) -> None:
         async with AsyncSessionLocal() as session:
             for need in needs:
-                data = need.model_dump(mode="json")
+                # excluded_at is a datetime; the ORM column rejects its ISO string.
+                data = _fix_datetimes(need.model_dump(mode="json"), NeedTable)
                 existing = await session.get(NeedTable, need.need_id)
                 if existing is None:
                     session.add(NeedTable(**data))
@@ -472,7 +473,7 @@ class NeedRepository:
                 if row is None or row.program_id != program_id:
                     raise KeyError(original.need_id)
                 row.merged_into = merged.need_id
-            session.add(NeedTable(**merged.model_dump(mode="json")))
+            session.add(NeedTable(**_fix_datetimes(merged.model_dump(mode="json"), NeedTable)))
             await session.commit()
             return merged
 

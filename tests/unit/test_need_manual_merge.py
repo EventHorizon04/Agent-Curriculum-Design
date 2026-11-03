@@ -329,6 +329,24 @@ def test_manual_merge_sentence_failure_502_writes_nothing(
     assert all(n.merged_into is None for n in store.rows.values())
 
 
+def test_manual_merge_of_needs_with_reextracted_skills_409(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs
+) -> None:
+    """After /needs/skills/run the Needs cite skill ids that no longer exist; a
+    retry can never succeed, so the answer is 409 pointing at Agent 2, not 502."""
+    store, sentence = _install(monkeypatch, _pool())
+    monkeypatch.setattr(
+        needs_route.SkillRepository, "list_by_program", AsyncMock(return_value=[_skill("S-new")])
+    )
+
+    response = _merge(["A", "B"])
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "ทักษะของ Need ที่เลือกถูกสกัดใหม่แล้ว — รัน Agent 2 ใหม่ก่อนรวม Need"
+    assert sentence.calls == 0
+    store.write_merge.assert_not_awaited()
+
+
 def test_manual_merge_nests_merged_need(
     monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs
 ) -> None:

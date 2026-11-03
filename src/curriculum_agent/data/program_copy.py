@@ -127,11 +127,20 @@ def _clone(row: _Row, id_map: Mapping[str, str], **overrides: Any) -> _Row:
 
 
 def _fingerprint(plo_rows: list[PLOTable], need_rows: list[NeedTable]) -> str | None:
-    """The review fingerprint of a program's rows, or None if a PLO row won't parse."""
+    """The review fingerprint of a program's rows, or None if a PLO row won't parse.
+
+    Over active Needs only, as `plo_review` fingerprints them: hashing a
+    merged-away or excluded Need too would never match the stored review, so a
+    current review would read as stale on every copy of a program that has one.
+    """
     try:
         return plo_fingerprint(
             [PLO.model_validate(_row_to_dict(r)) for r in plo_rows],
-            {r.need_id: r.demand_score for r in need_rows},
+            {
+                r.need_id: r.demand_score
+                for r in need_rows
+                if r.merged_into is None and r.excluded_at is None
+            },
         )
     except Exception as exc:  # noqa: BLE001 - a legacy row only costs freshness
         logger.warning(f"program copy: PLO rows did not parse for the fingerprint: {exc}")

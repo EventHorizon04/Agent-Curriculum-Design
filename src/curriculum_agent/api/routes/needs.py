@@ -233,6 +233,16 @@ async def merge_needs(program_id: str, body: ManualMergeRequest) -> Need:
             logger.info(f"manual merge for {program_id} includes out-of-scope Needs {out_of_scope}")
 
         skills = await SkillRepository().list_by_program(program_id)
+        # `/needs/skills/run` replaces every skill row under fresh ids without
+        # redrawing the Needs, so their member ids can all be dead. `_write_merged`
+        # would then return None and this route would answer "try again" for a
+        # merge that no retry can make; only re-running Agent 2 can.
+        stored_skill_ids = {s.skill_id for s in skills}
+        if not any(sid in stored_skill_ids for n in selected for sid in n.member_skill_ids):
+            raise HTTPException(
+                status_code=409,
+                detail="ทักษะของ Need ที่เลือกถูกสกัดใหม่แล้ว — รัน Agent 2 ใหม่ก่อนรวม Need",
+            )
         # Same corpus need_combination scores against; see build_scoring_corpus.
         corpus = build_scoring_corpus(
             (s.source_evidence_id, s.source_stakeholder_type.value) for s in skills

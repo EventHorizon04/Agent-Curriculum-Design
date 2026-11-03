@@ -260,8 +260,10 @@ async def _write_merged(
 def mark_merged(needs: list[Need], merged: list[Need]) -> list[Need]:
     """The originals in their order, `merged_into` set on those a merged Need absorbed.
 
-    Shared by the automatic merge and the designer's manual one, so both hide
-    their originals the same way. Needs no merged Need names pass through as is.
+    Used by the automatic merge only. The designer's manual merge hides its
+    originals through `NeedRepository.write_merge`, which sets the same
+    `merged_into` on the stored rows in the transaction that writes the merged
+    Need. Needs no merged Need names pass through as is.
     """
     parent_of = {oid: m.need_id for m in merged for oid in m.merged_from}
     return [
