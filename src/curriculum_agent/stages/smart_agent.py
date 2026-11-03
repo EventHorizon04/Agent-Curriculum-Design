@@ -517,9 +517,12 @@ async def run_smart_agent(
 
 
 def _with_turns_left(observation: str, turn: int) -> str:
-    """Append the turns-left note once two or fewer turns remain after this one."""
+    """Append the turns-left note once two or fewer turns remain after this one
+    and at least half the budget is spent."""
     turns_left = settings.validation_max_turns - turn
-    if 1 <= turns_left <= _TURNS_LEFT_WARNING:
+    # The closing call already guarantees a verdict, so the note must not end
+    # investigation early on a small budget.
+    if 1 <= turns_left <= _TURNS_LEFT_WARNING and turn * 2 >= settings.validation_max_turns:
         return f"{observation}\n{build_turns_left_note(turns_left)}"
     return observation
 

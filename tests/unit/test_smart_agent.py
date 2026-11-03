@@ -465,6 +465,19 @@ async def test_the_turns_left_note_appears_only_in_the_last_two_turns(
     assert "เหลืออีก 1 รอบ" in fake.messages_seen[7][-1]["content"]
 
 
+async def test_the_turns_left_note_waits_for_half_a_small_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sa.settings, "validation_max_turns", 3)
+    fake = _drive(monkeypatch, [("check_hard", {})])
+
+    await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    note_seen = ["เหลืออีก" in m[-1]["content"] for m in fake.messages_seen[:3]]
+    assert note_seen == [False, False, True]
+    assert "เหลืออีก 1 รอบ" in fake.messages_seen[2][-1]["content"]
+
+
 async def test_a_provider_error_leaves_every_soft_verdict_true(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
