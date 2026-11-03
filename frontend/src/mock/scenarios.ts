@@ -746,6 +746,8 @@ export function combineNeeds(
       top_skill_ids: members.slice(0, 3).map((m) => m.skill_id),
       merged_from: [],
       merged_into: null,
+      merged_by: null,
+      excluded_at: null,
       merge_reason_th: '',
       source_evidence_ids: evidenceIds,
       stakeholder_coverage: coverage,
@@ -771,9 +773,10 @@ function isOptionalGroup(classCoverage: Record<string, number>, evidenceCount: n
 }
 
 /** Needs the downstream stages read: merged ones and never-merged ones, not the
- *  originals a merge folded away (`NeedRepository.list_active_by_program`). */
+ *  originals a merge folded away and not the ones the designer excluded
+ *  (`NeedRepository.list_active_by_program`). */
 export function activeNeeds(needs: NeedRow[]): NeedRow[] {
-  return needs.filter((n) => n.merged_into === null)
+  return needs.filter((n) => n.merged_into === null && n.excluded_at === null)
 }
 
 /** The scenario's one merged Need: Agent 2 judged "ปรับเนื้อหาสู่ผู้ใช้ไทย"
@@ -805,6 +808,8 @@ function mergeMockDuplicates(needs: NeedRow[], mergedId: string): NeedRow[] {
     graduate_capability_skill_count: a.graduate_capability_skill_count + b.graduate_capability_skill_count,
     merged_from: [a.need_id, b.need_id],
     merged_into: null,
+    merged_by: 'agent',
+    excluded_at: null,
     merge_reason_th:
       'ทั้งสองข้อพูดถึงการทำงานกับผู้ว่าจ้างและผู้ใช้ชาวไทยอย่างรับผิดชอบ ผู้มีส่วนได้ส่วนเสียเอ่ยถึงสิ่งเดียวกันคนละมุม จึงรวมเป็นความสามารถเดียว',
   }

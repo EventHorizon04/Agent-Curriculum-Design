@@ -9,7 +9,7 @@
  */
 import type { JobInfo, JobKind } from '../api/jobs'
 import type { SMARTCheck, SmartFinding } from '../types/plo'
-import { MAX_CORE_PLOS } from '../constants/needPolicy'
+import { MAX_CORE_PLOS, fallbackKind } from '../constants/needPolicy'
 import {
   clone,
   consumeFailNextRun,
@@ -639,6 +639,7 @@ export function buildRouter(): Router {
     const need = of(db.needs, pid).find((n) => n.need_id === nid)
     if (!need) return detail(404, 'ไม่พบ Need นี้')
     if (need.merged_from.length === 0) return detail(422, 'Need นี้ไม่ได้มาจากการรวม จึงแยกไม่ได้')
+    if (need.excluded_at !== null) return detail(422, 'คืน Need ก่อนแยก')
     if (of(db.plos, pid).some((p) => p.source_need_ids.includes(nid))) {
       return detail(409, 'Need นี้ถูกใช้สร้าง PLO แล้ว — แยกก่อนสร้าง PLO หรือรันสังเคราะห์ PLO ใหม่หลังแยก')
     }
@@ -648,6 +649,83 @@ export function buildRouter(): Router {
     for (const o of originals) o.merged_into = null
     db.needs = db.needs.filter((n) => n.need_id !== nid)
     return ok(sortNeeds(originals))
+  })
+
+  /** The designer's merge, refused in the route's order: 422 on the request's
+   *  shape and the rows, then 409 for a PLO or a busy program. The sentence is
+   *  faked: the real route asks the model for it and answers 502 when it fails. */
+  r.post('/programs/:pid/needs/merge', (req) => {
+    const { pid } = req.params
+    const db = getDb()
+    const body = (req.body ?? {}) as { need_ids?: string[]; reason_th?: string | null }
+    const ids = body.need_ids ?? []
+    if (new Set(ids).size !== ids.length) return detail(422, 'เลือก Need ซ้ำกัน')
+    if (ids.length < 2 || ids.length > 5) return detail(422, 'เลือก Need 2-5 ข้อเพื่อรวม')
+    const rows = ids.map((id) => of(db.needs, pid).find((n) => n.need_id === id))
+    if (rows.some((n) => !n)) return detail(422, 'ไม่พบ Need ที่เลือกบางข้อ')
+    const picked = rows as NeedRow[]
+    if (picked.some((n) => n.merged_into !== null || n.excluded_at !== null)) {
+      return detail(422, 'รวมได้เฉพาะ Need ที่ยังใช้งานอยู่')
+    }
+    if (picked.some((n) => fallbackKind(n.statement_th))) {
+      return detail(422, 'Need ที่ยังเขียนประโยคไม่สำเร็จรวมไม่ได้ — เขียนประโยคก่อน')
+    }
+    if (of(db.plos, pid).some((p) => p.source_need_ids.some((id) => ids.includes(id)))) {
+      return detail(409, 'Need ที่เลือกถูกใช้สร้าง PLO แล้ว — ลบ PLO นั้นก่อนจึงจะรวมได้')
+    }
+    const busy = busyReason(pid)
+    if (busy) return detail(409, busy)
+    const merged: NeedRow = {
+      ...picked[0],
+      need_id: newId(),
+      statement_th: `(จำลอง) ${picked.map((n) => n.statement_th).join(' และ ')}`,
+      ksec_categories: [...new Set(picked.flatMap((n) => n.ksec_categories))].sort(),
+      member_skill_ids: [...new Set(picked.flatMap((n) => n.member_skill_ids))],
+      top_skill_ids: picked.flatMap((n) => n.top_skill_ids.slice(0, 2)).slice(0, 7),
+      source_evidence_ids: [...new Set(picked.flatMap((n) => n.source_evidence_ids))],
+      source_stakeholder_types: [...new Set(picked.flatMap((n) => n.source_stakeholder_types))],
+      freq: picked.reduce((a, n) => a + n.freq, 0),
+      demand_score: Math.max(...picked.map((n) => n.demand_score)),
+      is_optional: picked.every((n) => n.is_optional),
+      in_field_skill_count: picked.reduce((a, n) => a + n.in_field_skill_count, 0),
+      graduate_capability_skill_count: picked.reduce((a, n) => a + n.graduate_capability_skill_count, 0),
+      merged_from: ids,
+      merged_into: null,
+      merged_by: 'designer',
+      excluded_at: null,
+      merge_reason_th: body.reason_th?.trim() || '',
+    }
+    for (const n of picked) n.merged_into = merged.need_id
+    db.needs.push(merged)
+    return ok(merged)
+  })
+
+  /** NeedRepository.exclude: 404, 422 for a row that is not active, 409 for a PLO or a busy program. */
+  r.post('/programs/:pid/needs/:nid/exclude', (req) => {
+    const { pid, nid } = req.params
+    const db = getDb()
+    const need = of(db.needs, pid).find((n) => n.need_id === nid)
+    if (!need) return detail(404, 'ไม่พบ Need นี้')
+    if (need.merged_into !== null) return detail(422, 'Need นี้ถูกรวมไปแล้ว — ตัดออกได้เฉพาะข้อที่ยังใช้งานอยู่')
+    if (need.excluded_at !== null) return detail(422, 'Need นี้ถูกตัดออกไปแล้ว')
+    if (of(db.plos, pid).some((p) => p.source_need_ids.includes(nid))) {
+      return detail(409, 'Need นี้ถูกใช้สร้าง PLO แล้ว — ลบ PLO นั้นก่อนจึงจะตัดออกได้')
+    }
+    const busy = busyReason(pid)
+    if (busy) return detail(409, busy)
+    need.excluded_at = new Date().toISOString()
+    return ok(need)
+  })
+
+  r.post('/programs/:pid/needs/:nid/restore', (req) => {
+    const { pid, nid } = req.params
+    const need = of(getDb().needs, pid).find((n) => n.need_id === nid)
+    if (!need) return detail(404, 'ไม่พบ Need นี้')
+    if (need.excluded_at === null) return detail(422, 'Need นี้ไม่ได้ถูกตัดออก')
+    const busy = busyReason(pid)
+    if (busy) return detail(409, busy)
+    need.excluded_at = null
+    return ok(need)
   })
 
   r.get('/programs/:pid/needs/skills', (req) => ok(of(getDb().skills, req.params.pid)))
@@ -855,7 +933,7 @@ export function buildRouter(): Router {
         const plos = sortPlos(of(getDb().plos, pid))
         // Active Needs only, like the real report: merged-away originals are
         // stored but nothing downstream reads them.
-        const needs = of(getDb().needs, pid).filter((n) => n.merged_into === null)
+        const needs = activeNeeds(of(getDb().needs, pid))
         const cited = new Set(plos.flatMap((p) => p.source_need_ids))
         const notSynthesized = needs.map((n) => n.need_id).filter((id) => !cited.has(id))
         const core = plos.filter((p) => !p.is_optional).length

@@ -30,11 +30,18 @@ export default function NeedAnalysis() {
   const [skills, setSkills] = useState<SkillName[]>([])
   const [loading, setLoading] = useState(false)
   const [starting, setStarting] = useState(false)
-  const [splitting, setSplitting] = useState(false)
+  // One in-flight card action (split, exclude or restore); each blocks the rest.
+  const [acting, setActing] = useState(false)
+  const [merging, setMerging] = useState(false)
   const [error, setError] = useState('')
-  // A refused split is shown on the card whose button was pressed, not in the
-  // page notice at the top. One at a time: the next action clears it.
-  const [splitError, setSplitError] = useState<{ needId: string; message: string } | null>(null)
+  // A refused split, exclude or restore is shown on the card whose button was
+  // pressed, not in the page notice at the top. One at a time: the next action
+  // clears it.
+  const [actionError, setActionError] = useState<{ needId: string; message: string } | null>(null)
+  // The designer's pick for a merge, and the bar's own notice and reason.
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const [mergeReason, setMergeReason] = useState('')
+  const [mergeError, setMergeError] = useState('')
   const [note, setNote] = useState('')
 
   const { running, latestOf, started, refresh } = useJobs()
@@ -42,7 +49,7 @@ export default function NeedAnalysis() {
   const last = latestOf(PAGE_KINDS)
   // Any job of the program blocks every start button, not just this page's kind:
   // the backend allows one writer per program.
-  const busy = running !== null || starting || splitting
+  const busy = running !== null || starting || acting || merging
 
   const fetchAll = useCallback(async () => {
     if (!programId) return
@@ -69,7 +76,8 @@ export default function NeedAnalysis() {
     if (!programId) return
     setStarting(true)
     setError('')
-    setSplitError(null)
+    setActionError(null)
+    setMergeError('')
     try {
       const job = await startJob(`/programs/${programId}/needs/combine/run`, {
         note_th: note.trim() || null,
@@ -85,34 +93,92 @@ export default function NeedAnalysis() {
     }
   }, [programId, note, watch, started, refresh])
 
-  const split = useCallback(
-    async (need: NeedRow) => {
+  /** One card action. 404 / 422 / 409 all carry a Thai `detail` that says what
+   *  to do next; a 409 means another writer is running, so the job list is stale. */
+  const cardAction = useCallback(
+    async (need: NeedRow, verb: 'split' | 'exclude' | 'restore', failure: string) => {
       if (!programId) return
-      setSplitting(true)
+      setActing(true)
       setError('')
-      setSplitError(null)
+      setActionError(null)
       try {
-        await api.post(`/programs/${programId}/needs/${need.need_id}/split`)
+        await api.post(`/programs/${programId}/needs/${need.need_id}/${verb}`)
         await fetchAll()
       } catch (err: unknown) {
-        // 404 / 422 / 409 all carry a Thai `detail` that says what to do next.
         const res = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response
         const d = res?.data?.detail
-        setSplitError({
-          needId: need.need_id,
-          message: typeof d === 'string' ? d : 'แยก Need ไม่สำเร็จ',
-        })
+        setActionError({ needId: need.need_id, message: typeof d === 'string' ? d : failure })
         if (res?.status === 409) void refresh()
       } finally {
-        setSplitting(false)
+        setActing(false)
       }
     },
     [programId, fetchAll, refresh],
   )
+  const split = useCallback((n: NeedRow) => cardAction(n, 'split', 'แยก Need ไม่สำเร็จ'), [cardAction])
+  const exclude = useCallback((n: NeedRow) => cardAction(n, 'exclude', 'ตัด Need ไม่สำเร็จ'), [cardAction])
+  const restore = useCallback((n: NeedRow) => cardAction(n, 'restore', 'คืน Need ไม่สำเร็จ'), [cardAction])
+
+  const toggleSelect = useCallback((need: NeedRow, on: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev)
+      if (on) next.add(need.need_id)
+      else next.delete(need.need_id)
+      return next
+    })
+  }, [])
+
+  const merge = useCallback(
+    async (needIds: string[]) => {
+      if (!programId) return
+      setMerging(true)
+      setError('')
+      setMergeError('')
+      setActionError(null)
+      try {
+        await api.post(`/programs/${programId}/needs/merge`, {
+          need_ids: needIds,
+          reason_th: mergeReason.trim() || null,
+        })
+        setSelected(new Set())
+        setMergeReason('')
+        await fetchAll()
+      } catch (err: unknown) {
+        // 409 / 422 / 502 all carry a Thai `detail`; the bar shows it where the
+        // designer pressed the button.
+        const res = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response
+        const d = res?.data?.detail
+        setMergeError(typeof d === 'string' ? d : 'รวม Need ไม่สำเร็จ')
+        if (res?.status === 409) void refresh()
+      } finally {
+        setMerging(false)
+      }
+    },
+    [programId, mergeReason, fetchAll, refresh],
+  )
 
   useEffect(() => { fetchAll() }, [fetchAll])
 
-  const needs = useMemo(() => allNeeds.filter(n => n.merged_into === null), [allNeeds])
+  // Active: neither folded into a merge nor taken out by the designer. The
+  // excluded ones are listed apart, since no stage reads them.
+  const needs = useMemo(
+    () => allNeeds.filter(n => n.merged_into === null && n.excluded_at === null),
+    [allNeeds],
+  )
+  const excludedNeeds = useMemo(
+    () => allNeeds.filter(n => n.merged_into === null && n.excluded_at !== null),
+    [allNeeds],
+  )
+  // Derived from the active list so a Need that has since left it (merged,
+  // excluded, re-run away) can never count toward the bar.
+  const selectedIds = useMemo(
+    () => needs.filter(n => selected.has(n.need_id)).map(n => n.need_id),
+    [needs, selected],
+  )
+  const originalsFor = useCallback(
+    (needId: string) => allNeeds.filter(n => n.merged_into === needId),
+    [allNeeds],
+  )
   const originalsOf = useMemo(() => {
     const byParent = new Map<string, NeedRow[]>()
     for (const n of allNeeds) {
@@ -200,7 +266,7 @@ export default function NeedAnalysis() {
         <RunProgress key={mine.job_id} plan={SKILL_RUN_PLANS.needs} since={Date.parse(mine.created_at)} />
       ) : loading ? (
         <LoadingLine />
-      ) : needs.length === 0 ? (
+      ) : needs.length === 0 && excludedNeeds.length === 0 ? (
         <div className="panel border-dashed px-6 py-12 text-center">
           <p className="font-display mb-1 text-lg text-graphite">ยังไม่มี Need</p>
           {skills.length === 0 ? (
@@ -232,7 +298,10 @@ export default function NeedAnalysis() {
             >
               รวม Need ใหม่
             </button>
-            <p className="text-xs text-pencil">
+            <p className="max-w-sm text-xs text-pencil">
+              รัน Agent 2 ใหม่จะล้างการรวมและการตัดออกที่ทำด้วยมือ
+            </p>
+            <p className="w-full text-xs text-pencil">
               Need {needs.length} ข้อ
               {mergedCount > 0 && ` · รวมจากหลายข้อ ${mergedCount} ข้อ`}
             </p>
@@ -298,13 +367,73 @@ export default function NeedAnalysis() {
                 programId={programId}
                 need={n}
                 originals={originalsOf.get(n.need_id) ?? []}
+                originalsOf={originalsFor}
                 skillNames={skillNames}
                 onSplit={split}
-                splitError={splitError?.needId === n.need_id ? splitError.message : ''}
+                onExclude={exclude}
+                selected={selected.has(n.need_id)}
+                onSelect={toggleSelect}
+                actionError={actionError?.needId === n.need_id ? actionError.message : ''}
                 disabled={busy}
               />
             ))}
           </div>
+
+          {selectedIds.length > 0 && (
+            <div className="panel sticky bottom-3 z-10 mt-4 space-y-2 p-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <p className="text-sm text-graphite">
+                  เลือกแล้ว <span className="data font-semibold">{selectedIds.length}</span> ข้อ
+                  <span className="field-hint ml-2">รวมได้ 2-5 ข้อ</span>
+                </p>
+                <div className="min-w-48 flex-1">
+                  <label htmlFor="merge-reason" className="field-label">เหตุผลที่รวม (ไม่บังคับ)</label>
+                  <input
+                    id="merge-reason"
+                    type="text"
+                    maxLength={400}
+                    value={mergeReason}
+                    onChange={e => setMergeReason(e.target.value)}
+                    disabled={busy}
+                    className="input"
+                  />
+                </div>
+                <button
+                  onClick={() => void merge(selectedIds)}
+                  disabled={busy || selectedIds.length < 2 || selectedIds.length > 5}
+                  className="btn btn-primary"
+                >
+                  {merging ? 'กำลังรวม...' : `รวม Need ที่เลือก (${selectedIds.length})`}
+                </button>
+              </div>
+              {mergeError && (
+                <p role="alert" className="notice notice-error text-xs">{mergeError}</p>
+              )}
+            </div>
+          )}
+
+          {excludedNeeds.length > 0 && (
+            <details className="mt-6">
+              <summary className="cursor-pointer text-sm text-pencil">
+                Need ที่ตัดออก ({excludedNeeds.length})
+              </summary>
+              <div className="mt-3 space-y-3">
+                {excludedNeeds.map(n => (
+                  <NeedCard
+                    key={n.need_id}
+                    programId={programId}
+                    need={n}
+                    originals={originalsOf.get(n.need_id) ?? []}
+                    originalsOf={originalsFor}
+                    skillNames={skillNames}
+                    onRestore={restore}
+                    actionError={actionError?.needId === n.need_id ? actionError.message : ''}
+                    disabled={busy}
+                  />
+                ))}
+              </div>
+            </details>
+          )}
         </>
       )}
 

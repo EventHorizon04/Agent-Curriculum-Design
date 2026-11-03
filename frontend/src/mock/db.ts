@@ -102,6 +102,10 @@ export interface NeedRow {
   merged_from: string[]
   /** The merged Need this one was folded into, or null while it is active. */
   merged_into: string | null
+  /** Who made the merge: Agent 2, or the designer at the Need checkpoint. */
+  merged_by: 'agent' | 'designer' | null
+  /** Set while the designer has taken this Need out of the pool; restoring clears it. */
+  excluded_at: string | null
   merge_reason_th: string
   source_evidence_ids: string[]
   stakeholder_coverage: Record<string, number>
