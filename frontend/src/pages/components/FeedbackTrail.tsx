@@ -33,12 +33,19 @@ interface Round {
   rows: FeedbackAction[]
 }
 
-/** Rows grouped by the review that produced them, newest round first. */
+/** Rows grouped by the review that produced them, newest round first. Within a
+ *  round the rows read in action order (oldest first): the list arrives newest
+ *  first, so it is reversed before a stable sort on `created_at` settles ties. */
 function roundsOf(feedback: FeedbackAction[]): Round[] {
   const byKey = new Map<string, FeedbackAction[]>()
-  for (const f of feedback) byKey.set(f.review_created_at, [...(byKey.get(f.review_created_at) ?? []), f])
+  for (const f of [...feedback].reverse()) byKey.set(f.review_created_at, [...(byKey.get(f.review_created_at) ?? []), f])
   const rounds = [...byKey.entries()]
-    .map(([key, rows]) => ({ key, from: ms(key), until: Infinity, rows }))
+    .map(([key, rows]) => ({
+      key,
+      from: ms(key),
+      until: Infinity,
+      rows: [...rows].sort((a, b) => ms(a.created_at) - ms(b.created_at)),
+    }))
     .sort((a, b) => b.from - a.from)
   for (let i = 1; i < rounds.length; i++) rounds[i].until = rounds[i - 1].from
   return rounds
@@ -122,6 +129,9 @@ export default function FeedbackTrail({
 }) {
   if (feedback.length === 0) return null
   const [latest, ...older] = roundsOf(feedback)
+  // The newest round with rows is not necessarily the stored review's: a review
+  // that sent nothing back leaves no rows, and must not look like it did.
+  const isCurrent = ms(latest.key) === ms(review.created_at)
   const list = (round: Round) => (
     <ul className="divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
       {round.rows.map((row) => (
@@ -135,7 +145,10 @@ export default function FeedbackTrail({
       <h2 id="feedback-heading" className="section-title">
         ส่งกลับไปแก้แล้ว
       </h2>
-      <p className="mt-1 text-xs text-lead">ผลตรวจรอบ {when(latest.key)}</p>
+      <p className="mt-1 text-xs text-lead">
+        {isCurrent ? 'ผลตรวจรอบ' : 'รอบก่อนหน้า · ผลตรวจรอบ'} {when(latest.key)}
+        {!isCurrent && ' · ผลตรวจปัจจุบันไม่ได้ส่งอะไรกลับ'}
+      </p>
       <div className="mt-3">{list(latest)}</div>
       {older.map((round) => (
         <details key={round.key} className="mt-3">

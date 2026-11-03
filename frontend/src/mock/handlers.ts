@@ -367,6 +367,9 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
   // The review's own timestamp is naive; the trail's carries the offset.
   const reviewAt = /(Z|[+-]\d{2}:?\d{2})$/.test(review.created_at) ? review.created_at : `${review.created_at}+00:00`
   const rows: FeedbackAction[] = []
+  // One row per action, written right after it: each gets its own instant, so
+  // the newest-first list reads in reverse action order like the server's.
+  const base = Date.now()
   const push = (
     r: Pick<FeedbackAction, 'kind' | 'plo_ids' | 'need_ids' | 'finding_reason_th' | 'instruction_th' | 'outcome' | 'outcome_reason_th'> &
       Partial<FeedbackAction>,
@@ -379,7 +382,7 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
       id: newId(),
       program_id: pid,
       review_created_at: reviewAt,
-      created_at: nowIso(),
+      created_at: new Date(base + rows.length).toISOString(),
     })
   }
 
@@ -397,7 +400,7 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
       plo_ids: group.plo_ids,
       need_ids: needs.map((n) => n.need_id),
       finding_reason_th: group.reason_th,
-      instruction_th: `รวม Need ของ ${group.plo_ids.join(' และ ')} เป็น PLO ข้อเดียว`,
+      instruction_th: '',
     }
     if (members.length < 2 || needs.length < 2 || needs.length > MAX_MERGE_NEEDS) {
       push({ ...common, outcome: 'skipped', outcome_reason_th: 'ชุด Need ที่จะรวมไม่อยู่ในช่วง 2-5 ข้อ' })
@@ -427,9 +430,9 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
       plo_ids: [],
       need_ids: [unused.need_id],
       finding_reason_th: unused.reason_th,
-      instruction_th: 'เพิ่ม Need นี้เข้าไปใน PLO ข้อที่ใกล้เคียงที่สุด',
+      instruction_th: '',
       outcome: 'skipped',
-      outcome_reason_th: 'ไม่มี PLO ข้อใดที่ขอบเขตใกล้พอจะรับ Need นี้โดยไม่ทำให้ข้อความกว้างเกินไป จึงไม่ได้แก้',
+      outcome_reason_th: 'ร่างใหม่ไม่ผ่าน SMART — คงข้อเดิมไว้',
     })
   }
   db.feedback = [...rows, ...(db.feedback ?? [])]
@@ -1213,7 +1216,10 @@ export function buildRouter(): Router {
         const review = buildMockReview(pid, of(db.plos, pid), of(db.needs, pid), degree)
         db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
         const feedback = sendBack(pid, review)
-        return ok({ review, stale: false, review_enabled: true, feedback })
+        // Send-back changed the set right after the review was stored, so the
+        // review is stale by construction (the server's fingerprint would say so).
+        const changed = feedback.some((f) => f.outcome === 'applied')
+        return ok({ review, stale: changed, review_enabled: true, feedback })
       },
     })
   })
