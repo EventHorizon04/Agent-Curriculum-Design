@@ -51,6 +51,20 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   returning empty. `_run_graph` stores the raised message on the session row, so
   the Pipeline page says what a stage page's 422 would have said —
   `tests/unit/test_stage_preconditions.py` pins all of it.
+- **Evidence is locked once extraction has run, at the API, and the copy is the
+  way out** (phase 2, designer's decision of 2026-11-03). `evidence_lock_reason`
+  (`api/routes/evidence.py`) answers the busy reason while the program has a
+  running job, session or writer — the first extraction stores no skill until
+  it finishes, so "skills exist" alone would let an edit land mid-run — and the
+  lock text once any skill or Need is stored. POST (an upsert, so an existing
+  id is an edit too), PUT, DELETE and `classify-stream` all refuse with 409;
+  POST/PUT/DELETE take `program_lock` around check and write so `start_job`
+  cannot slip between them, and `classify-stream` holds a `sync_writer`
+  registration for its whole stream. A failed first extraction writes nothing,
+  so it does not lock. Seed scripts and the copy write through repositories and
+  are not designer edits. `POST /programs/{id}/copy` takes `{"mode":
+  "evidence_only"}` to clone metadata and evidence only — no skills, groups,
+  Needs, PLOs or review — which leaves the copy unlocked; no body is `full`.
 - **A program copy re-keys every evidence, skill and Need id; the validator
   switch skips only the agent.** `POST /programs/{id}/copy` (`data/program_copy.py`)
   exists so one synthesis run survives the next. `evidence_id`, `skill_id` and
@@ -81,7 +95,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   around its busy-check and insert, `/sessions/`, `/approve` and `/copy` around
   their busy-check and short write. `/plos/from-needs` cannot hold it across its
   LLM call — that would stall every `start_job` for minutes — so it registers as
-  an in-process writer instead (`/needs/{id}/split` registers the same way; `sync_writer`: busy-check and registration under
+  an in-process writer instead (`/needs/{id}/split`, `/needs/{id}/exclude|restore`, `/needs/merge` and the evidence `classify-stream` register the same way; `sync_writer`: busy-check and registration under
   the lock, the lock released before the call, the registration removed in a
   `finally`); `program_busy` reports a registered writer first, so a job, a
   session, a copy or a second merge started mid-merge answers 409 rather than

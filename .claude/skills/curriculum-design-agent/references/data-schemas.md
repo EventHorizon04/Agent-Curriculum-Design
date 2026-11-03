@@ -193,6 +193,8 @@ class Need(BaseModel):
     merged_from: list[str] = []
     merged_into: str | None = None  # set on an ORIGINAL: hides it from every reader
     merge_reason_th: str = ""
+    merged_by: Literal["agent", "designer"] | None = None  # who decided the merge; None on rows merged before 2026-11-03
+    excluded_at: datetime | None = None  # set when the designer excludes it: hides it from every reader, restorable
 
 class SkillGroup(BaseModel):
     """Agent 1's output, stored so Agent 2 starts without calling the clustering
@@ -216,7 +218,7 @@ class SkillGroup(BaseModel):
     graduate_capability_skill_count: int
 ```
 
-**Merged and active Needs.** Agent 2's duplicate check (up to 5 Needs, across KSEC) writes one new Need per group and keeps the originals with `merged_into = <merged need_id>`; readers use only active Needs (`merged_into is None`, `NeedRepository.list_active_by_program`). A merged Need's `member_skill_ids` and `source_evidence_ids` are the union over its originals (the trail is never smaller), `top_skill_ids` are the top 7 pooled skills by `importance_score`, and its scores are recomputed from the pooled skills, not the max of the originals. `POST /programs/{id}/needs/{need_id}/split` deletes the merged Need and clears `merged_into` on its originals. `skill_groups` is a table (`SkillGroupRepository`), replaced with the skills on a re-run of Agent 1.
+**Merged and active Needs.** Agent 2's duplicate check (up to 5 Needs, across KSEC) writes one new Need per group and keeps the originals with `merged_into = <merged need_id>`; readers use only active Needs (`merged_into is None` and `excluded_at is None`, `NeedRepository.list_active_by_program`). Since phase 2 (2026-11-03) the designer can also merge 2-5 active Needs at the Need checkpoint (`POST /needs/merge`, `merged_by="designer"`; a selected merged Need nests rather than flattens) and exclude/restore a Need (`POST /needs/{id}/exclude|restore`); both are refused for a Need a stored PLO cites, and a re-run of Agent 2 discards them. A merged Need's `member_skill_ids` and `source_evidence_ids` are the union over its originals (the trail is never smaller), `top_skill_ids` are the top 7 pooled skills by `importance_score`, and its scores are recomputed from the pooled skills, not the max of the originals. `POST /programs/{id}/needs/{need_id}/split` deletes the merged Need and clears `merged_into` on its originals. `skill_groups` is a table (`SkillGroupRepository`), replaced with the skills on a re-run of Agent 1.
 
 `rationale_th` is the model's account of why these skills form one demand, written by the same call that writes the sentence. Keep it apart from traceability: `source_evidence_ids` is what immutable rule 2 is about and is assembled in code, while this is free text nothing validates against the evidence — so the prompt forbids citing anything outside the skill names it was given, and both UI cards label it "คำอธิบายของโมเดล" and keep it out of the trail panel. `_NeedStatement` bounds it (20-240 characters) and rejects an empty answer with the same `find_vague_phrase` the statement uses. It defaults to `""` rather than being required, because a Need also arrives as a plain dict from a LangGraph checkpoint suspended across the deploy that added the column (migration `c7e2f81a4b93`, which backfills a self-identifying `[สร้างย้อนหลัง]` sentence into pre-existing rows rather than composing a reason nobody gave).
 

@@ -318,3 +318,23 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   Agent 2 is how the designer gets fresh merges. The checkpoint node reloads
   `state["needs"]` from the active read on resume, so a split made while a
   session is paused takes effect.
+- **The designer merges and excludes too, and "active" now means two things**
+  (phase 2, designer's decision of 2026-11-03). `list_active_by_program` is
+  `merged_into IS NULL AND excluded_at IS NULL`, so an excluded Need vanishes
+  from every reader the same way a merged-away one does — stored, traceable,
+  restorable (`POST /needs/{id}/exclude|restore`), never deleted. `POST
+  /plos/from-needs` reads all Needs and refuses an excluded one by hand, like a
+  merged-away one; a new reader that skips the active read must do the same.
+  The manual merge (`POST /needs/merge`, 2-5 Needs) reuses
+  `need_merge._write_merged` with `merged_by="designer"` and writes through
+  `NeedRepository.write_merge` in one transaction; Agent 2's merges carry
+  `merged_by="agent"`, and rows merged before the column existed carry `None`,
+  because the true author is unknown. Merging a merged Need **nests** it (it
+  keeps its own `merged_from`, `merged_by` and reason) instead of flattening,
+  which would delete it and its trail. Both merge and exclude are refused (409)
+  for a Need a stored PLO cites — a citation must never point at a Need that
+  left the active set — and splitting an excluded merged Need is refused (422)
+  so its exclusion cannot vanish with the deleted row. A re-run of Agent 2
+  (`need_combination` deletes and rewrites every Need) discards manual merges and
+  exclusions as it already discarded splits; the Need page says so beside the
+  re-run control.
