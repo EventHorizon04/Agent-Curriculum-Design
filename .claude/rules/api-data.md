@@ -60,7 +60,13 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   id is an edit too), PUT, DELETE and `classify-stream` all refuse with 409;
   POST/PUT/DELETE take `program_lock` around check and write so `start_job`
   cannot slip between them, and `classify-stream` holds a `sync_writer`
-  registration for its whole stream. A failed first extraction writes nothing,
+  registration for its whole stream. A graph session *suspended* at the
+  evidence checkpoint is not busy, so evidence is editable while it waits —
+  which is why `review_stakeholder_needs` reloads evidence from
+  `EvidenceRepository` on resume and re-derives `classified_evidence` with
+  `stakeholder_needs.classify_single`, exactly as `review_needs` reloads Needs:
+  extraction reads state, and a checkpoint's copy would extract skills from text
+  the rows no longer hold. A failed first extraction writes nothing,
   so it does not lock. Seed scripts and the copy write through repositories and
   are not designer edits. `POST /programs/{id}/copy` takes `{"mode":
   "evidence_only"}` to clone metadata and evidence only — no skills, groups,
