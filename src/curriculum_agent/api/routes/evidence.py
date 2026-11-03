@@ -5,15 +5,62 @@ from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.data.repositories import EvidenceRepository
-from curriculum_agent.models import StakeholderEvidence
-from curriculum_agent.stages.stakeholder_needs import classify_single
+from curriculum_agent.api.jobs import program_busy
+from curriculum_agent.data.repositories import (
+    EvidenceRepository,
+    NeedRepository,
+    SkillRepository,
+)
+from curriculum_agent.models import StakeholderEvidence, StakeholderType
+from curriculum_agent.stages.stakeholder_needs import classify_evidence_type, classify_single
 
 router = APIRouter()
 _repo = EvidenceRepository()
+
+EVIDENCE_LOCKED_TH = (
+    "สกัดทักษะจาก evidence แล้ว แก้ เพิ่ม หรือลบ evidence ไม่ได้ — คัดลอกหลักสูตรแบบเฉพาะข้อมูลนำเข้าหากต้องแก้"
+)
+
+
+class EvidenceUpdate(BaseModel):
+    stakeholder_type: StakeholderType
+    source_name: str
+    raw_text_th: str
+    source_url: str | None = None
+
+
+class EvidenceLock(BaseModel):
+    locked: bool
+    reason_th: str | None
+
+
+async def evidence_lock_reason(program_id: str) -> str | None:
+    """Why this program's evidence cannot change, in Thai, or None when it can.
+
+    Skills and Needs are derived from the evidence and cite it, so once either
+    exists an edit would leave them describing text that is no longer there. A
+    running writer locks it too: extraction reads the evidence mid-run.
+    """
+    if (busy := await program_busy(program_id)) is not None:
+        return busy
+    if await SkillRepository().has_any(program_id) or await NeedRepository().has_any(program_id):
+        return EVIDENCE_LOCKED_TH
+    return None
+
+
+async def _refuse_if_locked(program_id: str) -> None:
+    if (reason := await evidence_lock_reason(program_id)) is not None:
+        raise HTTPException(status_code=409, detail=reason)
+
+
+@router.get("/lock", response_model=EvidenceLock)
+async def evidence_lock(program_id: str) -> EvidenceLock:
+    reason = await evidence_lock_reason(program_id)
+    return EvidenceLock(locked=reason is not None, reason_th=reason)
 
 
 @router.get("/", response_model=list[StakeholderEvidence])
@@ -48,14 +95,40 @@ async def upload_evidence(program_id: str, evidence: StakeholderEvidence) -> Sta
     Classification did exist, in `GET /classify-stream`, as a separate step the
     designer had to know to run. A field the code owns cannot depend on that.
     """
+    await _refuse_if_locked(program_id)
     classified = await classify_single(evidence)
     await _repo.bulk_insert([classified])
     return classified
 
 
+@router.put(
+    "/{evidence_id}", response_model=StakeholderEvidence, dependencies=[Depends(require_api_key)]
+)
+async def update_evidence(
+    program_id: str, evidence_id: str, body: EvidenceUpdate
+) -> StakeholderEvidence:
+    """Edit what the designer typed; the id stays and the class is re-derived."""
+    await _refuse_if_locked(program_id)
+    existing = await _repo.get(program_id, evidence_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="ไม่พบหลักฐานนี้")
+    updated = existing.model_copy(
+        update={
+            "stakeholder_type": body.stakeholder_type,
+            "source_name": body.source_name,
+            "raw_text_th": body.raw_text_th,
+            "source_url": body.source_url,
+            "classification": classify_evidence_type(body.stakeholder_type),
+        }
+    )
+    await _repo.bulk_insert([updated])
+    return updated
+
+
 @router.get("/classify-stream", dependencies=[Depends(require_api_key)])
 async def classify_evidence_stream(program_id: str) -> StreamingResponse:
     """SSE endpoint: classify unclassified evidence items one-by-one, streaming progress."""
+    await _refuse_if_locked(program_id)
 
     async def _generate() -> AsyncGenerator[str, None]:
         repo = EvidenceRepository()
@@ -94,6 +167,7 @@ async def classify_evidence_stream(program_id: str) -> StreamingResponse:
 
 @router.delete("/{evidence_id}", status_code=204, dependencies=[Depends(require_api_key)])
 async def delete_evidence(program_id: str, evidence_id: str) -> None:
+    await _refuse_if_locked(program_id)
     try:
         deleted = await _repo.delete(program_id, evidence_id)
     except IntegrityError as exc:

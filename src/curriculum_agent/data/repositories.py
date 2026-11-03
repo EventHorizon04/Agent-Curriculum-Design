@@ -253,6 +253,16 @@ class EvidenceRepository:
                 out.append(StakeholderEvidence.model_validate(d))
             return out
 
+    async def get(self, program_id: str, evidence_id: str) -> StakeholderEvidence | None:
+        """One evidence item, or None when it is absent or another program's."""
+        async with AsyncSessionLocal() as session:
+            row = await session.get(EvidenceTable, evidence_id)
+            if row is None or row.program_id != program_id:
+                return None
+            d = _row_to_dict(row)
+            d["metadata"] = d.pop("extra_metadata")
+            return StakeholderEvidence.model_validate(d)
+
     async def delete(self, program_id: str, evidence_id: str) -> bool:
         """Delete one evidence row scoped to its program. Returns False if it
         doesn't exist OR belongs to a different program_id (same 404 either way
@@ -291,6 +301,13 @@ class SkillRepository:
             )
             await session.commit()
             return result.rowcount
+
+    async def has_any(self, program_id: str) -> bool:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(SkillTable.skill_id).where(SkillTable.program_id == program_id).limit(1)
+            )
+            return result.first() is not None
 
     async def bulk_insert(self, skills: list[ExtractedSkill]) -> None:
         async with AsyncSessionLocal() as session:
@@ -374,6 +391,13 @@ class NeedRepository:
             )
             await session.commit()
             return result.rowcount
+
+    async def has_any(self, program_id: str) -> bool:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(NeedTable.need_id).where(NeedTable.program_id == program_id).limit(1)
+            )
+            return result.first() is not None
 
     async def bulk_insert(self, needs: list[Need]) -> None:
         async with AsyncSessionLocal() as session:
