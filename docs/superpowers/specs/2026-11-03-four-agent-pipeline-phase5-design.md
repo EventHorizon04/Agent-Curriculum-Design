@@ -47,7 +47,9 @@ What the code and the reports say today:
    context (`program_id`, `job_id`, `session_id`) is set where work starts — the
    job runner, the graph session runner, the synchronous designer routes that
    call a model (`from-needs`, `/needs/merge`) — and read by the recorder. Calls
-   made outside any context (scripts, warm-up) are recorded with nulls. `slot` is
+   made outside any context (scripts) are recorded with nulls; the startup
+   warm-up is not recorded — it is an Ollama keep-alive ping (`max_tokens=1`,
+   answer discarded), not a model answer anything uses. `slot` is
    known at the call site already (each slot has its own wrapper).
 4. **Recording never breaks a call.** The write is best-effort: a failed insert
    is logged and the completion is returned. The DB write is one small insert
