@@ -237,7 +237,55 @@ over five runs because one run was measured to be unstable.
     - **What clears the marker.** The marker goes with the row: a PLO the designer
       replaces through `from-needs` is a new draft without it. Nothing else clears
       it.
-25. **Docs.** CLAUDE.md immutable rules 5 and 7 and `.claude/rules/plo-review.md` /
+25. **(designer, 2026-11-04) The review's advice reaches PLO synthesis in full.**
+    - **What Agent 3 receives today.** Only the Bloom send-back passes the
+      reviewer's words. A redundancy merge and an unused-Need draft hand
+      synthesis the Needs alone, so it redrafts without knowing what was wrong.
+    - **What every redraft now carries.** Through the existing `note_th`
+      channel, each send-back redraft carries:
+      - the finding's `reason_th`, plus `suggestion_th` where the finding has one
+        (redundancy has; alignment and Bloom/verb gain one);
+      - the statement(s) being replaced, labelled as "ร่างเดิมที่ผู้ตรวจติ", so
+        synthesis repairs the point instead of starting from nothing.
+    - **Limits.**
+      - The note is length-capped as the Bloom note is today.
+      - It must never contain a forbidden PLO word. A quoted old statement could
+        contain one only if it was escalated, and an escalated statement is quoted
+        with the word masked.
+    - **Builder's mechanics.** One note builder per finding kind in
+      `prompts/plo_feedback.py`, each with a test that renders it.
+26. **Risk controls (builder, agreed with the designer 2026-11-04).**
+    - **Early-stop voting.**
+      - Both votes (SMART and review) first run 3 runs concurrently.
+      - If those 3 already decide every question unanimously, the remaining 2 are
+        not run: 3 of 5 is already reached either way.
+      - Otherwise the other 2 run and the full 5 are counted.
+      - The result is the same as always running 5; the cost is lower when the
+        model is consistent.
+    - **Shadow mode.**
+      - `plo_review_loop_mode` takes `off` | `shadow` | `apply`, default `shadow`
+        until the designer has read a shadow run.
+      - In `shadow` the loop runs one review, computes every action and records it
+        on the trail as `planned` without writing a PLO.
+      - Phase 4's single send-back stays behind `plo_review_send_back` for `off`.
+    - **Kill switches.**
+      - `validation_runs=1` restores the single-run SMART agent.
+      - `plo_review_max_rounds=0` restores phase 4 behaviour.
+    - **Three gated parts, each built, verified and measured before the next.**
+      - **6a, no LLM change:** graph reorder, `plo_reports`, the resume reload
+        fix, the hand-edit marker.
+      - **6b:** the voted SMART loop, then a measured run against the baseline.
+      - **6c:** the review loop and its new checks, first in shadow mode, then the
+        before/after comparison for the designer.
+    - **DB.** Migrations go on the copy DB `curriculum_phase1` only, as in every
+      phase.
+    - **Baseline before building.**
+      - One run of today's tail on a copy of the stored corpus, with usage from
+        the panel.
+      - A stability probe of today's SMART agent (5 judgments of each stored
+        PLO, repairs off).
+      - Both are written to `.scratch/reports/2026-11-04-phase6-baseline.md`.
+27. **Docs.** CLAUDE.md immutable rules 5 and 7 and `.claude/rules/plo-review.md` /
     `smart-gate.md` / `api-data.md` are updated to say this, with the
     designer's date.
 
