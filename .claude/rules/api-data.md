@@ -70,7 +70,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   so it does not lock. Seed scripts and the copy write through repositories and
   are not designer edits. `POST /programs/{id}/copy` takes `{"mode":
   "evidence_only"}` to clone metadata and evidence only — no skills, groups,
-  Needs, PLOs or review — which leaves the copy unlocked; no body is `full`.
+  Needs, PLOs, review or report — which leaves the copy unlocked; no body is `full`.
 - **A program copy re-keys every evidence, skill and Need id; the validator
   switch skips only the agent.** `POST /programs/{id}/copy` (`data/program_copy.py`)
   exists so one synthesis run survives the next. `evidence_id`, `skill_id` and
@@ -156,7 +156,59 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   reports what is unreachable (add `--delete` to drop it) and is the sweep for
   those, and for rows written before any of this existed.
 - **`POST /plos/from-needs` takes 2-5 Needs, and what it replaces is kept.** More than `MAX_GROUP_SIZE` (`stages/need_dedup.py`) answers 422 "เลือก Need 2-5 ข้อเพื่อรวมเป็น PLO" before any lock, DB read or LLM call. `PLORepository.replace` snapshots every removed PLO into `superseded_plos` (`superseded_by` = the new PLO id, naive-UTC `superseded_at`) in the same transaction as the delete; `delete_by_program` and `ProgramRepository.delete_cascade` clear it, a full copy clones it with remapped ids, `evidence_only` copies none. `GET /programs/{id}/plos/superseded` is a read (404 unknown program) and `SupersededPLORepository.list_by_program` skips a snapshot failing `PLO.model_validate`. There is no restore. "Attach a Need to a PLO" in the UI is this same call with the card's `source_need_ids` plus one unused Need, no note. The picker's replaced-PLO preview uses `plosCiting` (`frontend/src/pages/components/plosCiting.ts`), the client mirror of `plos_citing`; the cap is `MAX_MERGE_NEEDS` (`frontend/src/constants/needPolicy.ts`, mirrors `MAX_GROUP_SIZE`) — change each pair together.
-- **`plo_redraft` is the one core behind the designer's merge and Agent 4's send-back, and it takes no lock.** `stages/plo_redraft.redraft_from_needs` (the old `_merge_needs` body) holds every bound and check of the merge and writes through `PLORepository.replace`. It registers no writer: `POST /plos/from-needs` wraps it in `sync_writer` with `cause="designer"`, while send-back runs inside the review job or graph session, which already hold the program busy, and passes `cause="review"` — a second registration there would 409 against itself. `superseded_plos.cause` is `designer` | `review` | null (null reads as designer, for older rows). `plo_feedback_actions` (`GET /programs/{id}/plos/feedback`, newest first) has the life of `superseded_plos`: cleared by `delete_by_program` and program delete, cloned with remapped ids by a full copy, not by `evidence_only`. The review job's result is `PLOReviewRunResponse` (`PLOReviewResponse` plus `feedback`); `GET /review` is unchanged.
+- **`plo_redraft` is the one core behind the designer's merge and Agent 4's send-back, and it takes no lock.** `stages/plo_redraft.redraft_from_needs` (the old `_merge_needs` body) holds every bound and check of the merge and writes through `PLORepository.replace`. It registers no writer: `POST /plos/from-needs` wraps it in `sync_writer` with `cause="designer"`, while send-back runs inside the review job or graph session, which already hold the program busy, and passes `cause="review"` — a second registration there would 409 against itself. `superseded_plos.cause` is `designer` | `review` | null (null reads as designer, for older rows). `plo_feedback_actions` (`GET /programs/{id}/plos/feedback`, newest first) has the life of `superseded_plos`: cleared by `delete_by_program` and program delete, cloned with remapped ids by a full copy, not by `evidence_only`. The review job's result is `PLOReviewRunResponse` (`PLOReviewResponse` plus `feedback`); `GET /review` is unchanged. Since phase 6 `plo_feedback_actions` also has `round`, and the loop adds `kind="loop_end"` rows (`outcome="stopped"`) with the stop reason.
+- **The PLO tail is `plo_synthesis -> plo_review -> [checkpoint] -> plo_report`, and the
+  report is a stored artifact (phase 6, designer's decision of 2026-11-04).** Graph:
+  `plo_synthesis -> plo_review -> review_plos_node -> plo_report -> END`;
+  `REVIEW_NODE_STAGE` maps `review_plos_node` to `plo_review` and `DESIGNER_STAGES`
+  ends `... plo_synthesis, plo_review, plo_report` (the frontend rail follows; change
+  both together). `plo_report.run` reads the PLOs from the database, never from
+  `state["plos"]`, writes no PLO, and stores its result in `plo_reports` (one row per
+  program, `PLOReportRepository`): program, the PLO+Need fingerprint of the set it
+  describes (`plo_review_facts.plo_fingerprint`, the review's own), `created_at`, and
+  the report JSON in a JSONB column, so a new report field needs no migration.
+  `stage_reached` answers `plo_report` for a *current* report, then `plo_review` for a
+  current review, then `plo_synthesis`; both count only while their fingerprint
+  matches, so the rail says "approved and reported" only for the set that was
+  approved and goes back a stage the moment a PLO or a Need score moves. Life: cleared
+  by `PLORepository.delete_by_program` and by program delete, copied by a full
+  `POST /programs/{id}/copy` (id-remapped, and re-fingerprinted when it was current
+  for the source, exactly like the review; a stale one stays stale), not by
+  `evidence_only`. `GET /programs/{id}/plos/report` answers `PLOReportStored`:
+  `report` (None when none was built), `stale` (the stored fingerprint against the
+  live set) and `created_at`; 404 for an unknown program. The review's `GET /review`
+  is unchanged.
+- **`POST /plos/run` chains the review job, so synthesis -> review is one tail with no
+  checkpoint between.** `start_job_or_409(..., on_success=chain)` starts the
+  `plo_review` job through `_start_review_job(or_409=False)` when synthesis
+  succeeds, the way `/needs/run` starts Agent 2: each job stores its output, shows
+  in `GET /jobs` and has its own budget. A conflict or "no PLO stored" is logged and
+  the synthesis job stays succeeded. `/plos/review/run` runs the **whole loop**
+  (`plo_review_loop`, mode from `settings.plo_review_loop_mode`) and its result,
+  `PLOReviewRunResponse`, carries every trail row the call wrote, rounds included;
+  `GET /programs/{id}/plos/feedback` has the whole trail with each row's `round` (0
+  for a single pass and for older rows) and the `loop_end` row that says why the loop
+  stopped. `POST /plos/report/run` stays the designer's button: on the page path it
+  is the equivalent of approving the set, and it runs only the report; a graph
+  session approves on the Pipeline page instead, which resumes `review_plos_node`.
+- **Resume at the PLO checkpoint reloads the PLOs from the database.** Like
+  `review_needs` and `review_stakeholder_needs`, `graph.review_plos` re-reads
+  `PLORepository` after the `interrupt` returns and rebuilds `state["plos"]` from it:
+  the designer may have edited, merged or deleted PLOs while the session was
+  suspended, and the review's send-back changed them before that, while the
+  checkpoint holds the set as it was. Before phase 6 it did not, so `plo_report`
+  upserted the checkpoint's stale copy over the edit; `plo_report` now also reads
+  from the database, and both are needed (`test_review_plos_resume_reloads_edited_plos`
+  pins it).
+- **`designer_edited_at` is set by `PUT /plos/{id}` with a changed statement and
+  cleared by nothing.** It is a nullable column on `plos` (migration
+  `a6c1d2e3f405`), naive UTC in the DB and with `+00:00` in JSON. A `PUT` that
+  leaves the statement unchanged does not set it. `revalidate` copies the stored
+  value onto the rebuilt row; `PLORepository.replace` writes the replacing draft
+  without it, so the marker goes with the row and a PLO the designer replaces through
+  `from-needs` is a new draft. The marker, not `smart_validated_by="stale"`, is what
+  send-back (`unavailable_reason`) and `allow_repair` read, because a revalidate
+  overwrites `stale`. A program copy carries it (rows are cloned by column).
 - **`llm_usage` has the life of the program's own rows, not of a run.** One row per
   provider response (`LLMUsage`, instructor retries included), attributed by
   `llm_context.llm_scope(program_id=..., job_id=... | session_id=...)`. The scope is set in

@@ -2,12 +2,14 @@
 
 Every other check reads one PLO against its own Needs; this reads the set —
 redundancy between drafts, a domain that spans KSEC tags, the Bloom
-distribution, the important Needs no PLO cites. It runs after the report, which
-is why it can read the set the report persisted. The review itself only judges:
-its findings are stored per program and shown beside the report. Since phase 4 a
-fresh agent review is followed by `plo_feedback.send_back`, which acts on the
-findings a majority agreed on and records a trail; that is a separate step, and
-the review row is never altered by it. See
+distribution, the important Needs no PLO cites. It runs after synthesis and
+before the PLO checkpoint and the report (phase 6), reading the stored PLOs. The
+review itself only judges: its findings are stored per program and shown on the
+review page. Since phase 4 a fresh agent review is followed by
+`plo_feedback.send_back`, which acts on the findings a majority agreed on and
+records a trail, and since phase 6 the pair repeats as a loop
+(`plo_review_loop`); that is a separate step, and the review row is never altered
+by it. See
 docs/superpowers/specs/2026-10-12-plo-qa-agent-design.md and
 docs/superpowers/specs/2026-11-03-four-agent-pipeline-phase4-design.md.
 

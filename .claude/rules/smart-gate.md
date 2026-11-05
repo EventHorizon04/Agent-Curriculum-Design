@@ -28,6 +28,61 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   comes from the synthesis slot, always, and a helpful model handed that field
   would make "a repair is never answered by a different model than wrote the
   draft" one field away from false.
+- **The judge, the vote and the repair are three separate things, and only the
+  vote's outcome plus the hard check may start a repair (phase 6, designer's
+  decision of 2026-11-04).** `run_smart_agent` -> `_voted_loop`: a round is
+  `validation_runs` judge runs of the *same* statement (`_judge_round`; each seeds
+  its own `ToolBudget`, ending in `Finish`, under the shared judge semaphore), then
+  `smart_vote.vote` counts them, then `hard_failures` runs on the statement. A soft
+  criterion fails when `n // 2 + 1` of the runs *requested* failed it; failed runs
+  do not lower the bar, the rule `plo_feedback` already uses. Why not "3 runs each
+  pass the whole thing": five runs flagging five different criteria would fail the
+  PLO with nothing a majority agreed to fix, and the loop would rewrite at random.
+  Why not five runs that each repair: five different statements and nothing to
+  vote on, so judging is parallel and the repair is one call. Early stop
+  (`first_batch_size`, `is_decided`): 3 runs first, and the other 2 only when the
+  first 3 leave a criterion open, which gives the same answer as always running 5
+  (7 of 9 PLOs stopped at 3 on the measured run). The repair instruction is built in
+  code (`build_vote_repair_instruction_th`) from the hard failures' fix hints, the
+  majority-failed repairable criteria with the representative run's note, and that
+  run's **`repair_hint_th`**, `Finish`'s one new field: advice about *what* to
+  change and never a sentence (see the first bullet). The representative run is the
+  one whose failures best match the vote (most majority criteria, fewest extras,
+  earliest on a tie), so its diagnosis and notes describe the verdict stored.
+  `repair_count` is spent when a repair is *attempted*: a failed call, a discarded
+  repair and an unchanged one are budget used, or a stuck PLO would loop on the same
+  sentence. At most `validation_max_repairs` (3) repairs, so at most 4 judgings.
+- **A repair never makes a PLO worse on the hard check, and `A_actor`/`A_scope` are
+  never repaired.** A repaired statement that carries a hard failure the previous
+  one did not is discarded and the previous statement stays (decision 20), which
+  is what keeps a soft criterion from ever causing an escalation. `A_actor` and
+  `A_scope` (`smart_vote.REPAIR_EXCLUDED`) stay comments even when a majority fails
+  them: both are properties of the *Need* (an institutional or out-of-scope Need),
+  rewording cannot change them, and a repair spent on them is budget taken from the
+  hard failures; the stored diagnosis keeps the "send back to the Need stage" text.
+  A soft criterion failing by majority after the last repair is stored in
+  `soft_flags` and the `SMARTCheck` field with the representative's note; those are
+  the comments the designer reads, and `smart_escalated` stays hard-only.
+- **A round that could not vote uses no soft verdict, and a timeout keeps what was
+  judged.** Fewer successful runs than the threshold means `vote` returns `None`:
+  no flag is manufactured and only hard failures drive repair; a PLO no round ever
+  voted on is `code_only`. When the round *after* a repair cannot vote (or the
+  per-PLO `validation_timeout_seconds`, 600, runs out before re-judging) the
+  repaired draft ships as `code_only` only when it has strictly fewer hard failures
+  than the last judged one (`_corrected_unjudged`: its failures are a subset of the
+  judged one's by the discard rule, so shipping it can only shrink the list);
+  otherwise the last judged statement ships with its vote. Rule 5 (a validator that
+  could not run must not escalate) outranks re-judging the older, defective
+  sentence. `validation_runs=1` runs the same structure with threshold 1; there is
+  no separate single-run code path.
+- **A designer's own sentence is judged, never rewritten (`allow_repair`).** `PUT
+  /plos/{id}` with a changed statement sets `designer_edited_at`; `POST
+  /plos/{id}/revalidate` passes `allow_repair=match.designer_edited_at is None`, so
+  the voted loop judges such a PLO and stores its verdicts without a repair, and
+  copies the stored marker onto the rebuilt row (`validate_and_build` returns a
+  fresh PLO that would otherwise drop it). The marker is not `smart_validated_by=
+  "stale"`: a revalidate overwrites that, and send-back must still leave the
+  sentence alone. Nothing clears it except replacing the outcome.
 - **Immutable rule 4 is enforced on `action_verb_th`, and a statement scan is
   what does not work.** `hard_failures` tested `action_verb_th in statement_th`
   and nothing else about verbs, so the rule was prompt text with no code behind
@@ -92,7 +147,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   /plos/{id}` used to accept a whole `PLO`, so a caller with the API key could
   set `smart_escalated=False` with an all-true `smart_check` on a statement no
   validator had ever passed. It now takes `PLOStatementUpdate` — text only —
-  and marks an edited statement `stale` rather than letting it inherit the old
+  and marks an edited statement `stale` (and stamps `designer_edited_at`) rather than letting it inherit the old
   verdict; `POST /plos/{id}/revalidate` is the way back to a real one. The next
   person who wants a quick edit path will be tempted to widen this again.
 - **`PUT` still has to run the pure-code gate, because `model_copy` skips

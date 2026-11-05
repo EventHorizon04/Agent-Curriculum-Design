@@ -299,12 +299,13 @@ class PLO(BaseModel):
     rationale_th: str  # why this PLO exists, for designer review
     distinctive_feature_th: str | None = None  # what differentiates this PLO
     version: int = 1
-    smart_retry_count: int = 0  # repair drafts the validator asked for (max 3)
+    smart_retry_count: int = 0  # repair drafts the voted SMART loop ran (max 3)
     smart_escalated: bool = False  # still hard-failing after repairs → human repair
     soft_flags: list[str] = []  # non-blocking: "S_object", "M_assessable", "A_level", "R_needs", "T_horizon"
     smart_validated_by: str = "legacy"  # agent | code_only | stale | legacy — see below
     smart_diagnosis_th: str | None = None  # the validator's reason, for the designer
     is_optional: bool = False  # PLO from want-dominant Need(s), exempt from the core-Need count
+    designer_edited_at: datetime | None = None  # set by PUT /plos/{id} on a changed statement; cleared by nothing but replacing the outcome. Send-back and SMART repair leave such a PLO alone
 ```
 
 **`SupersededPLO` — history of replaced outcomes.** `POST /plos/from-needs` (and review send-back, `cause=review`) replaces every PLO citing a selected Need; `PLORepository.replace` snapshots each removed row into `superseded_plos` in the same transaction as the delete. Read-only: nothing restores from it.
@@ -331,10 +332,10 @@ Validation rules for PLO (enforce in code):
 - `statement_th` must not contain forbidden words (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก) — see `obe-principles.md`. Exception: a PLO with `smart_escalated=True` may carry them — it exists precisely so a human can repair it, and the SMART gate already failed it loudly.
 - `source_need_ids` must be non-empty (no PLO without a Need behind it), and `source_evidence_ids` must be non-empty (no PLO without an evidence trail) — two separate validators, both hard rejects.
 - `smart_check` all five fields must be `True` to mark the PLO ready
-- Hard vs soft failure handling: S-verb / M-forbidden / R-evidence are pure code (`stages/smart_rules.py`) and are the floor — `validate_and_build` runs them on the final statement whatever the validator said, and that call alone sets `smart_escalated`. The five soft verdicts (`S_object`, `M_assessable`, `A_level`, `R_needs`, `T_horizon`) come from the validation agent, land in `soft_flags` and in the matching `SMARTCheck` field, and never block. Repairs are bounded at 3 per PLO. Implement per the SMART validation checklist in `obe-principles.md`.
+- Hard vs soft failure handling: S-verb / M-forbidden / R-evidence are pure code (`stages/smart_rules.py`) and are the floor — `validate_and_build` runs them on the final statement whatever the validator said, and that call alone sets `smart_escalated`. The seven soft verdicts (`S_object`, `M_assessable`, `A_level`, `A_actor`, `A_scope`, `R_needs`, `T_horizon`) come from the validation agent, land in `soft_flags` and in the matching `SMARTCheck` field, and never block or escalate. Since phase 6 a soft verdict counts only when a majority of the `validation_runs` (5) judge runs failed it (`stages/smart_vote.py`, early stop at 3 runs when decided); a PLO that fails a round gets one repair from the synthesis slot (instruction built in code from the hard failures, the majority-failed soft criteria and the representative run's `repair_hint_th`), then is judged again by fresh runs. At most 3 repairs per PLO, so 4 judgings. `A_actor` and `A_scope` are never repaired, and a repair that adds a hard failure the previous statement did not have is discarded. Implement per the SMART validation checklist in `obe-principles.md`.
 - `SMARTCheck.findings: list[SmartFinding]` carries *why*: `criterion` (one of the eight codes), `severity` (`hard`/`soft`), Thai `note_th`. It rides inside the existing `smart_check` JSONB column, so it needed no migration and rows written before it deserialise on the model's default. Do not make it required and do not give `SMARTCheck` `extra="forbid"` — either makes a pre-migration row unreadable, which loses a whole program's PLO list on GET rather than one field.
 - `soft_flags` stays `list[str]`, not the enum. A row carrying a code this build no longer knows would otherwise raise on read, and `R_alignment` was emitted for months. The typed detail is in `findings`; a validator keeps the flat list and the soft findings in step, exempting a row that has flags but no findings (that is what `legacy` means).
-- `smart_validated_by` distinguishes four facts the UI must not conflate: `agent` (judged and this is the verdict), `code_only` (the validator could not run; the pure checks decided alone), `stale` (a designer edited the statement and nothing has re-judged it — set by `PUT /plos/{id}`), `legacy` (predates the validator). `POST /plos/{id}/revalidate` is what moves a `stale` row back to `agent`.
+- `smart_validated_by` distinguishes four facts the UI must not conflate: `agent` (judged and this is the verdict), `code_only` (the validator could not run; the pure checks decided alone), `stale` (a designer edited the statement and nothing has re-judged it — set by `PUT /plos/{id}`), `legacy` (predates the validator). `POST /plos/{id}/revalidate` is what moves a `stale` row back to `agent`. `designer_edited_at` is separate from `stale` on purpose: a revalidate overwrites `smart_validated_by`, but a hand-edited sentence must stay unrewritten (revalidate judges it with `allow_repair=False`; send-back skips it with a trail reason).
 
 ## Stage 6: PLO QA review (advisory findings, acted on by send-back)
 
@@ -365,7 +366,18 @@ class BloomFinding(BaseModel):
     declared: BloomLevel
     suggested_level: BloomLevel | None = None
     reason_th: str = ""
+    suggested_verb_th: str | None = None                 # phase 6: the verb the reviewer thinks fits; guidance, the SMART checks govern it
+    suggestion_th: str = ""                              # phase 6: the reviewer's recommendation, quoted in the redraft note
     agreed_runs: int = 1                                 # runs that said this; 1 for one-run reviews and old rows
+
+class AlignmentFinding(BaseModel):
+    """Phase 6: a PLO that does not answer what the Needs it cites ask for. The
+    reviewer judges it from each cited Need's sentence and its voices (distinct
+    evidence items per stakeholder type, computed in code) — never evidence text."""
+    plo_id: str
+    reason_th: str
+    suggestion_th: str = ""                              # sent back as the redraft note
+    agreed_runs: int = 1
 
 class KsecCoverage(BaseModel):
     """PLOs per K/S/E/C (optional included), computed in code. Plain str keys and flags."""
@@ -409,6 +421,7 @@ class PLOSetReview(BaseModel):
     redundancies: list[RedundancyFinding] = Field(default_factory=list)
     ksec: list[KsecFinding] = Field(default_factory=list)
     bloom: list[BloomFinding] = Field(default_factory=list)
+    alignment: list[AlignmentFinding] = Field(default_factory=list)          # phase 6
     bloom_distribution_th: str = ""
     summary_th: str = ""
     ksec_coverage: KsecCoverage = Field(default_factory=KsecCoverage)        # code
@@ -424,9 +437,19 @@ class PLOSetReview(BaseModel):
     agreement_threshold: int = 1                         # runs_succeeded // 2 + 1 when >=2 runs
 ```
 
+**`PLOReport` — the stored report (phase 6).** `plo_report` stores its result instead of re-persisting PLOs: table `plo_reports`, one row per program (`program_id` primary key, FK, cascade-deleted with it), holding the fingerprint of the set it describes (the review's own: PLOs plus the `(need_id, demand_score)` pairs), `created_at` and the report body in a JSONB column, so a new report field needs no migration. It is current while that fingerprint matches the stored set, and `stage_reached` reports `plo_report` only for a current one. Cleared with the program's PLOs, copied (re-fingerprinted when current) by a full copy, not by `evidence_only`; `GET /programs/{id}/plos/report` returns it with `stale`.
+
+```python
+class PLOReport(BaseModel):
+    program_id: str
+    plo_fingerprint: str          # which PLO set it was built from, as on the review
+    created_at: datetime          # naive UTC in the DB, +00:00 in JSON
+    report: dict[str, Any]        # plos, needs_by_id, needs_not_synthesized, counts (opaque to the repository)
+```
+
 `plo_reviews` is one row per program (`program_id` primary key, FK to `programs.program_id`, cascade-deleted with it), holding `plo_fingerprint`, `model`, `created_at`, and the rest of `PLOSetReview` in a single JSONB `review` column — no migration needed for a new finding field, the same reasoning as `SMARTCheck.findings`.
 
-**The agent only advises.** The QA agent reads the finished PLO set as a whole, after the report (it is stage 06; the graph runs `plo_synthesis → [PLO checkpoint] → plo_report → plo_review → END`), and itself writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table. Agreed redundancy, Bloom and unused-Need findings are then acted on by code (send-back, `stages/plo_feedback.py`, through `plo_redraft`) and recorded as `FeedbackAction` below; KSEC findings stay advisory. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. The stage 06 page shows a stored review and labels it stale once `plo_fingerprint` no longer matches the current PLO set and Needs (the fingerprint hashes the PLOs plus the program's `(need_id, demand_score)` pairs); `plo_report` no longer carries a review. Every number and the unused-Need selection are code's (`stages/plo_review_facts.py`); only the judgements are the agent's. A review that could not run (slot disabled, failure, timeout) is stored with `reviewed_by="code_only"`, a `code_only_reason`, the code facts and no agent finding — none is manufactured — and never blocks anything. Every new field defaults, so rows written before them still read; no migration (JSONB, the `SMARTCheck.findings` reasoning).
+**The agent only advises.** The QA agent reads the finished PLO set as a whole, before the PLO checkpoint and the report (it is stage 06; since phase 6 the graph runs `plo_synthesis → plo_review → [PLO checkpoint] → plo_report → END`, the review being a loop of review and send-back, see `plo-review.md`), and itself writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table. Agreed redundancy, alignment, Bloom/verb and unused-Need findings, and a KSEC category with no PLO (a code fact), are then acted on by code (send-back, `stages/plo_feedback.py`, through `plo_redraft`) and recorded as `FeedbackAction` below; per-PLO KSEC suggestions stay advisory. A PLO the designer edited by hand (`designer_edited_at`) is never acted on; its findings stay as comments. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. The stage 06 page shows a stored review and labels it stale once `plo_fingerprint` no longer matches the current PLO set and Needs (the fingerprint hashes the PLOs plus the program's `(need_id, demand_score)` pairs); `plo_report` does not carry a review. Every number and the unused-Need selection are code's (`stages/plo_review_facts.py`); only the judgements are the agent's. A review that could not run (slot disabled, failure, timeout) is stored with `reviewed_by="code_only"`, a `code_only_reason`, the code facts and no agent finding — none is manufactured — and never blocks anything. Every new field defaults, so rows written before them still read; no migration (JSONB, the `SMARTCheck.findings` reasoning).
 
 **`FeedbackAction` — the send-back trail.** One row per actionable finding Agent 4 considered, written right after its action; table `plo_feedback_actions`, same life as `superseded_plos` (cleared with the program's PLOs, cascade-deleted, cloned by a full copy, not by `evidence_only`). `GET /programs/{id}/plos/feedback` lists newest first.
 
@@ -435,18 +458,21 @@ class FeedbackAction(BaseModel):
     id: str
     program_id: str
     review_created_at: datetime   # the review the finding came from
-    kind: str                     # redundancy | bloom | unused_need (plain string: a new kind needs no migration)
+    kind: str                     # redundancy | alignment | bloom | ksec_gap | unused_need | loop_end (plain string: a new kind needs no migration)
     plo_ids: list[str] = []
     need_ids: list[str] = []
     finding_reason_th: str = ""   # the reviewer's reason
     instruction_th: str = ""      # what was sent to the redraft
-    outcome: str                  # applied | skipped | failed
+    outcome: str                  # applied | skipped | failed | planned (shadow-mode dry run) | stopped (loop_end row)
     outcome_reason_th: str = ""
     result_plo_id: str | None = None   # the PLO written, when applied
     result_statement_th: str | None = None   # its statement, so the trail still reads after later edits
     result_bloom_level: str | None = None    # its Bloom level (BloomLevel value)
+    round: int = 0                # phase 6: which loop round wrote the row; 0 for a single send-back and older rows
     created_at: datetime          # when the row was written; orders actions within a round
 ```
+
+A `loop_end` row (`outcome="stopped"`, the loop's final `round`, a Thai `outcome_reason_th`) records why the review loop stopped: pass, nothing applied in the last round, the round cap, no agent review, an error or the loop's time budget. In `plo_review_loop_mode="shadow"` the rows are `planned`.
 
 ## Cross-stage: human-in-the-loop checkpoint
 
@@ -472,7 +498,7 @@ LangGraph's interrupt mechanism saves a `StageCheckpoint` and waits. The React U
 
 Note: `skill_extraction` and `need_combination` are separate graph nodes but share one checkpoint, placed after `need_combination` — the designer reviews raw extracted skills and the distilled Needs together in one review, not at two separate boundaries. Every other stage boundary gets its own checkpoint.
 
-Exception: after the PLO checkpoint, `plo_report` and `plo_review` run to the end with none (waived by the designer, 2026-10-12; see CLAUDE.md rule 7). The Literal keeps both values because `models.py` does; the graph writes no checkpoint for them.
+Since phase 6 (designer's decision of 2026-11-04) the PLO checkpoint is at the end, on the output: `plo_synthesis → plo_review → [checkpoint at stage plo_review] → plo_report → END`. Synthesis and the review loop run with no checkpoint between them, and `plo_report` runs after the designer approves, so the report is built from the approved set (see CLAUDE.md rule 7). `plo_report` has no checkpoint of its own.
 
 ## Cross-stage: background jobs
 
