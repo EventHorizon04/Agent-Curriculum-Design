@@ -6,6 +6,7 @@ from datetime import datetime
 import pytest
 
 from curriculum_agent.models import (
+    AlignmentFinding,
     BloomFinding,
     BloomLevel,
     KsecFinding,
@@ -39,6 +40,8 @@ def _run(
     verdict: str | None = None,
     summary: str = "สรุป",
     tool: str = "check_verbs",
+    alignment: Sequence[str] = (),
+    verbs: dict[str, str] | None = None,
 ) -> PLOSetReview:
     ksec = ksec if ksec is not None else {"PLO1": ["S"], "PLO2": ["S"]}
     return PLOSetReview(
@@ -61,6 +64,18 @@ def _run(
                 plo_id=pid, declared=BloomLevel.APPLY, suggested_level=lv, reason_th=f"{pid} {lv}"
             )
             for pid, lv in (bloom or {}).items()
+        ]
+        + [
+            BloomFinding(
+                plo_id=pid,
+                declared=BloomLevel.APPLY,
+                suggested_verb_th=verb,
+                suggestion_th=f"verb {verb}",
+            )
+            for pid, verb in (verbs or {}).items()
+        ],
+        alignment=[
+            AlignmentFinding(plo_id=pid, reason_th=f"ไม่ตรง {pid} {summary}") for pid in alignment
         ],
         unused_needs=[_unused(verdict, f"เหตุผล {verdict}" if verdict else "")],
         summary_th=summary,
@@ -239,3 +254,41 @@ def test_a_stored_review_without_the_new_fields_reads_as_one_run() -> None:
 def test_pair_findings_are_ordered_by_plo_number_not_by_string() -> None:
     review = _consensus(_run(groups=[["PLO10", "PLO11"], ["PLO2", "PLO3"]]), _run(), _run())
     assert [r.plo_ids for r in review.redundancies] == [["PLO2", "PLO3"], ["PLO10", "PLO11"]]
+
+
+def test_alignment_votes_per_plo_and_text_comes_from_the_representative_run() -> None:
+    review = _consensus(
+        _run(alignment=["PLO1"], summary="ก"),
+        _run(alignment=["PLO1", "PLO2"], summary="ข", verdict="consider"),
+        _run(alignment=["PLO1"], summary="ค", verdict="consider"),
+    )
+    by = {a.plo_id: a for a in review.alignment}
+    assert by["PLO1"].agreed_runs == 3 and by["PLO2"].agreed_runs == 1
+    assert by["PLO2"].reason_th == "ไม่ตรง PLO2 ข"  # only run 2 names it
+    # the representative run supplies the text of a PLO it names
+    assert by["PLO1"].reason_th == f"ไม่ตรง PLO1 {review.summary_th}"
+
+
+def test_a_verb_only_bloom_entry_votes_and_the_verb_is_a_plurality() -> None:
+    review = _consensus(
+        _run(verbs={"PLO1": "ออกแบบ"}),
+        _run(verbs={"PLO1": "ประเมิน"}),
+        _run(verbs={"PLO1": "ออกแบบ"}),
+    )
+    assert len(review.bloom) == 1
+    b = review.bloom[0]
+    assert b.agreed_runs == 3 and b.suggested_verb_th == "ออกแบบ"
+    assert b.suggested_level is None
+    assert b.suggestion_th == "verb ออกแบบ"
+
+
+def test_a_verb_tie_takes_the_first_and_a_minority_level_is_not_carried() -> None:
+    review = _consensus(
+        _run(verbs={"PLO1": "ประเมิน"}),
+        _run(verbs={"PLO1": "ออกแบบ"}),
+        _run(bloom={"PLO1": BloomLevel.CREATE}),
+    )
+    b = review.bloom[0]
+    assert b.agreed_runs == 3
+    assert b.suggested_verb_th == "ประเมิน"
+    assert b.suggested_level is None  # declared (2 entries) beats create (1)

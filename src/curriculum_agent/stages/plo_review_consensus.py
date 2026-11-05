@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from itertools import combinations
 
 from curriculum_agent.models import (
+    AlignmentFinding,
     BloomFinding,
     BloomLevel,
     KsecFinding,
@@ -148,23 +149,65 @@ def _bloom(runs: Sequence[PLOSetReview]) -> list[BloomFinding]:
     by_plo: dict[str, list[BloomFinding]] = {}
     for run in runs:
         for b in run.bloom:
-            # A comment with no proposed change is not a vote for a change.
-            if b.suggested_level is not None and b.suggested_level != b.declared:
+            # A comment that proposes neither a level change nor a verb is not a vote.
+            changes_level = b.suggested_level is not None and b.suggested_level != b.declared
+            if changes_level or b.suggested_verb_th:
                 by_plo.setdefault(b.plo_id, []).append(b)
     out: list[BloomFinding] = []
     for entries in by_plo.values():
-        counts = Counter(e.suggested_level for e in entries)
+        declared_level = entries[0].declared
+        # An entry with no level change votes for the declared level.
+        levels = [e.suggested_level or declared_level for e in entries]
+        counts = Counter(levels)
         top = max(counts.values())
         tied = [lv for lv, n in counts.items() if n == top]
-        declared = _BLOOM_ORDER.index(entries[0].declared)
+        declared = _BLOOM_ORDER.index(declared_level)
 
-        def distance(level: BloomLevel | None, declared: int = declared) -> tuple[int, int]:
-            i = _BLOOM_ORDER.index(level)  # type: ignore[arg-type]
+        def distance(level: BloomLevel, declared: int = declared) -> tuple[int, int]:
+            i = _BLOOM_ORDER.index(level)
             return (abs(i - declared), i)
 
         level = min(tied, key=distance)
-        src = next(e for e in entries if e.suggested_level == level)
-        out.append(src.model_copy(update={"agreed_runs": len(entries)}))
+        verbs = Counter(e.suggested_verb_th for e in entries if e.suggested_verb_th)
+        verb = verbs.most_common(1)[0][0] if verbs else None  # a tie keeps the first seen
+        src = next(
+            (
+                e
+                for e in entries
+                if (e.suggested_level or declared_level) == level and e.suggested_verb_th == verb
+            ),
+            None,
+        ) or next(e for e in entries if (e.suggested_level or declared_level) == level)
+        out.append(
+            src.model_copy(
+                update={
+                    "suggested_level": None if level == declared_level else level,
+                    "suggested_verb_th": verb,
+                    "agreed_runs": len(entries),
+                }
+            )
+        )
+    return out
+
+
+def _alignment_counts(runs: Sequence[PLOSetReview]) -> Counter[str]:
+    counts: Counter[str] = Counter()
+    for run in runs:
+        counts.update({a.plo_id for a in run.alignment})  # once per run
+    return counts
+
+
+def _alignment(
+    runs: Sequence[PLOSetReview], counts: Counter[str], rep: PLOSetReview
+) -> list[AlignmentFinding]:
+    """Per PLO: the count, and the text of the representative run when it names
+    the PLO, else the first run that does."""
+    out: list[AlignmentFinding] = []
+    for plo_id in sorted(counts, key=_plo_order):
+        src = next((a for a in rep.alignment if a.plo_id == plo_id), None) or next(
+            a for run in runs for a in run.alignment if a.plo_id == plo_id
+        )
+        out.append(src.model_copy(update={"agreed_runs": counts[plo_id]}))
     return out
 
 
@@ -198,12 +241,18 @@ def _representative(
     redundancies: Sequence[RedundancyFinding],
     ksec: Sequence[KsecFinding],
     bloom: Sequence[BloomFinding],
+    alignment_counts: Counter[str],
     unused: Sequence[UnusedNeedFinding],
     threshold: int,
 ) -> PLOSetReview:
     main_groups = [_pairs(f.plo_ids) for f in redundancies if f.agreed_runs >= threshold]
     ksec_keys = {(k.plo_id, frozenset(k.suggested)) for k in ksec}
-    bloom_keys = {(b.plo_id, b.suggested_level) for b in bloom if b.agreed_runs >= threshold}
+    bloom_keys = {
+        (b.plo_id, b.suggested_level, b.suggested_verb_th)
+        for b in bloom
+        if b.agreed_runs >= threshold
+    }
+    alignment_keys = {pid for pid, n in alignment_counts.items() if n >= threshold}
     unused_keys = {(u.need_id, u.verdict) for u in unused if u.verdict}
 
     def score(run: PLOSetReview) -> int:
@@ -213,7 +262,12 @@ def _representative(
         return (
             sum(1 for g in main_groups if g <= named)
             + sum(1 for k in run.ksec if (k.plo_id, frozenset(k.suggested)) in ksec_keys)
-            + sum(1 for b in run.bloom if (b.plo_id, b.suggested_level) in bloom_keys)
+            + sum(
+                1
+                for b in run.bloom
+                if (b.plo_id, b.suggested_level, b.suggested_verb_th) in bloom_keys
+            )
+            + sum(1 for a in run.alignment if a.plo_id in alignment_keys)
             + sum(1 for u in run.unused_needs if (u.need_id, u.verdict) in unused_keys)
         )
 
@@ -237,7 +291,9 @@ def consensus_review(
     ksec = _ksec(runs)
     bloom = _bloom(runs)
     unused = _unused(runs)
-    rep = _representative(runs, redundancies, ksec, bloom, unused, threshold)
+    alignment_counts = _alignment_counts(runs)
+    rep = _representative(runs, redundancies, ksec, bloom, alignment_counts, unused, threshold)
+    alignment = _alignment(runs, alignment_counts, rep)
     # The representative run supplies the free text, the tool calls and the
     # dropped count, so the dropped-findings warning still describes the
     # summary shown. Fingerprint, model, timestamp and code facts are the same
@@ -247,6 +303,7 @@ def consensus_review(
             "redundancies": redundancies,
             "ksec": ksec,
             "bloom": bloom,
+            "alignment": alignment,
             "unused_needs": unused,
             "runs_requested": runs_requested,
             "runs_succeeded": len(runs),

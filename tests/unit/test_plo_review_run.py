@@ -90,6 +90,9 @@ def live(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
         "NeedRepository",
         lambda: AsyncMock(list_active_by_program=AsyncMock(return_value=[_NEED])),
     )
+    monkeypatch.setattr(
+        pr, "EvidenceRepository", lambda: AsyncMock(list_by_program=AsyncMock(return_value=[]))
+    )
     _STORED[:] = list(_PLOS)
     monkeypatch.setattr(
         pr,
@@ -117,7 +120,8 @@ async def test_a_fresh_review_is_the_agents_answer_judged_and_stored(live: Async
 
 async def test_the_agent_is_handed_the_dossier_and_only_the_unused_needs(live: AsyncMock) -> None:
     await pr.fresh_review("p", _PLOS)
-    dossier, unused = live.await_args.args
+    dossier, unused, voices = live.await_args.args
+    assert dict(voices) == {}
     assert [i.plo_id for i in dossier.items] == ["PLO1", "PLO2"]
     assert dict(unused) == {}  # _NEED is cited by both PLOs
 
@@ -306,7 +310,7 @@ async def test_the_runs_are_concurrent(live: AsyncMock) -> None:
     started = 0
     all_started = asyncio.Event()
 
-    async def blocking(dossier, unused):  # type: ignore[no-untyped-def]
+    async def blocking(dossier, unused, voices):  # type: ignore[no-untyped-def]
         nonlocal started
         started += 1
         if started == 3:

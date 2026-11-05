@@ -13,6 +13,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.stages.plo_review import accept_review, code_only_review, has_agent_findings
 from curriculum_agent.stages.plo_review_agent import (
+    AlignmentVerdict,
     BloomVerdict,
     KsecVerdict,
     Redundancy,
@@ -339,3 +340,60 @@ def test_a_stored_review_without_the_field_reads_with_none_dropped() -> None:
 def test_an_answer_with_nothing_has_no_agent_findings() -> None:
     review, _ = _accept(ReviewFinish(kind="finish"))
     assert not has_agent_findings(review)
+
+
+def test_bloom_verb_only_entry_is_kept_and_an_empty_or_declared_verb_is_none() -> None:
+    review, drops = _accept(
+        ReviewFinish(
+            kind="finish",
+            bloom=[
+                BloomVerdict(
+                    plo_id="PLO1",
+                    suggested_verb_th="ออกแบบ",
+                    suggestion_th="กริยานี้เบาไป",
+                    reason_th="",
+                ),
+                BloomVerdict(plo_id="PLO2", suggested_verb_th="  ", reason_th=""),
+                BloomVerdict(plo_id="PLO3", suggested_verb_th="วิเคราะห์", reason_th=""),
+            ],
+        )
+    )
+    assert [b.plo_id for b in review.bloom] == ["PLO1"]
+    assert review.bloom[0].suggested_verb_th == "ออกแบบ"
+    assert review.bloom[0].suggestion_th == "กริยานี้เบาไป"
+    assert review.bloom[0].suggested_level is None
+    assert drops["bloom"] == 2  # empty verb, and the declared verb itself
+
+
+def test_alignment_keeps_known_plo_with_reason_first_entry_only() -> None:
+    review, drops = _accept(
+        ReviewFinish(
+            kind="finish",
+            alignment=[
+                AlignmentVerdict(plo_id="PLO1", reason_th=" ไม่ตรงกับ Need ", suggestion_th=" ปรับ "),
+                AlignmentVerdict(plo_id="PLO1", reason_th="ซ้ำ"),
+                AlignmentVerdict(plo_id="PLO2", reason_th="  "),
+                AlignmentVerdict(plo_id="PLO99", reason_th="ไม่มีจริง"),
+            ],
+        )
+    )
+    assert [(a.plo_id, a.reason_th, a.suggestion_th) for a in review.alignment] == [
+        ("PLO1", "ไม่ตรงกับ Need", "ปรับ")
+    ]
+    assert drops["alignment"] == 3
+    assert review.dropped_findings["alignment"] == 3
+    assert has_agent_findings(review)
+
+
+def test_a_stored_review_without_alignment_validates() -> None:
+    old = PLOSetReview.model_validate(
+        {
+            "program_id": "p",
+            "plo_fingerprint": "0",
+            "model": "m",
+            "created_at": "2026-10-05T16:32:00",
+            "bloom": [{"plo_id": "PLO1", "declared": "apply"}],
+        }
+    )
+    assert old.alignment == []
+    assert old.bloom[0].suggested_verb_th is None and old.bloom[0].suggestion_th == ""

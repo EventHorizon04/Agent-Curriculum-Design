@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from curriculum_agent.models import BloomHistogram, KsecCoverage, UnusedNeedFinding
 from curriculum_agent.prompts.plo_review import (
+    STAKEHOLDER_LABEL_TH,
+    CitedNeed,
     ReviewItem,
     build_plo_review_prompt,
     build_review_observation,
@@ -22,7 +24,9 @@ def _dossier(**kw: object) -> ReviewDossier:
                 action_verb_th="แปล",
                 bloom_level="apply",
                 current_ksec=("S",),
-                need_statements_th=("ต้องการบัณฑิตที่แปลเอกสารธุรกิจได้",),
+                cited_needs=(
+                    CitedNeed("ต้องการบัณฑิตที่แปลเอกสารธุรกิจได้", (("employer", 3), ("alumni", 2))),
+                ),
             ),
             ReviewItem(
                 plo_id="OPT1",
@@ -31,7 +35,7 @@ def _dossier(**kw: object) -> ReviewDossier:
                 action_verb_th="ประพฤติตน",
                 bloom_level="apply",
                 current_ksec=("E", "C"),
-                need_statements_th=(),
+                cited_needs=(),
             ),
         ),
         ksec_coverage=KsecCoverage(
@@ -97,11 +101,13 @@ def test_no_unused_need_is_said_outright() -> None:
     assert "ไม่มี Need สำคัญที่ไม่ได้เป็น PLO" in user
 
 
-def test_rubric_names_the_six_checks_tools_budget_and_json_keys() -> None:
+def test_rubric_names_the_seven_checks_tools_budget_and_json_keys() -> None:
     system, _ = _turns()
     for key in (
         "redundancies",
         "ksec",
+        "alignment",
+        "suggested_verb_th",
         "bloom",
         "bloom_distribution_th",
         "coverage_th",
@@ -158,3 +164,26 @@ def test_rubric_says_an_unwritten_need_cannot_be_judged_consider() -> None:
     system, _ = _turns()
     assert "Need ที่ยังไม่มีประโยค" in system and "ok_to_leave" in system
     assert "เหตุที่ไม่ได้ใช้ = unwritten" not in system  # keyed on the flag, not the reason
+
+
+def test_cited_need_voices_print_in_thai_and_an_unknown_type_prints_raw() -> None:
+    _, user = _turns()
+    assert "- ต้องการบัณฑิตที่แปลเอกสารธุรกิจได้ (ผู้ขอ: ผู้ประกอบการ 3, ศิษย์เก่า 2)" in user
+    item = ReviewItem(
+        "PLO1", False, "แปล", "แปล", "apply", ("S",), (CitedNeed("ข", (("mystery", 1),)),)
+    )
+    assert "(ผู้ขอ: mystery 1)" in build_plo_review_prompt(_dossier(items=(item,)))[1]["content"]
+
+
+def test_every_stakeholder_type_has_a_thai_label() -> None:
+    from curriculum_agent.models import StakeholderType
+
+    assert set(STAKEHOLDER_LABEL_TH) == {t.value for t in StakeholderType}
+    assert STAKEHOLDER_LABEL_TH["employer"] == "ผู้ประกอบการ"
+    assert STAKEHOLDER_LABEL_TH["alumni"] == "ศิษย์เก่า"
+
+
+def test_rubric_asks_alignment_and_verb_fit_and_still_writes_no_plo() -> None:
+    system, _ = _turns()
+    assert "สอดคล้อง" in system and "เสียง" in system
+    assert "ห้ามเขียนประโยค PLO ใหม่" in system

@@ -33,7 +33,7 @@ from curriculum_agent.prompts.plo_review import (
     build_review_refusal,
 )
 from curriculum_agent.stages.bloom_verbs import levels_for_verb, scan_statement_verbs
-from curriculum_agent.stages.plo_review_facts import ReviewDossier
+from curriculum_agent.stages.plo_review_facts import ReviewDossier, need_voices
 from curriculum_agent.stages.smart_rules import (
     declares_too_many_verbs,
     opens_with_declared_verb,
@@ -71,10 +71,18 @@ class KsecVerdict(BaseModel):
     reason_th: str = ""
 
 
+class AlignmentVerdict(BaseModel):
+    plo_id: str = ""
+    reason_th: str = ""
+    suggestion_th: str = ""
+
+
 class BloomVerdict(BaseModel):
     plo_id: str = ""
     suggested_level: str | None = None
+    suggested_verb_th: str | None = None
     reason_th: str = ""
+    suggestion_th: str = ""
 
 
 class UnusedVerdict(BaseModel):
@@ -95,6 +103,7 @@ class ReviewFinish(BaseModel):
     kind: Literal["finish"]
     redundancies: list[Redundancy] = Field(default_factory=list)
     ksec: list[KsecVerdict] = Field(default_factory=list)
+    alignment: list[AlignmentVerdict] = Field(default_factory=list)
     bloom: list[BloomVerdict] = Field(default_factory=list)
     bloom_distribution_th: str = ""
     coverage_th: str = ""
@@ -121,6 +130,7 @@ def run_review_tool(
     unused_needs: Mapping[str, Need],
     tool: ReviewToolName,
     arg: str,
+    stakeholder_by_evidence: Mapping[str, str] = {},  # noqa: B006 - read-only
 ) -> tuple[bool, dict[str, Any]]:
     """One tool, pure. (False, {"error_th": ...}) is a refusal the model reads."""
     arg = arg.strip()
@@ -153,7 +163,7 @@ def run_review_tool(
     return True, {
         "need_id": need.need_id,
         "member_count": len(need.member_skill_ids),
-        "stakeholder_coverage": {str(k): v for k, v in need.stakeholder_coverage.items()},
+        "voices": need_voices(need, stakeholder_by_evidence),
     }
 
 
@@ -177,7 +187,9 @@ async def _ask_step(messages: list[dict[str, Any]]) -> ReviewStep:
 
 
 async def run_review_agent(
-    dossier: ReviewDossier, unused_needs: Mapping[str, Need]
+    dossier: ReviewDossier,
+    unused_needs: Mapping[str, Need],
+    stakeholder_by_evidence: Mapping[str, str] = {},  # noqa: B006 - read-only
 ) -> AgentOutcome:
     """Run the loop. Never raises: every failure is an outcome with a reason."""
     messages: list[dict[str, Any]] = build_plo_review_prompt(dossier)
@@ -202,7 +214,9 @@ async def run_review_agent(
                 else:
                     arg = action.arg.strip()
                     calls.append(ReviewToolCall(tool=action.tool.value, arg=arg))
-                    ok, payload = run_review_tool(dossier, unused_needs, action.tool, arg)
+                    ok, payload = run_review_tool(
+                        dossier, unused_needs, action.tool, arg, stakeholder_by_evidence
+                    )
                     content = (
                         build_review_observation(action.tool.value, payload)
                         if ok

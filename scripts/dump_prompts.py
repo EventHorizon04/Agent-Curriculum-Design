@@ -36,6 +36,7 @@ from curriculum_agent.prompts.merged_need import build_merged_need_prompt
 from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
 from curriculum_agent.prompts.plo_feedback import build_bloom_redraft_note_th
 from curriculum_agent.prompts.plo_review import (
+    CitedNeed,
     ReviewItem,
     build_plo_review_prompt,
     build_review_observation,
@@ -144,7 +145,9 @@ def _build() -> str:
                         action_verb_th="<กริยา>",
                         bloom_level="apply",
                         current_ksec=("S",),
-                        need_statements_th=("<ประโยคความต้องการ>",),
+                        cited_needs=(
+                            CitedNeed("<ประโยคความต้องการ>", (("employer", 3), ("alumni", 2))),
+                        ),
                     ),
                     ReviewItem(
                         plo_id="<OPT1>",
@@ -153,7 +156,9 @@ def _build() -> str:
                         action_verb_th="<กริยา>",
                         bloom_level="analyze",
                         current_ksec=("E", "C"),
-                        need_statements_th=("<ประโยคความต้องการ>",),
+                        cited_needs=(
+                            CitedNeed("<ประโยคความต้องการ>", (("employer", 3), ("alumni", 2))),
+                        ),
                     ),
                 ),
                 ksec_coverage=KsecCoverage(

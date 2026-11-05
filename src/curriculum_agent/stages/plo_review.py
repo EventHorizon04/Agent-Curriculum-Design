@@ -34,6 +34,7 @@ from loguru import logger
 
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
+    EvidenceRepository,
     NeedRepository,
     PLORepository,
     PLOReviewRepository,
@@ -42,6 +43,7 @@ from curriculum_agent.data.repositories import (
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import (
     PLO,
+    AlignmentFinding,
     BloomFinding,
     BloomLevel,
     FeedbackAction,
@@ -154,6 +156,20 @@ def accept_review(
             )
         )
 
+    alignment: list[AlignmentFinding] = []
+    alignment_seen: set[str] = set()
+    for al in answer.alignment:
+        pid = al.plo_id.strip()
+        if pid not in by_id or pid in alignment_seen or not al.reason_th.strip():
+            drops["alignment"] += 1
+            continue
+        alignment_seen.add(pid)
+        alignment.append(
+            AlignmentFinding(
+                plo_id=pid, reason_th=al.reason_th.strip(), suggestion_th=al.suggestion_th.strip()
+            )
+        )
+
     bloom: list[BloomFinding] = []
     bloom_seen: set[str] = set()
     for b in answer.bloom:
@@ -163,13 +179,24 @@ def accept_review(
             continue
         declared = by_id[pid].bloom_level
         level = _bloom_level(b.suggested_level)
-        if (level is None or level == declared) and not b.reason_th.strip():
+        # A verb is advice only when it differs from the declared one; an empty
+        # or unchanged verb is no proposal.
+        verb = (b.suggested_verb_th or "").strip() or None
+        if verb == by_id[pid].action_verb_th.strip():
+            verb = None
+        proposes = verb is not None or (level is not None and level != declared)
+        if not proposes and not b.reason_th.strip():
             drops["bloom"] += 1
             continue
         bloom_seen.add(pid)
         bloom.append(
             BloomFinding(
-                plo_id=pid, declared=declared, suggested_level=level, reason_th=b.reason_th.strip()
+                plo_id=pid,
+                declared=declared,
+                suggested_level=level,
+                suggested_verb_th=verb,
+                reason_th=b.reason_th.strip(),
+                suggestion_th=b.suggestion_th.strip(),
             )
         )
 
@@ -205,6 +232,7 @@ def accept_review(
         redundancies=redundancies,
         ksec=ksec,
         bloom=bloom,
+        alignment=alignment,
         bloom_distribution_th=answer.bloom_distribution_th.strip(),
         summary_th=answer.summary_th.strip(),
         ksec_coverage=dossier.ksec_coverage,
@@ -249,6 +277,7 @@ def has_agent_findings(review: PLOSetReview) -> bool:
         review.redundancies
         or review.ksec
         or review.bloom
+        or review.alignment
         or review.summary_th
         or review.coverage_th
         or review.bloom_distribution_th
@@ -272,6 +301,9 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
     metadata = await ProgramRepository().get(program_id)
     needs = await NeedRepository().list_active_by_program(program_id)
     needs_by_id = {n.need_id: n for n in needs}
+    # Voices need the stakeholder type of each evidence item; read once here.
+    evidence = await EvidenceRepository().list_by_program(program_id)
+    stakeholder_by_evidence = {e.evidence_id: e.stakeholder_type.value for e in evidence}
     dossier = build_dossier(
         plos,
         needs,
@@ -279,6 +311,7 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
         if metadata
         else None,
         degree_level=metadata.degree_level if metadata else "",
+        stakeholder_by_evidence=stakeholder_by_evidence,
     )
     if len(dossier.items) > MAX_DOSSIER_PLOS_WARN:
         logger.warning(
@@ -304,7 +337,9 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
     # answers differently from run to run even at temperature 0, and a finding
     # most runs repeat is one the designer can trust. Each run keeps its own
     # budget and timeout; none sees another's answer.
-    outcomes = await asyncio.gather(*(run_review_agent(dossier, unused) for _ in range(requested)))
+    outcomes = await asyncio.gather(
+        *(run_review_agent(dossier, unused, stakeholder_by_evidence) for _ in range(requested))
+    )
     judged: list[PLOSetReview] = []
     for i, outcome in enumerate(outcomes, start=1):
         if outcome.finish is None:
@@ -323,7 +358,8 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
         )
         logger.info(
             f"plo_review: run {i}/{requested} kept {len(review.redundancies)} redundancy / "
-            f"{len(review.ksec)} ksec / {len(review.bloom)} bloom / "
+            f"{len(review.ksec)} ksec / {len(review.alignment)} alignment / "
+            f"{len(review.bloom)} bloom / "
             f"{sum(1 for u in review.unused_needs if u.verdict)} unused verdict(s), "
             f"dropped {dict(drops) or 'nothing'}, {len(review.tool_calls)} tool call(s)"
         )

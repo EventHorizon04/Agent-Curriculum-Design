@@ -836,8 +836,21 @@ class BloomFinding(BaseModel):
     declared: BloomLevel
     suggested_level: BloomLevel | None = None
     reason_th: str = ""
+    # The verb the reviewer thinks fits the work better, and why. Advice only:
+    # nothing here is a PLO field. Both default empty for rows written before.
+    suggested_verb_th: str | None = None
+    suggestion_th: str = ""
     # How many of the review's runs said this (stages/plo_review_consensus.py).
     # 1 for a one-run review and for rows written before the field existed.
+    agreed_runs: int = 1
+
+
+class AlignmentFinding(BaseModel):
+    """A PLO that does not answer what the Needs it cites ask for."""
+
+    plo_id: str
+    reason_th: str
+    suggestion_th: str = ""
     agreed_runs: int = 1
 
 
@@ -914,6 +927,7 @@ class PLOSetReview(BaseModel):
     redundancies: list[RedundancyFinding] = Field(default_factory=list)
     ksec: list[KsecFinding] = Field(default_factory=list)
     bloom: list[BloomFinding] = Field(default_factory=list)
+    alignment: list[AlignmentFinding] = Field(default_factory=list)
     bloom_distribution_th: str = ""
     summary_th: str = ""
     ksec_coverage: KsecCoverage = Field(default_factory=KsecCoverage)
