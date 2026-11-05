@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
-import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
-import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
-import { PLO_REPORT_PLAN } from '../constants/runPlans'
+import { LoadingLine } from '../components/RunProgress'
 import api from '../api/client'
-import { startJob, type JobKind } from '../api/jobs'
+import type { JobKind } from '../api/jobs'
 import { ksecLabel, stakeholderLabel, classStyle, isRequirementStakeholder } from '../constants/stakeholder'
 import { VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
@@ -56,15 +54,13 @@ interface ReportCounts {
   code_only: number
 }
 
-/** The job kinds whose outcome this page reports: the report run alone. The set
- *  review is stage 06 and has its own page, which shows its runs and failures. */
-const PAGE_KINDS: JobKind[] = ['plo_report']
 /** The jobs that change what this page draws, whichever page started them: the
- *  report is a reading of the PLOs and the Needs, so a synthesis, a re-check, or
- *  a new set of Needs all leave it showing a set that no longer exists. */
+ *  stored report is written by the approval run, and a synthesis, a review's
+ *  send-back, a re-check or a new set of Needs leave it older than the set. */
 const RELOAD_KINDS: JobKind[] = [
   'plo_report',
   'plo_synthesis',
+  'plo_review',
   'plo_revalidate',
   'needs_pipeline',
   'skill_extraction',
@@ -105,6 +101,14 @@ interface TraceSkill {
  *  also returns are already quoted through each skill's span. */
 interface NeedTraceResponse {
   skills: TraceSkill[]
+}
+
+/** `GET /plos/report`: the report stored when the designer approved the set. */
+interface StoredReportResponse {
+  report: { plos: PLO[]; needs_by_id: Record<string, NeedSummary> } | null
+  /** The PLOs or Needs changed after the report was stored. */
+  stale: boolean
+  created_at: string | null
 }
 
 interface PLOTrace {
@@ -237,30 +241,24 @@ export default function PloReport() {
     const cited = new Set(plos.flatMap((p) => p.source_need_ids))
     return Object.values(needsById).filter((n) => !cited.has(n.need_id))
   }, [plos, needsById])
+  const [hasReport, setHasReport] = useState(false)
+  const [stale, setStale] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [starting, setStarting] = useState(false)
   const [error, setError] = useState('')
-
-  const { running, latestOf, started, refresh } = useJobs()
-  // `running` is any job of this program; `mine` is the report run this page shows.
-  const mine = running?.kind === 'plo_report' ? running : null
-  const last = latestOf(PAGE_KINDS)
-  // Any job of the program blocks the start button: one writer per program.
-  const busy = running !== null || starting
 
   const fetchData = useCallback(async () => {
     if (!programId) return
     setLoading(true)
     setError('')
     try {
-      const [ploRes, needRes] = await Promise.all([
-        api.get<PLO[]>(`/programs/${programId}/plos/`),
-        api.get<NeedSummary[]>(`/programs/${programId}/needs/?active_only=true`),
-      ])
-      setPlos(ploRes.data)
-      setNeedsById(Object.fromEntries(needRes.data.map((n) => [n.need_id, n])))
-      setCounts(countsFrom(ploRes.data))
+      const res = await api.get<StoredReportResponse>(`/programs/${programId}/plos/report`)
+      const { report, stale: isStale } = res.data
+      setHasReport(report !== null)
+      setStale(report !== null && isStale)
+      setPlos(report?.plos ?? [])
+      setNeedsById(report?.needs_by_id ?? {})
+      setCounts(countsFrom(report?.plos ?? []))
     } catch {
       setError('โหลดข้อมูลไม่สำเร็จ ตรวจว่า API ทำงานอยู่ แล้วลองใหม่')
     } finally {
@@ -270,29 +268,7 @@ export default function PloReport() {
 
   // Reload once when a job that changes this page's data ends, whichever page
   // started it and whichever way it ended.
-  const watch = useReloadOnJobs(RELOAD_KINDS, () => void fetchData())
-
-  // The report is a background job: starting it only records it. The page has
-  // its own read of the stored PLOs and Needs, so when the job ends it reloads
-  // them (above) rather than drawing from the job's result.
-  const runReport = useCallback(async () => {
-    if (!programId) return
-    setStarting(true)
-    setError('')
-    try {
-      const job = await startJob(`/programs/${programId}/plos/report/run`)
-      watch(job)
-      started(job)
-    } catch (err: unknown) {
-      const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
-      setError(res?.data?.detail ?? 'สร้างรายงานไม่สำเร็จ')
-      // A 409 means a job this page has not heard of is running: read the list
-      // now so the button says so too.
-      if (res?.status === 409) void refresh()
-    } finally {
-      setStarting(false)
-    }
-  }, [programId, watch, started, refresh])
+  useReloadOnJobs(RELOAD_KINDS, () => void fetchData())
 
   // Fetched as a blob through the api client rather than linked with a plain
   // anchor, so a 422 or 501 surfaces as an error message here instead of
@@ -336,36 +312,34 @@ export default function PloReport() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="eyebrow">ขั้นที่ 6</p>
+        <p className="eyebrow">ขั้นที่ 7</p>
         <h1 className="page-title">รายงาน PLO</h1>
         <p className="mt-1 text-sm text-pencil">
-          ผลลัพธ์การเรียนรู้ทั้งชุด พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
+          ชุด PLO ที่อนุมัติแล้ว พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
         </p>
       </header>
 
       {error && <p className="notice notice-error">{error}</p>}
-      {last?.status === 'failed' && <RunFailure job={last} />}
+      {hasReport && stale && (
+        <p className="notice notice-warn">
+          รายงานนี้จัดทำจากชุด PLO ก่อนหน้า — PLO หรือ Need เปลี่ยนหลังอนุมัติ กลับไปตรวจและอนุมัติใหม่เพื่อให้ตรงกับชุดปัจจุบัน{' '}
+          <Link to="/plo-review" className="link">
+            ไปหน้าตรวจคุณภาพ
+          </Link>
+        </p>
+      )}
 
-      {/* A run in progress comes before the loading line: what a load would
-          show is about to be replaced, and a page opened mid-run should say so
-          at once rather than after its own read finishes. */}
-      {mine ? (
-        <RunProgress key={mine.job_id} plan={PLO_REPORT_PLAN} since={Date.parse(mine.created_at)} />
-      ) : loading ? (
+      {loading && !hasReport ? (
         <LoadingLine />
-      ) : plos.length === 0 ? (
+      ) : !hasReport ? (
         <div className="panel px-6 py-12 text-center">
-          <p className="record text-lg">ยังไม่มี PLO ให้รายงาน</p>
+          <p className="record text-lg">ยังไม่ได้อนุมัติชุด PLO</p>
           <p className="mx-auto mt-2 max-w-md text-sm text-pencil">
-            รายงานประกอบขึ้นจาก PLO ที่สังเคราะห์ไว้แล้ว ถ้ายังไม่ได้สังเคราะห์
-            ให้กลับไปที่ขั้นที่ 5 ก่อน
+            รายงานเก็บเมื่อผู้ออกแบบอนุมัติชุด PLO ที่ขั้นตรวจคุณภาพ
           </p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-            <button onClick={runReport} disabled={busy} className="btn btn-primary">
-              สร้างรายงาน
-            </button>
-            <Link to="/plo-synthesis" className="link text-sm">
-              ไปสังเคราะห์ PLO
+          <div className="mt-5">
+            <Link to="/plo-review" className="link text-sm">
+              ไปตรวจคุณภาพชุด PLO
             </Link>
           </div>
         </div>
@@ -393,9 +367,6 @@ export default function PloReport() {
             )}
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <button onClick={runReport} disabled={busy} className="btn btn-secondary btn-sm">
-                สร้างใหม่
-              </button>
               <button
                 onClick={exportMatrix}
                 disabled={exporting}
@@ -423,7 +394,7 @@ export default function PloReport() {
 
           <p className="border-t border-hair pt-4 text-sm text-pencil">
             <Link to="/plo-review" className="link">
-              ไปตรวจคุณภาพชุด PLO →
+              ← กลับไปหน้าตรวจคุณภาพชุด PLO
             </Link>
           </p>
         </>

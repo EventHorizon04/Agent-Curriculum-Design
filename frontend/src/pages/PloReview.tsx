@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
-import { PLO_REVIEW_PLAN } from '../constants/runPlans'
+import { PLO_REPORT_PLAN, PLO_REVIEW_PLAN } from '../constants/runPlans'
 import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import { BLOOM_ORDER, bloomLabel } from '../constants/bloom'
@@ -21,8 +21,9 @@ import type {
 /** The job kinds whose runs this page shows. */
 const PAGE_KINDS: JobKind[] = ['plo_review']
 /** The jobs that change what this page draws, whichever page started them: the
- *  review is a reading of the PLOs and the Needs, so a synthesis, a re-check, a
- *  new report or a new set of Needs all leave it describing a set that moved. */
+ *  review is a reading of the PLOs and the Needs, so a synthesis, a re-check or
+ *  a new set of Needs all leave it describing a set that moved. `plo_report` is
+ *  here for the approval this page starts: its success sends the designer on. */
 const RELOAD_KINDS: JobKind[] = [
   'plo_review',
   'plo_report',
@@ -90,11 +91,18 @@ export default function PloReview() {
   const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[] } | null>(null)
   const [starting, setStarting] = useState(false)
   const [runError, setRunError] = useState<RunError | null>(null)
+  const navigate = useNavigate()
+  // The approval job this page started; its success is what navigates on, and
+  // a report run some other page started must not pull the designer away.
+  const approvalJob = useRef<string | null>(null)
 
   const { running, latestOf, started, refresh } = useJobs()
   // `running` is any job of this program; `mine` is the review this page shows.
   const mine = running?.kind === 'plo_review' ? running : null
   const last = latestOf(PAGE_KINDS)
+  // The approval's own failure; the report is stored by it, so it is this page's.
+  const lastReport = latestOf(['plo_report'])
+  const approving = running?.kind === 'plo_report' ? running : null
   // Any job of the program blocks the button: one writer per program.
   const busy = running !== null || starting
 
@@ -122,7 +130,13 @@ export default function PloReview() {
     }
   }, [programId])
 
-  const watch = useReloadOnJobs(RELOAD_KINDS, () => void fetchData())
+  const watch = useReloadOnJobs(RELOAD_KINDS, (job) => {
+    void fetchData()
+    if (job.kind === 'plo_report' && job.job_id === approvalJob.current) {
+      approvalJob.current = null
+      if (job.status === 'succeeded') navigate('/plo-report')
+    }
+  })
 
   const runReview = useCallback(async () => {
     if (!programId) return
@@ -137,6 +151,26 @@ export default function PloReview() {
       setRunError({ text: res?.data?.detail ?? 'ตรวจชุด PLO ไม่สำเร็จ', status: res?.status })
       // A 409 means a job this page has not heard of is running: read the list
       // now so the button says so too.
+      if (res?.status === 409) void refresh()
+    } finally {
+      setStarting(false)
+    }
+  }, [programId, watch, started, refresh])
+
+  // Approving stores the report (POST /plos/report/run) and then the report page
+  // reads it; graph-session approval stays on the Pipeline page.
+  const approve = useCallback(async () => {
+    if (!programId) return
+    setStarting(true)
+    setRunError(null)
+    try {
+      const job = await startJob(`/programs/${programId}/plos/report/run`)
+      approvalJob.current = job.job_id
+      watch(job)
+      started(job)
+    } catch (err: unknown) {
+      const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
+      setRunError({ text: res?.data?.detail ?? 'อนุมัติชุด PLO ไม่สำเร็จ', status: res?.status })
       if (res?.status === 409) void refresh()
     } finally {
       setStarting(false)
@@ -166,7 +200,7 @@ export default function PloReview() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="eyebrow">ขั้นที่ 7</p>
+        <p className="eyebrow">ขั้นที่ 6</p>
         <h1 className="page-title">ตรวจคุณภาพชุด PLO</h1>
         <p className="mt-1 text-sm text-pencil">
           QA agent อ่าน PLO ทั้งชุดที่ทำเสร็จแล้ว แล้วให้คำแนะนำ — ข้อที่ตรงกันและแก้ได้จะถูกส่งกลับไปแก้ให้ พร้อมบันทึกว่าแก้อะไร
@@ -188,8 +222,11 @@ export default function PloReview() {
         </p>
       )}
       {last?.status === 'failed' && <RunFailure job={last} />}
+      {lastReport?.status === 'failed' && <RunFailure job={lastReport} />}
 
-      {mine ? (
+      {approving ? (
+        <RunProgress key={approving.job_id} plan={PLO_REPORT_PLAN} since={Date.parse(approving.created_at)} />
+      ) : mine ? (
         <RunProgress key={mine.job_id} plan={PLO_REVIEW_PLAN} since={Date.parse(mine.created_at)} />
       ) : data === null && !loadError ? (
         <LoadingLine />
@@ -206,9 +243,7 @@ export default function PloReview() {
           )}
 
           {data?.stale && (
-            <p className="notice notice-warn">
-              ผลนี้ตรวจจาก PLO ชุดก่อน — PLO หรือ Need เปลี่ยนหลังการตรวจ กดตรวจใหม่ให้ตรงกับชุดปัจจุบัน
-            </p>
+            <p className="notice notice-warn">ชุด PLO เปลี่ยนหลังการตรวจ — ตรวจใหม่ก่อนอนุมัติ</p>
           )}
 
           {(review.runs_requested ?? 1) > 1 && runsOf(review) === 1 && (
@@ -229,6 +264,19 @@ export default function PloReview() {
               review={review}
             />
           )}
+
+          <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
+            <p className="min-w-0 flex-1 text-sm text-pencil">
+              อ่านผลตรวจและตรวจ PLO ให้พอใจแล้วอนุมัติ — ระบบจะเก็บรายงานชุดนี้ไว้เป็นฉบับสุดท้าย
+            </p>
+            <button
+              onClick={approve}
+              disabled={busy || data?.stale === true}
+              className="btn btn-primary"
+            >
+              อนุมัติชุด PLO และออกรายงาน
+            </button>
+          </div>
 
           <Overview review={review} />
           <Redundancies review={review} />

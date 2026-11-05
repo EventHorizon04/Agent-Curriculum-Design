@@ -162,6 +162,9 @@ export interface MockDb {
   superseded?: SupersededRow[]
   /** What each review sent back, newest first once listed. Optional for the same reason. */
   feedback?: FeedbackAction[]
+  /** The report stored at approval, one per program at most, with the time it was stored.
+   *  Optional for the same reason as `reviews`. */
+  reports?: Array<{ program_id: string; created_at: string; report: unknown }>
 }
 
 export function emptyDb(): MockDb {

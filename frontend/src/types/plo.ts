@@ -49,6 +49,8 @@ export interface PLO {
   smart_validated_by: ValidatedBy
   smart_diagnosis_th: string | null
   is_optional: boolean
+  /** ISO timestamp (+00:00) of the designer's last hand edit; null when none. */
+  designer_edited_at?: string | null
 }
 
 /** A PLO a merge replaced, kept so the designer can see what it said. The live

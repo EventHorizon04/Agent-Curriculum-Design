@@ -58,7 +58,8 @@ const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate']
 /** The jobs that change what this page lists, whichever page started them: the
  *  PLOs it shows are written by the first two, the Needs it offers for merging
  *  by the last two. */
-const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate', 'needs_pipeline', 'skill_extraction', 'need_combination']
+/* plo_review is chained after synthesis and may change PLOs (send-back). */
+const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_review', 'plo_revalidate', 'needs_pipeline', 'skill_extraction', 'need_combination']
 
 /** Wall clock, read from an event handler: kept out of the component body so
  *  the purity lint does not mistake the handler for render. */
@@ -278,11 +279,17 @@ export default function PloSynthesis() {
         <p className="eyebrow">ขั้นที่ 5</p>
         <h1 className="page-title">สังเคราะห์ PLO</h1>
         <p className="mt-1 text-sm text-pencil">ตรวจสอบและแก้ไข Program Learning Outcomes ที่ AI สังเคราะห์</p>
+        <p className="mt-1 text-xs text-lead">
+          เมื่อสังเคราะห์เสร็จ ระบบตรวจคุณภาพทั้งชุดต่อทันที และอาจส่งบาง PLO กลับไปแก้ — ดูผลที่ขั้นตรวจคุณภาพ
+        </p>
         <p className="data mt-1 text-xs text-lead">{programId}</p>
       </div>
 
       {error && (
         <div className="notice notice-error mb-6">{error}</div>
+      )}
+      {running?.kind === 'plo_review' && (
+        <p className="notice notice-warn mb-6">กำลังตรวจคุณภาพชุด PLO ต่อจากการสังเคราะห์ — PLO อาจเปลี่ยนเมื่อตรวจเสร็จ</p>
       )}
       {last?.status === 'failed' && (
         <div className="mb-6">
@@ -399,15 +406,15 @@ export default function PloSynthesis() {
         </>
       )}
 
-      {/* The report reads the stored PLOs, so anything drafted is enough to go
+      {/* The review reads the stored PLOs, so anything drafted is enough to go
           on — including a set carrying escalations, which is exactly what the
-          report page is there to show. */}
+          review page is there to show. */}
       <NextStageLink
         from="plo_synthesis"
         ready={Boolean(programId) && plos.length > 0 && mine === null && !merging}
         blockedReason={
           mine !== null || merging
-            ? 'รอให้งานที่กำลังทำเสร็จก่อน — รายงานต้องอ่านจาก PLO ชุดนี้'
+            ? 'รอให้งานที่กำลังทำเสร็จก่อน — การตรวจคุณภาพต้องอ่านจาก PLO ชุดนี้'
             : 'ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน'
         }
       />

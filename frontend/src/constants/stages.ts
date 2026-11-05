@@ -1,8 +1,9 @@
 /** The pipeline as the designer meets it.
  *
  * Seven stages, seven pages. Skill extraction (Agent 1) and Need analysis
- * (Agent 2) each have their own page; the review gate sits after Need analysis,
- * so `gateNote` is on that stage and the skill stage has none.
+ * (Agent 2) each have their own page; the Need gate sits after Need analysis and
+ * the PLO gate on the review page (the designer approves there, then the report
+ * is stored), so `gateNote` is on those two and the skill stage has none.
  */
 export interface StageDef {
   /** Stage key as the API reports it in ProgramSummary.current_stage. */
@@ -54,18 +55,19 @@ export const STAGES: StageDef[] = [
     summary: 'หนึ่ง Need เป็นหนึ่ง PLO สูงสุด 10 ข้อหลัก',
   },
   {
-    key: 'plo_report',
-    route: '/plo-report',
-    ordinal: 6,
-    label: 'รายงาน PLO',
-    summary: 'ทบทวนผลตรวจ ย้อนรอยหลักฐาน และส่งออก',
-  },
-  {
     key: 'plo_review',
     route: '/plo-review',
-    ordinal: 7,
+    ordinal: 6,
     label: 'ตรวจคุณภาพชุด PLO',
-    summary: 'QA agent อ่าน PLO ทั้งชุด แนะนำเรื่องซ้ำ KSEC Bloom และ Need ที่ตกหล่น',
+    summary: 'ตรวจทั้งชุด ส่งกลับไปแก้ แล้วผู้ออกแบบอนุมัติ',
+    gateNote: 'ตรวจและอนุมัติที่ขั้นนี้',
+  },
+  {
+    key: 'plo_report',
+    route: '/plo-report',
+    ordinal: 7,
+    label: 'รายงาน PLO',
+    summary: 'ชุด PLO สุดท้ายหลังอนุมัติ ย้อนรอยหลักฐาน และส่งออก',
   },
 ]
 

@@ -110,6 +110,9 @@ function stageReached(pid: string): string {
   const db = getDb()
   // graph.stage_reached: a stored review counts once the program has PLOs; the
   // mock never reports one stale, so any stored review is current.
+  if (of(db.plos, pid).length && (db.reports ?? []).some((x) => x.program_id === pid)) {
+    return 'plo_report'
+  }
   if (of(db.plos, pid).length && (db.reviews ?? []).some((x) => x.program_id === pid)) {
     return 'plo_review'
   }
@@ -304,6 +307,38 @@ function runStageForSession(pid: string, stage: string): void {
   }
 }
 
+/** The report body, built from the set as it is now: active Needs only, like the
+ *  real report, since merged-away originals are stored but nothing reads them. */
+function buildReport(pid: string) {
+  const plos = sortPlos(of(getDb().plos, pid))
+  const needs = activeNeeds(of(getDb().needs, pid))
+  const cited = new Set(plos.flatMap((p) => p.source_need_ids))
+  const notSynthesized = needs.map((n) => n.need_id).filter((id) => !cited.has(id))
+  const core = plos.filter((p) => !p.is_optional).length
+  return {
+    plos,
+    counts: {
+      total: plos.length,
+      core,
+      optional: plos.length - core,
+      escalated: plos.filter((p) => p.smart_escalated).length,
+      stale: plos.filter((p) => p.smart_validated_by === 'stale').length,
+      code_only: plos.filter((p) => p.smart_validated_by === 'code_only').length,
+      needs_not_synthesized: notSynthesized.length,
+    },
+    needs_by_id: Object.fromEntries(needs.map((n) => [n.need_id, n])),
+    needs_not_synthesized: notSynthesized,
+  }
+}
+
+/** Stores the report, replacing the previous one — the designer's approval. */
+function storeReport(pid: string): ReturnType<typeof buildReport> {
+  const db = getDb()
+  const report = clone(buildReport(pid))
+  db.reports = [...(db.reports ?? []).filter((x) => x.program_id !== pid), { program_id: pid, created_at: utcIso(), report }]
+  return report
+}
+
 /** What resuming the last checkpoint runs: plo_report, then plo_review, then END.
  *  The review is stored the way the real graph's plo_review node stores it. */
 function finishSession(pid: string): void {
@@ -316,6 +351,9 @@ function finishSession(pid: string): void {
   const review = buildMockReview(pid, plos, of(db.needs, pid), degree)
   db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
   sendBack(pid, review)
+  // The review comes first now and the report last, so the stored report
+  // describes the set the send-back left.
+  storeReport(pid)
 }
 
 /** Replace every outcome citing one of the selected Needs with one drafted from
@@ -744,6 +782,30 @@ function finishJob(jobId: string, work: () => MockResponse, next?: MockJob): voi
 // ----------------------------------------------------------------------------
 // The routes
 // ----------------------------------------------------------------------------
+
+/** The stage 06 review as a job. `/plos/run` chains it after synthesis, as the
+ *  backend does, and `/plos/review/run` starts it alone. */
+function reviewJobSpec(pid: string): MockJob {
+  return {
+    pid,
+    kind: 'plo_review',
+    params: {},
+    failure: runFailureText('plo_review'),
+    work: () => {
+      // Built when the job finishes, from the set as it is by then, and stored
+      // the way the real run replaces the previous review.
+      const db = getDb()
+      const degree = db.programs.find((p) => p.program_id === pid)?.degree_level ?? 'bachelor'
+      const review = buildMockReview(pid, of(db.plos, pid), of(db.needs, pid), degree)
+      db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
+      const feedback = sendBack(pid, review)
+      // Send-back changed the set right after the review was stored, so the
+      // review is stale by construction (the server's fingerprint would say so).
+      const changed = feedback.some((f) => f.outcome === 'applied')
+      return ok({ review, stale: changed, review_enabled: true, feedback })
+    },
+  }
+}
 
 export function buildRouter(): Router {
   const r = new Router()
@@ -1257,6 +1319,8 @@ export function buildRouter(): Router {
       kind: 'plo_synthesis',
       params: { note_th: note_th ?? null, run_validation: run_validation ?? true },
       failure: runFailureText('plo_synthesis'),
+      // The backend chains the review once synthesis succeeds.
+      next: reviewJobSpec(pid),
       work: () => {
         const plos = synthesizePlos(pid, of(getDb().needs, pid), of(getDb().skills, pid))
         // The system switch wins over the request, as smart_agent orders them:
@@ -1307,31 +1371,22 @@ export function buildRouter(): Router {
       params: {},
       failure: runFailureText('plo_report'),
       work: () => {
-        // Read when the job finishes, not when it starts: the report describes
-        // whatever the set is by then.
-        const plos = sortPlos(of(getDb().plos, pid))
-        // Active Needs only, like the real report: merged-away originals are
-        // stored but nothing downstream reads them.
-        const needs = activeNeeds(of(getDb().needs, pid))
-        const cited = new Set(plos.flatMap((p) => p.source_need_ids))
-        const notSynthesized = needs.map((n) => n.need_id).filter((id) => !cited.has(id))
-        const core = plos.filter((p) => !p.is_optional).length
-        return ok({
-          plos,
-          counts: {
-            total: plos.length,
-            core,
-            optional: plos.length - core,
-            escalated: plos.filter((p) => p.smart_escalated).length,
-            stale: plos.filter((p) => p.smart_validated_by === 'stale').length,
-            code_only: plos.filter((p) => p.smart_validated_by === 'code_only').length,
-            needs_not_synthesized: notSynthesized.length,
-          },
-          needs_by_id: Object.fromEntries(needs.map((n) => [n.need_id, n])),
-          needs_not_synthesized: notSynthesized,
-        })
+        // Built when the job finishes and stored: this is the designer's approval.
+        return ok(storeReport(pid))
       },
     })
+  })
+
+  /** The stored report; stale when the set changed after it was stored. The
+   *  mock compares the PLO rows themselves, since nothing here fingerprints. */
+  r.get('/programs/:pid/plos/report', (req) => {
+    const pid = req.params.pid
+    if (!findProgram(pid)) return detail(404, 'Program not found')
+    const row = (getDb().reports ?? []).find((x) => x.program_id === pid)
+    if (!row) return ok({ report: null, stale: false, created_at: null })
+    const stored = (row.report as { plos: PloRow[] }).plos
+    const stale = JSON.stringify(stored) !== JSON.stringify(sortPlos(of(getDb().plos, pid)))
+    return ok({ report: row.report, stale, created_at: row.created_at })
   })
 
   /** The stage 06 set review: what is stored, if anything. The mock never
@@ -1346,25 +1401,7 @@ export function buildRouter(): Router {
     if (!of(getDb().plos, pid).length) {
       return detail(422, 'ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน')
     }
-    return startJob({
-      pid,
-      kind: 'plo_review',
-      params: {},
-      failure: runFailureText('plo_review'),
-      work: () => {
-        // Built when the job finishes, from the set as it is by then, and stored
-        // the way the real run replaces the previous review.
-        const db = getDb()
-        const degree = db.programs.find((p) => p.program_id === pid)?.degree_level ?? 'bachelor'
-        const review = buildMockReview(pid, of(db.plos, pid), of(db.needs, pid), degree)
-        db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
-        const feedback = sendBack(pid, review)
-        // Send-back changed the set right after the review was stored, so the
-        // review is stale by construction (the server's fingerprint would say so).
-        const changed = feedback.some((f) => f.outcome === 'applied')
-        return ok({ review, stale: changed, review_enabled: true, feedback })
-      },
-    })
+    return startJob(reviewJobSpec(pid))
   })
 
   r.post(
