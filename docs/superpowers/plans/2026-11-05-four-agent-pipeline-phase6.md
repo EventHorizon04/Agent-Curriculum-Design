@@ -566,3 +566,16 @@ def repairable(failed: Sequence[SmartFindingCode]) -> list[SmartFindingCode]
   - Write `.scratch/reports/2026-11-05-phase6c-loop.md`: the before/after set (statements), the trail, cost and time against the baseline and 6b.
   - Recommend whether to flip the default to `apply`. **Do not flip it; that is the designer's call.**
 - [ ] **Step 5: commit the report.**
+
+### Task 13: review early stop (added during execution — spec decision 26 covers both votes; the plan omitted the review)
+
+**Files:** `src/curriculum_agent/stages/plo_review.py` (`_review`), `src/curriculum_agent/stages/plo_review_consensus.py` (a pure helper); tests `tests/unit/test_plo_review_run.py` (or the file that tests `_review`), `tests/unit/test_plo_review_consensus.py`.
+
+**Interfaces — produces:**
+- `def review_key(review: PLOSetReview) -> tuple` in `plo_review_consensus.py`: everything the vote decides, as a hashable value — the set of redundancy pairs (`_pairs` over every finding), the set of alignment `plo_id`s, the set of Bloom `(plo_id, suggested_level or declared, suggested_verb_th)`, the set of unused `(need_id, verdict)` with a verdict, the set of KSEC `(plo_id, frozenset(suggested))`.
+- `_review` runs `first = plo_review_runs // 2 + 1` agent runs concurrently. If all `first` runs are usable (judged, `has_agent_findings` true) and their `review_key`s are all equal, it stops and votes over those runs with `runs_requested = plo_review_runs` (so the threshold stays over runs requested and the stored review reports `runs_succeeded = first`). Otherwise it runs the remaining `plo_review_runs - first` runs and votes over every usable run, exactly as today. `plo_review_runs = 1` is unchanged (one run).
+- `_worth_reusing` must not treat an early-stopped review (`runs_succeeded == first < runs_requested`, unanimous) as unconfirmed: it is confirmed. Today's rule refuses only `runs_requested > 1 and runs_succeeded == 1`; keep that, and make sure a unanimous early stop with `first >= 2` is reused.
+- Log one INFO line: `plo_review: early stop after {first}/{requested} runs (unanimous)` or `... running {rest} more (split)`.
+
+- [ ] Step 1: failing tests — `test_review_key_equal_for_same_findings_any_order`; `test_unanimous_first_batch_stops_at_three` (5 requested, 3 identical runs → exactly 3 agent calls, stored `runs_requested=5`, `runs_succeeded=3`, `agreement_threshold` = 3, findings carried with `agreed_runs=3`); `test_split_first_batch_runs_all_five`; `test_one_unusable_run_in_first_batch_runs_the_rest`; `test_early_stopped_review_is_reused`; `test_single_run_unchanged`.
+- [ ] Step 2-4: FAIL → implement → full backend verify PASS. Step 5: commit `feat(review): early stop when the first three runs agree`.
