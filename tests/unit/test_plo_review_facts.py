@@ -180,10 +180,19 @@ def test_the_dossier_carries_no_evidence_skill_names_or_old_verdicts() -> None:
     Need sentences, and code facts — nothing a reviewer could anchor on."""
     needs = [_need("n1"), _need("n2", KSECCategory.EC), _need("u1", demand=0.9)]
     plos = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2", "gone"])]
+    voices = {eid: "employer" for n in needs for eid in n.source_evidence_ids}
     d = build_dossier(
-        plos, needs, program_context="หลักสูตรปริญญาตรี สาขาการแปล", degree_level="bachelor"
+        plos,
+        needs,
+        program_context="หลักสูตรปริญญาตรี สาขาการแปล",
+        degree_level="bachelor",
+        stakeholder_by_evidence=voices,
     )
     text = repr(d)
+    prompt = "\n".join(m["content"] for m in build_plo_review_prompt(d))
+    assert "(ผู้ขอ: ผู้ประกอบการ 1)" in prompt  # voices are rendered, not vacuous
+    for forbidden in ("E-n1", "S-n1-1", "rationale", "เหตุผลของ", "smart_check", "diagnosis"):
+        assert forbidden not in prompt, forbidden
     for forbidden in ("E-n1", "S-n1-1", "rationale", "เหตุผลของ", "smart_check", "diagnosis"):
         assert forbidden not in text, forbidden
     assert [i.plo_id for i in d.items] == ["PLO1", "PLO2"]
@@ -207,14 +216,20 @@ def test_the_rendered_prompt_carries_no_skill_names_ids_or_rationale() -> None:
     cited_fallback = _need("w3", demand=0.1, statement="[ต้องทบทวน] การตรวจสอบบัญชี, การวางแผนภาษี")
     needs = [_need("n1"), _need("n2", KSECCategory.EC), unwritten, unwritten_oos, cited_fallback]
     plos = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2"]), _plo("PLO3", ["w3"])]
+    voices = {eid: "employer" for n in needs for eid in n.source_evidence_ids}
     d = build_dossier(
-        plos, needs, program_context="หลักสูตรปริญญาตรี สาขาการแปล", degree_level="bachelor"
+        plos,
+        needs,
+        program_context="หลักสูตรปริญญาตรี สาขาการแปล",
+        degree_level="bachelor",
+        stakeholder_by_evidence=voices,
     )
     by_id = {u.need_id: u for u in d.unused_needs}
     assert by_id["w1"].exclusion == "unwritten" and by_id["w1"].unwritten
     assert by_id["w2"].exclusion == "out_of_scope" and by_id["w2"].unwritten
     text = "\n".join(m["content"] for m in build_plo_review_prompt(d))
     assert "[w1]" in text and "[w2]" in text  # offered to the reviewer, by id
+    assert "(ผู้ขอ: ผู้ประกอบการ 1)" in text  # voices are rendered, not vacuous
     forbidden = [
         skill_a,
         skill_b,
