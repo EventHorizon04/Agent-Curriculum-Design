@@ -11,12 +11,20 @@ from collections.abc import Callable
 
 from loguru import logger
 
-from curriculum_agent.data.repositories import NeedRepository, PLORepository
+from curriculum_agent.data.repositories import (
+    NeedRepository,
+    PLOChangedDuringRedraft,
+    PLORepository,
+)
 from curriculum_agent.models import PLO, ProgramMetadata
 
 
+REASON_CHANGED_DURING_REDRAFT = "PLO นี้ถูกแก้ระหว่างร่างใหม่ — ไม่เขียนทับ"
+
+
 class RedraftRefused(Exception):
-    """The request cannot be honoured; nothing was written. `status` is 404 or 422."""
+    """The request cannot be honoured; nothing was written. `status` is 422, or 409
+    when a PLO it would replace was changed while the draft was being written."""
 
     def __init__(self, status: int, detail_th: str) -> None:
         super().__init__(detail_th)
@@ -205,7 +213,21 @@ async def redraft_from_needs(
         if refusal is not None:
             raise RedraftRefused(422, refusal)
 
-    removed = await PLORepository().replace(program_id, sorted(superseded_ids), [plo], cause=cause)
+    # `expect` is the set as read above, before a draft that can take minutes: a
+    # hand edit that landed meanwhile refuses the replace instead of being deleted.
+    try:
+        removed = await PLORepository().replace(
+            program_id,
+            sorted(superseded_ids),
+            [plo],
+            cause=cause,
+            expect={p.plo_id: p.statement_th for p in superseded},
+        )
+    except PLOChangedDuringRedraft as exc:
+        logger.warning(
+            f"Redraft into {plo.plo_id} refused: {exc.plo_id} changed while it was drafted"
+        )
+        raise RedraftRefused(409, REASON_CHANGED_DURING_REDRAFT) from exc
     if removed:
         logger.info(f"Merge into {plo.plo_id} replaced {removed} PLO row(s)")
     return plo, sorted(superseded_ids)

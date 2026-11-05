@@ -52,7 +52,11 @@ async def test_cause_reaches_replace(monkeypatch: pytest.MonkeyPatch) -> None:
 
     await redraft_from_needs(_program(), "cs-test", ["N1"], note_th=None, cause="review")
 
-    assert replace.await_args.kwargs == {"cause": "review"}
+    # `expect` carries the superseded PLOs as read before the draft (final review I1).
+    assert replace.await_args.kwargs == {
+        "cause": "review",
+        "expect": {"PLO1": existing[0].statement_th},
+    }
 
 
 async def test_refusal_raises_422_and_replaces_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

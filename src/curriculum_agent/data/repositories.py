@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -577,6 +577,19 @@ class NeedRepository:
             return [Need.model_validate(_row_to_dict(row)) for row in originals]
 
 
+class PLOChangedDuringRedraft(Exception):
+    """A PLO `replace` was asked to supersede is not the one the caller read.
+
+    Raised from inside the transaction before anything is written: the row is
+    gone, its statement differs from the one expected, or (for a `review`
+    replace) the designer has edited it since. `plo_id` names the first such row.
+    """
+
+    def __init__(self, plo_id: str) -> None:
+        super().__init__(plo_id)
+        self.plo_id = plo_id
+
+
 class PLORepository:
     async def delete_by_program(self, program_id: str) -> int:
         """Drop every PLO row for a program. Returns the row count removed.
@@ -635,6 +648,7 @@ class PLORepository:
         add: list[PLO],
         *,
         cause: str = "designer",
+        expect: Mapping[str, str] | None = None,
     ) -> int:
         """Drop some outcomes and write others, in one transaction.
 
@@ -652,28 +666,51 @@ class PLORepository:
         `cause` is written on each history row: "designer" for a merge on the PLO
         page, "review" for Agent 4's send-back.
 
+        `expect` (plo_id -> `statement_th` as the caller read it before drafting)
+        is optimistic concurrency for a redraft: the draft takes minutes and
+        `PUT /plos/{id}` is not blocked meanwhile, so the rows are re-read here,
+        locked, and a row that is gone, reads differently, or carries
+        `designer_edited_at` on a `review` replace raises
+        `PLOChangedDuringRedraft` with nothing written. Without the check the
+        delete below would take the designer's edit with it.
+
         Returns the number of rows removed.
         """
         async with AsyncSessionLocal() as session:
             removed = 0
+            to_read = sorted(set(remove_plo_ids) | set(expect or {}))
+            current: dict[str, PLOTable] = {}
+            if to_read and (add or expect is not None):
+                rows = (
+                    (
+                        await session.execute(
+                            select(PLOTable)
+                            .where(
+                                PLOTable.program_id == program_id,
+                                PLOTable.plo_id.in_(to_read),
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                current = {row.plo_id: row for row in rows}
+            for plo_id, statement in (expect or {}).items():
+                row = current.get(plo_id)
+                if (
+                    row is None
+                    or row.statement_th != statement
+                    or (cause == "review" and row.designer_edited_at is not None)
+                ):
+                    raise PLOChangedDuringRedraft(plo_id)
             if remove_plo_ids:
                 if add:
                     # History first, in this same transaction: a PLO is either
                     # live or in superseded_plos, never lost and never both.
                     # Nothing replaces them when `add` is empty, so there is no
                     # `superseded_by` to record.
-                    doomed = (
-                        (
-                            await session.execute(
-                                select(PLOTable).where(
-                                    PLOTable.program_id == program_id,
-                                    PLOTable.plo_id.in_(remove_plo_ids),
-                                )
-                            )
-                        )
-                        .scalars()
-                        .all()
-                    )
+                    doomed = [current[pid] for pid in remove_plo_ids if pid in current]
                     now = datetime.now(UTC).replace(tzinfo=None)  # naive UTC like every column here
                     for row in doomed:
                         session.add(
