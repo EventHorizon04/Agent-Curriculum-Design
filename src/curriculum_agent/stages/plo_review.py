@@ -59,11 +59,12 @@ from curriculum_agent.models import (
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.stages.plo_feedback import send_back
 from curriculum_agent.stages.plo_review_agent import (
+    AgentOutcome,
     ReviewFinish,
     UnusedVerdict,
     run_review_agent,
 )
-from curriculum_agent.stages.plo_review_consensus import consensus_review
+from curriculum_agent.stages.plo_review_consensus import consensus_review, review_key
 from curriculum_agent.stages.plo_review_facts import (
     ReviewDossier,
     build_dossier,
@@ -339,36 +340,59 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
     # answers differently from run to run even at temperature 0, and a finding
     # most runs repeat is one the designer can trust. Each run keeps its own
     # budget and timeout; none sees another's answer.
-    outcomes = await asyncio.gather(
-        *(run_review_agent(dossier, unused, stakeholder_by_evidence) for _ in range(requested))
-    )
-    judged: list[PLOSetReview] = []
-    for i, outcome in enumerate(outcomes, start=1):
-        if outcome.finish is None:
-            logger.warning(f"plo_review: run {i}/{requested} ended {outcome.reason}")
-            continue
-        review, drops = accept_review(
-            outcome.finish,
-            plos,
-            needs_by_id,
-            dossier,
-            program_id=program_id,
-            fingerprint=fingerprint,
-            model=settings.plo_review_model,
-            created_at=now,
-            tool_calls=outcome.tool_calls,
+    # Spec 2026-11-04 decision 26: the first batch is a majority of the runs asked
+    # for; when it already agrees on every question the rest would only repeat it.
+    first = min(requested, requested // 2 + 1)
+
+    async def batch(n: int) -> list[AgentOutcome]:
+        return list(
+            await asyncio.gather(
+                *(run_review_agent(dossier, unused, stakeholder_by_evidence) for _ in range(n))
+            )
         )
-        logger.info(
-            f"plo_review: run {i}/{requested} kept {len(review.redundancies)} redundancy / "
-            f"{len(review.ksec)} ksec / {len(review.alignment)} alignment / "
-            f"{len(review.bloom)} bloom / "
-            f"{sum(1 for u in review.unused_needs if u.verdict)} unused verdict(s), "
-            f"dropped {dict(drops) or 'nothing'}, {len(review.tool_calls)} tool call(s)"
-        )
-        if not has_agent_findings(review):
-            logger.warning(f"plo_review: run {i}/{requested} held nothing usable")
-            continue
-        judged.append(review)
+
+    def judge(batch_outcomes: Sequence[AgentOutcome], offset: int) -> list[PLOSetReview]:
+        kept: list[PLOSetReview] = []
+        for i, outcome in enumerate(batch_outcomes, start=offset + 1):
+            if outcome.finish is None:
+                logger.warning(f"plo_review: run {i}/{requested} ended {outcome.reason}")
+                continue
+            review, drops = accept_review(
+                outcome.finish,
+                plos,
+                needs_by_id,
+                dossier,
+                program_id=program_id,
+                fingerprint=fingerprint,
+                model=settings.plo_review_model,
+                created_at=now,
+                tool_calls=outcome.tool_calls,
+            )
+            logger.info(
+                f"plo_review: run {i}/{requested} kept {len(review.redundancies)} redundancy / "
+                f"{len(review.ksec)} ksec / {len(review.alignment)} alignment / "
+                f"{len(review.bloom)} bloom / "
+                f"{sum(1 for u in review.unused_needs if u.verdict)} unused verdict(s), "
+                f"dropped {dict(drops) or 'nothing'}, {len(review.tool_calls)} tool call(s)"
+            )
+            if not has_agent_findings(review):
+                logger.warning(f"plo_review: run {i}/{requested} held nothing usable")
+                continue
+            kept.append(review)
+        return kept
+
+    outcomes = await batch(first)
+    judged = judge(outcomes, 0)
+    if requested > first:
+        unanimous = len(judged) == first and len({review_key(r) for r in judged}) == 1
+        rest = requested - first
+        if unanimous:
+            logger.info(f"plo_review: early stop after {first}/{requested} runs (unanimous)")
+        else:
+            logger.info(f"plo_review: running {rest} more (split)")
+            more = await batch(rest)
+            outcomes += more
+            judged += judge(more, first)
 
     if not judged:
         reason = "timeout" if all(o.reason == "timeout" for o in outcomes) else "failed"

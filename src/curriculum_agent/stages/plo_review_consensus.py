@@ -33,6 +33,23 @@ def agreement_threshold(runs_succeeded: int) -> int:
     return runs_succeeded // 2 + 1
 
 
+def review_key(review: PLOSetReview) -> tuple[object, ...]:
+    """Everything the vote decides, as a hashable value: two runs with equal keys
+    cast the same vote on every question, whatever their order or free text."""
+    redundancy: set[Pair] = set()
+    for f in review.redundancies:
+        redundancy |= _pairs(f.plo_ids)
+    return (
+        frozenset(redundancy),
+        frozenset(a.plo_id for a in review.alignment),
+        frozenset(
+            (b.plo_id, b.suggested_level or b.declared, b.suggested_verb_th) for b in review.bloom
+        ),
+        frozenset((u.need_id, u.verdict) for u in review.unused_needs if u.verdict),
+        frozenset((k.plo_id, frozenset(k.suggested)) for k in review.ksec),
+    )
+
+
 def _plo_order(plo_id: str) -> tuple[int, str]:
     # Length before value, or PLO10 sorts between PLO1 and PLO2.
     return (len(plo_id), plo_id)
