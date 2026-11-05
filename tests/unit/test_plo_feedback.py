@@ -8,15 +8,21 @@ import pytest
 from curriculum_agent.config import settings
 from curriculum_agent.models import (
     PLO,
+    AlignmentFinding,
     BloomFinding,
     BloomLevel,
     FeedbackAction,
+    KsecCoverage,
     KsecFinding,
+    Need,
     PLOSetReview,
     RedundancyFinding,
     UnusedNeedFinding,
 )
-from curriculum_agent.prompts.plo_feedback import build_bloom_redraft_note_th
+from curriculum_agent.prompts.plo_feedback import (
+    build_bloom_redraft_note_th,
+    build_ksec_gap_note_th,
+)
 from curriculum_agent.smart_vocabulary import forbidden_words_in
 from curriculum_agent.stages import plo_feedback as pf
 from curriculum_agent.stages import plo_review as pr
@@ -243,7 +249,9 @@ async def test_bloom_note_comes_from_the_builder_and_result_level_is_recorded(
 ) -> None:
     env = _Env(monkeypatch, plos)
     (action,) = await _sb(_review(bloom=[_bloom("PLO3", "ระดับสูงเกินไป")]))
-    expected = build_bloom_redraft_note_th(BloomLevel.APPLY, "ระดับสูงเกินไป")
+    expected = build_bloom_redraft_note_th(
+        BloomLevel.APPLY, "ระดับสูงเกินไป", old_statement_th=plos[2].statement_th
+    )
     assert env.redraft.await_args.kwargs["note_th"] == expected
     assert action.instruction_th == expected
     assert "Apply" in expected and "ระดับสูงเกินไป" in expected
@@ -702,3 +710,234 @@ async def test_an_unedited_neighbour_of_a_designer_edited_plo_is_still_acted_on(
     (action,) = await _sb(_review(bloom=[_bloom("PLO3")]))
     assert action.outcome == "applied"
     env.redraft.assert_awaited_once()
+
+
+# --------------------- phase 6: alignment, KSEC gap, verb, rounds, dry run ---------------------
+
+
+def _align(plo_id: str) -> AlignmentFinding:
+    return AlignmentFinding(plo_id=plo_id, reason_th="ไม่ตรง", suggestion_th="ปรับ", agreed_runs=2)
+
+
+def _ksec_need(nid: str, cats: list[str], demand: float, **kw: bool) -> Need:
+    need = _need(nid, in_scope=kw.get("in_scope", True))
+    update: dict[str, object] = {"demand_score": demand, "ksec_categories": cats}
+    if kw.get("unwritten"):
+        update["statement_th"] = "[ต้องทบทวน] ทักษะ ก, ข"
+    return need.model_copy(update=update)
+
+
+def _needs(monkeypatch: pytest.MonkeyPatch, needs: list[Need]) -> None:
+    repo = AsyncMock(list_active_by_program=AsyncMock(return_value=needs))
+    monkeypatch.setattr(pf, "NeedRepository", lambda: repo)
+
+
+async def test_order_includes_alignment_and_ksec_gap(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    _Env(monkeypatch, plos)
+    _needs(monkeypatch, [_ksec_need("N6", ["E"], 0.9)])
+    review = _review(
+        unused_needs=[_unused("N8", agreed_runs=2)],
+        bloom=[_bloom("PLO3")],
+        alignment=[_align("PLO4")],
+        redundancies=[_red("PLO1", "PLO2")],
+        ksec_coverage=KsecCoverage(missing=["E"]),
+    )
+    actions = await _sb(review)
+    assert [a.kind for a in actions] == [
+        "redundancy",
+        "alignment",
+        "bloom",
+        "ksec_gap",
+        "unused_need",
+    ]
+
+
+async def test_alignment_redraft_passes_its_note(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    (action,) = await _sb(_review(alignment=[_align("PLO2")]))
+    note = env.redraft.await_args.kwargs["note_th"]
+    assert note == action.instruction_th
+    assert "ไม่ตรง" in note and plos[1].statement_th in note
+    assert env.redraft.await_args.args[2] == ["N2"]
+    assert action.kind == "alignment" and action.outcome == "applied"
+
+
+async def test_alignment_skips_designer_edited(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    plos[1] = plos[1].model_copy(update={"designer_edited_at": datetime(2026, 11, 3)})
+    env = _Env(monkeypatch, plos)
+    (action,) = await _sb(_review(alignment=[_align("PLO2")]))
+    assert (action.outcome, action.outcome_reason_th) == ("skipped", pf.REASON_DESIGNER_EDITED)
+    env.redraft.assert_not_awaited()
+
+
+async def test_ksec_gap_picks_top_eligible_need(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    _needs(
+        monkeypatch,
+        [
+            _ksec_need("N5", ["E"], 0.4),
+            _ksec_need("N6", ["E", "K"], 0.8),
+            _ksec_need("N7", ["E"], 0.95, unwritten=True),
+            _ksec_need("N8", ["E"], 0.99, in_scope=False),
+            _ksec_need("N1", ["E"], 0.97),  # cited by PLO1
+            _ksec_need("N9", ["S"], 0.9),
+        ],
+    )
+    (action,) = await _sb(_review(ksec_coverage=KsecCoverage(missing=["E"])))
+    assert action.kind == "ksec_gap" and action.outcome == "applied"
+    assert action.need_ids == ["N6"] and env.redraft.await_args.args[2] == ["N6"]
+    assert action.instruction_th == build_ksec_gap_note_th("E")
+
+
+async def test_ksec_gap_without_candidate_is_skipped_with_exact_text(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    _needs(monkeypatch, [_ksec_need("N7", ["E"], 0.95, unwritten=True)])
+    (action,) = await _sb(_review(ksec_coverage=KsecCoverage(missing=["E"])))
+    assert action.outcome == "skipped"
+    assert action.outcome_reason_th == "ไม่มี Need หมวดนี้ — ต้องเพิ่มที่ขั้น Need"
+    assert action.outcome_reason_th == pf.REASON_KSEC_NO_NEED
+    env.redraft.assert_not_awaited()
+
+
+async def test_ksec_gap_ceiling_refusal_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    _needs(monkeypatch, [_ksec_need("N7", ["S"], 0.9)])
+    env.redraft.side_effect = RedraftRefused(409, "เกินเพดาน PLO หลัก")
+    (action,) = await _sb(_review(ksec_coverage=KsecCoverage(missing=["S"])))
+    assert (action.outcome, action.outcome_reason_th) == ("skipped", "เกินเพดาน PLO หลัก")
+
+
+async def test_bloom_verb_only_finding_acts(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    env.draft_update = {"bloom_level": BloomLevel.CREATE}
+    finding = BloomFinding(
+        plo_id="PLO3",
+        declared=BloomLevel.CREATE,
+        suggested_level=BloomLevel.CREATE,  # a verb-only vote carries the declared level
+        suggested_verb_th="ประเมิน",
+        suggestion_th="ใช้กริยาประเมิน",
+        reason_th="กริยาไม่เหมาะ",
+        agreed_runs=2,
+    )
+    (action,) = await _sb(_review(bloom=[finding]))
+    assert action.kind == "bloom" and action.outcome == "applied"
+    note = env.redraft.await_args.kwargs["note_th"]
+    assert "ประเมิน" in note and "Bloom:" not in note
+
+
+async def test_bloom_without_level_change_or_verb_is_not_actionable(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    finding = BloomFinding(
+        plo_id="PLO3", declared=BloomLevel.CREATE, suggested_level=None, agreed_runs=2
+    )
+    assert await _sb(_review(bloom=[finding])) == []
+    env.redraft.assert_not_awaited()
+
+
+async def test_merge_drift_skip(monkeypatch: pytest.MonkeyPatch, plos: list[PLO]) -> None:
+    env = _Env(monkeypatch, plos)
+    memory = pf.LoopMemory(merged={("PLO1", plos[0].statement_th)})
+    (action,) = await pf.send_back(
+        "cs-test", _review(redundancies=[_red("PLO1", "PLO2")]), env.initial, memory=memory
+    )
+    assert (action.outcome, action.outcome_reason_th) == ("skipped", pf.REASON_MERGED_EARLIER)
+    env.redraft.assert_not_awaited()
+
+
+async def test_applied_redundancy_is_added_to_memory(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    memory = pf.LoopMemory()
+    (action,) = await pf.send_back(
+        "cs-test", _review(redundancies=[_red("PLO1", "PLO2")]), env.initial, memory=memory
+    )
+    assert action.outcome == "applied"
+    assert memory.merged == {(str(action.result_plo_id), str(action.result_statement_th))}
+
+
+async def test_dry_run_plans_without_redrafting(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    memory = pf.LoopMemory()
+    review = _review(
+        redundancies=[_red("PLO1", "PLO2")], bloom=[_bloom("PLO3")], alignment=[_align("PLO4")]
+    )
+    actions = await pf.send_back("cs-test", review, env.initial, dry_run=True, memory=memory)
+    env.redraft.assert_not_awaited()
+    assert [a.outcome for a in actions] == ["planned", "planned", "planned"]
+    assert [a.kind for a in actions] == ["redundancy", "alignment", "bloom"]
+    assert actions[0].need_ids == ["N1", "N2"] and actions[1].need_ids == ["N4"]
+    assert actions[1].instruction_th and actions[2].instruction_th
+    assert memory.merged == set()
+    assert env.plos == env.initial
+
+
+async def test_round_is_stored_on_every_row(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    actions = await pf.send_back(
+        "cs-test", _review(bloom=[_bloom("PLO3")]), env.initial, round_no=2
+    )
+    assert [a.round for a in actions] == [2]
+    assert env.trail.add.await_args.args[0][0].round == 2
+
+
+async def test_redundancy_note_includes_both_old_statements(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ps = [
+        _plo("PLO1", ["N1"]).model_copy(update={"statement_th": "ร่างข้อหนึ่ง"}),
+        _plo("PLO2", ["N2"]).model_copy(update={"statement_th": "ร่างข้อสอง"}),
+    ]
+    env = _Env(monkeypatch, ps)
+    await _sb(_review(redundancies=[_red("PLO1", "PLO2")]))
+    note = env.redraft.await_args.kwargs["note_th"]
+    assert "ร่างข้อหนึ่ง" in note and "ร่างข้อสอง" in note and "ซ้ำ" in note
+
+
+async def test_unused_consider_passes_its_note(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    await _sb(_review(unused_needs=[_unused("N7", agreed_runs=2)]))
+    assert "เหตุผล N7" in env.redraft.await_args.kwargs["note_th"]
+
+
+def test_actionable_count() -> None:
+    def row(outcome: str, reason: str = "") -> FeedbackAction:
+        return FeedbackAction(
+            program_id="p",
+            review_created_at=datetime(2026, 11, 3),
+            kind="x",
+            outcome=outcome,
+            outcome_reason_th=reason,
+        )
+
+    rows = [
+        row("applied"),
+        row("failed"),
+        row("planned"),
+        row("skipped", "เกินเพดาน"),
+        row("skipped", pf.REASON_KSEC_NO_NEED),
+        row("stopped"),
+    ]
+    assert pf.actionable_count(rows) == 4

@@ -226,6 +226,7 @@ class PLOFeedbackActionTable(Base):
     result_plo_id: Mapped[str | None] = mapped_column(String, nullable=True)
     result_statement_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_bloom_level: Mapped[str | None] = mapped_column(String, nullable=True)
+    round: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     created_at: Mapped[datetime] = mapped_column(DateTime)
 
 

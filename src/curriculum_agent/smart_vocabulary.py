@@ -12,6 +12,7 @@ Nothing here imports from the package.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 
 # Words forbidden in PLO statements (Thai). Cause SMART measurable to fail.
@@ -73,6 +74,25 @@ def forbidden_words_in(statement_th: str) -> list[str]:
 
     found = [(masked.index(word), word) for word in FORBIDDEN_WORDS_TH if word in masked]
     return [word for _, word in sorted(found)]
+
+
+def mask_forbidden_words(text: str) -> str:
+    """`text` with each forbidden word that `forbidden_words_in` would flag
+    replaced by "…". Allowed compounds are left alone (matched first, longest
+    first, so "ความรู้" survives while a bare "รู้" is masked).
+
+    For text that is quoted to a model, such as a redraft note quoting an escalated
+    statement: a note that carried the word would prime the draft toward it.
+    """
+    compounds = sorted(ALLOWED_COMPOUNDS_TH, key=len, reverse=True)
+    words = sorted(FORBIDDEN_WORDS_TH, key=len, reverse=True)
+    pattern = re.compile(
+        "|".join(
+            [f"(?P<ok>{'|'.join(map(re.escape, compounds))})"]
+            + [f"(?P<bad>{'|'.join(map(re.escape, words))})"]
+        )
+    )
+    return pattern.sub(lambda m: m.group(0) if m.group("ok") else "…", text)
 
 
 class SmartFindingCode(StrEnum):

@@ -34,7 +34,13 @@ from curriculum_agent.prompts.designer_note import NOTE_HEADER_TH, NOTE_POLICY_T
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.merged_need import build_merged_need_prompt
 from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
-from curriculum_agent.prompts.plo_feedback import build_bloom_redraft_note_th
+from curriculum_agent.prompts.plo_feedback import (
+    build_alignment_redraft_note_th,
+    build_bloom_redraft_note_th,
+    build_ksec_gap_note_th,
+    build_redundancy_redraft_note_th,
+    build_unused_redraft_note_th,
+)
 from curriculum_agent.prompts.plo_review import (
     CitedNeed,
     ReviewItem,
@@ -201,7 +207,21 @@ def _build() -> str:
             sibling_count=5,
         )
     )
-    bloom_note = build_bloom_redraft_note_th(BloomLevel.ANALYZE, "<เหตุผลของผู้ตรวจ>")
+    bloom_note = build_bloom_redraft_note_th(
+        BloomLevel.ANALYZE,
+        "<เหตุผลของผู้ตรวจ>",
+        suggested_verb_th="<กริยาที่เสนอ>",
+        suggestion_th="<ข้อเสนอของผู้ตรวจ>",
+        old_statement_th="<ร่างเดิม>",
+    )
+    redundancy_note = build_redundancy_redraft_note_th(
+        "<เหตุผลของผู้ตรวจ>", "<ข้อเสนอของผู้ตรวจ>", ["<ร่างเดิมข้อ 1>", "<ร่างเดิมข้อ 2>"]
+    )
+    alignment_note = build_alignment_redraft_note_th(
+        "<เหตุผลของผู้ตรวจ>", "<ข้อเสนอของผู้ตรวจ>", "<ร่างเดิม>"
+    )
+    unused_note = build_unused_redraft_note_th("<เหตุผลของผู้ตรวจ>")
+    ksec_gap_note = build_ksec_gap_note_th("<K/S/E/C>")
     context_line = build_program_context_th({"field": "<สาขาวิชา>", "degree_level": "bachelor"})
     repair_instruction = build_vote_repair_instruction_th(
         ["<คำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน>"],
@@ -231,6 +251,10 @@ def _build() -> str:
         dedup=dedup,
         merged_need=merged_need,
         bloom_note=bloom_note,
+        redundancy_note=redundancy_note,
+        alignment_note=alignment_note,
+        unused_note=unused_note,
+        ksec_gap_note=ksec_gap_note,
         review=review,
         review_observation=review_observation,
         review_refusal=review_refusal,
@@ -276,7 +300,7 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
 | 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
 | 10 | เขียนประโยค Need ที่รวมจากหลายข้อ | `build_merged_need_prompt` | `stages/need_merge.py` → `_write_merged` | `need_combination` | `NeedStatement` | ❌ |
-| 11 | โน้ตสั่งเขียน PLO ใหม่ตามระดับ Bloom ที่ผู้ตรวจเสนอ | `build_bloom_redraft_note_th` | `stages/plo_feedback.py` → `_send_bloom` | `plo_synthesis` (ผ่าน `note_th` ของข้อ 5) | `_SingleDraftResponse` | ❌ |
+| 11 | โน้ตสั่งเขียน PLO ใหม่จากข้อค้นพบของผู้ตรวจ (ซ้ำซ้อน, ความสอดคล้อง, Bloom/กริยา, Need ที่ไม่ได้ใช้, หมวด KSEC ขาด) | `build_redundancy_redraft_note_th` ฯลฯ | `stages/plo_feedback.py` → `_send_*` | `plo_synthesis` (ผ่าน `note_th` ของข้อ 5) | `_SingleDraftResponse` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -574,12 +598,12 @@ tag หรือระดับ Bloom ที่เก็บไว้จริง
 
 ---
 
-## 11. โน้ตส่งกลับเมื่อผู้ตรวจเสนอระดับ Bloom ใหม่
+## 11. โน้ตส่งกลับ (ซ้ำซ้อน, ความสอดคล้อง, Bloom/กริยา, Need ที่ไม่ได้ใช้, หมวด KSEC ขาด)
 
 | | |
 |---|---|
-| **builder** | `prompts/plo_feedback.py` → `build_bloom_redraft_note_th(suggested, reason_th)` |
-| **ผู้เรียก** | `stages/plo_feedback.py` → `_send_bloom` |
+| **builder** | `prompts/plo_feedback.py` → `build_redundancy_redraft_note_th` / `build_alignment_redraft_note_th` / `build_bloom_redraft_note_th` / `build_unused_redraft_note_th` / `build_ksec_gap_note_th` |
+| **ผู้เรียก** | `stages/plo_feedback.py` → `_send_redundancy` / `_send_alignment` / `_send_bloom` / `_send_ksec_gap` / `_send_unused` |
 | **slot / wrapper** | ไม่เรียก LLM เอง — เป็นข้อความที่ไปต่อท้าย user message ของข้อ 5 ผ่าน `note_th` (slot `plo_synthesis`) |
 | **response model** | `_SingleDraftResponse` (เดียวกับข้อ 5) |
 | **cache** | ไม่มี |
@@ -587,8 +611,36 @@ tag หรือระดับ Bloom ที่เก็บไว้จริง
 คืน string ไม่ใช่ messages: ระบุระดับ Bloom ที่ผู้ตรวจเสนอและยกเหตุผลของผู้ตรวจมาตรง ๆ · ถูกอ่านเป็นแนวทางเลือกถ้อยคำ
 ตาม `NOTE_POLICY_TH` ด่าน SMART ยังมีคำสุดท้าย จึงบันทึกทั้งระดับที่ขอและระดับที่ได้ไว้ใน `plo_feedback_actions`
 
+ทุกโน้ตไม่เกิน 900 ตัวอักษร ร่างเดิมอยู่ใต้ป้าย `ร่างเดิมที่ผู้ตรวจติ:` และทุกข้อความที่ยกมาผ่าน `mask_forbidden_words` (คำต้องห้ามเป็น `…`)
+
+Bloom / กริยา:
+
 ```text
 {bloom_note}
+```
+
+ซ้ำซ้อน:
+
+```text
+{redundancy_note}
+```
+
+ความสอดคล้องกับ Need:
+
+```text
+{alignment_note}
+```
+
+Need ที่ยังไม่มี PLO:
+
+```text
+{unused_note}
+```
+
+หมวด KSEC ที่ชุดไม่มี PLO:
+
+```text
+{ksec_gap_note}
 ```
 
 ---

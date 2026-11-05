@@ -678,9 +678,10 @@ class PLOReport(BaseModel):
 class FeedbackAction(BaseModel):
     """One finding of the PLO set review that Agent 4 considered (phase 4).
 
-    The trail of what the review sent back: `outcome` is `applied`, `skipped` or
-    `failed`, with the Thai reason. `kind` and `outcome` stay plain strings so a
-    new value needs no migration.
+    The trail of what the review sent back: `outcome` is `applied`, `skipped`,
+    `failed`, `planned` (dry run) or `stopped` (loop end), with the Thai reason.
+    `kind` (redundancy, bloom, alignment, ksec_gap, unused_need, loop_end) and
+    `outcome` stay plain strings so a new value needs no migration.
     """
 
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
@@ -696,6 +697,8 @@ class FeedbackAction(BaseModel):
     result_plo_id: str | None = None
     result_statement_th: str | None = None
     result_bloom_level: str | None = None
+    # Which loop round wrote the row; 0 for a single send-back and for older rows.
+    round: int = 0
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
 
     # Stored naive UTC; sent with its offset like SupersededPLO. JSON only.
