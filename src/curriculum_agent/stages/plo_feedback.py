@@ -521,12 +521,16 @@ async def send_back(
     round_no: int = 0,
     dry_run: bool = False,
     memory: LoopMemory | None = None,
+    sink: list[FeedbackAction] | None = None,
 ) -> list[FeedbackAction]:
     """Act on the review's agreed findings; return the trail rows written.
 
     `reviewed_plos` is the set the review judged; a PLO changed since is not acted on.
     A finding counts only with a majority of the runs *asked for*, so one run of
     five that happened to succeed is never enough.
+
+    `sink`, when given, is the list rows are appended to as they are written (and the
+    one returned), so a caller that abandons the round still sees them.
 
     `dry_run` records every action as `planned` and writes nothing, and leaves
     `memory` (the loop's) untouched. Every row carries `round_no`.
@@ -537,7 +541,7 @@ async def send_back(
     """
     if not settings.plo_review_send_back or review.reviewed_by != "agent":
         return []
-    actions: list[FeedbackAction] = []
+    actions: list[FeedbackAction] = sink if sink is not None else []
     try:
         program = await ProgramRepository().get(program_id)
         if program is None:

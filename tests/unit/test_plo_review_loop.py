@@ -59,6 +59,9 @@ class _Env:
             item = self.sends.pop(0)
             if isinstance(item, Exception):
                 raise item
+            sink = kw.get("sink")
+            if isinstance(sink, list):
+                sink.extend(item)  # as the real send_back records its rows
             return item
 
         self.send = AsyncMock(side_effect=_send)
@@ -106,7 +109,10 @@ async def test_shadow_one_review_planned_rows_no_write(monkeypatch: pytest.Monke
     env.sends.append([_row("planned", 1)])
     review, rows = await loop.run_review_loop("p", [])
     assert env.review_calls == 1
-    assert env.send_kwargs == [{"round_no": 1, "dry_run": True}]
+    assert {k: v for k, v in env.send_kwargs[0].items() if k != "sink"} == {
+        "round_no": 1,
+        "dry_run": True,
+    }
     assert [r.outcome for r in rows] == ["planned", "stopped"]
     (end,) = env.ends()
     assert end.round == 1 and end.outcome_reason_th == "โหมดทดลอง — ยังไม่แก้ PLO"
@@ -150,7 +156,10 @@ async def test_timeout_runs_final_review(monkeypatch: pytest.MonkeyPatch) -> Non
     env = _Env(monkeypatch, [_rev(n=1), _rev(n=2)])
     monkeypatch.setattr(settings, "plo_review_loop_timeout_seconds", 1)
 
-    async def _hang(*_a: object, **_k: object) -> list[FeedbackAction]:
+    async def _hang(*_a: object, **kw: object) -> list[FeedbackAction]:
+        sink = kw["sink"]
+        assert isinstance(sink, list)
+        sink.append(_row("applied", 1))  # written before the budget ran out
         await asyncio.sleep(10)
         return []
 
@@ -162,7 +171,7 @@ async def test_timeout_runs_final_review(monkeypatch: pytest.MonkeyPatch) -> Non
     (end,) = env.ends()
     assert end.round == 1 and end.outcome_reason_th == "หมดเวลา 1 วินาที — ตรวจชุดสุดท้ายแล้ว"
     assert env.send.await_count == 1
-    assert rows == [end]
+    assert [r.outcome for r in rows] == ["applied", "stopped"] and rows[-1] is end
 
 
 async def test_exception_in_round_does_not_raise(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,6 +181,48 @@ async def test_exception_in_round_does_not_raise(monkeypatch: pytest.MonkeyPatch
     assert review.plo_fingerprint == "f2"
     (end,) = env.ends()
     assert end.round == 1 and end.outcome_reason_th == "เกิดข้อผิดพลาด — หยุด"
+
+
+async def test_provider_timeout_in_round_is_an_error_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _Env(monkeypatch, [_rev(n=1), _rev(n=2)])
+    env.sends.append(TimeoutError("provider"))
+    review, _rows = await loop.run_review_loop("p", [])
+    assert review.plo_fingerprint == "f2"
+    (end,) = env.ends()
+    assert end.round == 1 and end.outcome_reason_th == "เกิดข้อผิดพลาด — หยุด"
+
+
+async def test_timeout_in_first_review_with_failing_final_review_reraises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _Env(monkeypatch, [TimeoutError("x"), RuntimeError("y")])
+    real = asyncio.timeout
+    monkeypatch.setattr(loop.asyncio, "timeout", lambda _s: real(0.05))
+
+    async def _slow(*_a: object) -> PLOSetReview:
+        await asyncio.sleep(10)
+        raise AssertionError
+
+    monkeypatch.setattr(pr, "_review", _slow)
+    with pytest.raises(TimeoutError):
+        await loop.run_review_loop("p", [])
+
+
+async def test_shadow_through_fresh_review_with_feedback(monkeypatch: pytest.MonkeyPatch) -> None:
+    env = _Env(monkeypatch, [_rev()])
+    monkeypatch.setattr(settings, "plo_review_loop_mode", "shadow")
+
+    async def _plan(*_a: object, **kw: object) -> list[FeedbackAction]:
+        sink = kw["sink"]
+        assert isinstance(sink, list)
+        sink.append(_row("planned", 1))
+        return sink
+
+    env.send.side_effect = _plan
+    review, rows = await pr.fresh_review_with_feedback("p", [])
+    assert [r.outcome for r in rows] == ["planned", "stopped"]
+    assert rows[-1].kind == "loop_end" and review.reviewed_by == "agent"
+    assert "p" not in pr._REVIEW_IN_FLIGHT
 
 
 async def test_first_review_failure_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

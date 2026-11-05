@@ -78,13 +78,15 @@ async def _end(run: _Run, reason: str) -> None:
         logger.error(f"plo_review_loop: could not write trail row {row.model_dump_json()}: {exc!r}")
 
 
-async def _review_live(run: _Run, plos: Sequence[PLO] | None) -> None:
-    """Review `plos` (the live stored set when None) and store the review."""
+async def _review_live(run: _Run, plos: Sequence[PLO] | None) -> Sequence[PLO]:
+    """Review `plos` (the live stored set when None) and store the review. Returns
+    the set that was reviewed."""
     if plos is None:
         plos = await PLORepository().list_by_program(run.program_id)
     review = await plo_review._review(run.program_id, plos)
     await PLOReviewRepository().upsert(review)
     run.review = review
+    return plos
 
 
 async def _rounds(run: _Run, plos: Sequence[PLO]) -> None:
@@ -92,7 +94,7 @@ async def _rounds(run: _Run, plos: Sequence[PLO]) -> None:
     mem = LoopMemory()
     for i in range(1, max_rounds + 2):
         run.round_no = i
-        await _review_live(run, plos if i == 1 else None)
+        reviewed = await _review_live(run, plos if i == 1 else None)
         review = run.review
         assert review is not None
         if i == max_rounds + 1:
@@ -101,11 +103,11 @@ async def _rounds(run: _Run, plos: Sequence[PLO]) -> None:
         if review.reviewed_by != "agent" or not settings.plo_review_send_back:
             await _end(run, REASON_NO_AGENT)
             return
-        reviewed = plos if i == 1 else await PLORepository().list_by_program(run.program_id)
-        # `send_back` writes its own rows; keep them as they come so an abandoned
+        # `send_back` appends each row to `run.rows` as it writes it, so an abandoned
         # round still has them in the result.
-        rows = await send_back(run.program_id, review, reviewed, round_no=i, memory=mem)
-        run.rows.extend(rows)
+        start = len(run.rows)
+        await send_back(run.program_id, review, reviewed, round_no=i, memory=mem, sink=run.rows)
+        rows = run.rows[start:]
         if actionable_count(rows) == 0:
             await _end(run, REASON_PASS)
             return
@@ -120,21 +122,21 @@ async def _apply(run: _Run, plos: Sequence[PLO]) -> None:
         async with asyncio.timeout(seconds) as scope:
             await _rounds(run, plos)
         return
-    except TimeoutError:
-        if not scope.expired():
-            raise
     except Exception as exc:
-        if run.review is None:
-            raise  # nothing reviewed yet: the caller sees the first review's error
-        logger.warning(
-            f"plo_review_loop: round {run.round_no} for {run.program_id} failed: {exc!r}"
-        )
+        # A provider's own TimeoutError is an in-round failure, not the loop budget.
+        expired = isinstance(exc, TimeoutError) and scope.expired()
+        if run.review is None and not expired:
+            raise  # the first review failed: the caller sees its error
+        if expired:
+            logger.warning(f"plo_review_loop: {run.program_id} out of time at round {run.round_no}")
+        else:
+            logger.warning(
+                f"plo_review_loop: round {run.round_no} for {run.program_id} failed: {exc!r}"
+            )
         await _final_review(run)
-        await _end(run, REASON_ERROR)
-        return
-    logger.warning(f"plo_review_loop: {run.program_id} out of time at round {run.round_no}")
-    await _final_review(run)
-    await _end(run, _reason_timeout(seconds))
+        if run.review is None:
+            raise  # out of time before any review, and the final one failed too
+        await _end(run, _reason_timeout(seconds) if expired else REASON_ERROR)
 
 
 async def _final_review(run: _Run) -> None:
@@ -162,7 +164,7 @@ async def run_review_loop(
         assert run.review is not None
         run.round_no = 1
         try:
-            run.rows.extend(await send_back(program_id, run.review, plos, round_no=1, dry_run=True))
+            await send_back(program_id, run.review, plos, round_no=1, dry_run=True, sink=run.rows)
         except Exception as exc:
             logger.warning(f"plo_review_loop: shadow send-back for {program_id} failed: {exc!r}")
         await _end(run, REASON_SHADOW)
