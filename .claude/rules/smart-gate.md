@@ -54,7 +54,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   sentence. At most `validation_max_repairs` (3) repairs, so at most 4 judgings.
 - **A repair never makes a PLO worse on the hard check, and `A_actor`/`A_scope` are
   never repaired.** A repaired statement that carries a hard failure the previous
-  one did not is discarded and the previous statement stays (decision 20), which
+  one did not is discarded and the previous statement stays (decision 20 of docs/superpowers/specs/2026-11-04-four-agent-pipeline-phase6-design.md), which
   is what keeps a soft criterion from ever causing an escalation. `A_actor` and
   `A_scope` (`smart_vote.REPAIR_EXCLUDED`) stay comments even when a majority fails
   them: both are properties of the *Need* (an institutional or out-of-scope Need),
