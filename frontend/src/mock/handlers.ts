@@ -476,6 +476,8 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
 
   // Round 2 reads the set round 1 left; its review is the stored one, made after
   // the replacement so the replaced outcome's snapshot falls inside round 1.
+  // Deliberate mutation: `review` is the object already stored in db.reviews, so
+  // this re-stamps the stored review as round 2's (the final review of the job).
   review.created_at = new Date(Date.now() + 1).toISOString().replace('Z', '')
   push(
     {

@@ -23,7 +23,7 @@ export const OUTCOME_TH: Record<string, string> = {
 export const isLoopEnd = (row: FeedbackAction): boolean => row.kind === 'loop_end'
 
 export interface Round {
-  /** The loop's round number; rows written before the loop count as round 1. */
+  /** The loop's round number, from 1; 0 for rows written before the loop (no round header). */
   n: number
   /** The earliest review these rows came from. */
   from: number
@@ -43,7 +43,7 @@ export interface Job {
 
 function roundsOf(rows: FeedbackAction[]): Round[] {
   const byRound = new Map<number, FeedbackAction[]>()
-  for (const f of rows) byRound.set(f.round ?? 1, [...(byRound.get(f.round ?? 1) ?? []), f])
+  for (const f of rows) byRound.set(f.round ?? 0, [...(byRound.get(f.round ?? 0) ?? []), f])
   return [...byRound.entries()]
     .sort((a, b) => a[0] - b[0])
     .map(([n, list]) => {
@@ -70,17 +70,19 @@ export function jobsOf(feedback: FeedbackAction[]): Job[] {
     if (isLoopEnd(row)) {
       current = { key: row.id, rows: [row] }
       groups.push(current)
-    } else if (current) {
+    } else if (current && (row.round ?? 0) > 0) {
       current.rows.push(row)
     } else {
+      // Rows from before the loop (round 0) are never part of a loop job.
       legacy.set(row.review_created_at, [...(legacy.get(row.review_created_at) ?? []), row])
     }
   }
-  // Legacy rows are newer than every loop job, so they come first.
-  const legacyGroups = [...legacy.entries()]
-    .sort((a, b) => ms(b[0]) - ms(a[0]))
-    .map(([key, rows]) => ({ key, rows }))
-  const jobs: Job[] = [...legacyGroups, ...groups].map((g) => ({ key: g.key, rounds: roundsOf(g.rows) }))
+  const legacyGroups = [...legacy.entries()].map(([key, rows]) => ({ key, rows }))
+  // Newest job first, by its newest row.
+  const newest = (g: { rows: FeedbackAction[] }): number => Math.max(...g.rows.map((r) => ms(r.created_at)))
+  const jobs: Job[] = [...legacyGroups, ...groups]
+    .sort((a, b) => newest(b) - newest(a))
+    .map((g) => ({ key: g.key, rounds: roundsOf(g.rows) }))
 
   // Each round's window ends where the next newer round begins.
   const all = jobs.flatMap((j) => j.rounds).sort((a, b) => b.from - a.from)

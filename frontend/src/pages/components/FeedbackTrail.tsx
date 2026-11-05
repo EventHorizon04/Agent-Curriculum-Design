@@ -78,7 +78,7 @@ function Action({
 function RoundList({ round, superseded, review }: { round: Round; superseded: SupersededPLO[]; review: PLOSetReview }) {
   return (
     <div>
-      <h3 className="eyebrow">รอบที่ {round.n}</h3>
+      {round.n > 0 && <h3 className="eyebrow">รอบที่ {round.n}</h3>}
       {round.rows.length > 0 && (
         <ul className="mt-1.5 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
           {round.rows.map((row) => (

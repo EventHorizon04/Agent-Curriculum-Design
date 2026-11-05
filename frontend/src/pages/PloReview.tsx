@@ -10,7 +10,7 @@ import { startJob, type JobKind } from '../api/jobs'
 import { BLOOM_ORDER, bloomLabel } from '../constants/bloom'
 import { ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import FeedbackTrail from './components/FeedbackTrail'
-import { KIND_TH, OUTCOME_TH, isLoopEnd, jobIsFor, jobsOf } from './components/feedbackJobs'
+import { KIND_TH, OUTCOME_TH, isLoopEnd, jobIsFor, jobsOf, ms } from './components/feedbackJobs'
 import type { SupersededPLO } from '../types/plo'
 import type {
   FeedbackAction,
@@ -89,7 +89,7 @@ export default function PloReview() {
   const data = read?.programId === programId ? read.response : null
   const [loadError, setLoadError] = useState('')
   // The send-back trail and the history it points into. Secondary: a failed read leaves them empty.
-  const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[] } | null>(null)
+  const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[]; failed: boolean } | null>(null)
   const [starting, setStarting] = useState(false)
   const [runError, setRunError] = useState<RunError | null>(null)
   const navigate = useNavigate()
@@ -115,14 +115,21 @@ export default function PloReview() {
     const mineRead = ++latestRead.current
     setLoadError('')
     try {
+      let trailFailed = false
       const [res, fb, sup] = await Promise.all([
         api.get<PLOReviewResponse>(`/programs/${programId}/plos/review`),
-        api.get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`).catch(() => ({ data: [] as FeedbackAction[] })),
-        api.get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`).catch(() => ({ data: [] as SupersededPLO[] })),
+        api.get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`).catch(() => {
+          trailFailed = true
+          return { data: [] as FeedbackAction[] }
+        }),
+        api.get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`).catch(() => {
+          trailFailed = true
+          return { data: [] as SupersededPLO[] }
+        }),
       ])
       if (mineRead === latestRead.current) {
         setRead({ programId, response: res.data })
-        setTrail({ programId, feedback: fb.data, superseded: sup.data })
+        setTrail({ programId, feedback: fb.data, superseded: sup.data, failed: trailFailed })
       }
     } catch {
       if (mineRead === latestRead.current) {
@@ -279,7 +286,13 @@ export default function PloReview() {
             </button>
           </div>
 
-          {trailNow && <OpenComments review={review} feedback={trailNow.feedback} />}
+          {trailNow && !trailNow.failed ? (
+            <OpenComments review={review} feedback={trailNow.feedback} />
+          ) : trailNow ? (
+            <p className="notice notice-warn">โหลดประวัติการส่งกลับไม่สำเร็จ</p>
+          ) : (
+            <LoadingLine />
+          )}
 
           <Overview review={review} />
           <Redundancies review={review} />
@@ -342,8 +355,9 @@ function droppedNotice(dropped: Record<string, number> | undefined): string | nu
 const runsOf = (r: PLOSetReview): number => r.runs_succeeded ?? 1
 const isVoted = (r: PLOSetReview): boolean => runsOf(r) >= 2
 /** Does a finding meet the review's agreement threshold? Old rows: always. */
-const isMain = (agreed: number | undefined, r: PLOSetReview): boolean =>
-  (agreed ?? 1) >= Math.max(r.agreement_threshold ?? 1, Math.floor((r.runs_requested ?? 1) / 2) + 1)
+const effectiveThreshold = (r: PLOSetReview): number =>
+  Math.max(r.agreement_threshold ?? 1, Math.floor((r.runs_requested ?? 1) / 2) + 1)
+const isMain = (agreed: number | undefined, r: PLOSetReview): boolean => (agreed ?? 1) >= effectiveThreshold(r)
 
 /** "ตรงกัน 2/3" — only on a review voted over several runs. */
 function AgreementChip({ agreed, review }: { agreed: number | undefined; review: PLOSetReview }) {
@@ -365,7 +379,7 @@ function StatusLine({ review }: { review: PLOSetReview }) {
       <p className="text-sm text-pencil">
         ตรวจโดย agent · {review.model} · {when}
         {isVoted(review) &&
-          ` · ตรวจ ${runsOf(review)} รอบ แสดงเฉพาะข้อที่ตรงกันอย่างน้อย ${review.agreement_threshold ?? 1} รอบ`}
+          ` · ตรวจ ${runsOf(review)} รอบ แสดงเฉพาะข้อที่ตรงกันอย่างน้อย ${effectiveThreshold(review)} รอบ`}
       </p>
     )
   }
@@ -538,8 +552,13 @@ interface OpenComment {
  *  loop gave up on. What the designer reads before approving. */
 function OpenComments({ review, feedback }: { review: PLOSetReview; feedback: FeedbackAction[] }) {
   const latest = jobsOf(feedback)[0]
-  // Rows of another review's job say nothing about this one.
-  const rows = latest && jobIsFor(latest, review.created_at) ? latest.rounds.flatMap((r) => r.rows) : []
+  // The box is about the stored (final) review: only rows written for that very
+  // review may mark a finding handled or explain a skip. An earlier round's
+  // `applied` row must not hide a finding the final review raises again.
+  const rows =
+    latest && jobIsFor(latest, review.created_at)
+      ? latest.rounds.flatMap((r) => r.rows).filter((r) => ms(r.review_created_at) === ms(review.created_at))
+      : []
   const targets = (row: FeedbackAction): string[] => [...row.plo_ids, ...row.need_ids]
   const fixed = (kind: string, ids: string[]): boolean =>
     rows.some((r) => r.outcome === 'applied' && r.kind === kind && targets(r).some((t) => ids.includes(t)))
@@ -783,7 +802,7 @@ function BelowThreshold({ review }: { review: PLOSetReview }) {
     <details className="border-t border-hair pt-4">
       <summary className="eyebrow cursor-pointer">พบไม่ถึงเกณฑ์ ({total})</summary>
       <p className="mt-2 text-sm text-pencil">
-        ข้อเหล่านี้มีบางรอบพูดถึงแต่ไม่ถึงเกณฑ์ {review.agreement_threshold ?? 1} รอบ — ยังไม่ควรถือเป็นข้อค้นพบ
+        ข้อเหล่านี้มีบางรอบพูดถึงแต่ไม่ถึงเกณฑ์ {effectiveThreshold(review)} รอบ — ยังไม่ควรถือเป็นข้อค้นพบ
       </p>
       <div className="mt-3 space-y-3">
         {red.length > 0 && (
