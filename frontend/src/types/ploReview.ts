@@ -31,9 +31,21 @@ export interface BloomFinding {
   plo_id: string
   declared: string
   suggested_level: string | null
+  /** The Thai action verb the reviewer would use at the suggested level. Absent on old rows. */
+  suggested_verb_th?: string | null
+  suggestion_th?: string
   reason_th: string
   /** Runs (of those with a usable answer) that reported this finding. 1 on old rows. */
   agreed_runs?: number
+}
+
+/** A PLO that does not answer the Needs it cites. */
+export interface AlignmentFinding {
+  plo_id: string
+  reason_th: string
+  suggestion_th: string
+  /** Runs (of those with a usable answer) that reported this finding. */
+  agreed_runs: number
 }
 
 export interface UnusedNeedFinding {
@@ -68,6 +80,8 @@ export interface PLOSetReview {
   redundancies: RedundancyFinding[]
   ksec: KsecFinding[]
   bloom: BloomFinding[]
+  /** Absent on rows written before the alignment check. */
+  alignment?: AlignmentFinding[]
   bloom_distribution_th: string
   summary_th: string
   /** Counts include optional PLOs. */
@@ -92,15 +106,18 @@ export interface PLOSetReview {
 export interface FeedbackAction {
   id: string
   program_id: string
-  /** The review the finding came from; groups rows into a round. */
+  /** The review the finding came from. */
   review_created_at: string
-  /** `redundancy` | `bloom` | `unused_need`. */
+  /** The loop round that wrote the row, from 1. Absent on rows from before the loop. */
+  round?: number
+  /** `redundancy` | `alignment` | `bloom` | `ksec_gap` | `unused_need` | `loop_end`. */
   kind: string
   plo_ids: string[]
   need_ids: string[]
   finding_reason_th: string
   instruction_th: string
-  /** `applied` | `skipped` | `failed`. */
+  /** `applied` | `skipped` | `failed` | `planned` (shadow mode) | `stopped` (the `loop_end` row,
+   *  whose `outcome_reason_th` is the stop reason). */
   outcome: string
   outcome_reason_th: string
   result_plo_id: string | null

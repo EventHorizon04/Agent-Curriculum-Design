@@ -10,6 +10,7 @@ import { startJob, type JobKind } from '../api/jobs'
 import { BLOOM_ORDER, bloomLabel } from '../constants/bloom'
 import { ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import FeedbackTrail from './components/FeedbackTrail'
+import { KIND_TH, OUTCOME_TH, isLoopEnd, jobIsFor, jobsOf } from './components/feedbackJobs'
 import type { SupersededPLO } from '../types/plo'
 import type {
   FeedbackAction,
@@ -278,8 +279,11 @@ export default function PloReview() {
             </button>
           </div>
 
+          {trailNow && <OpenComments review={review} feedback={trailNow.feedback} />}
+
           <Overview review={review} />
           <Redundancies review={review} />
+          <AlignmentSection review={review} />
           <KsecSection review={review} />
           <BloomSection review={review} />
           <UnusedNeeds review={review} />
@@ -339,7 +343,7 @@ const runsOf = (r: PLOSetReview): number => r.runs_succeeded ?? 1
 const isVoted = (r: PLOSetReview): boolean => runsOf(r) >= 2
 /** Does a finding meet the review's agreement threshold? Old rows: always. */
 const isMain = (agreed: number | undefined, r: PLOSetReview): boolean =>
-  (agreed ?? 1) >= (r.agreement_threshold ?? 1)
+  (agreed ?? 1) >= Math.max(r.agreement_threshold ?? 1, Math.floor((r.runs_requested ?? 1) / 2) + 1)
 
 /** "ตรงกัน 2/3" — only on a review voted over several runs. */
 function AgreementChip({ agreed, review }: { agreed: number | undefined; review: PLOSetReview }) {
@@ -494,6 +498,124 @@ function Redundancies({ review }: { review: PLOSetReview }) {
   )
 }
 
+function AlignmentSection({ review }: { review: PLOSetReview }) {
+  const rows = (review.alignment ?? []).filter((f) => isMain(f.agreed_runs, review))
+  return (
+    <section className="border-t border-hair pt-5" aria-labelledby="alignment-heading">
+      <h2 id="alignment-heading" className="section-title">
+        ความสอดคล้องกับ Need
+      </h2>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-pencil">PLO ทุกข้อตอบสิ่งที่ Need ของตนต้องการ</p>
+      ) : (
+        <ul className="mt-3 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
+          {rows.map((f) => (
+            <li key={f.plo_id} className="px-4 py-3">
+              <p className="data text-sm font-semibold text-graphite">
+                {f.plo_id}
+                <AgreementChip agreed={f.agreed_runs} review={review} />
+              </p>
+              <p className="mt-1 text-sm text-pencil">{f.reason_th}</p>
+              {f.suggestion_th && <p className="mt-1 text-sm text-graphite">ข้อเสนอ: {f.suggestion_th}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+interface OpenComment {
+  key: string
+  kind: string
+  target: string
+  reason: string
+  /** Why the loop did not fix it, when a skipped or failed row says so. */
+  note: string
+}
+
+/** The last review's agreed findings that the job did not fix, and the rows the
+ *  loop gave up on. What the designer reads before approving. */
+function OpenComments({ review, feedback }: { review: PLOSetReview; feedback: FeedbackAction[] }) {
+  const latest = jobsOf(feedback)[0]
+  // Rows of another review's job say nothing about this one.
+  const rows = latest && jobIsFor(latest, review.created_at) ? latest.rounds.flatMap((r) => r.rows) : []
+  const targets = (row: FeedbackAction): string[] => [...row.plo_ids, ...row.need_ids]
+  const fixed = (kind: string, ids: string[]): boolean =>
+    rows.some((r) => r.outcome === 'applied' && r.kind === kind && targets(r).some((t) => ids.includes(t)))
+  const stuck = (kind: string, ids: string[]): FeedbackAction | undefined =>
+    [...rows].reverse().find((r) => (r.outcome === 'skipped' || r.outcome === 'failed') && r.kind === kind && targets(r).some((t) => ids.includes(t)))
+
+  const found: { kind: string; ids: string[]; reason: string }[] = [
+    ...review.redundancies
+      .filter((f) => isMain(f.agreed_runs, review))
+      .map((f) => ({ kind: 'redundancy', ids: f.plo_ids, reason: f.reason_th })),
+    ...(review.alignment ?? [])
+      .filter((f) => isMain(f.agreed_runs, review))
+      .map((f) => ({ kind: 'alignment', ids: [f.plo_id], reason: f.reason_th })),
+    ...review.bloom
+      .filter((f) => isMain(f.agreed_runs, review))
+      .map((f) => ({ kind: 'bloom', ids: [f.plo_id], reason: f.reason_th })),
+    ...review.unused_needs
+      .filter((f) => f.verdict === 'consider' && isMain(f.agreed_runs, review))
+      .map((f) => ({ kind: 'unused_need', ids: [f.need_id], reason: f.reason_th })),
+  ]
+  const comments: OpenComment[] = found
+    .filter((f) => !fixed(f.kind, f.ids))
+    .map((f) => {
+      const row = stuck(f.kind, f.ids)
+      return {
+        key: `${f.kind}:${f.ids.join(',')}`,
+        kind: f.kind,
+        target: f.ids.map((id) => (f.kind === 'unused_need' ? id.slice(0, 8) : id)).join(' · '),
+        reason: f.reason,
+        note: row ? `${OUTCOME_TH[row.outcome] ?? row.outcome}: ${row.outcome_reason_th}` : '',
+      }
+    })
+  // Rows the loop skipped that no finding above already explains (an earlier
+  // round's), unless a later round fixed the same thing.
+  const shown = new Set(found.map((f) => `${f.kind}:${f.ids.join(',')}`))
+  for (const row of rows) {
+    if (isLoopEnd(row) || (row.outcome !== 'skipped' && row.outcome !== 'failed')) continue
+    if (fixed(row.kind, targets(row)) || stuck(row.kind, targets(row)) !== row) continue
+    if ([...shown].some((k) => k.startsWith(`${row.kind}:`) && targets(row).some((t) => k.includes(t)))) continue
+    comments.push({
+      key: row.id,
+      kind: row.kind,
+      target: (row.plo_ids.length ? row.plo_ids : row.need_ids.map((n) => n.slice(0, 8))).join(' · '),
+      reason: row.finding_reason_th,
+      note: `${OUTCOME_TH[row.outcome] ?? row.outcome}: ${row.outcome_reason_th}`,
+    })
+  }
+
+  return (
+    <section className="panel px-5 py-4" aria-labelledby="open-comments-heading">
+      <h2 id="open-comments-heading" className="section-title">
+        ข้อสังเกตที่ยังค้าง
+      </h2>
+      {comments.length === 0 ? (
+        <p className="mt-2 text-sm text-pencil">ไม่มีข้อสังเกตที่ค้างอยู่</p>
+      ) : (
+        <>
+          <p className="mt-1 text-xs text-lead">ข้อที่ผลตรวจตรงกันแต่ยังไม่ได้แก้ — อ่านก่อนอนุมัติ</p>
+          <ul className="mt-3 divide-y divide-hair">
+            {comments.map((c) => (
+              <li key={c.key} className="py-2.5">
+                <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                  <span className="chip chip-marker">{KIND_TH[c.kind] ?? c.kind}</span>
+                  <span className="data font-semibold text-graphite">{c.target}</span>
+                </p>
+                {c.reason && <p className="mt-1 text-sm text-pencil">{c.reason}</p>}
+                {c.note && <p className="mt-1 text-sm text-graphite">{c.note}</p>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  )
+}
+
 function KsecTable({ rows, review }: { rows: KsecFinding[]; review: PLOSetReview }) {
   return (
     <div className="overflow-x-auto">
@@ -584,7 +706,11 @@ function BloomSection({ review }: { review: PLOSetReview }) {
                 )}
                 <AgreementChip agreed={b.agreed_runs} review={review} />
               </p>
+              {b.suggested_verb_th && (
+                <p className="mt-1 text-sm text-graphite">แนะนำกริยา: {b.suggested_verb_th}</p>
+              )}
               {b.reason_th && <p className="mt-1 text-sm text-pencil">{b.reason_th}</p>}
+              {b.suggestion_th && <p className="mt-1 text-sm text-graphite">ข้อเสนอ: {b.suggestion_th}</p>}
             </li>
           ))}
         </ul>
@@ -650,7 +776,8 @@ function BelowThreshold({ review }: { review: PLOSetReview }) {
   const ksec = review.ksec.filter((k) => !k.agrees && below(k.agreed_runs))
   const bloom = review.bloom.filter((b) => below(b.agreed_runs))
   const unused = review.unused_needs.filter((u) => u.verdict && below(u.agreed_runs))
-  const total = red.length + ksec.length + bloom.length + unused.length
+  const align = (review.alignment ?? []).filter((f) => below(f.agreed_runs))
+  const total = red.length + ksec.length + bloom.length + unused.length + align.length
   if (total === 0) return null
   return (
     <details className="border-t border-hair pt-4">
@@ -670,6 +797,22 @@ function BelowThreshold({ review }: { review: PLOSetReview }) {
                     <AgreementChip agreed={g.agreed_runs} review={review} />
                   </p>
                   <p className="mt-1 text-sm text-pencil">{g.reason_th}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {align.length > 0 && (
+          <div>
+            <p className="text-sm font-medium text-graphite">ความสอดคล้องกับ Need</p>
+            <ul className="mt-1 space-y-2">
+              {align.map((f) => (
+                <li key={f.plo_id}>
+                  <p className="data text-sm font-semibold text-graphite">
+                    {f.plo_id}
+                    <AgreementChip agreed={f.agreed_runs} review={review} />
+                  </p>
+                  <p className="mt-1 text-sm text-pencil">{f.reason_th}</p>
                 </li>
               ))}
             </ul>

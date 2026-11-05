@@ -1052,6 +1052,8 @@ export function buildMockReview(
           plo_id: toRevise.plo_id,
           declared: toRevise.bloom_level,
           suggested_level: toRevise.bloom_level === 'analyze' ? 'evaluate' : 'analyze',
+          suggested_verb_th: 'วิเคราะห์',
+          suggestion_th: 'เปลี่ยนกริยาเป็น "วิเคราะห์" และระบุเกณฑ์ที่ใช้เลือกวิธีทำ',
           reason_th: 'งานที่ข้อความ PLO ระบุต้องเลือกระหว่างวิธีทำ ซึ่งสูงกว่าระดับที่ประกาศไว้',
           agreed_runs: 3,
         },
@@ -1115,6 +1117,18 @@ export function buildMockReview(
         : [],
     ksec,
     bloom,
+    // Seen in one run of three: draws in the "พบไม่ถึงเกณฑ์" fold. The agreed
+    // finding of the first round was fixed by the loop, so the stored review has none.
+    alignment: sorted[0]
+      ? [
+          {
+            plo_id: sorted[0].plo_id,
+            reason_th: 'บางรอบเห็นว่า PLO ข้อนี้พูดกว้างกว่าสิ่งที่ Need ต้นทางขอ',
+            suggestion_th: 'ผูกข้อความกับงานที่ Need ระบุให้ชัดขึ้น',
+            agreed_runs: 1,
+          },
+        ]
+      : [],
     bloom_distribution_th: 'PLO ส่วนใหญ่อยู่ที่ระดับประยุกต์ใช้ ซึ่งพอดีกับหลักสูตรระดับปริญญาตรี',
     summary_th:
       'ชุด PLO ครอบคลุมงานแปลหลักของสาขา มีสองข้อที่ซ้ำกันและหนึ่งข้อที่หมวดสมรรถนะควรทบทวน',

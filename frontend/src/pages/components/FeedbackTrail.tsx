@@ -1,54 +1,11 @@
 import { bloomLabel } from '../../constants/bloom'
 import type { SupersededPLO } from '../../types/plo'
 import type { FeedbackAction, PLOSetReview } from '../../types/ploReview'
-
-const KIND_TH: Record<string, string> = {
-  redundancy: 'ซ้ำซ้อน',
-  bloom: 'ระดับ Bloom',
-  unused_need: 'Need ที่ยังไม่ได้ใช้',
-}
-
-const OUTCOME_TH: Record<string, string> = {
-  skipped: 'ข้าม',
-  failed: 'ไม่สำเร็จ',
-}
-
-/** Timestamps arrive both naive (the review) and with an offset (the rest). */
-function ms(iso: string): number {
-  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(iso)
-  return Date.parse(hasZone ? iso : `${iso}Z`)
-}
+import { KIND_TH, OUTCOME_TH, jobIsFor, jobsOf, ms, type Job, type Round } from './feedbackJobs'
 
 function when(iso: string): string {
   const t = ms(iso)
   return Number.isNaN(t) ? iso : new Date(t).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })
-}
-
-interface Round {
-  /** The review these actions came from. */
-  key: string
-  from: number
-  /** Start of the next newer round: the window in which this round's replacements were written. */
-  until: number
-  rows: FeedbackAction[]
-}
-
-/** Rows grouped by the review that produced them, newest round first. Within a
- *  round the rows read in action order (oldest first): the list arrives newest
- *  first, so it is reversed before a stable sort on `created_at` settles ties. */
-function roundsOf(feedback: FeedbackAction[]): Round[] {
-  const byKey = new Map<string, FeedbackAction[]>()
-  for (const f of [...feedback].reverse()) byKey.set(f.review_created_at, [...(byKey.get(f.review_created_at) ?? []), f])
-  const rounds = [...byKey.entries()]
-    .map(([key, rows]) => ({
-      key,
-      from: ms(key),
-      until: Infinity,
-      rows: [...rows].sort((a, b) => ms(a.created_at) - ms(b.created_at)),
-    }))
-    .sort((a, b) => b.from - a.from)
-  for (let i = 1; i < rounds.length; i++) rounds[i].until = rounds[i - 1].from
-  return rounds
 }
 
 function Action({
@@ -72,10 +29,11 @@ function Action({
       : []
   // The level the reviewer asked for is data only on the review itself, and
   // only while that review is the stored one; otherwise just the level reached.
-  const asked =
+  const finding =
     row.kind === 'bloom' && ms(review.created_at) === round.from
-      ? review.bloom.find((b) => b.plo_id === row.plo_ids[0])?.suggested_level
-      : null
+      ? review.bloom.find((b) => b.plo_id === row.plo_ids[0])
+      : undefined
+  const asked = finding?.suggested_level ?? null
   const level = row.result_bloom_level
 
   return (
@@ -84,7 +42,7 @@ function Action({
         <span className="chip chip-neutral">{KIND_TH[row.kind] ?? row.kind}</span>
         <span className="data font-semibold text-graphite">{[...row.plo_ids, ...(row.plo_ids.length ? [] : row.need_ids.map((n) => n.slice(0, 8)))].join(' · ')}</span>
         {row.outcome !== 'applied' && (
-          <span className={`chip ${row.outcome === 'failed' ? 'chip-mandate' : 'chip-marker'}`}>
+          <span className={`chip ${row.outcome === 'failed' ? 'chip-mandate' : row.outcome === 'planned' ? 'chip-neutral' : 'chip-marker'}`}>
             {OUTCOME_TH[row.outcome] ?? row.outcome}
           </span>
         )}
@@ -105,6 +63,7 @@ function Action({
           </p>
           {row.kind === 'bloom' && level && (
             <p className="text-xs text-lead">
+              {finding?.suggested_verb_th ? `แนะนำกริยา: ${finding.suggested_verb_th} · ` : ''}
               {asked ? `ขอระดับ ${bloomLabel(asked)} · ` : ''}ได้ระดับ {bloomLabel(level)}
             </p>
           )}
@@ -116,8 +75,41 @@ function Action({
   )
 }
 
-/** What the last review sent back for a fix, and what came of it. Older rounds
- *  fold away. Draws nothing when nothing was ever sent back. */
+function RoundList({ round, superseded, review }: { round: Round; superseded: SupersededPLO[]; review: PLOSetReview }) {
+  return (
+    <div>
+      <h3 className="eyebrow">รอบที่ {round.n}</h3>
+      {round.rows.length > 0 && (
+        <ul className="mt-1.5 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
+          {round.rows.map((row) => (
+            <Action key={row.id} row={row} round={round} superseded={superseded} review={review} />
+          ))}
+        </ul>
+      )}
+      {round.stop && (
+        <p className="mt-1.5 text-sm text-pencil">
+          <span className="chip chip-neutral mr-2">หยุด</span>
+          หยุดเพราะ: {round.stop.outcome_reason_th}
+        </p>
+      )}
+    </div>
+  )
+}
+
+function JobBody({ job, superseded, review }: { job: Job; superseded: SupersededPLO[]; review: PLOSetReview }) {
+  return (
+    <div className="space-y-4">
+      {job.rounds.map((round) => (
+        <RoundList key={round.n} round={round} superseded={superseded} review={review} />
+      ))}
+    </div>
+  )
+}
+
+const jobStart = (job: Job): string => when(new Date(job.rounds[0].from).toISOString())
+
+/** What the last review job sent back for a fix, round by round, and what came
+ *  of it. Older jobs fold away. Draws nothing when nothing was ever sent back. */
 export default function FeedbackTrail({
   feedback,
   superseded,
@@ -127,18 +119,11 @@ export default function FeedbackTrail({
   superseded: SupersededPLO[]
   review: PLOSetReview
 }) {
-  if (feedback.length === 0) return null
-  const [latest, ...older] = roundsOf(feedback)
-  // The newest round with rows is not necessarily the stored review's: a review
-  // that sent nothing back leaves no rows, and must not look like it did.
-  const isCurrent = ms(latest.key) === ms(review.created_at)
-  const list = (round: Round) => (
-    <ul className="divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
-      {round.rows.map((row) => (
-        <Action key={row.id} row={row} round={round} superseded={superseded} review={review} />
-      ))}
-    </ul>
-  )
+  const [latest, ...older] = jobsOf(feedback)
+  if (!latest || latest.rounds.length === 0) return null
+  // The newest job is not necessarily the stored review's: a review that sent
+  // nothing back leaves no rows, and must not look like it did.
+  const isCurrent = jobIsFor(latest, review.created_at)
 
   return (
     <section className="border-t border-hair pt-5" aria-labelledby="feedback-heading">
@@ -146,16 +131,20 @@ export default function FeedbackTrail({
         ส่งกลับไปแก้แล้ว
       </h2>
       <p className="mt-1 text-xs text-lead">
-        {isCurrent ? 'ผลตรวจรอบ' : 'รอบก่อนหน้า · ผลตรวจรอบ'} {when(latest.key)}
+        {isCurrent ? 'ผลตรวจรอบ' : 'รอบก่อนหน้า · ผลตรวจรอบ'} {jobStart(latest)}
         {!isCurrent && ' · ผลตรวจปัจจุบันไม่ได้ส่งอะไรกลับ'}
       </p>
-      <div className="mt-3">{list(latest)}</div>
-      {older.map((round) => (
-        <details key={round.key} className="mt-3">
+      <div className="mt-3">
+        <JobBody job={latest} superseded={superseded} review={review} />
+      </div>
+      {older.map((job) => (
+        <details key={job.key} className="mt-3">
           <summary className="cursor-pointer text-sm text-pencil">
-            รอบก่อนหน้า · {when(round.key)} ({round.rows.length})
+            รอบก่อนหน้า · {jobStart(job)} ({job.rounds.reduce((n, r) => n + r.rows.length, 0)})
           </summary>
-          <div className="mt-2">{list(round)}</div>
+          <div className="mt-2">
+            <JobBody job={job} superseded={superseded} review={review} />
+          </div>
         </details>
       ))}
     </section>

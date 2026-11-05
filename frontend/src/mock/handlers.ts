@@ -396,15 +396,18 @@ function replaceFromNeeds(pid: string, selected: NeedRow[], cause: 'designer' | 
   return plo
 }
 
-/** The review's send-back, as the server runs it after an agent review: one
- *  agreed redundancy is applied through the same replace a designer's merge
- *  uses, and the finding it cannot act on is recorded with its reason. A
- *  code-only review sends nothing back. */
+/** The review's send-back as the server's loop runs it in apply mode, two rounds
+ *  long: round 1 redrafts the last core PLO for an agreed alignment finding and
+ *  records the unused Need it cannot draft; round 2 reads the new set, finds
+ *  nothing to fix and writes the `loop_end` row. The stored review is round 2's.
+ *  A code-only review sends nothing back. */
 function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
   if (review.reviewed_by !== 'agent') return []
   const db = getDb()
+  const stamp = (t: number): string => new Date(t).toISOString().replace('Z', '+00:00')
   // The review's own timestamp is naive; the trail's carries the offset.
-  const reviewAt = /(Z|[+-]\d{2}:?\d{2})$/.test(review.created_at) ? review.created_at : `${review.created_at}+00:00`
+  const hasZone = /(Z|[+-]\d{2}:?\d{2})$/.test(review.created_at)
+  const round1At = hasZone ? review.created_at : `${review.created_at}+00:00`
   const rows: FeedbackAction[] = []
   // One row per action, written right after it: each gets its own instant, so
   // the newest-first list reads in reverse action order like the server's.
@@ -412,6 +415,8 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
   const push = (
     r: Pick<FeedbackAction, 'kind' | 'plo_ids' | 'need_ids' | 'finding_reason_th' | 'instruction_th' | 'outcome' | 'outcome_reason_th'> &
       Partial<FeedbackAction>,
+    round: number,
+    reviewAt: string,
   ): void => {
     rows.push({
       result_plo_id: null,
@@ -421,60 +426,71 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
       id: newId(),
       program_id: pid,
       review_created_at: reviewAt,
+      round,
       created_at: new Date(base + rows.length).toISOString(),
     })
   }
 
-  const group = review.redundancies.find((g) => (g.agreed_runs ?? 1) >= (review.agreement_threshold ?? 1))
-  if (group) {
-    const plos = of(db.plos, pid)
-    const members = plos.filter((p) => group.plo_ids.includes(p.plo_id))
-    const needById = new Map(of(db.needs, pid).map((n) => [n.need_id, n]))
-    const needs = [...new Set(members.flatMap((p) => p.source_need_ids))]
-      .map((id) => needById.get(id))
-      .filter((n): n is NeedRow => !!n)
-    const coreAfter = plos.filter((p) => !p.is_optional).length - members.filter((p) => !p.is_optional).length + 1
-    const common = {
-      kind: 'redundancy',
-      plo_ids: group.plo_ids,
-      need_ids: needs.map((n) => n.need_id),
-      finding_reason_th: group.reason_th,
-      instruction_th: '',
-    }
-    if (members.length < 2 || needs.length < 2 || needs.length > MAX_MERGE_NEEDS) {
-      push({ ...common, outcome: 'skipped', outcome_reason_th: 'ชุด Need ที่จะรวมไม่อยู่ในช่วง 2-5 ข้อ' })
-    } else if (coreAfter < MIN_CORE_AFTER_MERGE) {
-      push({
-        ...common,
-        outcome: 'skipped',
-        outcome_reason_th: `การรวมจะเหลือ PLO หลัก ${coreAfter} ข้อ ต่ำกว่าขั้นต่ำ ${MIN_CORE_AFTER_MERGE} ข้อ`,
-      })
-    } else {
-      const plo = replaceFromNeeds(pid, needs, 'review')
-      push({
-        ...common,
+  // Round 1
+  const target = of(db.plos, pid)
+    .filter((p) => !p.is_optional)
+    .at(-1)
+  const needById = new Map(of(db.needs, pid).map((n) => [n.need_id, n]))
+  const needs = (target?.source_need_ids ?? []).map((id) => needById.get(id)).filter((n): n is NeedRow => !!n)
+  if (target && needs.length > 0) {
+    const reason = 'ข้อความ PLO ยังไม่ตอบงานที่ Need ต้นทางขอไว้ครบ'
+    const plo = replaceFromNeeds(pid, needs, 'review')
+    push(
+      {
+        kind: 'alignment',
+        plo_ids: [target.plo_id],
+        need_ids: needs.map((n) => n.need_id),
+        finding_reason_th: reason,
+        instruction_th: 'ร่างใหม่ให้ตอบงานที่ Need ระบุ',
         outcome: 'applied',
         outcome_reason_th: '',
         result_plo_id: plo.plo_id,
         result_statement_th: plo.statement_th,
         result_bloom_level: plo.bloom_level,
-      })
-    }
+      },
+      1,
+      round1At,
+    )
   }
-
   const unused = review.unused_needs.find((n) => n.verdict === 'consider')
   if (unused) {
-    push({
-      kind: 'unused_need',
-      plo_ids: [],
-      need_ids: [unused.need_id],
-      finding_reason_th: unused.reason_th,
-      instruction_th: '',
-      outcome: 'skipped',
-      outcome_reason_th: 'ร่างใหม่ไม่ผ่าน SMART — คงข้อเดิมไว้',
-    })
+    push(
+      {
+        kind: 'unused_need',
+        plo_ids: [],
+        need_ids: [unused.need_id],
+        finding_reason_th: unused.reason_th,
+        instruction_th: '',
+        outcome: 'skipped',
+        outcome_reason_th: 'ร่างใหม่ไม่ผ่าน SMART — คงข้อเดิมไว้',
+      },
+      1,
+      round1At,
+    )
   }
-  db.feedback = [...rows, ...(db.feedback ?? [])]
+
+  // Round 2 reads the set round 1 left; its review is the stored one, made after
+  // the replacement so the replaced outcome's snapshot falls inside round 1.
+  review.created_at = new Date(Date.now() + 1).toISOString().replace('Z', '')
+  push(
+    {
+      kind: 'loop_end',
+      plo_ids: [],
+      need_ids: [],
+      finding_reason_th: '',
+      instruction_th: '',
+      outcome: 'stopped',
+      outcome_reason_th: 'ผ่านแล้ว — รอบที่ 2 ไม่พบข้อที่ต้องแก้เพิ่ม',
+    },
+    2,
+    stamp(Date.parse(`${review.created_at}Z`)),
+  )
+  db.feedback = [...[...rows].reverse(), ...(db.feedback ?? [])]
   return rows
 }
 
