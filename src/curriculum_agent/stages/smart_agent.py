@@ -62,6 +62,7 @@ from curriculum_agent.stages.smart_agent_tools import (
     run_tool,
 )
 from curriculum_agent.stages.smart_rules import hard_failures
+from curriculum_agent.stages.smart_vote import _SOFT_VERDICTS
 
 # Consecutive malformed steps before the loop gives up. Instructor has already
 # re-asked twice by then, so a third is a model that cannot answer the schema.
@@ -191,27 +192,6 @@ def _schema_failure_reason(exc: Exception, *, limit: int = 240) -> str:
         return f"{where}: {first.get('msg', '')}"[:limit]
     text = str(inner).strip()
     return text.splitlines()[0][:limit] if text else type(inner).__name__
-
-
-# Soft verdict field -> the code recorded when it is false. Every code here has
-# a label in FINDING_LABEL_TH and its frontend mirror, which is what the
-# exporter and both pages render.
-#
-# actor_ok and scope_ok arrived after the other five and answer what nothing
-# else did at the PLO level. The scope guard judges a *Need* from skill flags
-# and a ratio, so a Need that passes it can still yield a sentence describing
-# the institution's mission or another profession's job; these two read the
-# sentence itself. They fold into SMARTCheck.achievable in plo_synthesis rather
-# than adding a field, so no stored row changes shape.
-_SOFT_VERDICTS: tuple[tuple[str, SmartFindingCode], ...] = (
-    ("specific_object_ok", SmartFindingCode.S_OBJECT),
-    ("measurable_ok", SmartFindingCode.M_ASSESSABLE),
-    ("achievable_ok", SmartFindingCode.A_LEVEL),
-    ("actor_ok", SmartFindingCode.A_ACTOR),
-    ("scope_ok", SmartFindingCode.A_SCOPE),
-    ("relevant_needs_ok", SmartFindingCode.R_NEEDS),
-    ("time_bound_ok", SmartFindingCode.T_HORIZON),
-)
 
 
 class ValidationReason(StrEnum):
