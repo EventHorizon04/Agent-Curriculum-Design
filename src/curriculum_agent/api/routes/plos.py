@@ -642,6 +642,8 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
             plo_id=plo_id,
             known_need_ids={n.need_id for n in all_needs},
             siblings=[SiblingSummary.from_plo(p) for p in stored if p.plo_id != plo_id],
+            # A designer's own sentence is judged, never rewritten.
+            allow_repair=match.designer_edited_at is None,
         )
         if revalidated is None:
             raise HTTPException(status_code=502, detail="ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่")

@@ -155,7 +155,7 @@ Every draft this prompt produces goes past the validation agent and then the pur
 
 **Model:** validation (`complete_validation`) — its own slot, and specifically not `heavy` (clustering) or `synthesis` (which writes the Thai).
 
-**File:** `prompts/smart_agent.py` — `build_smart_agent_prompt`, `build_tool_observation`, `build_refusal_observation`, `build_repair_observation`, `build_agent_repair_prompt`.
+**File:** `prompts/smart_agent.py` — `build_smart_agent_prompt`, `build_tool_observation`, `build_refusal_observation`, `build_vote_repair_instruction_th`, `build_agent_repair_prompt`.
 
 **Shape.** A structured action loop, not native tool-calling: Instructor is in `Mode.JSON` for every slot, so reading a `tool_calls` envelope would mean hand-parsing JSON or keying the shared client cache on `(provider, mode)`, and it would tie the loop to providers that implement tool-calling when running the whole pipeline on one endpoint is supported. The model answers one `ValidationStep` per turn — `reasoning_th` first, so it reasons before it commits — carrying a discriminated action: `call_tool`, `request_repair`, or `finish`. The loop executes the action and appends the result as the next user turn. A malformed action is a Pydantic `ValidationError`, which Instructor re-asks with the error attached.
 
@@ -167,7 +167,7 @@ The five soft verdicts in `finish` ask exactly what the old judge asked, and the
 
 The repair prompt carries the instruction, the original statement, the declared Bloom level and verb, and nothing else — no tool results, no sibling PLOs, no rubric recital. The model that wrote the diagnosis is not the model that writes the fix, so the instruction has to stand on its own. It repeats the forbidden-word list, because a repair is the last model call before a statement ships, and it asks for `action_verb_th` to follow the sentence: a rewrite that changes the verb in the text but not the field fails S forever.
 
-**Tool observations** are Thai text built by the same module, so no prompt string is inlined in stage code. `build_repair_observation` reports the rewrite **and** the code's verdict on it, both before and after — handed only the new sentence, the agent would have to trust its own reading of a criterion pure code had just decided, and could not tell a rewrite it likes from one that passes.
+**Tool observations** are Thai text built by the same module, so no prompt string is inlined in stage code. `build_vote_repair_instruction_th` (phase 6) builds the one repair instruction from the code's hard-failure hints, the criteria a majority of judge runs failed (never A_actor/A_scope: rewording cannot fix them) and the representative run's `repair_hint_th`, capped at 800 characters. The old `build_repair_observation` is gone: the repaired sentence is now judged again by a full round rather than reported to a run.
 
 ---
 

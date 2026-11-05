@@ -332,10 +332,14 @@ class Settings(BaseSettings):
     # keeps a deployment that raises the per-call ceiling for extraction from
     # silently multiplying the validation bill.
     validation_max_concurrent_plos: int = 3
-    # Wall clock for one PLO's loop. Bounds the whole stage at roughly
-    # ceil(N / concurrency) x this, and turns a hung provider into one
-    # code-only verdict rather than a stage that never returns.
-    validation_timeout_seconds: int = 240
+    # Judge runs per round. A soft criterion counts as failed only when a majority
+    # (runs // 2 + 1) of the successful runs failed it; 1 is the single-run agent.
+    validation_runs: int = Field(default=5, ge=1)
+    # Wall clock for one PLO's whole loop: every judge round and every repair.
+    # Bounds the whole stage at roughly ceil(N / concurrency) x this, and turns a
+    # hung provider into the last judged verdict (or code-only when none exists)
+    # rather than a stage that never returns.
+    validation_timeout_seconds: int = 600
     # Wall clock for each of the three Agent 1 / Agent 2 job steps (extraction,
     # grouping, need_combination), one budget apiece. It was 300 until 2026-10-28;
     # the designer raised it while run time is not a concern on this branch, since

@@ -24,7 +24,7 @@ from curriculum_agent.smart_vocabulary import SmartFindingCode
 # the institution's mission or another profession's job; these two read the
 # sentence itself. They fold into SMARTCheck.achievable in plo_synthesis rather
 # than adding a field, so no stored row changes shape.
-_SOFT_VERDICTS: tuple[tuple[str, SmartFindingCode], ...] = (
+SOFT_VERDICTS: tuple[tuple[str, SmartFindingCode], ...] = (
     ("specific_object_ok", SmartFindingCode.S_OBJECT),
     ("measurable_ok", SmartFindingCode.M_ASSESSABLE),
     ("achievable_ok", SmartFindingCode.A_LEVEL),
@@ -34,7 +34,7 @@ _SOFT_VERDICTS: tuple[tuple[str, SmartFindingCode], ...] = (
     ("time_bound_ok", SmartFindingCode.T_HORIZON),
 )
 
-_SOFT_ORDER: tuple[SmartFindingCode, ...] = tuple(code for _, code in _SOFT_VERDICTS)
+_SOFT_ORDER: tuple[SmartFindingCode, ...] = tuple(code for _, code in SOFT_VERDICTS)
 
 # A repair cannot change who the actor is or what profession the work belongs
 # to: both are properties of the Need, so they are reported, never repaired.

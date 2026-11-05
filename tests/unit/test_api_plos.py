@@ -624,7 +624,10 @@ def test_revalidate_keeps_designer_edited_at(
     insert = _stored(monkeypatch, [stale])
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
 
+    allow_repair_seen: list[bool] = []
+
     async def fake_validate(draft, **kwargs):  # noqa: ANN001, ANN003
+        allow_repair_seen.append(kwargs["allow_repair"])
         # validate_and_build builds a fresh PLO, which knows nothing of the edit.
         return _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "agent"})
 
@@ -638,6 +641,8 @@ def test_revalidate_keeps_designer_edited_at(
     job = jobs_store.rows[resp.json()["job_id"]]
     assert job.status == "succeeded", job.error_th
     assert insert.await_args.args[0][0].designer_edited_at == edited_at
+    # The designer's own sentence is judged, never rewritten by a repair.
+    assert allow_repair_seen == [False]
 
 
 def test_revalidate_rejudges_the_stored_statement(
@@ -661,6 +666,7 @@ def test_revalidate_rejudges_the_stored_statement(
     async def fake_validate(draft, **kwargs):  # noqa: ANN001, ANN003
         seen["statement_th"] = draft.statement_th
         seen["sibling_ids"] = [s.plo_id for s in kwargs["siblings"]]
+        seen["allow_repair"] = kwargs["allow_repair"]
         return stale.model_copy(
             update={"smart_validated_by": "agent", "smart_diagnosis_th": "ตรวจแล้วผ่าน"}
         )
@@ -681,6 +687,8 @@ def test_revalidate_rejudges_the_stored_statement(
     assert seen["statement_th"] == stale.statement_th
     # Its siblings are the other stored outcomes, never itself.
     assert seen["sibling_ids"] == ["PLO2"]
+    # Never hand-edited, so the agent may still repair it.
+    assert seen["allow_repair"] is True
     body = job.result
     assert body["smart_validated_by"] == "agent"
     assert body["version"] == stale.version + 1

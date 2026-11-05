@@ -10,6 +10,12 @@ The loop is driven by scripting *tool intents* — ("get_need", {...}) — never
 wire-format assistant turns. Each intent is executed against the real tools, so
 a tool whose signature drifts fails the test. Assertions read
 `fake.tools_called`, never `len(fake.calls) == 4`.
+
+Every test here runs the agent at `validation_runs=1`, the single-run agent: one
+judge run per round, threshold 1. That keeps these tests about one run's loop
+(tools, malformed steps, closing calls, reasoning bounds) and about the repair
+handoff. What several runs add -- the vote, the early stop, the shared
+semaphore -- is `test_smart_voted_loop.py`.
 """
 
 from __future__ import annotations
@@ -22,7 +28,6 @@ from pydantic import ValidationError
 
 from curriculum_agent.models import BloomLevel, Need, ProgramMetadata, StakeholderEvidence
 from curriculum_agent.prompts.smart_agent import build_closing_after_malformed_instruction
-from curriculum_agent.smart_vocabulary import SmartFindingCode
 from curriculum_agent.stages import plo_synthesis as ps
 from curriculum_agent.stages import smart_agent as sa
 from curriculum_agent.stages.smart_agent_tools import (
@@ -31,6 +36,24 @@ from curriculum_agent.stages.smart_agent_tools import (
     ToolBudget,
     ValidationContext,
 )
+
+
+@pytest.fixture(autouse=True)
+def _single_run_agent(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sa.settings, "validation_runs", 1)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_repair_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A repair is a provider call, and a test that did not script one must fail
+    the repair rather than reach a real endpoint. Tests that exercise a repair
+    patch `complete_plo_synthesis` themselves, which wins over this default."""
+
+    async def not_scripted(model, messages, **kwargs):  # noqa: ANN001, ANN003
+        raise RuntimeError("no repair scripted for this test")
+
+    monkeypatch.setattr(sa, "complete_plo_synthesis", not_scripted)
+
 
 META = ProgramMetadata(
     program_id="cs-test",
@@ -148,12 +171,10 @@ class FakeToolModel:
         if isinstance(step, Exception):
             raise step
         if isinstance(step, sa.Finish):
-            return sa.ValidationStep(reasoning_th="สรุปผล", action=step)
-        if isinstance(step, sa.RequestRepair):
-            return sa.ValidationStep(reasoning_th="ต้องแก้", action=step)
+            return sa.JudgeStep(reasoning_th="สรุปผล", action=step)
         tool, args = step
         self.tools_called.append(tool)
-        return sa.ValidationStep(
+        return sa.JudgeStep(
             reasoning_th=f"ขอดู {tool}",
             action=sa.CallTool(kind="call_tool", tool=tool, **args),
         )
@@ -209,7 +230,7 @@ async def test_a_soft_failure_is_flagged_and_never_escalates(
         ],
     )
 
-    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+    result = await sa.run_smart_agent(_draft(), _ctx(), META, allow_repair=False)
 
     assert set(result.soft_flags) == {
         "S_object",
@@ -229,7 +250,7 @@ async def test_the_soft_verdicts_are_derived_from_the_findings(
     disagree about the same criterion."""
     _drive(monkeypatch, [_finish(measurable_ok=False, diagnosis_th="วัดไม่ได้")])
 
-    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+    result = await sa.run_smart_agent(_draft(), _ctx(), META, allow_repair=False)
 
     assert result.soft_verdicts == {
         "specific_object_ok": True,
@@ -243,6 +264,11 @@ async def test_the_soft_verdicts_are_derived_from_the_findings(
 
 
 # ---------------------- repair handoff ----------------------
+#
+# At validation_runs=1 a Finish that fails a soft criterion is a majority of one,
+# so it triggers the repair; the next scripted Finish is the re-judgement.
+
+_NEEDS_FIX = {"measurable_ok": False, "repair_hint_th": "ใช้กริยาที่วัดได้"}
 
 
 async def test_a_repair_is_written_by_the_plo_synthesis_model_not_the_validator(
@@ -250,17 +276,7 @@ async def test_a_repair_is_written_by_the_plo_synthesis_model_not_the_validator(
 ) -> None:
     """The user's decision, and the sort of thing that regresses silently: the
     validator diagnoses, the Thai-first synthesis slot writes."""
-    _drive(
-        monkeypatch,
-        [
-            sa.RequestRepair(
-                kind="request_repair",
-                instruction_th="แทน 'ตระหนักถึง' ด้วยกริยาที่สังเกตได้",
-                criteria=[SmartFindingCode.M_FORBIDDEN],
-            ),
-            _finish(),
-        ],
-    )
+    _drive(monkeypatch, [_finish(**_NEEDS_FIX), _finish()])
     repair_calls: list[Any] = []
 
     async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
@@ -277,12 +293,16 @@ async def test_a_repair_is_written_by_the_plo_synthesis_model_not_the_validator(
     assert result.repair_count == 1
 
 
-async def test_the_repair_request_cannot_carry_a_thai_sentence() -> None:
-    """The mechanism behind the rule, pinned as a schema fact. If the field
-    existed, a helpful model would fill it in and "a repair is never answered by
-    a different model than wrote the draft" would be one field away."""
-    assert "statement_th" not in sa.RequestRepair.model_fields
-    assert "statement_en" not in sa.RequestRepair.model_fields
+async def test_a_judge_run_cannot_carry_a_thai_sentence_or_request_a_repair() -> None:
+    """The mechanism behind the rule, pinned as a schema fact. If `Finish` had a
+    statement field, a helpful model would fill it in and "a repair is never
+    answered by a different model than wrote the draft" would be one field away.
+    The repair action is gone from the step too: a repair is decided from the
+    vote, never by one run."""
+    assert "statement_th" not in sa.Finish.model_fields
+    assert "statement_en" not in sa.Finish.model_fields
+    assert not hasattr(sa, "RequestRepair")
+    assert "request_repair" not in str(sa.JudgeStep.model_json_schema())
 
 
 async def test_a_repair_carries_the_new_verb_with_the_new_sentence(
@@ -291,10 +311,7 @@ async def test_a_repair_carries_the_new_verb_with_the_new_sentence(
     """A rewrite that changes the verb in the sentence without changing
     action_verb_th fails S forever — the exact failure the old retry-loop tests
     were built around. The result carries a whole draft for this reason."""
-    _drive(
-        monkeypatch,
-        [sa.RequestRepair(kind="request_repair", instruction_th="ใช้กริยาที่วัดได้"), _finish()],
-    )
+    _drive(monkeypatch, [_finish(**_NEEDS_FIX), _finish()])
 
     async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SingleDraftResponse(plo=_draft("ประเมินคุณภาพของระบบได้", "ประเมิน"))
@@ -310,17 +327,7 @@ async def test_a_repair_carries_the_new_verb_with_the_new_sentence(
 async def test_the_repair_call_bounds_output_and_hidden_reasoning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _drive(
-        monkeypatch,
-        [
-            sa.RequestRepair(
-                kind="request_repair",
-                instruction_th="แก้คำกริยา",
-                criteria=[SmartFindingCode.M_FORBIDDEN],
-            ),
-            _finish(),
-        ],
-    )
+    _drive(monkeypatch, [_finish(**_NEEDS_FIX), _finish()])
     seen: dict[str, Any] = {}
 
     async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
@@ -339,10 +346,7 @@ async def test_a_repair_re_pins_the_evidence_trail(monkeypatch: pytest.MonkeyPat
     """Behaviour 4: the gate judges the ids that ship, not the model's echo. A
     replacement draft is a fresh object the model filled in, so the pin has to
     happen again."""
-    _drive(
-        monkeypatch,
-        [sa.RequestRepair(kind="request_repair", instruction_th="แก้ประโยค"), _finish()],
-    )
+    _drive(monkeypatch, [_finish(**_NEEDS_FIX), _finish()])
 
     async def echoes_a_wrong_id(model, messages, **kw):  # noqa: ANN001, ANN003
         return ps._SingleDraftResponse(
@@ -356,50 +360,7 @@ async def test_a_repair_re_pins_the_evidence_trail(monkeypatch: pytest.MonkeyPat
     assert result.source_need_ids == ["N1"]
 
 
-async def test_the_repair_observation_shows_the_code_verdict_both_ways(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Handed only the new sentence, the validator has to trust its own reading
-    of a criterion pure code just decided — and cannot tell a rewrite it likes
-    from one that passes."""
-    fake = _drive(
-        monkeypatch,
-        [sa.RequestRepair(kind="request_repair", instruction_th="แก้คำที่วัดไม่ได้"), _finish()],
-    )
-
-    async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SingleDraftResponse(plo=_draft("วิเคราะห์ความเสี่ยงได้", "วิเคราะห์"))
-
-    monkeypatch.setattr(sa, "complete_plo_synthesis", fake_repair)
-
-    bad = _draft("เข้าใจความเสี่ยงของระบบ", "เข้าใจ")
-    await sa.run_smart_agent(bad, _ctx(bad), META)
-
-    observation = fake.messages_seen[-1][-1]["content"]
-    assert "M_forbidden" in observation
-    assert "->" in observation
-
-
 # ---------------------- budgets and failure ----------------------
-
-
-async def test_a_fourth_repair_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Three, the SMART gate's long-standing policy. Refused rather than
-    silently ignored, so the validator knows to finish."""
-    fake = _drive(monkeypatch, [sa.RequestRepair(kind="request_repair", instruction_th="แก้อีก")])
-
-    async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
-        return ps._SingleDraftResponse(plo=_draft())
-
-    monkeypatch.setattr(sa, "complete_plo_synthesis", fake_repair)
-
-    result = await sa.run_smart_agent(_draft(), _ctx(), META)
-
-    assert result.repair_count == 3
-    refusals = [
-        m[-1]["content"] for m in fake.messages_seen if "ระบบปฏิเสธ" in m[-1].get("content", "")
-    ]
-    assert any("ไม่เกิน 3 รอบ" in r for r in refusals)
 
 
 async def test_the_turn_budget_ends_the_loop_rather_than_hanging(
@@ -413,10 +374,7 @@ async def test_the_turn_budget_ends_the_loop_rather_than_hanging(
 
     assert result.ran is False
     assert result.soft_findings == []
-    assert result.reason in (
-        sa.ValidationReason.TURN_BUDGET,
-        sa.ValidationReason.REPAIR_BUDGET,
-    )
+    assert result.reason is sa.ValidationReason.TURN_BUDGET
 
 
 async def test_the_closing_call_turns_an_exhausted_budget_into_a_verdict(
@@ -429,9 +387,9 @@ async def test_the_closing_call_turns_an_exhausted_budget_into_a_verdict(
     )
     fake = _drive(monkeypatch, [("check_hard", {})], closing=closing)
 
-    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+    result = await sa.run_smart_agent(_draft(), _ctx(), META, allow_repair=False)
 
-    assert result.reason is sa.ValidationReason.FINISHED_AT_BUDGET
+    assert result.reason is sa.ValidationReason.FINISHED
     assert result.ran is True
     assert [f.criterion.value for f in result.soft_findings] == ["M_assessable"]
     assert result.turns == 8
@@ -631,10 +589,7 @@ async def test_the_validator_never_sees_the_designer_note(
     """Behaviour 5, extended. The note reaches the draft prompt and nothing
     else; a validator that could read it could relay the wording into a repair
     instruction, and the note would arrive at a repair prompt second-hand."""
-    fake = _drive(
-        monkeypatch,
-        [sa.RequestRepair(kind="request_repair", instruction_th="แก้ประโยค"), _finish()],
-    )
+    fake = _drive(monkeypatch, [_finish(**_NEEDS_FIX), _finish()])
     repair_messages: list[Any] = []
 
     async def fake_repair(model, messages, **kw):  # noqa: ANN001, ANN003
@@ -718,14 +673,6 @@ async def test_check_hard_reads_the_pure_function(monkeypatch: pytest.MonkeyPatc
     assert '"passed": false' in observation
 
 
-async def test_a_repair_instruction_may_run_to_800_characters() -> None:
-    """The cap was 400 and a live run lost a verdict to two over-long instructions."""
-    ok = sa.RequestRepair(kind="request_repair", instruction_th="ก" * 600)
-    assert len(ok.instruction_th) == 600
-    with pytest.raises(ValidationError):
-        sa.RequestRepair(kind="request_repair", instruction_th="ก" * 801)
-
-
 async def test_the_closing_call_salvages_a_malformed_exhaustion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -735,9 +682,9 @@ async def test_the_closing_call_salvages_a_malformed_exhaustion(
     )
     fake = _drive(monkeypatch, [error, error], closing=closing)
 
-    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+    result = await sa.run_smart_agent(_draft(), _ctx(), META, allow_repair=False)
 
-    assert result.reason is sa.ValidationReason.FINISHED_AFTER_MALFORMED
+    assert result.reason is sa.ValidationReason.FINISHED
     assert result.ran is True
     assert [f.criterion.value for f in result.soft_findings] == ["M_assessable"]
     assert len(fake.messages_seen) == 3, "two malformed steps plus exactly one closing call"

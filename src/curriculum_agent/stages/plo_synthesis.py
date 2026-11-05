@@ -284,11 +284,14 @@ async def validate_and_build(
     pending_need_statements_th: Sequence[str] = (),
     evidence_index: EvidenceIndex | None = None,
     run_validation: bool = True,
+    allow_repair: bool = True,
 ) -> PLO | None:
     """Run one draft past the validation agent, then judge it in pure code.
 
     `run_validation=False` is the per-run switch (`POST /plos/run`): it skips
     the agent for this run only. The pure-code gate below still runs either way.
+    `allow_repair=False` lets the agent judge but never rewrite the sentence (a
+    designer-edited PLO being revalidated); the gate is unchanged.
 
     **The last word is the code gate, always.** `hard_failures` runs on the
     final statement whatever way the agent exited — finished, out of budget,
@@ -316,7 +319,9 @@ async def validate_and_build(
         evidence_index=evidence_index,
         budget=ToolBudget(),
     )
-    result = await run_smart_agent(draft, ctx, metadata, enabled=run_validation)
+    result = await run_smart_agent(
+        draft, ctx, metadata, enabled=run_validation, allow_repair=allow_repair
+    )
 
     # The authoritative gate. Not the agent's reading of it — the same pure
     # function, on the statement that will actually ship.

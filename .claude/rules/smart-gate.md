@@ -21,8 +21,10 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   exit path — finished, out of budget, endpoint down — and that call sets
   `smart_escalated`. Delete it and immutable rule 5 becomes a request the model
   can decline: `Finish` has no field that clears a hard failure precisely
-  because nothing downstream would notice if it did. `RequestRepair` has no
-  `statement_th` for the same reason — the Thai a designer submits to MHESI
+  because nothing downstream would notice if it did. `Finish` has no
+  `statement_th` for the same reason (and no repair action: since phase 6 a repair
+  is decided by the vote over `validation_runs` judge runs plus `hard_failures`,
+  not requested by one run) — the Thai a designer submits to MHESI
   comes from the synthesis slot, always, and a helpful model handed that field
   would make "a repair is never answered by a different model than wrote the
   draft" one field away from false.

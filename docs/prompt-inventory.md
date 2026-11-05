@@ -22,7 +22,7 @@
 | 3 | ยุบกลุ่มที่ซ้ำความหมาย | `build_merge_clusters_prompt` | `stages/llm_clustering.py` → `_cluster_map_reduce` | `clustering` | `MergeGroupsResponse` | ✅ ผ่าน key เดียวกับข้อ 2 |
 | 4 | เขียนประโยค Need | `build_summarize_need_prompt` | `stages/need_combination.py` → `run` | `need_combination` | `_NeedStatement` | ❌ ไม่มี cache |
 | 5 | แปลง Need เป็น PLO | `build_plo_from_need_prompt` | `stages/plo_synthesis.py` → `draft_from_needs` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
-| 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_loop` | `validation` | `ValidationStep` | ❌ |
+| 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_judge_once` (รัน `VALIDATION_RUNS` ครั้งต่อรอบ) | `validation` | `JudgeStep` | ❌ |
 | 7 | สั่งแก้ประโยค PLO | `build_agent_repair_prompt` | `stages/smart_agent.py` → `_repair` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
 | 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
@@ -372,12 +372,12 @@ need_id: <need_id>
 | | |
 |---|---|
 | **builder** | `prompts/smart_agent.py` → `build_smart_agent_prompt(...)` (system คงที่ `_SYSTEM_TH` + user หนึ่งก้อน) |
-| **ผู้เรียก** | `stages/smart_agent.py` → `_loop` |
+| **ผู้เรียก** | `stages/smart_agent.py` → `_judge_once` (หนึ่ง judge run) ภายใต้ `_voted_loop` |
 | **slot / wrapper** | `validation` → `complete_validation` (`temperature=0`, `max_tokens=_MAX_STEP_TOKENS`) |
-| **response model** | `ValidationStep` = `CallTool` \| `RequestRepair` \| `Finish` |
-| **งบ** | `VALIDATION_MAX_TURNS` รอบ · `VALIDATION_MAX_REPAIRS` ครั้งซ่อมต่อ PLO |
+| **response model** | `JudgeStep` = `CallTool` \| `Finish` (ไม่มี action สั่งซ่อมแล้ว) |
+| **งบ** | `VALIDATION_RUNS` judge run ต่อรอบ (ค่าเริ่มต้น 5, โหวตเสียงข้างมาก) · `VALIDATION_MAX_TURNS` รอบต่อ run · `VALIDATION_MAX_REPAIRS` ครั้งซ่อมต่อ PLO · `VALIDATION_TIMEOUT_SECONDS` ครอบทั้ง loop |
 
-slot เดียวที่รัน multi-turn loop แบบมีเครื่องมือ · เครื่องมือที่เรียกได้: `check_hard`,
+slot เดียวที่รัน multi-turn loop แบบมีเครื่องมือ · PLO หนึ่งข้อถูกตรวจหลายรอบพร้อมกัน (judge run) แล้ว `smart_vote` นับเสียงข้างมากต่อเกณฑ์ soft · run ไม่สั่งซ่อมเอง: มันรายงานผลตรวจ คำวินิจฉัย และ `repair_hint_th` สั้น ๆ แล้ว `_voted_loop` เป็นผู้ตัดสินใจซ่อมจากเสียงข้างมากกับ `hard_failures` · เครื่องมือที่เรียกได้: `check_hard`,
 `bloom_lookup`, `get_need`, `get_evidence` (ไม่เกิน 3 รายการ), `list_sibling_plos`
 
 **agent ประกาศว่าเกณฑ์ที่ตัดสินด้วยโค้ดผ่านเองไม่ได้** — `Finish` ไม่มี field ที่ล้างข้อผิดพลาดชนิดนั้น
@@ -398,7 +398,7 @@ monotone: หดรายการที่ไม่ผ่านได้ ปร
 คุณสืบค้นข้อมูลได้ด้วยเครื่องมือ แล้วจึงสรุปผล ตอบเป็น JSON object เดียวต่อหนึ่งรอบ:
 {"reasoning_th": "...", "action": {...}}
 
-action มีสามแบบ
+action มีสองแบบ
 1) เรียกเครื่องมือ: {"kind":"call_tool","tool":"<ชื่อ>", <อาร์กิวเมนต์>}
    - check_hard — ผลตรวจเกณฑ์ที่ตัดสินด้วยโค้ด (S ประโยคขึ้นต้นด้วย action_verb_th, S action_verb_th
      ประกาศกริยาเกินหนึ่งตัว, M คำที่วัดไม่ได้, R ร่องรอยหลักฐาน) พร้อมจำนวนกริยา Bloom ที่พบ
@@ -408,12 +408,10 @@ action มีสามแบบ
    - get_need — Need ที่ PLO นี้อ้างถึง (ต้องมี need_id)
    - get_evidence — ข้อความหลักฐานบางส่วนที่ PLO นี้อ้างถึง อ่านได้ไม่เกิน 3 รายการ (ต้องมี evidence_id)
    - list_sibling_plos — PLO อื่นในชุดเดียวกัน เพื่อดูว่าซ้ำซ้อนกันหรือไม่
-2) สั่งแก้ประโยค: {"kind":"request_repair","instruction_th":"...",
-   "criteria":["M_forbidden"],"keep_th":"..."}
-   - คุณไม่ได้เขียนประโยคเอง โมเดลที่เขียนภาษาไทยจะแก้ตามคำสั่งของคุณ แล้วคุณตรวจซ้ำ
-   - instruction_th ต้องอยู่ได้ด้วยตัวเอง ระบุว่าอะไรผิดและต้องแก้อย่างไร
-   - keep_th คือสาระที่ต้องคงไว้
-3) สรุปผล: {"kind":"finish", <ผลตรวจ 7 ข้อ>, "findings_th":{...}, "diagnosis_th":"..."}
+2) สรุปผล: {"kind":"finish", <ผลตรวจ 7 ข้อ>, "findings_th":{...}, "diagnosis_th":"...",
+   "repair_hint_th":"..."}
+   - คุณไม่ได้เขียนประโยคเอง และไม่ได้สั่งแก้ประโยคโดยตรง ระบบรวมผลจากผู้ตรวจหลายรอบ
+     แล้วโมเดลที่เขียนภาษาไทยจะแก้ตามข้อเสนอที่ผู้ตรวจส่วนใหญ่เห็นตรงกัน
 
 ผลตรวจ 7 ข้อใน finish (true = ผ่าน)
 - specific_object_ok: กรรมของกริยาเจาะจง ระบุพฤติกรรม/ทักษะ/สมรรถนะที่ชัดเจน
@@ -446,6 +444,9 @@ action มีสามแบบ
 findings_th: เหตุผลสั้น ๆ ต่อข้อที่ไม่ผ่าน ใช้ชื่อรหัสเป็นคีย์
 (S_object, M_assessable, A_level, A_actor, A_scope, R_needs, T_horizon)
 diagnosis_th: สรุปให้นักออกแบบหลักสูตรอ่าน ระบุว่าต้องแก้อะไรหรือเหตุใดจึงผ่าน
+repair_hint_th: ถ้ามีข้อที่ไม่ผ่านและแก้ได้ที่ถ้อยคำ ให้บอกสั้น ๆ ว่า "ควรแก้อะไร" (ไม่เกิน 400 ตัวอักษร)
+เช่น 'เปลี่ยนกรรมจากคำกว้างเป็นงานที่ระบุได้' ห้ามเขียนประโยค PLO ใหม่เต็มประโยค
+ถ้าผ่านทุกข้อ หรือที่ไม่ผ่านแก้ด้วยถ้อยคำไม่ได้ ให้ปล่อยว่าง
 
 หมายเหตุ
 - S_multi_verb ตัดสินจาก action_verb_th ไม่ใช่จากประโยค ประโยคมีกริยาในอนุประโยครอง
@@ -455,14 +456,14 @@ diagnosis_th: สรุปให้นักออกแบบหลักสู
   ผ่านได้ตามปกติ แต่งานที่ทำจริงซึ่งซ่อนอยู่ในอนุประโยค 'ในการ...'/'เพื่อ...' ใต้กริยา
   'ประยุกต์ใช้'/'ใช้' ไม่ใช่กรณีนั้น ให้ถือว่า S_object และ achievable_ok ไม่ผ่านตามที่ระบุไว้ข้างต้น
 - เกณฑ์ที่ตัดสินด้วยโค้ด (S กริยา, S จำนวนกริยาที่ประกาศ, M คำห้าม, R หลักฐาน) คุณประกาศว่าผ่านเองไม่ได้
-  โค้ดจะตรวจประโยคสุดท้ายอีกครั้งเสมอ ทางเดียวที่จะแก้ได้คือสั่ง request_repair
+  โค้ดจะตรวจประโยคสุดท้ายอีกครั้งเสมอ
 - ร่องรอยหลักฐานของ PLO (source_need_ids) ถูกตรึงด้วยโค้ดจาก Need ที่เลือกไว้ก่อนเรียกคุณ
-  request_repair เปลี่ยนมันไม่ได้ ถ้าเห็นว่าประโยคไม่ตรงกับ Need ให้สั่งแก้ *ประโยค* ให้ตอบ Need ที่มีอยู่
-  ไม่ใช่สั่งให้เปลี่ยน Need ที่อ้างถึง
+  การแก้ประโยคเปลี่ยนมันไม่ได้ ถ้าเห็นว่าประโยคไม่ตรงกับ Need ให้เสนอแก้ *ประโยค* ให้ตอบ Need ที่มีอยู่
+  ไม่ใช่เสนอให้เปลี่ยน Need ที่อ้างถึง
 - ถ้า actor_ok หรือ scope_ok ไม่ผ่านเพราะสาระของ Need เอง (Need คืองานของสถาบันเอง
-  หรือคืองานของวิชาชีพอื่น) ห้ามสั่ง request_repair เพราะแก้ถ้อยคำแล้วสาระของผลลัพธ์จะเปลี่ยน
-  ให้ finish แล้วเขียนใน diagnosis_th ว่าควรตัดข้อนี้หรือส่งกลับขั้น Need
-  สั่งแก้ได้เฉพาะเมื่อประโยคเติมส่วนที่เกินขอบเขตเข้ามาเองทั้งที่ Need ไม่ได้ขอ
+  หรือคืองานของวิชาชีพอื่น) การแก้ถ้อยคำทำให้สาระของผลลัพธ์เปลี่ยน ระบบจึงไม่แก้ข้อนี้ให้
+  ให้ finish แล้วเขียนใน diagnosis_th ว่าควรตัดข้อนี้หรือส่งกลับขั้น Need และอย่าเขียน repair_hint_th
+  เพื่อข้อนี้ เสนอแก้ได้เฉพาะเมื่อประโยคเติมส่วนที่เกินขอบเขตเข้ามาเองทั้งที่ Need ไม่ได้ขอ
 - get_need รับเฉพาะ need_id ที่แสดงไว้เท่านั้น ส่งข้อความของ Need เป็น need_id ไม่ได้
 - อย่าเรียกเครื่องมือเดิมด้วยอาร์กิวเมนต์เดิมซ้ำ
 - ถ้าข้อมูลพอแล้วให้สรุปด้วย finish ทันที ไม่ต้องเรียกเครื่องมือให้ครบทุกตัว
@@ -485,27 +486,28 @@ Need ที่อ้างถึง (need_id ตรึงด้วยโค้�
 
 ### ข้อความที่ต่อเข้า loop ระหว่างทาง
 
-ไม่ใช่ prompt เต็ม แต่เป็น user turn ที่ `_loop` ต่อท้ายหลังทุก action:
+ไม่ใช่ prompt เต็ม แต่เป็น user turn ที่ `_judge_once` ต่อท้ายหลังทุก action:
 
 | builder | ใช้เมื่อ |
 |---|---|
 | `build_tool_observation(observation)` | ผลของเครื่องมือหนึ่งตัว — สำเร็จส่ง JSON, ล้มเหลวส่ง `ผลของ <tool>: ปฏิเสธ — <เหตุผล>` |
-| `build_refusal_observation(reason_th)` | ระบบปฏิเสธคำสั่งล่าสุด เช่น รูปแบบคำตอบผิด หรือซ่อมไม่สำเร็จ |
-| `build_repair_observation(...)` | ผลการซ่อม พร้อม **คำตัดสินของโค้ด** ก่อน/หลัง |
+| `build_refusal_observation(reason_th)` | ระบบปฏิเสธคำสั่งล่าสุด เช่น รูปแบบคำตอบผิด หรือเรียกเครื่องมือด้วยอาร์กิวเมนต์เดิมซ้ำ |
+| `build_vote_repair_instruction_th(...)` | คำสั่งซ่อมเดียวที่ส่งให้ slot `plo_synthesis` สร้างจากคำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน + ข้อที่ผู้ตรวจเสียงข้างมากไม่ผ่าน (ไม่รวม A_actor/A_scope) + hint ของผู้ตรวจตัวแทน ยาวไม่เกิน 800 ตัวอักษร |
 
 ```text
-ผลการแก้ประโยค
-ประโยคเดิม: <ประโยคเดิม>
-ประโยคใหม่: <ประโยคใหม่>
-เกณฑ์ที่ตัดสินด้วยโค้ด: M_forbidden -> (ไม่มี)
+เกณฑ์ที่โค้ดตรวจไม่ผ่าน:
+- <คำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน>
+เกณฑ์ที่ผู้ตรวจส่วนใหญ่เห็นว่าไม่ผ่าน:
+- M_assessable: <หมายเหตุของผู้ตรวจที่เป็นตัวแทนเสียงข้างมาก>
+ข้อเสนอของผู้ตรวจ: <repair_hint_th ของผู้ตรวจที่เป็นตัวแทน>
 ```
 
 ```text
 ระบบปฏิเสธคำสั่งล่าสุด: <เหตุผลที่ระบบปฏิเสธ>
 ```
 
-`build_repair_observation` ส่งทั้งประโยคใหม่และผลตรวจของโค้ดเสมอ — ถ้าส่งแค่ประโยค agent ต้องเชื่อการอ่าน
-ของตัวเองกับเกณฑ์ที่โค้ดเพิ่งตัดสินไป และแยกไม่ออกระหว่างประโยคที่มัน *ชอบ* กับประโยคที่ *ผ่าน*
+หลังซ่อม ประโยคใหม่ถูกตรวจรอบใหม่ทั้งรอบ และโค้ดเทียบ `hard_failures` ของประโยคก่อน/หลัง — ถ้าประโยคใหม่มีข้อผิดพลาดชนิด
+ที่ประโยคเดิมไม่มี (decision 20) จะทิ้งประโยคใหม่ ใช้ประโยคเดิมต่อ และนับว่าใช้สิทธิ์ซ่อมไปแล้ว
 
 ---
 
@@ -518,9 +520,9 @@ Need ที่อ้างถึง (need_id ตรึงด้วยโค้�
 | **slot / wrapper** | `plo_synthesis` → `complete_plo_synthesis` (`max_retries=2`) |
 | **response model** | `_SingleDraftResponse` (โครงเดียวกับร่างแรก) |
 
-**นี่คือ invariant กลางของ SMART loop:** agent ตัดสินใจ *ว่าจะซ่อมไหม* และออกคำสั่ง ส่วนภาษาไทยที่
-ผู้ออกแบบจะยื่นต่อ อว. เขียนโดย slot `plo_synthesis` เสมอ · `RequestRepair` จึงไม่มี field
-`statement_th` เลย — ถ้ามี "การซ่อมไม่เคยถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่าง" จะห่างจากเท็จอยู่ field เดียว
+**นี่คือ invariant กลางของ SMART loop:** เสียงข้างมากของ judge run กับ `hard_failures` ตัดสินใจ *ว่าจะซ่อมไหม* และออกคำสั่ง ส่วนภาษาไทยที่
+ผู้ออกแบบจะยื่นต่อ อว. เขียนโดย slot `plo_synthesis` เสมอ · `Finish` จึงไม่มี field
+`statement_th` เลย (มีแค่ `repair_hint_th` สั้น ๆ) — ถ้ามี "การซ่อมไม่เคยถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่าง" จะห่างจากเท็จอยู่ field เดียว
 
 prompt ซ่อมพกแค่คำสั่ง + ประโยคเดิม ไม่มีผลเครื่องมือ ไม่มี PLO พี่น้อง ไม่มีการท่องเกณฑ์ซ้ำ เพราะโมเดลที่
 เขียนคำวินิจฉัยไม่ใช่โมเดลที่เขียนคำแก้ `instruction_th` จึงต้องอยู่ได้ด้วยตัวเอง

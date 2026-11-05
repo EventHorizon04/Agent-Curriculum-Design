@@ -45,8 +45,8 @@ from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
     build_refusal_observation,
-    build_repair_observation,
     build_smart_agent_prompt,
+    build_vote_repair_instruction_th,
 )
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
 from curriculum_agent.prompts.summarize_need import (
@@ -209,11 +209,10 @@ def _build() -> str:
     )
     bloom_note = build_bloom_redraft_note_th(BloomLevel.ANALYZE, "<เหตุผลของผู้ตรวจ>")
     context_line = build_program_context_th({"field": "<สาขาวิชา>", "degree_level": "bachelor"})
-    repair_observation = build_repair_observation(
-        before_statement="<ประโยคเดิม>",
-        after_statement="<ประโยคใหม่>",
-        before_failures=["M_forbidden"],
-        after_failures=[],
+    repair_instruction = build_vote_repair_instruction_th(
+        ["<คำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน>"],
+        [("M_assessable", "<หมายเหตุของผู้ตรวจที่เป็นตัวแทนเสียงข้างมาก>")],
+        "<repair_hint_th ของผู้ตรวจที่เป็นตัวแทน>",
     )
     refusal_observation = build_refusal_observation("<เหตุผลที่ระบบปฏิเสธ>")
 
@@ -234,7 +233,7 @@ def _build() -> str:
         note_policy=NOTE_POLICY_TH,
         note_header=NOTE_HEADER_TH,
         context_line=context_line,
-        repair_observation=repair_observation,
+        repair_instruction=repair_instruction,
         refusal_observation=refusal_observation,
         min_statement=MIN_STATEMENT_CHARS,
         min_rationale=MIN_RATIONALE_CHARS,
@@ -266,7 +265,7 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 3 | ยุบกลุ่มที่ซ้ำความหมาย | `build_merge_clusters_prompt` | `stages/llm_clustering.py` → `_cluster_map_reduce` | `clustering` | `MergeGroupsResponse` | ✅ ผ่าน key เดียวกับข้อ 2 |
 | 4 | เขียนประโยค Need | `build_summarize_need_prompt` | `stages/need_combination.py` → `run` | `need_combination` | `_NeedStatement` | ❌ ไม่มี cache |
 | 5 | แปลง Need เป็น PLO | `build_plo_from_need_prompt` | `stages/plo_synthesis.py` → `draft_from_needs` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
-| 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_loop` | `validation` | `ValidationStep` | ❌ |
+| 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_judge_once` (รัน `VALIDATION_RUNS` ครั้งต่อรอบ) | `validation` | `JudgeStep` | ❌ |
 | 7 | สั่งแก้ประโยค PLO | `build_agent_repair_prompt` | `stages/smart_agent.py` → `_repair` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
 | 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
@@ -411,12 +410,12 @@ prompt สลับประโยคสั่งและเพิ่มกฎ 
 | | |
 |---|---|
 | **builder** | `prompts/smart_agent.py` → `build_smart_agent_prompt(...)` (system คงที่ `_SYSTEM_TH` + user หนึ่งก้อน) |
-| **ผู้เรียก** | `stages/smart_agent.py` → `_loop` |
+| **ผู้เรียก** | `stages/smart_agent.py` → `_judge_once` (หนึ่ง judge run) ภายใต้ `_voted_loop` |
 | **slot / wrapper** | `validation` → `complete_validation` (`temperature=0`, `max_tokens=_MAX_STEP_TOKENS`) |
-| **response model** | `ValidationStep` = `CallTool` \\| `RequestRepair` \\| `Finish` |
-| **งบ** | `VALIDATION_MAX_TURNS` รอบ · `VALIDATION_MAX_REPAIRS` ครั้งซ่อมต่อ PLO |
+| **response model** | `JudgeStep` = `CallTool` \\| `Finish` (ไม่มี action สั่งซ่อมแล้ว) |
+| **งบ** | `VALIDATION_RUNS` judge run ต่อรอบ (ค่าเริ่มต้น 5, โหวตเสียงข้างมาก) · `VALIDATION_MAX_TURNS` รอบต่อ run · `VALIDATION_MAX_REPAIRS` ครั้งซ่อมต่อ PLO · `VALIDATION_TIMEOUT_SECONDS` ครอบทั้ง loop |
 
-slot เดียวที่รัน multi-turn loop แบบมีเครื่องมือ · เครื่องมือที่เรียกได้: `check_hard`,
+slot เดียวที่รัน multi-turn loop แบบมีเครื่องมือ · PLO หนึ่งข้อถูกตรวจหลายรอบพร้อมกัน (judge run) แล้ว `smart_vote` นับเสียงข้างมากต่อเกณฑ์ soft · run ไม่สั่งซ่อมเอง: มันรายงานผลตรวจ คำวินิจฉัย และ `repair_hint_th` สั้น ๆ แล้ว `_voted_loop` เป็นผู้ตัดสินใจซ่อมจากเสียงข้างมากกับ `hard_failures` · เครื่องมือที่เรียกได้: `check_hard`,
 `bloom_lookup`, `get_need`, `get_evidence` (ไม่เกิน 3 รายการ), `list_sibling_plos`
 
 **agent ประกาศว่าเกณฑ์ที่ตัดสินด้วยโค้ดผ่านเองไม่ได้** — `Finish` ไม่มี field ที่ล้างข้อผิดพลาดชนิดนั้น
@@ -434,24 +433,24 @@ monotone: หดรายการที่ไม่ผ่านได้ ปร
 
 ### ข้อความที่ต่อเข้า loop ระหว่างทาง
 
-ไม่ใช่ prompt เต็ม แต่เป็น user turn ที่ `_loop` ต่อท้ายหลังทุก action:
+ไม่ใช่ prompt เต็ม แต่เป็น user turn ที่ `_judge_once` ต่อท้ายหลังทุก action:
 
 | builder | ใช้เมื่อ |
 |---|---|
 | `build_tool_observation(observation)` | ผลของเครื่องมือหนึ่งตัว — สำเร็จส่ง JSON, ล้มเหลวส่ง `ผลของ <tool>: ปฏิเสธ — <เหตุผล>` |
-| `build_refusal_observation(reason_th)` | ระบบปฏิเสธคำสั่งล่าสุด เช่น รูปแบบคำตอบผิด หรือซ่อมไม่สำเร็จ |
-| `build_repair_observation(...)` | ผลการซ่อม พร้อม **คำตัดสินของโค้ด** ก่อน/หลัง |
+| `build_refusal_observation(reason_th)` | ระบบปฏิเสธคำสั่งล่าสุด เช่น รูปแบบคำตอบผิด หรือเรียกเครื่องมือด้วยอาร์กิวเมนต์เดิมซ้ำ |
+| `build_vote_repair_instruction_th(...)` | คำสั่งซ่อมเดียวที่ส่งให้ slot `plo_synthesis` สร้างจากคำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน + ข้อที่ผู้ตรวจเสียงข้างมากไม่ผ่าน (ไม่รวม A_actor/A_scope) + hint ของผู้ตรวจตัวแทน ยาวไม่เกิน 800 ตัวอักษร |
 
 ```text
-{repair_observation}
+{repair_instruction}
 ```
 
 ```text
 {refusal_observation}
 ```
 
-`build_repair_observation` ส่งทั้งประโยคใหม่และผลตรวจของโค้ดเสมอ — ถ้าส่งแค่ประโยค agent ต้องเชื่อการอ่าน
-ของตัวเองกับเกณฑ์ที่โค้ดเพิ่งตัดสินไป และแยกไม่ออกระหว่างประโยคที่มัน *ชอบ* กับประโยคที่ *ผ่าน*
+หลังซ่อม ประโยคใหม่ถูกตรวจรอบใหม่ทั้งรอบ และโค้ดเทียบ `hard_failures` ของประโยคก่อน/หลัง — ถ้าประโยคใหม่มีข้อผิดพลาดชนิด
+ที่ประโยคเดิมไม่มี (decision 20) จะทิ้งประโยคใหม่ ใช้ประโยคเดิมต่อ และนับว่าใช้สิทธิ์ซ่อมไปแล้ว
 
 ---
 
@@ -464,9 +463,9 @@ monotone: หดรายการที่ไม่ผ่านได้ ปร
 | **slot / wrapper** | `plo_synthesis` → `complete_plo_synthesis` (`max_retries=2`) |
 | **response model** | `_SingleDraftResponse` (โครงเดียวกับร่างแรก) |
 
-**นี่คือ invariant กลางของ SMART loop:** agent ตัดสินใจ *ว่าจะซ่อมไหม* และออกคำสั่ง ส่วนภาษาไทยที่
-ผู้ออกแบบจะยื่นต่อ อว. เขียนโดย slot `plo_synthesis` เสมอ · `RequestRepair` จึงไม่มี field
-`statement_th` เลย — ถ้ามี "การซ่อมไม่เคยถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่าง" จะห่างจากเท็จอยู่ field เดียว
+**นี่คือ invariant กลางของ SMART loop:** เสียงข้างมากของ judge run กับ `hard_failures` ตัดสินใจ *ว่าจะซ่อมไหม* และออกคำสั่ง ส่วนภาษาไทยที่
+ผู้ออกแบบจะยื่นต่อ อว. เขียนโดย slot `plo_synthesis` เสมอ · `Finish` จึงไม่มี field
+`statement_th` เลย (มีแค่ `repair_hint_th` สั้น ๆ) — ถ้ามี "การซ่อมไม่เคยถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่าง" จะห่างจากเท็จอยู่ field เดียว
 
 prompt ซ่อมพกแค่คำสั่ง + ประโยคเดิม ไม่มีผลเครื่องมือ ไม่มี PLO พี่น้อง ไม่มีการท่องเกณฑ์ซ้ำ เพราะโมเดลที่
 เขียนคำวินิจฉัยไม่ใช่โมเดลที่เขียนคำแก้ `instruction_th` จึงต้องอยู่ได้ด้วยตัวเอง

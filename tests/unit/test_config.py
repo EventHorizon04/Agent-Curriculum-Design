@@ -185,7 +185,8 @@ def test_the_validation_budgets_are_bounded_by_default():
     s = Settings(_env_file=None)
     assert s.validation_max_turns == 8
     assert s.validation_max_repairs == 3
-    assert s.validation_timeout_seconds == 240
+    assert s.validation_timeout_seconds == 600
+    assert s.validation_runs == 5
     # Loops, not calls: a loop is serial, so N loops is N in-flight calls.
     assert s.validation_max_concurrent_plos == 3
 

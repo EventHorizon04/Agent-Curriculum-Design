@@ -1,4 +1,15 @@
-"""The SMART validation agent: a tool-using loop over one PLO draft.
+"""The SMART validation agent: voted judge runs, and a repair loop around them.
+
+**Judge, vote, repair.** One PLO is judged several times (`validation_runs`,
+default 5) by independent tool-using runs, each ending in a `Finish`. A soft
+criterion counts as failed only when a majority of the successful runs failed it
+(`smart_vote`, pure code), because the same model at temperature 0 still answers
+differently from run to run. A run never asks for a repair: it reports verdicts, a
+diagnosis and a short `repair_hint_th`. When the code found a hard failure or the
+vote found a repairable soft one, *this module* builds one instruction from the
+code's hints plus the majority's findings and gets `complete_plo_synthesis` to
+rewrite the sentence, then judges the new sentence again, up to
+`validation_max_repairs` times. `validation_runs=1` is the single-run agent.
 
 **Why a structured action loop rather than native tool-calling.** Instructor is
 wired in `Mode.JSON` for every slot (`llm._get_client`), and reading a
@@ -15,23 +26,28 @@ Pydantic `ValidationError`, which Instructor re-asks with the error attached.
 **What keeps immutable rule 5 intact.** Three things, and none of them are
 conventions the agent could talk its way past:
 
-1. `Finish` carries soft verdicts and a diagnosis. It has no field that can
-   clear a hard failure, and `check_hard` is a *read* of the pure function
-   whose result is never retained as the verdict.
+1. `Finish` carries soft verdicts, a diagnosis and a repair hint. It has no field
+   that can clear a hard failure, and `check_hard` is a *read* of the pure
+   function whose result is never retained as the verdict. Hard failures drive
+   repair from `hard_failures` directly; no vote can remove one.
 2. `validate_and_build` runs `hard_failures` on the final statement after this
    loop returns, whatever way it returned, and that call decides `escalated`.
    The agent's only causal route to the outcome is getting `complete_plo_synthesis`
    to write a better sentence, which code then re-judges — so its power is
-   monotone: it can shrink the failure list, never declare it empty.
-3. A repair is *requested*, never written here. `RequestRepair` has no
-   statement field, so the Thai a designer submits to MHESI still comes from
-   the synthesis slot.
+   monotone: it can shrink the failure list, never declare it empty. A repair
+   that introduces a hard failure the previous sentence did not have is discarded.
+3. A repair is written by the synthesis slot, never here. `Finish` has no
+   statement field, so the Thai a designer submits to MHESI still comes from the
+   slot that wrote the draft.
 """
 
 from __future__ import annotations
 
 import asyncio
+import dataclasses
+import weakref
 from collections.abc import Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Annotated, Any, Literal, TypeVar
 
@@ -49,20 +65,29 @@ from curriculum_agent.prompts.smart_agent import (
     build_closing_after_malformed_instruction,
     build_closing_instruction,
     build_refusal_observation,
-    build_repair_observation,
     build_smart_agent_prompt,
     build_tool_observation,
     build_turns_left_note,
+    build_vote_repair_instruction_th,
 )
 from curriculum_agent.smart_vocabulary import HARD_CODES, SmartFindingCode
 from curriculum_agent.stages.smart_agent_tools import (
     TOOL_REQUIRED_ARG,
+    ToolBudget,
     ValidationContext,
     call_fingerprint,
     run_tool,
 )
-from curriculum_agent.stages.smart_rules import hard_failures
-from curriculum_agent.stages.smart_vote import _SOFT_VERDICTS
+from curriculum_agent.stages.smart_rules import CRITERION_FIX_HINTS_TH, hard_failures
+from curriculum_agent.stages.smart_vote import (
+    SOFT_VERDICTS,
+    JudgeRun,
+    SoftVote,
+    first_batch_size,
+    is_decided,
+    repairable,
+    vote,
+)
 
 # Consecutive malformed steps before the loop gives up. Instructor has already
 # re-asked twice by then, so a third is a model that cannot answer the schema.
@@ -246,23 +271,14 @@ class CallTool(BaseModel):
         return self
 
 
-class RequestRepair(BaseModel):
-    """The agent asks for a rewrite; it never performs one.
-
-    There is deliberately no `statement_th` field. If there were, a helpful
-    model would fill it in and "a repair is never answered by a different model
-    than wrote the draft" would be one field away from broken. The Thai sentence
-    is written by `complete_plo_synthesis`, always.
-    """
-
-    kind: Literal["request_repair"]
-    instruction_th: str = Field(min_length=1, max_length=800)
-    criteria: list[SmartFindingCode] = Field(default_factory=list)
-    keep_th: str | None = Field(default=None, max_length=200)
-
-
 class Finish(BaseModel):
-    """The verdict. Soft only — nothing here can clear a hard failure."""
+    """One judge run's verdict. Soft only — nothing here can clear a hard failure.
+
+    `repair_hint_th` says what to change, never a sentence: there is no statement
+    field on purpose. If there were, a helpful model would fill it in and "a repair
+    is never answered by a different model than wrote the draft" would be one
+    field away from false. The Thai sentence is written by `complete_plo_synthesis`.
+    """
 
     kind: Literal["finish"]
     specific_object_ok: bool = True
@@ -274,21 +290,25 @@ class Finish(BaseModel):
     time_bound_ok: bool = True
     findings_th: dict[str, str] = Field(default_factory=dict)
     diagnosis_th: str = Field(min_length=1, max_length=600)
+    repair_hint_th: str = Field(default="", max_length=400)
 
 
-class ValidationStep(BaseModel):
-    """One turn. `reasoning_th` comes first on purpose: field order is schema
-    order is generation order, so the model reasons before it commits."""
+class JudgeStep(BaseModel):
+    """One turn of a judge run. `reasoning_th` comes first on purpose: field order
+    is schema order is generation order, so the model reasons before it commits.
+
+    No repair action is offered: a repair is decided from the vote, not by one run.
+    """
 
     reasoning_th: str = Field(min_length=1, max_length=800)
-    action: Annotated[CallTool | RequestRepair | Finish, Field(discriminator="kind")]
+    action: Annotated[CallTool | Finish, Field(discriminator="kind")]
 
 
 class ClosingStep(BaseModel):
     """The call made when the turns are spent: a `Finish` and nothing else.
 
-    No tool and no repair can be named, so the schema, not the prompt, is what
-    stops the model spending the extra call on more work.
+    No tool can be named, so the schema, not the prompt, is what stops the model
+    spending the extra call on more work.
     """
 
     reasoning_th: str = Field(min_length=1, max_length=800)
@@ -328,7 +348,7 @@ class SmartAgentResult(BaseModel):
     def soft_verdicts(self) -> dict[str, bool]:
         """One boolean per soft verdict, derived from the findings so the two cannot drift."""
         failed = {f.criterion for f in self.soft_findings}
-        return {field: code not in failed for field, code in _SOFT_VERDICTS}
+        return {field: code not in failed for field, code in SOFT_VERDICTS}
 
 
 def _result_from_draft(draft: Any, **overrides: Any) -> SmartAgentResult:
@@ -342,19 +362,6 @@ def _result_from_draft(draft: Any, **overrides: Any) -> SmartAgentResult:
         source_need_ids=list(draft.source_need_ids),
         **overrides,
     )
-
-
-def _soft_findings(finish: Finish) -> list[SmartFinding]:
-    """The failed soft verdicts, each with the model's note or a default one."""
-    out: list[SmartFinding] = []
-    for field_name, code in _SOFT_VERDICTS:
-        if getattr(finish, field_name):
-            continue
-        note = finish.findings_th.get(code.value) or finish.findings_th.get(field_name) or ""
-        out.append(
-            SmartFinding(criterion=code, severity="soft", note_th=note or finish.diagnosis_th)
-        )
-    return out
 
 
 def code_only_result(
@@ -389,23 +396,19 @@ def code_only_result(
 
 async def _repair(
     draft: Any,
-    action: RequestRepair,
+    instruction_th: str,
+    criteria: Sequence[str],
     ctx: ValidationContext,
     metadata: ProgramMetadata,
-) -> tuple[Any, str] | None:
+) -> Any | None:
     """Ask the synthesis slot for a replacement sentence.
 
-    Returns the adopted draft and an observation, or None when the call failed.
+    Returns the adopted draft, or None when the call failed. Whether the new
+    sentence is *better* is not decided here: the caller compares the code's
+    verdict on the two (decision 20) and the next judge round reads it.
     """
     from curriculum_agent.stages.plo_synthesis import _adopt, _SingleDraftResponse
 
-    before_statement = draft.statement_th
-    before_fails = hard_failures(
-        draft.statement_th,
-        draft.action_verb_th,
-        list(ctx.authoritative_need_ids),
-        set(ctx.known_need_ids),
-    )
     try:
         fixed = await complete_plo_synthesis(
             _SingleDraftResponse,
@@ -414,9 +417,9 @@ async def _repair(
                 bloom_level=draft.bloom_level.value,
                 action_verb_th=draft.action_verb_th,
                 degree_level=metadata.degree_level,
-                instruction_th=action.instruction_th,
-                criteria=[c.value for c in action.criteria],
-                keep_th=action.keep_th,
+                instruction_th=instruction_th,
+                criteria=list(criteria),
+                keep_th=None,
             ),
             max_retries=2,
             max_tokens=PLO_MAX_TOKENS,
@@ -428,22 +431,100 @@ async def _repair(
 
     # Re-pinned immediately: the gate judges the ids that will ship, and a
     # replacement draft is a fresh object the model filled in.
-    adopted = _adopt(fixed.plo, list(ctx.authoritative_need_ids))
-    after_fails = hard_failures(
-        adopted.statement_th,
-        adopted.action_verb_th,
-        adopted.source_need_ids,
+    return _adopt(fixed.plo, list(ctx.authoritative_need_ids))
+
+
+@dataclass
+class _Progress:
+    """What the loop has settled so far, held outside it so a timeout can read it.
+
+    `judged` is the last statement a usable vote covered, and `vote` is that
+    vote: the two only ever move together. `current` is the draft being worked on,
+    which is ahead of `judged` between a repair and the next round.
+    """
+
+    current: Any
+    judged: Any | None = None
+    vote: SoftVote | None = None
+    repairs: int = 0
+    turns: int = 0
+
+
+# One semaphore per event loop, shared by every PLO's judge runs. asyncio
+# primitives bind to the loop they first wait on, so a module-global one breaks
+# the moment a second loop (every pytest-asyncio test) touches it.
+_JUDGE_SEMAPHORES: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+def _judge_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    semaphore = _JUDGE_SEMAPHORES.get(loop)
+    if semaphore is None:
+        semaphore = asyncio.Semaphore(max(1, settings.llm_max_concurrency))
+        _JUDGE_SEMAPHORES[loop] = semaphore
+    return semaphore
+
+
+def _hard_on(draft: Any, ctx: ValidationContext) -> list[Any]:
+    return hard_failures(
+        draft.statement_th,
+        draft.action_verb_th,
+        list(ctx.authoritative_need_ids),
         set(ctx.known_need_ids),
     )
-    # The agent sees the new sentence *and* the code's verdict on it, so it can
-    # never mistake a rewrite it likes for a rewrite that passes.
-    observation = build_repair_observation(
-        before_statement=before_statement,
-        after_statement=adopted.statement_th,
-        before_failures=[f.value for f in before_fails],
-        after_failures=[f.value for f in after_fails],
+
+
+def _judge_run(finish: Finish, turns: int) -> JudgeRun:
+    """One run's verdict in the shape `smart_vote` counts."""
+    failed: set[SmartFindingCode] = set()
+    notes: dict[SmartFindingCode, str] = {}
+    for field_name, code in SOFT_VERDICTS:
+        if getattr(finish, field_name):
+            continue
+        failed.add(code)
+        notes[code] = finish.findings_th.get(code.value) or finish.findings_th.get(field_name) or ""
+    return JudgeRun(
+        failed=frozenset(failed),
+        notes_th=notes,
+        diagnosis_th=finish.diagnosis_th,
+        repair_hint_th=finish.repair_hint_th,
+        turns=turns,
     )
-    return adopted, observation
+
+
+def _voted_result(
+    progress: _Progress,
+    *,
+    reason: ValidationReason = ValidationReason.FINISHED,
+    note_th: str = "",
+) -> SmartAgentResult:
+    """The result for the last statement a usable vote covered, with that vote."""
+    voted = progress.vote
+    assert voted is not None and progress.judged is not None
+    representative = voted.representative
+    findings = [
+        SmartFinding(
+            criterion=code,
+            severity="soft",
+            note_th=representative.notes_th.get(code) or representative.diagnosis_th,
+        )
+        for code in voted.failed
+    ]
+    diagnosis = (
+        f"{representative.diagnosis_th} {note_th}".strip()
+        if note_th
+        else (representative.diagnosis_th)
+    )
+    return _result_from_draft(
+        progress.judged,
+        soft_findings=findings,
+        diagnosis_th=diagnosis,
+        repair_count=progress.repairs,
+        turns=progress.turns,
+        reason=reason,
+    )
 
 
 async def run_smart_agent(
@@ -452,8 +533,9 @@ async def run_smart_agent(
     metadata: ProgramMetadata,
     *,
     enabled: bool = True,
+    allow_repair: bool = True,
 ) -> SmartAgentResult:
-    """Validate one draft, repairing through the synthesis slot when asked.
+    """Validate one draft: judge it by vote, repairing through the synthesis slot.
 
     Never raises for a bad verdict: every exit produces a result, and
     `validate_and_build` re-runs the pure-code checks on whatever comes back.
@@ -466,6 +548,9 @@ async def run_smart_agent(
 
     `enabled=False` is the per-run switch (`POST /plos/run`, `run_validation`):
     it skips the agent for this run only, without touching `.env`.
+
+    `allow_repair=False` judges and never rewrites. It is how a designer-edited
+    PLO is revalidated: the sentence is theirs, and a repair would replace it.
     """
     # The kill switch. Not `and not settings.llm_provider`: that field is a
     # Literal with no empty member, so the second half could never be true and
@@ -484,19 +569,174 @@ async def run_smart_agent(
     if not enabled:
         return code_only_result(draft, ValidationReason.SKIPPED, "ไม่ได้ตรวจ (ปิดการตรวจในรอบนี้)")
 
+    progress = _Progress(current=draft)
     try:
         async with asyncio.timeout(settings.validation_timeout_seconds):
-            return await _loop(draft, ctx, metadata)
+            return await _voted_loop(ctx, metadata, progress, allow_repair=allow_repair)
     except TimeoutError:
         logger.warning(
             f"  SMART agent {ctx.plo_id}: gave up after "
-            f"{settings.validation_timeout_seconds}s — code-only verdict"
+            f"{settings.validation_timeout_seconds}s "
+            f"({progress.repairs} repairs, voted={progress.vote is not None})"
         )
+        if progress.vote is not None:
+            return _voted_result(
+                progress,
+                reason=ValidationReason.DEADLINE,
+                note_th="(หมดเวลา — ใช้ผลตรวจรอบล่าสุด)",
+            )
         return code_only_result(
-            draft,
+            progress.current,
             ValidationReason.DEADLINE,
             f"ไม่ได้ตรวจครบ (เกิน {settings.validation_timeout_seconds} วินาที)",
+            repair_count=progress.repairs,
+            turns=progress.turns,
         )
+
+
+_NO_VOTE_NOTE_TH: dict[ValidationReason, str] = {
+    ValidationReason.MALFORMED: "ไม่ได้ตรวจครบ (ผู้ตรวจตอบไม่ตรงรูปแบบซ้ำ)",
+    ValidationReason.TURN_BUDGET: "ไม่ได้ตรวจครบ (ผู้ตรวจใช้ครบรอบแล้วยังไม่สรุปผล)",
+    ValidationReason.PROVIDER_ERROR: "ไม่ได้ตรวจ (เรียกผู้ตรวจไม่สำเร็จ)",
+}
+
+
+async def _judge_round(
+    draft: Any,
+    ctx: ValidationContext,
+    metadata: ProgramMetadata,
+    requested: int,
+    failures: list[ValidationReason],
+) -> list[JudgeRun | None]:
+    """The runs of one round: a first batch, and the rest only if it left the
+    vote open. Every run waits on the shared semaphore, so N PLOs times M runs
+    stays inside `llm_max_concurrency`."""
+
+    async def one() -> JudgeRun | None:
+        async with _judge_semaphore():
+            return await _judge_once(draft, ctx, metadata, failures=failures)
+
+    runs: list[JudgeRun | None] = list(
+        await asyncio.gather(*(one() for _ in range(first_batch_size(requested))))
+    )
+    if not is_decided(runs, requested):
+        runs += await asyncio.gather(*(one() for _ in range(requested - len(runs))))
+    return runs
+
+
+async def _voted_loop(
+    ctx: ValidationContext,
+    metadata: ProgramMetadata,
+    progress: _Progress,
+    *,
+    allow_repair: bool,
+) -> SmartAgentResult:
+    requested = settings.validation_runs
+    failures: list[ValidationReason] = []
+    logger.info(
+        f"  SMART agent {ctx.plo_id}: start (model={settings.validation_model}, "
+        f"{requested} runs / {settings.validation_max_turns} turns / "
+        f"{settings.validation_max_repairs} repairs)"
+    )
+
+    rounds = 0
+    judge_next = True
+    hard: list[Any] = []
+    to_fix: list[SmartFindingCode] = []
+    round_vote: SoftVote | None = None
+    while True:
+        if judge_next:
+            rounds += 1
+            runs = await _judge_round(progress.current, ctx, metadata, requested, failures)
+            progress.turns += sum(run.turns for run in runs if run is not None)
+            round_vote = vote(runs, requested)
+            if round_vote is not None:
+                progress.judged = progress.current
+                progress.vote = round_vote
+            hard = _hard_on(progress.current, ctx)
+            to_fix = repairable(round_vote.failed) if round_vote is not None else []
+
+        stop = (
+            (not hard and not to_fix)
+            or not allow_repair
+            or progress.repairs >= settings.validation_max_repairs
+        )
+        if judge_next:
+            logger.info(
+                f"  SMART agent {ctx.plo_id}: round={rounds} "
+                f"runs_used={round_vote.runs_used if round_vote else 0}/{requested} "
+                f"failed={[c.value for c in round_vote.failed] if round_vote else []} "
+                f"hard={[f.value for f in hard]} repair={not stop}"
+            )
+        if stop:
+            break
+
+        representative = round_vote.representative if round_vote is not None else None
+        soft = [
+            (code.value, representative.notes_th.get(code) or representative.diagnosis_th)
+            for code in to_fix
+            if representative is not None
+        ]
+        instruction = build_vote_repair_instruction_th(
+            [CRITERION_FIX_HINTS_TH[f] for f in hard],
+            soft,
+            representative.repair_hint_th if representative is not None else "",
+        )
+        criteria = [f.value for f in hard] + [code.value for code in to_fix]
+        # A repair is spent when it is attempted: a failed or discarded one is
+        # still budget used, or a stuck PLO would loop on the same sentence.
+        progress.repairs += 1
+        logger.info(
+            f"  SMART agent {ctx.plo_id} repair {progress.repairs}/"
+            f"{settings.validation_max_repairs}: {criteria}"
+        )
+        repaired = await _repair(progress.current, instruction, criteria, ctx, metadata)
+        judge_next = False
+        if repaired is None:
+            continue
+        introduced = set(_hard_on(repaired, ctx)) - set(hard)
+        if introduced:
+            # Decision 20: a rewrite that breaks something the old sentence did
+            # not is worse than no rewrite. The previous draft stays.
+            logger.warning(
+                f"  SMART agent {ctx.plo_id}: repair discarded, it introduced "
+                f"{[f.value for f in introduced]}"
+            )
+            continue
+        if (repaired.statement_th, repaired.action_verb_th) == (
+            progress.current.statement_th,
+            progress.current.action_verb_th,
+        ):
+            # Nothing changed, so there is nothing new to judge.
+            continue
+        progress.current = repaired
+        judge_next = True
+
+    if progress.vote is None:
+        reason = next(
+            (
+                r
+                for r in (
+                    ValidationReason.MALFORMED,
+                    ValidationReason.TURN_BUDGET,
+                    ValidationReason.PROVIDER_ERROR,
+                )
+                if r in failures
+            ),
+            ValidationReason.PROVIDER_ERROR,
+        )
+        logger.warning(
+            f"  SMART agent {ctx.plo_id}: no round held a vote after {rounds} "
+            f"({reason.value}) — code-only verdict"
+        )
+        return code_only_result(
+            progress.current,
+            reason,
+            _NO_VOTE_NOTE_TH[reason],
+            repair_count=progress.repairs,
+            turns=progress.turns,
+        )
+    return _voted_result(progress)
 
 
 def _with_turns_left(observation: str, turn: int) -> str:
@@ -510,11 +750,27 @@ def _with_turns_left(observation: str, turn: int) -> str:
     return observation
 
 
-async def _loop(
+async def _judge_once(
     draft: Any,
     ctx: ValidationContext,
     metadata: ProgramMetadata,
-) -> SmartAgentResult:
+    *,
+    failures: list[ValidationReason] | None = None,
+) -> JudgeRun | None:
+    """One judge run over `draft`: a tool-using conversation that ends in a Finish.
+
+    Runs on its own copy of the context (a fresh `ToolBudget`, the draft being
+    judged), so concurrent runs share no counters and one run's runaway-reasoning
+    bound does not leak into another. Returns None when the run cannot produce a
+    verdict — a provider error, or malformed/over-long steps the closing call
+    cannot salvage — and says why through `failures` when the caller wants it.
+    """
+    run_ctx = dataclasses.replace(ctx, draft=draft, budget=ToolBudget())
+
+    def failed(reason: ValidationReason) -> None:
+        if failures is not None:
+            failures.append(reason)
+
     messages: list[dict[str, Any]] = build_smart_agent_prompt(
         statement_th=draft.statement_th,
         bloom_level=draft.bloom_level.value,
@@ -524,25 +780,19 @@ async def _loop(
         program_context=build_program_context_th(metadata.model_dump()),
         scope_th=metadata.scope_th or None,
         cited_needs=[
-            (need_id, ctx.needs_by_id[need_id].statement_th)
-            for need_id in ctx.authoritative_need_ids
-            if need_id in ctx.needs_by_id
+            (need_id, run_ctx.needs_by_id[need_id].statement_th)
+            for need_id in run_ctx.authoritative_need_ids
+            if need_id in run_ctx.needs_by_id
         ],
-        cited_evidence_ids=sorted(ctx.cited_evidence_ids),
-        sibling_count=len([s for s in ctx.siblings if s.plo_id != ctx.plo_id]),
-    )
-    logger.info(
-        f"  SMART agent {ctx.plo_id}: start (model={settings.validation_model}, "
-        f"budget {settings.validation_max_turns} turns / "
-        f"{settings.validation_max_repairs} repairs)"
+        cited_evidence_ids=sorted(run_ctx.cited_evidence_ids),
+        sibling_count=len([s for s in run_ctx.siblings if s.plo_id != run_ctx.plo_id]),
     )
 
-    repairs = 0
     malformed = 0
     turn = 0
     for turn in range(1, settings.validation_max_turns + 1):
         try:
-            step = await _ask_step(messages, ctx, ValidationStep)
+            step = await _ask_step(messages, run_ctx, JudgeStep)
         # InstructorRetryException is what a schema failure actually reaches
         # here as: instructor re-asks internally and, once the retries are
         # spent, wraps the last ValidationError rather than re-raising it. It
@@ -556,28 +806,20 @@ async def _loop(
         except (InstructorRetryException, ValidationError, IncompleteOutputException) as exc:
             malformed += 1
             logger.warning(
-                f"  SMART agent {ctx.plo_id} turn {turn}: malformed step "
+                f"  SMART agent {run_ctx.plo_id} turn {turn}: malformed step "
                 f"({malformed}/{_MAX_MALFORMED}): {_schema_failure_reason(exc)}"
             )
             if malformed >= _MAX_MALFORMED:
                 salvaged = await _closing_call(
-                    draft,
-                    ctx,
+                    run_ctx,
                     messages,
                     build_closing_after_malformed_instruction(),
                     ValidationReason.FINISHED_AFTER_MALFORMED,
-                    repairs=repairs,
                     turns=turn,
                 )
-                if salvaged is not None:
-                    return salvaged
-                return code_only_result(
-                    draft,
-                    ValidationReason.MALFORMED,
-                    "ไม่ได้ตรวจครบ (ผู้ตรวจตอบไม่ตรงรูปแบบซ้ำ)",
-                    repair_count=repairs,
-                    turns=turn,
-                )
+                if salvaged is None:
+                    failed(ValidationReason.MALFORMED)
+                return salvaged
             messages.append(
                 {
                     "role": "user",
@@ -591,67 +833,20 @@ async def _loop(
             # Instructor has already re-asked. A second failure is a dead
             # endpoint, not bad luck — and an agent that could not run must not
             # manufacture an escalation.
-            logger.warning(f"  SMART agent {ctx.plo_id} turn {turn}: provider error: {exc}")
-            return code_only_result(
-                draft,
-                ValidationReason.PROVIDER_ERROR,
-                "ไม่ได้ตรวจ (เรียกผู้ตรวจไม่สำเร็จ)",
-                repair_count=repairs,
-                turns=turn,
-            )
+            logger.warning(f"  SMART agent {run_ctx.plo_id} turn {turn}: provider error: {exc}")
+            failed(ValidationReason.PROVIDER_ERROR)
+            return None
 
         malformed = 0
         messages.append({"role": "assistant", "content": step.model_dump_json()})
         action = step.action
 
         if isinstance(action, Finish):
-            logger.info(
-                f"  SMART agent {ctx.plo_id}: finish turns={turn} repairs={repairs} "
-                f"evidence_reads={len(ctx.budget.evidence_reads)}"
+            logger.debug(
+                f"  SMART agent {run_ctx.plo_id}: run finished turns={turn} "
+                f"evidence_reads={len(run_ctx.budget.evidence_reads)}"
             )
-            return _result_from_draft(
-                draft,
-                soft_findings=_soft_findings(action),
-                diagnosis_th=action.diagnosis_th,
-                repair_count=repairs,
-                turns=turn,
-                reason=ValidationReason.FINISHED,
-            )
-
-        if isinstance(action, RequestRepair):
-            if repairs >= settings.validation_max_repairs:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": _with_turns_left(
-                            build_refusal_observation(
-                                f"แก้ไขได้ไม่เกิน {settings.validation_max_repairs} รอบ "
-                                "— สรุปผลตรวจด้วย finish"
-                            ),
-                            turn,
-                        ),
-                    }
-                )
-                continue
-            repairs += 1
-            logger.info(
-                f"  SMART agent {ctx.plo_id} repair {repairs}/{settings.validation_max_repairs}: "
-                f'"{action.instruction_th}" {[c.value for c in action.criteria]}'
-            )
-            repaired = await _repair(draft, action, ctx, metadata)
-            if repaired is None:
-                messages.append(
-                    {
-                        "role": "user",
-                        "content": _with_turns_left(
-                            build_refusal_observation("แก้ไขประโยคไม่สำเร็จ"), turn
-                        ),
-                    }
-                )
-                continue
-            draft, observation = repaired
-            messages.append({"role": "user", "content": _with_turns_left(observation, turn)})
-            continue
+            return _judge_run(action, turn)
 
         fingerprint = call_fingerprint(
             action.tool.value,
@@ -661,7 +856,7 @@ async def _loop(
             action_verb_th=action.action_verb_th,
             verb_th=action.verb_th,
         )
-        if fingerprint in ctx.budget.seen_calls:
+        if fingerprint in run_ctx.budget.seen_calls:
             # A repeat is not progress, and re-running it spends a provider call
             # to tell the model something it was already told.
             messages.append(
@@ -677,10 +872,10 @@ async def _loop(
                 }
             )
             continue
-        ctx.budget.seen_calls.add(fingerprint)
+        run_ctx.budget.seen_calls.add(fingerprint)
 
         observation_result = await run_tool(
-            ctx,
+            run_ctx,
             action.tool.value,
             need_id=action.need_id,
             evidence_id=action.evidence_id,
@@ -691,7 +886,9 @@ async def _loop(
         outcome_th = (
             "ok" if observation_result.ok else f"refused: {observation_result.error_th or ''}"
         )
-        logger.debug(f"  SMART agent {ctx.plo_id} turn {turn}: {action.tool.value} {outcome_th}")
+        logger.debug(
+            f"  SMART agent {run_ctx.plo_id} turn {turn}: {action.tool.value} {outcome_th}"
+        )
         messages.append(
             {
                 "role": "user",
@@ -703,46 +900,32 @@ async def _loop(
     # verdict for work the model did do, so ask once more for a Finish and
     # nothing else. This call is not a turn.
     closed = await _closing_call(
-        draft,
-        ctx,
+        run_ctx,
         messages,
         build_closing_instruction(turn),
         ValidationReason.FINISHED_AT_BUDGET,
-        repairs=repairs,
         turns=turn,
     )
-    if closed is not None:
-        return closed
-
-    logger.warning(
-        f"  SMART agent {ctx.plo_id}: turn budget exhausted after {turn} turns "
-        f"({repairs} repairs) — code-only verdict"
-    )
-    return code_only_result(
-        draft,
-        ValidationReason.TURN_BUDGET
-        if repairs < settings.validation_max_repairs
-        else ValidationReason.REPAIR_BUDGET,
-        f"ไม่ได้ตรวจครบ (ใช้ครบ {turn} รอบแล้วยังไม่สรุปผล)",
-        repair_count=repairs,
-        turns=turn,
-    )
+    if closed is None:
+        logger.warning(
+            f"  SMART agent {run_ctx.plo_id}: turn budget exhausted after {turn} turns — no verdict"
+        )
+        failed(ValidationReason.TURN_BUDGET)
+    return closed
 
 
 async def _closing_call(
-    draft: Any,
-    ctx: Any,
+    ctx: ValidationContext,
     messages: list[dict[str, Any]],
     instruction: str,
     reason: ValidationReason,
     *,
-    repairs: int,
     turns: int,
-) -> SmartAgentResult | None:
-    """One Finish-only call that salvages the verdict when the loop cannot go on.
+) -> JudgeRun | None:
+    """One Finish-only call that salvages the verdict when a run cannot go on.
 
     Used when the turns run out and when malformed steps run out. Returns None
-    when the call itself fails, so the caller falls back to its code-only verdict.
+    when the call itself fails, so the caller counts the run as not having voted.
     """
     messages.append({"role": "user", "content": instruction})
     try:
@@ -753,19 +936,11 @@ async def _closing_call(
             f"{_schema_failure_reason(exc)}"
         )
         return None
-    closing_action = closing.action
-    logger.info(
-        f"  SMART agent {ctx.plo_id}: closed ({reason.value}) turns={turns} repairs={repairs} "
+    logger.debug(
+        f"  SMART agent {ctx.plo_id}: run closed ({reason.value}) turns={turns} "
         f"evidence_reads={len(ctx.budget.evidence_reads)}"
     )
-    return _result_from_draft(
-        draft,
-        soft_findings=_soft_findings(closing_action),
-        diagnosis_th=closing_action.diagnosis_th,
-        repair_count=repairs,
-        turns=turns,
-        reason=reason,
-    )
+    return _judge_run(closing.action, turns)
 
 
 def hard_findings_for(failures: Sequence[Any], hints_th: Sequence[str]) -> list[SmartFinding]:
