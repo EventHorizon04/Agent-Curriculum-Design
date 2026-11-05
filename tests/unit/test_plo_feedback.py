@@ -96,6 +96,14 @@ class _Env:
         monkeypatch.setattr(pf, "PLOFeedbackRepository", lambda: self.trail)
         self.redraft = AsyncMock(side_effect=self._redraft)
         monkeypatch.setattr(pf, "redraft_from_needs", self.redraft)
+        # Every Need the tests name; a dry run checks a planned draft against them
+        # (final review I3). `_needs` replaces the list for a test that cares.
+        self.needs = [_need(f"N{i}") for i in range(1, 13)]
+        self.need_repo = AsyncMock(
+            list_by_program=AsyncMock(side_effect=lambda _pid: list(self.needs)),
+            list_active_by_program=AsyncMock(side_effect=lambda _pid: list(self.needs)),
+        )
+        monkeypatch.setattr(pf, "NeedRepository", lambda: self.need_repo)
 
     async def _list(self, _pid: str) -> list[PLO]:
         return list(self.plos)
@@ -728,7 +736,10 @@ def _ksec_need(nid: str, cats: list[str], demand: float, **kw: bool) -> Need:
 
 
 def _needs(monkeypatch: pytest.MonkeyPatch, needs: list[Need]) -> None:
-    repo = AsyncMock(list_active_by_program=AsyncMock(return_value=needs))
+    repo = AsyncMock(
+        list_active_by_program=AsyncMock(return_value=needs),
+        list_by_program=AsyncMock(return_value=needs),
+    )
     monkeypatch.setattr(pf, "NeedRepository", lambda: repo)
 
 
@@ -872,10 +883,10 @@ async def test_applied_redundancy_is_added_to_memory(
     assert memory.merged == {(str(action.result_plo_id), str(action.result_statement_th))}
 
 
-async def test_dry_run_plans_without_redrafting(
-    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
-) -> None:
-    env = _Env(monkeypatch, plos)
+async def test_dry_run_plans_without_redrafting(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Six core PLOs: merging two of four would be refused by the merge floor, which
+    # a dry run now checks (final review I3).
+    env = _Env(monkeypatch, _core(6))
     memory = pf.LoopMemory()
     review = _review(
         redundancies=[_red("PLO1", "PLO2")], bloom=[_bloom("PLO3")], alignment=[_align("PLO4")]
@@ -944,9 +955,9 @@ def test_actionable_count() -> None:
 
 
 async def test_dry_run_alignment_on_plo_a_planned_redundancy_replaces_is_skipped(
-    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    env = _Env(monkeypatch, plos)
+    env = _Env(monkeypatch, _core(6))  # above the merge floor, see the test above
     review = _review(redundancies=[_red("PLO1", "PLO2")], alignment=[_align("PLO1")])
     actions = await pf.send_back("cs-test", review, env.initial, dry_run=True)
     assert [(a.kind, a.outcome) for a in actions] == [
@@ -980,3 +991,75 @@ async def test_dry_run_ksec_gap_does_not_plan_the_same_need_twice(
     review = _review(ksec_coverage=KsecCoverage(missing=["E", "K"]))
     actions = await pf.send_back("cs-test", review, env.initial, dry_run=True)
     assert [a.outcome for a in actions] == ["planned", "skipped"]
+
+
+# --------------------- final review I3: a dry run runs the pre-draft checks ---------------------
+
+
+def _core(n: int) -> list[PLO]:
+    return [_plo(f"PLO{i}", [f"N{i}"]) for i in range(1, n + 1)]
+
+
+@pytest.mark.parametrize("kind", ["ksec_gap", "unused_need"])
+async def test_dry_run_on_a_full_set_skips_an_addition_with_the_ceiling_text(
+    monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    env = _Env(monkeypatch, _core(10))
+    _needs(monkeypatch, [*env.needs[:10], _ksec_need("N11", ["E"], 0.9)])
+    review = (
+        _review(ksec_coverage=KsecCoverage(missing=["E"]))
+        if kind == "ksec_gap"
+        else _review(unused_needs=[_unused("N11", agreed_runs=2)])
+    )
+    (action,) = await pf.send_back("cs-test", review, env.initial, dry_run=True)
+    assert (action.kind, action.outcome) == (kind, "skipped")
+    assert action.outcome_reason_th.startswith("การรวมนี้จะทำให้มี PLO หลัก 11 ข้อ เกินเพดาน 10 ข้อ")
+    env.redraft.assert_not_awaited()
+
+
+async def test_dry_run_merge_below_the_floor_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)  # 4 core: merging two leaves 3, under MIN_CORE_AFTER_MERGE
+    (action,) = await pf.send_back(
+        "cs-test", _review(redundancies=[_red("PLO1", "PLO2")]), env.initial, dry_run=True
+    )
+    assert action.outcome == "skipped"
+    assert action.outcome_reason_th.startswith("การรวมนี้จะเหลือ PLO หลัก 3 ข้อ ต่ำกว่าขั้นต่ำของการรวม 4 ข้อ")
+
+
+async def test_dry_run_counts_its_own_planned_additions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env = _Env(monkeypatch, _core(9))
+    review = _review(unused_needs=[_unused("N10", agreed_runs=2), _unused("N11", agreed_runs=2)])
+    actions = await pf.send_back("cs-test", review, env.initial, dry_run=True)
+    assert [a.outcome for a in actions] == ["planned", "skipped"]
+    assert "11 ข้อ เกินเพดาน" in actions[1].outcome_reason_th
+
+
+async def test_dry_run_counts_the_outcome_a_planned_redraft_writes_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A planned alignment redraft replaces PLO3 with a new PLO, so the set stays at
+    10 and a later addition is over the ceiling, as it would be when applied."""
+    env = _Env(monkeypatch, _core(10))
+    review = _review(alignment=[_align("PLO3")], unused_needs=[_unused("N11", agreed_runs=2)])
+    actions = await pf.send_back("cs-test", review, env.initial, dry_run=True)
+    assert [(a.kind, a.outcome) for a in actions] == [
+        ("alignment", "planned"),
+        ("unused_need", "skipped"),
+    ]
+    assert "11 ข้อ เกินเพดาน" in actions[1].outcome_reason_th
+
+
+def test_check_redraft_answers_what_redraft_from_needs_refuses() -> None:
+    from curriculum_agent.stages.plo_redraft import check_redraft  # noqa: PLC0415
+
+    needs = [_need(f"N{i}") for i in range(1, 12)]
+    assert check_redraft(_core(4), needs, ["N1"]) is None
+    assert check_redraft(_core(4), needs, ["NOPE"]) == "ไม่พบ Need: NOPE"
+    ceiling = check_redraft(_core(10), needs, ["N11"])
+    assert ceiling is not None and ceiling.startswith("การรวมนี้จะทำให้มี PLO หลัก 11 ข้อ")
+    floor = check_redraft(_core(4), needs, ["N1", "N2"])
+    assert floor is not None and floor.startswith("การรวมนี้จะเหลือ PLO หลัก 3 ข้อ")

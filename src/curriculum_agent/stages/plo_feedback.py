@@ -44,9 +44,11 @@ from curriculum_agent.models import (
     BloomFinding,
     BloomLevel,
     FeedbackAction,
+    Need,
     PLOSetReview,
     ProgramMetadata,
     RedundancyFinding,
+    SMARTCheck,
     UnusedNeedFinding,
 )
 from curriculum_agent.prompts.plo_feedback import (
@@ -58,7 +60,12 @@ from curriculum_agent.prompts.plo_feedback import (
 )
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.need_grouping import is_unwritten_need
-from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused, redraft_from_needs
+from curriculum_agent.stages.plo_redraft import (
+    RedraftFailed,
+    RedraftRefused,
+    check_redraft,
+    redraft_from_needs,
+)
 from curriculum_agent.stages.plo_review_facts import exclusion_reason
 from curriculum_agent.stages.plo_synthesis import plos_citing
 
@@ -117,6 +124,10 @@ class _Round:
         # Needs a dry run has planned a draft for: nothing is written, so the live
         # set cannot tell a later action that the Need is taken.
         self.planned_needs: set[str] = set()
+        # One stand-in per planned draft, so the next plan's ceiling and floor
+        # see the outcomes a live run would have written by then.
+        self.planned_plos: list[PLO] = []
+        self._all_needs: list[Need] | None = None
         self.reviewed = {p.plo_id: p for p in reviewed}
         self.program_id = program_id
         self.review_created_at = _naive_utc(review.created_at)
@@ -177,12 +188,32 @@ class _Round:
     ) -> FeedbackAction:
         """Run one redraft and turn whatever happens into a trail row."""
         if self.dry_run:
+            live = await _live_plos(self.program_id)
+            if self._all_needs is None:
+                self._all_needs = await NeedRepository().list_by_program(self.program_id)
+            # The checks the live redraft makes before its draft, against the set
+            # this round would have by now: the ceiling, the floor, an unknown or
+            # merged-away Need. Without them a plan overstates what apply would do.
+            projected = [p for pid, p in live.items() if pid not in self.replaced]
+            refusal = check_redraft([*projected, *self.planned_plos], self._all_needs, need_ids)
+            if refusal is not None:
+                return self.skipped(
+                    kind,
+                    refusal,
+                    plo_ids=plo_ids,
+                    need_ids=need_ids,
+                    finding_reason_th=finding_reason_th,
+                    instruction_th=instruction_th,
+                )
             # Book what a live run would have done, so the later actions of the
             # round see the same world: the PLOs this one would replace count as
-            # replaced, and its Needs as taken.
-            live = await _live_plos(self.program_id)
+            # replaced, its Needs as taken, and the outcome it would write is there.
             self.replaced.update(p.plo_id for p in plos_citing(live.values(), need_ids))
             self.replaced.update(pid for pid in plo_ids if pid in live)
+            self.planned_plos = [
+                p for p in self.planned_plos if not set(p.source_need_ids) & set(need_ids)
+            ]
+            self.planned_plos.append(_planned_stand_in(self.program_id, self._all_needs, need_ids))
             self.planned_needs.update(need_ids)
             return FeedbackAction(
                 program_id=self.program_id,
@@ -268,6 +299,26 @@ class _Round:
             or before.statement_th != now.statement_th
             or before.source_need_ids != now.source_need_ids
         )
+
+
+def _planned_stand_in(program_id: str, all_needs: Sequence[Need], need_ids: list[str]) -> PLO:
+    """The outcome a planned draft would write, for counting only: core unless every
+    one of its Needs is optional, citing those Needs. Never stored or shown, so it
+    skips the validators a statement-less PLO would fail."""
+    by_id = {n.need_id: n for n in all_needs}
+    return PLO.model_construct(
+        plo_id=f"planned:{'+'.join(need_ids)}",
+        program_id=program_id,
+        statement_th="",
+        bloom_level=BloomLevel.APPLY,
+        action_verb_th="",
+        smart_check=SMARTCheck(
+            specific=False, measurable=False, achievable=False, relevant=False, timely=False
+        ),
+        source_need_ids=list(need_ids),
+        rationale_th="",
+        is_optional=all(by_id[nid].is_optional for nid in need_ids if nid in by_id),
+    )
 
 
 def _keep_original_unless_better(

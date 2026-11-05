@@ -7,7 +7,7 @@ lock — see `redraft_from_needs` — and imports nothing from `api`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 
 from loguru import logger
 
@@ -16,8 +16,7 @@ from curriculum_agent.data.repositories import (
     PLOChangedDuringRedraft,
     PLORepository,
 )
-from curriculum_agent.models import PLO, ProgramMetadata
-
+from curriculum_agent.models import PLO, Need, ProgramMetadata
 
 REASON_CHANGED_DURING_REDRAFT = "PLO นี้ถูกแก้ระหว่างร่างใหม่ — ไม่เขียนทับ"
 
@@ -34,6 +33,109 @@ class RedraftRefused(Exception):
 
 class RedraftFailed(Exception):
     """The draft came back empty; nothing was written."""
+
+
+def _need_refusal(all_needs: Sequence[Need], need_ids: Sequence[str]) -> str | None:
+    """The checks on the selected Needs alone, which need no PLO read."""
+    from curriculum_agent.stages.need_grouping import is_unwritten_need  # noqa: PLC0415
+
+    by_id = {n.need_id: n for n in all_needs}
+    missing = [nid for nid in need_ids if nid not in by_id]
+    if missing:
+        return f"ไม่พบ Need: {', '.join(missing)}"
+
+    selected = [by_id[nid] for nid in need_ids]
+
+    # A Need folded into a merged one is represented by that Need; picking the
+    # original would put one demand behind two outcomes. Checked after the
+    # unknown-id test so a merged-away id answers this text, not "not found".
+    if any(n.merged_into is not None for n in selected):
+        return "Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — เลือก Need ที่รวมแล้วแทน"
+
+    # An excluded Need was taken out of the working set by the designer; it comes
+    # back through restore, not by being picked here.
+    if any(n.excluded_at is not None for n in selected):
+        return "Need นี้ถูกตัดออกแล้ว — คืน Need ก่อนนำมารวมเป็น PLO"
+
+    # A fallback Need's statement is a marker plus a comma-joined skill list, not
+    # a requirement — there is no PLO to draft it into, merged or otherwise. The
+    # scope guard is a designer override (selecting an out-of-scope Need is a
+    # decision, logged but allowed); this is not, because rewording cannot
+    # supply a requirement nobody wrote, and a human has to write the sentence
+    # (or re-run need_combination) before this Need can become anyone's PLO.
+    # Checked before any LLM call and before anything is written.
+    unwritten = [n for n in selected if is_unwritten_need(n)]
+    if unwritten:
+        return (
+            "ยังไม่ได้เขียนประโยคสำหรับ Need: "
+            f"{', '.join(n.need_id for n in unwritten)} — ผู้ออกแบบหลักสูตรต้องเขียนประโยคเอง "
+            "หรือรันขั้นรวมทักษะเป็น Need ใหม่ ก่อนนำมารวมเป็น PLO"
+        )
+    return None
+
+
+def check_redraft(
+    existing: Sequence[PLO], all_needs: Sequence[Need], need_ids: Sequence[str]
+) -> str | None:
+    """Every check `redraft_from_needs` makes before the draft, as pure code.
+
+    Returns the Thai refusal text (each one a 422 there) or None. Same texts and
+    order as the route always had; send-back's dry run calls it against the set
+    it projects, so a plan is refused where the real action would be.
+    """
+    from curriculum_agent.stages.need_grouping import (  # noqa: PLC0415
+        MAX_CORE_PLOS,
+        MIN_CORE_AFTER_MERGE,
+    )
+    from curriculum_agent.stages.plo_synthesis import plos_citing  # noqa: PLC0415
+
+    refusal = _need_refusal(all_needs, need_ids)
+    if refusal is not None:
+        return refusal
+    by_id = {n.need_id: n for n in all_needs}
+    selected = [by_id[nid] for nid in need_ids]
+
+    # A merged outcome is supplementary only when every Need feeding it is.
+    is_optional = all(n.is_optional for n in selected)
+
+    # One outcome per Need. Every PLO citing any selected Need is replaced by this
+    # merge rather than left standing beside it: this endpoint used to append, so a
+    # Need ended up behind both its own outcome and the merged one, and two PLOs
+    # claiming the same evidence read as two independent market demands in the
+    # มคอ.2 matrix when they are one. Replacing is also what a designer means by
+    # "merge" — the outcomes the merge supersedes are exactly the ones it covers.
+    superseded_ids = {p.plo_id for p in plos_citing(existing, need_ids)}
+    surviving = [p for p in existing if p.plo_id not in superseded_ids]
+
+    current_core = sum(1 for p in existing if not p.is_optional)
+    projected_core = sum(1 for p in surviving if not p.is_optional) + (0 if is_optional else 1)
+
+    # The 6-10 policy is a property of the stored set, not of one stage's output,
+    # and a replacing merge moves the count in both directions: folding several
+    # outcomes into one lowers it, merging Needs nothing cites yet raises it.
+    # Both bounds are therefore checked here — the ceiling at MAX_CORE_PLOS, the
+    # floor at MIN_CORE_AFTER_MERGE below. Optional PLOs are outside the count,
+    # for the same reason they are in synthesis.
+    if projected_core > MAX_CORE_PLOS:
+        return (
+            f"การรวมนี้จะทำให้มี PLO หลัก {projected_core} ข้อ เกินเพดาน "
+            f"{MAX_CORE_PLOS} ข้อ เลือก Need ที่มี PLO อยู่แล้วเข้ามารวมด้วย "
+            "เพื่อให้การรวมนี้แทนที่ PLO เดิมแทนที่จะเพิ่มข้อใหม่"
+        )
+    # The merge floor, not the policy floor: a merge may leave the set under the
+    # 6-10 band — two PLOs that say one thing are not two outcomes, and the band's
+    # own warning still tells the designer — but not under MIN_CORE_AFTER_MERGE.
+    # plo_synthesis folds duplicates down to the same number, so nothing the stage
+    # does on its own is refused here by hand. Only when this merge causes the
+    # shortfall: a program that is already short must not have every further
+    # merge refused for a shortfall it did not cause.
+    if projected_core < MIN_CORE_AFTER_MERGE and projected_core < current_core:
+        return (
+            f"การรวมนี้จะเหลือ PLO หลัก {projected_core} ข้อ ต่ำกว่าขั้นต่ำของการรวม "
+            f"{MIN_CORE_AFTER_MERGE} ข้อ รวม Need ที่ยังไม่มี PLO ขึ้นมาเป็นข้อใหม่ก่อน "
+            "แล้วจึงรวมข้อที่ซ้ำซ้อนกัน"
+        )
+    return None
 
 
 async def redraft_from_needs(
@@ -57,12 +159,7 @@ async def redraft_from_needs(
     returned Thai reason raises `RedraftRefused(422, reason)`. The designer's route
     passes none.
     """
-    from curriculum_agent.stages.need_grouping import (  # noqa: PLC0415
-        MAX_CORE_PLOS,
-        MIN_CORE_AFTER_MERGE,
-        is_in_scope,
-        is_unwritten_need,
-    )
+    from curriculum_agent.stages.need_grouping import is_in_scope  # noqa: PLC0415
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
         SiblingSummary,
         cited_need_ids,
@@ -72,100 +169,24 @@ async def redraft_from_needs(
     )
 
     all_needs = await NeedRepository().list_by_program(program_id)
+    # The Need checks first, so a request naming a bad Need costs no PLO read.
+    refusal = _need_refusal(all_needs, need_ids)
+    if refusal is not None:
+        raise RedraftRefused(422, refusal)
+    existing = await PLORepository().list_by_program(program_id)
+    refusal = check_redraft(existing, all_needs, need_ids)
+    if refusal is not None:
+        raise RedraftRefused(422, refusal)
+
     by_id = {n.need_id: n for n in all_needs}
-    missing = [nid for nid in need_ids if nid not in by_id]
-    if missing:
-        raise RedraftRefused(422, f"ไม่พบ Need: {', '.join(missing)}")
-
     selected = [by_id[nid] for nid in need_ids]
-
-    # A Need folded into a merged one is represented by that Need; picking the
-    # original would put one demand behind two outcomes. Checked after the
-    # unknown-id test so a merged-away id answers this text, not "not found".
-    merged_away = [n for n in selected if n.merged_into is not None]
-    if merged_away:
-        raise RedraftRefused(
-            422,
-            "Need นี้ถูกรวมเข้ากับ Need อื่นแล้ว — เลือก Need ที่รวมแล้วแทน",
-        )
-
-    # An excluded Need was taken out of the working set by the designer; it comes
-    # back through restore, not by being picked here.
-    if any(n.excluded_at is not None for n in selected):
-        raise RedraftRefused(
-            422,
-            "Need นี้ถูกตัดออกแล้ว — คืน Need ก่อนนำมารวมเป็น PLO",
-        )
-
-    # A fallback Need's statement is a marker plus a comma-joined skill list, not
-    # a requirement — there is no PLO to draft it into, merged or otherwise. The
-    # scope guard below is a designer override (selecting an out-of-scope Need is
-    # a decision, logged but allowed); this is not, because rewording cannot
-    # supply a requirement nobody wrote, and a human has to write the sentence
-    # (or re-run need_combination) before this Need can become anyone's PLO.
-    # Checked before any LLM call and before anything is written.
-    unwritten = [n for n in selected if is_unwritten_need(n)]
-    if unwritten:
-        raise RedraftRefused(
-            422,
-            (
-                "ยังไม่ได้เขียนประโยคสำหรับ Need: "
-                f"{', '.join(n.need_id for n in unwritten)} — ผู้ออกแบบหลักสูตรต้องเขียนประโยคเอง "
-                "หรือรันขั้นรวมทักษะเป็น Need ใหม่ ก่อนนำมารวมเป็น PLO"
-            ),
-        )
-
-    # A merged outcome is supplementary only when every Need feeding it is, and it
-    # takes the next free number in that series — a PLO's identity is
+    # The draft takes the next free number in its series — a PLO's identity is
     # (program_id, plo_id) and the repository upserts on it, so reusing a plo_id
     # within this program would overwrite an existing outcome.
     is_optional = all(n.is_optional for n in selected)
-    existing = await PLORepository().list_by_program(program_id)
-
-    # One outcome per Need. Every PLO citing any selected Need is replaced by this
-    # merge rather than left standing beside it: this endpoint used to append, so a
-    # Need ended up behind both its own outcome and the merged one, and two PLOs
-    # claiming the same evidence read as two independent market demands in the
-    # มคอ.2 matrix when they are one. Replacing is also what a designer means by
-    # "merge" — the outcomes the merge supersedes are exactly the ones it covers.
     superseded = plos_citing(existing, need_ids)
     superseded_ids = {p.plo_id for p in superseded}
     surviving = [p for p in existing if p.plo_id not in superseded_ids]
-
-    current_core = sum(1 for p in existing if not p.is_optional)
-    projected_core = sum(1 for p in surviving if not p.is_optional) + (0 if is_optional else 1)
-
-    # The 6-10 policy is a property of the stored set, not of one stage's output,
-    # and a replacing merge moves the count in both directions: folding several
-    # outcomes into one lowers it, merging Needs nothing cites yet raises it.
-    # Both bounds are therefore checked here — the ceiling at MAX_CORE_PLOS, the
-    # floor at MIN_CORE_AFTER_MERGE below. Optional PLOs are outside the count,
-    # for the same reason they are in synthesis.
-    if projected_core > MAX_CORE_PLOS:
-        raise RedraftRefused(
-            422,
-            (
-                f"การรวมนี้จะทำให้มี PLO หลัก {projected_core} ข้อ เกินเพดาน "
-                f"{MAX_CORE_PLOS} ข้อ เลือก Need ที่มี PLO อยู่แล้วเข้ามารวมด้วย "
-                "เพื่อให้การรวมนี้แทนที่ PLO เดิมแทนที่จะเพิ่มข้อใหม่"
-            ),
-        )
-    # The merge floor, not the policy floor: a merge may leave the set under the
-    # 6-10 band — two PLOs that say one thing are not two outcomes, and the band's
-    # own warning still tells the designer — but not under MIN_CORE_AFTER_MERGE.
-    # plo_synthesis folds duplicates down to the same number, so nothing the stage
-    # does on its own is refused here by hand. Only when this merge causes the
-    # shortfall: a program that is already short must not have every further
-    # merge refused for a shortfall it did not cause.
-    if projected_core < MIN_CORE_AFTER_MERGE and projected_core < current_core:
-        raise RedraftRefused(
-            422,
-            (
-                f"การรวมนี้จะเหลือ PLO หลัก {projected_core} ข้อ ต่ำกว่าขั้นต่ำของการรวม "
-                f"{MIN_CORE_AFTER_MERGE} ข้อ รวม Need ที่ยังไม่มี PLO ขึ้นมาเป็นข้อใหม่ก่อน "
-                "แล้วจึงรวมข้อที่ซ้ำซ้อนกัน"
-            ),
-        )
 
     # A Need cited only by an outcome this merge supersedes loses its PLO and
     # returns to the pool. That is the correct outcome — it is no longer behind

@@ -15,13 +15,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from curriculum_agent.api.routes import plos as plos_route
 from curriculum_agent.data.orm import PLOFeedbackActionTable, PLOTable, SupersededPLOTable
 from curriculum_agent.data.repositories import (
     NeedRepository,
     PLOChangedDuringRedraft,
     PLORepository,
 )
-from curriculum_agent.api.routes import plos as plos_route
 from curriculum_agent.models import PLO, AlignmentFinding
 from curriculum_agent.stages import plo_feedback as pf
 from curriculum_agent.stages.plo_redraft import (
@@ -51,7 +51,12 @@ async def _replace(
 ) -> int:
     with _patched(session):
         return await PLORepository().replace(
-            PID, ["PLO1"], [_stored_plo("PLO1", "ออกแบบระบบรวมได้")], cause=cause, expect=expect, **kw
+            PID,
+            ["PLO1"],
+            [_stored_plo("PLO1", "ออกแบบระบบรวมได้")],
+            cause=cause,
+            expect=expect,
+            **kw,
         )
 
 
@@ -140,8 +145,7 @@ async def test_send_back_skips_a_plo_edited_mid_draft_and_replaces_nothing(
     assert (action.outcome, action.outcome_reason_th) == ("skipped", CHANGED)
     assert session.commits == 0 and _deletes(session) == []
     assert not any(
-        isinstance(a, PLOTable | SupersededPLOTable | PLOFeedbackActionTable)
-        for a in session.added
+        isinstance(a, PLOTable | SupersededPLOTable | PLOFeedbackActionTable) for a in session.added
     )
     # The skipped row is written on its own, as every non-applied row is.
     assert [c.args[0] for c in env.trail.add.await_args_list] == [[action]]
@@ -155,9 +159,7 @@ def test_from_needs_answers_409_when_a_plo_is_edited_mid_draft(
 ) -> None:
     existing = [_plo(f"PLO{i}", [f"N{i}"]) for i in range(1, 7)]
     session = _Session(select_rows=[_plo_row("PLO1", existing[0].statement_th)])
-    monkeypatch.setattr(
-        plos_route.ProgramRepository, "get", AsyncMock(return_value=_program())
-    )
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
         NeedRepository,
         "list_by_program",
@@ -175,11 +177,8 @@ def test_from_needs_answers_409_when_a_plo_is_edited_mid_draft(
     )
 
     with _patched(session):
-        response = client.post(
-            "/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]}
-        )
+        response = client.post("/programs/cs-test/plos/from-needs", json={"need_ids": ["N1", "N2"]})
 
     assert response.status_code == 409, response.text
     assert response.json()["detail"] == CHANGED
     assert session.commits == 0 and _deletes(session) == []
-
