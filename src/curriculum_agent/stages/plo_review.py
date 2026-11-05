@@ -35,6 +35,7 @@ from loguru import logger
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     NeedRepository,
+    PLORepository,
     PLOReviewRepository,
     ProgramRepository,
 )
@@ -436,10 +437,15 @@ async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview |
 
 
 async def run(state: AgentState) -> AgentState:
-    """Graph entry, stage 06: after the report, review the set it persisted."""
+    """Graph entry, stage 06: review the synthesized set, before the PLO checkpoint."""
     program_id = state.get("program_id", "unknown")
     plos = [PLO.model_validate(d) for d in state.get("plos", [])]
     review = await review_plo_set(program_id, plos) if plos else None
     state["plo_review"] = review.model_dump(mode="json") if review is not None else None
+    if plos:
+        # Send-back may have redrafted or merged PLOs; the state must carry what is
+        # stored now, not the set the review started from.
+        stored = await PLORepository().list_by_program(program_id)
+        state["plos"] = [p.model_dump(mode="json") for p in stored]
     state["current_stage"] = "plo_review"
     return state

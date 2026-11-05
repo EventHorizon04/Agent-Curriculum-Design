@@ -1,35 +1,44 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
 
-from curriculum_agent.data.repositories import NeedRepository, PLORepository
+from curriculum_agent.data.repositories import (
+    NeedRepository,
+    PLOReportRepository,
+    PLORepository,
+)
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import PLO
+from curriculum_agent.models import PLOReport
+from curriculum_agent.stages.plo_review_facts import need_demands, plo_fingerprint
 from curriculum_agent.stages.plo_synthesis import cited_need_ids
 
 
 async def run(state: AgentState) -> AgentState:
-    """PLO Report stage: assemble the reviewable report and persist the PLOs.
+    """PLO Report stage: assemble the report from the stored PLOs and store it.
 
     This stage used to classify each PLO generic vs specific. That split came from
     the SS/GS KSEC tags, which no longer exist — a PLO's competency domain is the
     KSEC tag of the Needs behind it, and the report shows that directly instead of
     reducing it to a binary. No LLM call remains here.
 
-    No checkpoint follows it: the set was approved at the PLO checkpoint, and the
-    QA review (stage 06, `plo_review`) runs after this stage and is not part of
-    the report.
+    It reads the PLOs from the database, never from `state["plos"]`: the designer
+    may have edited the set while the session was suspended, and writing the
+    checkpoint's copy back would undo that. It writes no PLO; the report is one
+    row in `plo_reports`, stamped with the fingerprint of the set it was built from.
+
+    No checkpoint follows it: it is the last stage, built from the set the designer
+    approved at the PLO checkpoint after the QA review (stage 06, `plo_review`).
     """
     program_id = state.get("program_id", "unknown")
-    plo_dicts = state.get("plos", [])
-    if not plo_dicts:
+    plos = await PLORepository().list_by_program(program_id)
+    if not plos:
         raise ValueError(
             f"PLO report: no PLOs for program '{program_id}' — run PLO synthesis first"
         )
 
-    plos = [PLO.model_validate(d) for d in plo_dicts]
     needs = await NeedRepository().list_active_by_program(program_id)
     needs_by_id = {n.need_id: n for n in needs}
 
@@ -91,7 +100,14 @@ async def run(state: AgentState) -> AgentState:
         },
     }
 
-    await PLORepository().bulk_insert(plos)
+    await PLOReportRepository().upsert(
+        PLOReport(
+            program_id=program_id,
+            plo_fingerprint=plo_fingerprint(plos, need_demands(needs)),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            report=report,
+        )
+    )
 
     state["plos"] = report["plos"]
     state["report"] = report

@@ -88,6 +88,32 @@ async def _programs_with_a_current_review(program_ids: Iterable[str]) -> set[str
     return current
 
 
+async def _programs_with_a_current_report(program_ids: Iterable[str]) -> set[str]:
+    """Programs whose stored PLO report was built from their current PLOs and Needs.
+
+    Same fingerprint as the QA review, same rule: a read or parse failure counts
+    as "not current" for that program and is logged.
+    """
+    from curriculum_agent.stages.plo_review_facts import (  # noqa: PLC0415
+        need_demands,
+        plo_fingerprint,
+    )
+
+    current: set[str] = set()
+    for pid in program_ids:
+        try:
+            stored = await PLOReportRepository().get(pid)
+            if stored is None:
+                continue
+            plos = await PLORepository().list_by_program(pid)
+            needs = await NeedRepository().list_active_by_program(pid)
+            if plos and stored.plo_fingerprint == plo_fingerprint(plos, need_demands(needs)):
+                current.add(pid)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"list_all: could not judge the PLO report of {pid}: {exc!r}")
+    return current
+
+
 def _row_to_dict(row: Base) -> dict[str, Any]:
     return {c.key: getattr(row, c.key) for c in row.__table__.columns}
 
@@ -190,6 +216,7 @@ class ProgramRepository:
 
         # Only a program with PLOs can have a current review.
         current = await _programs_with_a_current_review(with_plos)
+        current_report = await _programs_with_a_current_report(with_plos)
 
         latest: dict[str, SessionTable] = {}
         for s in sess_rows:
@@ -214,6 +241,7 @@ class ProgramRepository:
                     has_needs=p.program_id in with_needs,
                     has_plos=p.program_id in with_plos,
                     has_current_review=p.program_id in current,
+                    has_current_report=p.program_id in current_report,
                 ),
                 session_status=(latest[p.program_id].status if p.program_id in latest else None),
                 copied_from=p.copied_from,

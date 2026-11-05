@@ -44,6 +44,19 @@ def test_every_mapped_stage_is_a_designer_stage():
         assert stage in DESIGNER_STAGES, f"{node} maps to unknown stage '{stage}'"
 
 
+def test_the_plo_checkpoint_is_reported_as_the_review_stage():
+    assert REVIEW_NODE_STAGE["review_plos_node"] == "plo_review"
+
+
+async def test_suspending_at_the_plo_checkpoint_records_plo_review():
+    """The gate now sits after the QA review, so the session records that stage."""
+    repo = AsyncMock()
+    with patch("curriculum_agent.api.routes.sessions.SessionRepository", return_value=repo):
+        await _run_graph(_suspended_at("review_plos_node"), {}, {}, "s1")
+
+    repo.set_suspended.assert_awaited_once_with("s1", "plo_review", "Review required")
+
+
 def _suspended_at(node: str) -> MagicMock:
     graph = MagicMock()
     graph.ainvoke = AsyncMock()

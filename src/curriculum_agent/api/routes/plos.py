@@ -5,15 +5,16 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.api.jobs import start_job_or_409, sync_writer
+from curriculum_agent.api.jobs import JobConflict, start_job, start_job_or_409, sync_writer
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
     PLOFeedbackRepository,
+    PLOReportRepository,
     PLORepository,
     PLOReviewRepository,
     ProgramRepository,
@@ -36,7 +37,7 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused, redraft_from_needs
-from curriculum_agent.stages.plo_review_facts import is_stale, need_demands
+from curriculum_agent.stages.plo_review_facts import is_stale, need_demands, plo_fingerprint
 
 router = APIRouter()
 _repo = PLORepository()
@@ -163,6 +164,45 @@ async def list_feedback_actions(program_id: str) -> list[FeedbackAction]:
     return await PLOFeedbackRepository().list_by_program(program_id)
 
 
+class PLOReportStored(BaseModel):
+    """The stored report, and whether the PLO set has moved since it was built."""
+
+    report: PLOReportResponse | None
+    stale: bool
+    created_at: datetime | None = None
+
+    # Stored naive UTC; sent with its offset, as the model's own serializer does.
+    @field_serializer("created_at", when_used="json")
+    def _utc(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+@router.get("/report", response_model=PLOReportStored)
+async def get_plo_report(program_id: str) -> PLOReportStored:
+    """The latest stored report (built last in the session or by `/report/run`).
+
+    `report` is None when none has been built; `stale` is True when the PLOs or the
+    Needs changed after it was built, judged by the same fingerprint as the review.
+    """
+    if await ProgramRepository().get(program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    stored = await PLOReportRepository().get(program_id)
+    if stored is None:
+        return PLOReportStored(report=None, stale=False)
+    plos = await _repo.list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
+    stale = stored.plo_fingerprint != plo_fingerprint(plos, need_demands(needs))
+    return PLOReportStored(
+        report=PLOReportResponse.model_validate(stored.report),
+        stale=stale,
+        created_at=stored.created_at,
+    )
+
+
 @router.get("/{plo_id}/trace", response_model=PLOTrace)
 async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     plos = await _repo.list_by_program(program_id)
@@ -239,6 +279,17 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
         result_state = await run(state)
         return [PLO.model_validate(p) for p in result_state.get("plos", [])]
 
+    async def chain() -> None:
+        # The review reads the set this job just stored, so it starts afterwards as
+        # its own job, the way /needs/run starts Agent 2 after Agent 1.
+        try:
+            await _start_review_job(program_id, or_409=False)
+        except JobConflict as exc:
+            logger.warning(f"plo_review not chained for {program_id}: {exc.detail_th}")
+        except HTTPException as exc:
+            # Synthesis stored no PLO: nothing to review, and the job stays succeeded.
+            logger.warning(f"plo_review not chained for {program_id}: {exc.detail}")
+
     return await start_job_or_409(
         program_id,
         "plo_synthesis",
@@ -247,6 +298,7 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
             "run_validation": body.run_validation if body else True,
         },
         work,
+        on_success=chain,
     )
 
 
@@ -330,15 +382,10 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
     )
 
 
-@router.post("/review/run", response_model=JobInfo, status_code=202)
-async def run_plo_review(program_id: str) -> JobInfo:
-    """Run the closing-stage QA review afresh. Answers 202; the result (a
-    `PLOReviewRunResponse`) arrives through `GET /jobs`.
-
-    It runs with the slot switched off too: the code facts are stored without the
-    agent, so there is no disabled-feature 503 — `review_enabled` in the result
-    says whether the agent judged it.
-    """
+async def _start_review_job(program_id: str, *, or_409: bool) -> JobInfo:
+    """The QA review as a job. Its input is read from storage when the job starts,
+    so the same job serves `POST /review/run` and the one chained after synthesis.
+    `or_409=False` raises `JobConflict` instead of an HTTP 409, for the chain."""
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
 
     plos = await _repo.list_by_program(program_id)
@@ -363,7 +410,20 @@ async def run_plo_review(program_id: str) -> JobInfo:
             feedback=feedback,
         )
 
-    return await start_job_or_409(program_id, "plo_review", {}, work)
+    starter = start_job_or_409 if or_409 else start_job
+    return await starter(program_id, "plo_review", {}, work)
+
+
+@router.post("/review/run", response_model=JobInfo, status_code=202)
+async def run_plo_review(program_id: str) -> JobInfo:
+    """Run the closing-stage QA review afresh. Answers 202; the result (a
+    `PLOReviewRunResponse`) arrives through `GET /jobs`.
+
+    It runs with the slot switched off too: the code facts are stored without the
+    agent, so there is no disabled-feature 503 — `review_enabled` in the result
+    says whether the agent judged it.
+    """
+    return await _start_review_job(program_id, or_409=True)
 
 
 class MergeNeedsRequest(DesignerNoteRequest):

@@ -571,3 +571,98 @@ def test_another_programs_running_job_does_not_block(
 
     assert r.status_code == 202, r.text
     spawned.drain()
+
+
+# --- phase 6: synthesis chains the review; the stored report ------------------
+
+
+def test_plos_run_chains_review_job(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    r = client.post(f"{BASE}/run")
+    assert r.status_code == 202, r.text
+    spawned.drain()
+
+    kinds = sorted(j.kind for j in jobs_store.rows.values())
+    assert kinds == ["plo_review", "plo_synthesis"]
+    assert all(j.status == "succeeded" for j in jobs_store.rows.values())
+    env.synth.assert_awaited_once()
+    env.fresh_review.assert_awaited_once()
+
+
+def test_plos_run_chain_conflict_keeps_synthesis_succeeded(
+    env: _Env, monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    async def busy(*_a: Any, **_k: Any) -> JobInfo:
+        raise plos_route.JobConflict("another writer")
+
+    monkeypatch.setattr(plos_route, "start_job", busy)
+    r = client.post(f"{BASE}/run")
+    assert r.status_code == 202, r.text
+    spawned.drain()
+
+    job = jobs_store.rows[r.json()["job_id"]]
+    assert job.kind == "plo_synthesis" and job.status == "succeeded"
+    assert [j.kind for j in jobs_store.rows.values()] == ["plo_synthesis"]
+    env.fresh_review.assert_not_awaited()
+
+
+def test_review_run_alone_does_not_chain(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    _finish(client.post(f"{BASE}/review/run"), jobs_store, spawned)
+    assert [j.kind for j in jobs_store.rows.values()] == ["plo_review"]
+
+
+def _stored_report(**kw: Any) -> Any:
+    from curriculum_agent.models import PLOReport
+
+    base: dict[str, Any] = {
+        "program_id": "cs-test",
+        "plo_fingerprint": plo_fingerprint([_plo()], need_demands([_need()])),
+        "created_at": datetime(2026, 11, 5, 9, 30),
+        "report": {
+            "plos": [_plo().model_dump(mode="json")],
+            "counts": {"total": 1},
+            "needs_by_id": {"N1": _need().model_dump(mode="json")},
+            "needs_not_synthesized": [],
+        },
+    }
+    base.update(kw)
+    return PLOReport(**base)
+
+
+def test_get_report_returns_the_stored_report(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        plos_route.PLOReportRepository, "get", AsyncMock(return_value=_stored_report())
+    )
+    r = client.get(f"{BASE}/report")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["stale"] is False
+    assert body["created_at"] == "2026-11-05T09:30:00+00:00"
+    assert [p["plo_id"] for p in body["report"]["plos"]] == ["PLO1"]
+    assert body["report"]["needs_by_id"]["N1"]["need_id"] == "N1"
+
+
+def test_get_report_is_stale_when_the_set_moved(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        plos_route.PLOReportRepository,
+        "get",
+        AsyncMock(return_value=_stored_report(plo_fingerprint="0" * 64)),
+    )
+    assert client.get(f"{BASE}/report").json()["stale"] is True
+
+
+def test_get_report_is_none_when_nothing_is_stored(
+    env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(plos_route.PLOReportRepository, "get", AsyncMock(return_value=None))
+    r = client.get(f"{BASE}/report")
+    assert r.status_code == 200
+    assert r.json() == {"report": None, "stale": False, "created_at": None}
+
+
+def test_get_report_404_for_an_unknown_program(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    env.program.return_value = None
+    assert client.get(f"{BASE}/report").status_code == 404

@@ -73,6 +73,9 @@ class _MemoryRepo:
         self.rows[review.program_id] = review
 
 
+_STORED: list[PLO] = []
+
+
 @pytest.fixture
 def live(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     """Undo the conftest kill switch for this module and fake every boundary."""
@@ -86,6 +89,12 @@ def live(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
         pr,
         "NeedRepository",
         lambda: AsyncMock(list_active_by_program=AsyncMock(return_value=[_NEED])),
+    )
+    _STORED[:] = list(_PLOS)
+    monkeypatch.setattr(
+        pr,
+        "PLORepository",
+        lambda: AsyncMock(list_by_program=AsyncMock(side_effect=lambda _pid: list(_STORED))),
     )
     agent_run = AsyncMock(
         return_value=AgentOutcome(_FINISH, None, [ReviewToolCall(tool="check_verbs", arg="PLO1")])
@@ -244,6 +253,13 @@ async def test_run_puts_the_review_on_the_state(live: AsyncMock) -> None:
     state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
     assert state["plo_review"]["summary_th"] == "สองข้อซ้ำกัน"
     assert state["current_stage"] == "plo_review"
+
+
+async def test_run_reloads_the_stored_plos_after_the_review(live: AsyncMock) -> None:
+    """Send-back may have redrafted a PLO; the state must carry the stored set."""
+    _STORED[:] = _changed()
+    state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
+    assert [p["statement_th"] for p in state["plos"]] == [p.statement_th for p in _changed()]
 
 
 async def test_run_with_no_plos_leaves_no_review(live: AsyncMock) -> None:

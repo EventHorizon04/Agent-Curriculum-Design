@@ -69,7 +69,11 @@ def test_report_run_returns_the_full_report_payload(jobs_store, spawned):
             new=AsyncMock(return_value=[need]),
         ),
         patch(
-            "curriculum_agent.stages.plo_report.PLORepository.bulk_insert",
+            "curriculum_agent.stages.plo_report.PLORepository.list_by_program",
+            new=AsyncMock(return_value=[plo]),
+        ),
+        patch(
+            "curriculum_agent.stages.plo_report.PLOReportRepository.upsert",
             new=AsyncMock(),
         ),
     ):

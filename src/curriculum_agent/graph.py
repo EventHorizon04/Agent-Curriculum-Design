@@ -47,7 +47,7 @@ class AgentState(TypedDict, total=False):
     # Stage 3
     plos: list[dict[str, Any]]
 
-    # Advisory PLO set review, written by the stage-06 node after the report. Nothing
+    # Advisory PLO set review, written by the stage-06 node before the PLO checkpoint. Nothing
     # in the graph reads it back; the page reads the stored row. None when no
     # review could be produced or kept (no PLOs, or a read or store failed).
     plo_review: dict[str, Any] | None
@@ -157,11 +157,19 @@ async def review_needs(state: AgentState) -> AgentState:
     return {**state, "needs": [n.model_dump(mode="json") for n in active]}
 
 
-def review_plos(state: AgentState) -> AgentState:
-    payload = interrupt("Stage 3 complete — review/edit PLOs before PLO report")
+async def review_plos(state: AgentState) -> AgentState:
+    payload = interrupt("PLO review complete — approve the PLO set before the report")
     if isinstance(payload, dict):
-        return {**state, **payload}
-    return state
+        state = {**state, **payload}
+    # The designer may have edited, merged or deleted PLOs while suspended, and
+    # the review's send-back may have changed them before that; the checkpoint
+    # still holds the set as it was. Reload what is stored so the report is built
+    # from it, never from the checkpoint's copy.
+    # Lazy: data.repositories imports stage_reached from this module (a cycle).
+    from curriculum_agent.data.repositories import PLORepository  # noqa: PLC0415
+
+    stored = await PLORepository().list_by_program(state["program_id"])
+    return {**state, "plos": [p.model_dump(mode="json") for p in stored]}
 
 
 # ----------------------- Stages as reported ----------------------
@@ -179,8 +187,8 @@ DESIGNER_STAGES: tuple[str, ...] = (
     "skill_extraction",
     "need_analysis",
     "plo_synthesis",
-    "plo_report",
     "plo_review",
+    "plo_report",
 )
 
 # Which stage a suspended run is waiting at, by the node it is suspended on.
@@ -194,7 +202,7 @@ DESIGNER_STAGES: tuple[str, ...] = (
 REVIEW_NODE_STAGE: dict[str, str] = {
     "review_evidence": "stakeholder_needs",
     "review_needs_node": "need_analysis",
-    "review_plos_node": "plo_synthesis",
+    "review_plos_node": "plo_review",
 }
 
 
@@ -205,6 +213,7 @@ def stage_reached(
     has_needs: bool,
     has_plos: bool,
     has_current_review: bool = False,
+    has_current_report: bool = False,
 ) -> str:
     """The furthest stage a program has produced output for.
 
@@ -224,14 +233,16 @@ def stage_reached(
     `need_analysis`. They are two pages: skills (Agent 1, no checkpoint) and
     Needs (Agent 2, where the review gate is).
 
-    The report leaves no artifact of its own — it re-persists the PLOs synthesis
-    already wrote — so a program that has been through it looks exactly like one
-    that has not. The QA agent's review does leave one, and only a review current
-    for the stored set counts: a stale one means the set changed after it was
-    made. That includes the review's own send-back: an applied redraft changes the
-    set right after the review is stored, so the rail shows the PLO stage until the
-    designer re-runs the review — the set changed and has not been reviewed.
+    The report is stored (`plo_reports`, with the fingerprint of the set it was
+    built from) and so is the QA review; each counts only while current for the
+    stored set, because a stale one means the set changed after it was made. The
+    report is last in the order, so a current report wins over a current review.
+    The review's own send-back changes the set right after the review is stored,
+    so the rail shows the PLO stage until the designer re-runs the review — the
+    set changed and has not been reviewed.
     """
+    if has_current_report:
+        return "plo_report"
     if has_current_review:
         return "plo_review"
     if has_plos:
@@ -275,13 +286,13 @@ def build_graph(
     g.add_edge("skill_grouping", "need_combination")
     g.add_edge("need_combination", "review_needs_node")
     g.add_edge("review_needs_node", "plo_synthesis")
-    g.add_edge("plo_synthesis", "review_plos_node")
-    # No checkpoint after the PLOs (immutable rule 7, waived for this segment by
-    # the designer, 2026-10-12): the report re-persists the approved set and the
-    # QA agent only advises, so a checkpoint between or after them gates nothing.
+    # The review runs on the synthesized set, then the designer approves it at
+    # review_plos_node, and the report is built last from what is stored. No
+    # checkpoint follows the report: it is a view of the set just approved.
+    g.add_edge("plo_synthesis", "plo_review")
+    g.add_edge("plo_review", "review_plos_node")
     g.add_edge("review_plos_node", "plo_report")
-    g.add_edge("plo_report", "plo_review")
-    g.add_edge("plo_review", END)
+    g.add_edge("plo_report", END)
 
     return g.compile(checkpointer=checkpointer)
 

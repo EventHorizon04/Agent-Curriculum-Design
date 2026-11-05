@@ -128,7 +128,7 @@ async def test_report_unused_needs_exclude_merged_away(monkeypatch: pytest.Monke
         "list_by_program",
         AsyncMock(return_value=[*active, _need("O1", merged_into="A1")]),
     )
-    monkeypatch.setattr(pr.PLORepository, "bulk_insert", AsyncMock())
+    monkeypatch.setattr(pr.PLOReportRepository, "upsert", AsyncMock())
     plo = PLO(
         plo_id="PLO1",
         program_id="test",
@@ -143,6 +143,8 @@ async def test_report_unused_needs_exclude_merged_away(monkeypatch: pytest.Monke
         rationale_th="ตรงกับความต้องการของตลาด",
     )
 
-    state = await pr.run({"program_id": "test", "plos": [plo.model_dump(mode="json")]})
+    monkeypatch.setattr(pr.PLORepository, "list_by_program", AsyncMock(return_value=[plo]))
+
+    state = await pr.run({"program_id": "test"})
 
     assert state["report"]["needs_not_synthesized"] == ["A2"]
