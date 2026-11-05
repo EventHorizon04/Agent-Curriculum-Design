@@ -338,7 +338,8 @@ class Settings(BaseSettings):
     # Wall clock for one PLO's whole loop: every judge round and every repair.
     # Bounds the whole stage at roughly ceil(N / concurrency) x this, and turns a
     # hung provider into the last judged verdict (or code-only when none exists)
-    # rather than a stage that never returns.
+    # rather than a stage that never returns. The clock includes time queued on
+    # the shared judge semaphore (llm_max_concurrency), not only provider calls.
     validation_timeout_seconds: int = 600
     # Wall clock for each of the three Agent 1 / Agent 2 job steps (extraction,
     # grouping, need_combination), one budget apiece. It was 300 until 2026-10-28;

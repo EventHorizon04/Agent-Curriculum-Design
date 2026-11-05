@@ -367,10 +367,15 @@ async def validate_and_build(
     # there is nothing here for a model to invent.
     evidence_ids = sorted({eid for n in needs for eid in n.source_evidence_ids})
     diagnosis = result.diagnosis_th
-    if escalated and result.reason in (
-        ValidationReason.FINISHED,
-        ValidationReason.FINISHED_AT_BUDGET,
-        ValidationReason.FINISHED_AFTER_MALFORMED,
+    if escalated and (
+        result.reason
+        in (
+            ValidationReason.FINISHED,
+            ValidationReason.FINISHED_AT_BUDGET,
+            ValidationReason.FINISHED_AFTER_MALFORMED,
+        )
+        # A timeout that still returned the last vote is a verdict too.
+        or (result.reason is ValidationReason.DEADLINE and result.ran)
     ):
         # The agent signed off and code disagreed. Say so, or the diagnosis
         # reads as an explanation of a PLO that passed.

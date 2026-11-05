@@ -220,7 +220,13 @@ def _schema_failure_reason(exc: Exception, *, limit: int = 240) -> str:
 
 
 class ValidationReason(StrEnum):
-    """Why the loop stopped. Reported, logged, and folded into the diagnosis."""
+    """Why the loop stopped. Reported, logged, and folded into the diagnosis.
+
+    FINISHED_AT_BUDGET, FINISHED_AFTER_MALFORMED and REPAIR_BUDGET are no longer
+    produced: a voted result has no single run to attribute them to. They stay
+    because `validate_and_build` and older tests branch on them, and a member
+    removed here would be one more place an old stored value could not be read.
+    """
 
     FINISHED = "finished"
     # The turns ran out and one Finish-only call still produced the verdict.
@@ -434,6 +440,23 @@ async def _repair(
     return _adopt(fixed.plo, list(ctx.authoritative_need_ids))
 
 
+def _corrected_unjudged(progress: _Progress, ctx: ValidationContext) -> bool:
+    """True when the current draft was never voted on but has strictly fewer hard
+    failures than the last judged one.
+
+    Decision 20 guarantees the current draft's hard failures are a subset of the
+    judged one's, so shipping it can only shrink the failure list. Judging the
+    older sentence instead would escalate a PLO over a defect already repaired,
+    because a validator that could not run must not escalate (rule 5).
+    """
+    if progress.vote is None or progress.judged is None or progress.current is progress.judged:
+        return False
+    return len(_hard_on(progress.current, ctx)) < len(_hard_on(progress.judged, ctx))
+
+
+_CORRECTED_UNJUDGED_NOTE_TH = "แก้ประโยคแล้วแต่ผู้ตรวจยังไม่ได้ตรวจประโยคใหม่"
+
+
 @dataclass
 class _Progress:
     """What the loop has settled so far, held outside it so a timeout can read it.
@@ -579,6 +602,14 @@ async def run_smart_agent(
             f"{settings.validation_timeout_seconds}s "
             f"({progress.repairs} repairs, voted={progress.vote is not None})"
         )
+        if _corrected_unjudged(progress, ctx):
+            return code_only_result(
+                progress.current,
+                ValidationReason.DEADLINE,
+                f"{_CORRECTED_UNJUDGED_NOTE_TH} (หมดเวลา — ใช้ผลตรวจรอบล่าสุด)",
+                repair_count=progress.repairs,
+                turns=progress.turns,
+            )
         if progress.vote is not None:
             return _voted_result(
                 progress,
@@ -712,7 +743,7 @@ async def _voted_loop(
         progress.current = repaired
         judge_next = True
 
-    if progress.vote is None:
+    if progress.vote is None or _corrected_unjudged(progress, ctx):
         reason = next(
             (
                 r
@@ -732,7 +763,9 @@ async def _voted_loop(
         return code_only_result(
             progress.current,
             reason,
-            _NO_VOTE_NOTE_TH[reason],
+            _NO_VOTE_NOTE_TH[reason]
+            if progress.vote is None
+            else f"{_CORRECTED_UNJUDGED_NOTE_TH} {_NO_VOTE_NOTE_TH[reason]}",
             repair_count=progress.repairs,
             turns=progress.turns,
         )
@@ -759,14 +792,34 @@ async def _judge_once(
 ) -> JudgeRun | None:
     """One judge run over `draft`: a tool-using conversation that ends in a Finish.
 
-    Runs on its own copy of the context (a fresh `ToolBudget`, the draft being
-    judged), so concurrent runs share no counters and one run's runaway-reasoning
-    bound does not leak into another. Returns None when the run cannot produce a
+    Runs on its own copy of the context (a fresh `ToolBudget` for the repeat-call
+    and evidence counters, the draft being judged), so concurrent runs share no
+    counters. The runaway-reasoning bound is the exception: it is per PLO, seeded
+    from `ctx.budget` and written back to it. Returns None when the run cannot produce a
     verdict — a provider error, or malformed/over-long steps the closing call
     cannot salvage — and says why through `failures` when the caller wants it.
     """
-    run_ctx = dataclasses.replace(ctx, draft=draft, budget=ToolBudget())
+    # Counters are per run, but the reasoning bound is per PLO: a PLO whose step
+    # ran away starts every later run bounded, and a run that trips it tells the
+    # caller's budget so later runs and rounds of this PLO start bounded too.
+    run_ctx = dataclasses.replace(
+        ctx,
+        draft=draft,
+        budget=ToolBudget(reasoning_bounded=ctx.budget.reasoning_bounded),
+    )
+    try:
+        return await _run_judge(draft, run_ctx, metadata, failures)
+    finally:
+        if run_ctx.budget.reasoning_bounded:
+            ctx.budget.reasoning_bounded = True
 
+
+async def _run_judge(
+    draft: Any,
+    run_ctx: ValidationContext,
+    metadata: ProgramMetadata,
+    failures: list[ValidationReason] | None,
+) -> JudgeRun | None:
     def failed(reason: ValidationReason) -> None:
         if failures is not None:
             failures.append(reason)

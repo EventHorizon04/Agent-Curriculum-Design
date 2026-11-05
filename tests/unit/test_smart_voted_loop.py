@@ -13,6 +13,7 @@ import asyncio
 from typing import Any
 
 import pytest
+from instructor.core.exceptions import IncompleteOutputException
 from pydantic import ValidationError
 
 from curriculum_agent.prompts.smart_agent import (
@@ -495,3 +496,180 @@ def test_repair_instruction_builder_caps_and_excludes() -> None:
 
     long = build_vote_repair_instruction_th(["ก" * 500], [("M_assessable", "ข" * 500)], "ค" * 400)
     assert len(long) <= 800
+
+
+# ---------------------- the reasoning bound is per PLO ----------------------
+
+
+class _RunawayFirstCall:
+    """Truncates the very first unbounded call, then answers; records every
+    call's `reasoning_max_tokens` in order."""
+
+    def __init__(self, script: list[Any]) -> None:
+        self.inner = ScriptedJudges(script)
+        self.reasoning: list[int | None] = []
+        self._ran_away = False
+
+    async def __call__(self, response_model, messages, **kwargs):  # noqa: ANN001, ANN003
+        self.reasoning.append(kwargs.get("reasoning_max_tokens"))
+        if kwargs.get("reasoning_max_tokens") is None and not self._ran_away:
+            self._ran_away = True
+            raise IncompleteOutputException(last_completion=None)
+        return await self.inner(response_model, messages, **kwargs)
+
+
+async def test_a_runaway_in_one_run_bounds_the_later_runs_of_that_plo(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """One dissent in the first batch forces a second batch. Those later runs ask
+    their first step bounded: the input that ran away is in their conversation
+    too, and an unbounded call would spend the whole step cap to find that out."""
+    fake = _RunawayFirstCall([_finish(**_FAIL_M, diagnosis_th="วัดไม่ได้"), _finish()])
+    monkeypatch.setattr(sa, "complete_validation", fake)
+
+    await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    # The first call runs away and is re-asked bounded; every run that starts
+    # after it -- its batch peers and the whole second batch -- starts bounded.
+    assert fake.reasoning[0] is None
+    assert all(r is not None for r in fake.reasoning[1:]), fake.reasoning
+    assert len(fake.reasoning) == 6
+
+
+async def test_a_runaway_bounds_the_next_round_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sa.settings, "validation_runs", 1)
+    fake = _RunawayFirstCall([_finish(**_FAIL_M, diagnosis_th="วัดไม่ได้"), _finish()])
+    monkeypatch.setattr(sa, "complete_validation", fake)
+    _repairs(monkeypatch, _BETTER)
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert result.repair_count == 1
+    assert fake.reasoning[0] is None
+    assert fake.reasoning[-1] is not None, "round two started unbounded"
+
+
+# ---------------------- a repaired sentence that was never re-judged ----------------------
+
+_GOOD = _draft("วิเคราะห์ความเสี่ยงของระบบได้", "วิเคราะห์")
+_BAD = _draft("เข้าใจความเสี่ยงของระบบ", "เข้าใจ")  # one hard failure: M_forbidden
+
+
+async def test_outage_after_repair_ships_the_repaired_draft_code_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fail = _finish(**_FAIL_M, diagnosis_th="วัดไม่ได้")
+    judges = _judges(monkeypatch, [fail, fail, fail, RuntimeError("endpoint down")])
+    _repairs(monkeypatch, _GOOD)
+
+    result = await sa.run_smart_agent(_BAD, _ctx(_BAD), META)
+
+    assert judges.calls > 3
+    assert result.statement_th == _GOOD.statement_th
+    assert result.ran is False
+    assert result.soft_findings == [], "the new wording was never voted"
+    assert result.reason is sa.ValidationReason.PROVIDER_ERROR
+    assert "แก้ประโยคแล้วแต่ผู้ตรวจยังไม่ได้ตรวจประโยคใหม่" in (result.diagnosis_th or "")
+    assert result.repair_count == 1
+
+
+async def test_outage_after_repair_does_not_escalate_in_validate_and_build(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A validator that could not run must not escalate a sentence code passes."""
+    fail = _finish(**_FAIL_M, diagnosis_th="วัดไม่ได้")
+    _judges(monkeypatch, [fail, fail, fail, RuntimeError("endpoint down")])
+    _repairs(monkeypatch, _GOOD)
+
+    plo = await ps.validate_and_build(
+        _BAD,
+        metadata=META,
+        needs=[_need()],
+        program_id="cs-test",
+        plo_id="PLO1",
+        known_need_ids={"N1"},
+    )
+
+    assert plo is not None
+    assert plo.statement_th == _GOOD.statement_th
+    assert plo.smart_escalated is False
+    assert plo.smart_validated_by == "code_only"
+
+
+async def test_timeout_after_repair_ships_the_repaired_draft_code_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fail = _finish(**_FAIL_M, diagnosis_th="วัดไม่ได้")
+    calls = 0
+
+    async def hangs_after_round_one(response_model, messages, **kwargs):  # noqa: ANN001, ANN003
+        nonlocal calls
+        calls += 1
+        if calls > 3:
+            await asyncio.sleep(10)
+        return sa.JudgeStep(reasoning_th="สรุปผล", action=fail)
+
+    monkeypatch.setattr(sa, "complete_validation", hangs_after_round_one)
+    _repairs(monkeypatch, _GOOD)
+    monkeypatch.setattr(sa.settings, "validation_timeout_seconds", 1)
+
+    result = await sa.run_smart_agent(_BAD, _ctx(_BAD), META)
+
+    assert result.reason is sa.ValidationReason.DEADLINE
+    assert result.ran is False
+    assert result.soft_findings == []
+    assert result.statement_th == _GOOD.statement_th
+    diagnosis = result.diagnosis_th or ""
+    assert "แก้ประโยคแล้วแต่ผู้ตรวจยังไม่ได้ตรวจประโยคใหม่" in diagnosis
+    assert "(หมดเวลา — ใช้ผลตรวจรอบล่าสุด)" in diagnosis
+
+
+async def test_a_repair_with_equal_hard_failures_keeps_the_judged_statement(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Not strictly fewer, so nothing says the new sentence is better: the last
+    voted statement stays, with its vote."""
+    fail = _finish(**_FAIL_M, diagnosis_th="วัดไม่ได้")
+    _judges(monkeypatch, [fail, fail, fail, RuntimeError("endpoint down")])
+    _repairs(monkeypatch, _draft("เข้าใจความเสี่ยงของระบบอีกแบบ", "เข้าใจ"))
+
+    result = await sa.run_smart_agent(_BAD, _ctx(_BAD), META)
+
+    assert result.statement_th == _BAD.statement_th
+    assert result.ran is True
+    assert result.soft_flags == ["M_assessable"]
+
+
+async def test_a_timeout_that_returned_the_vote_still_gets_the_code_disagreed_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DEADLINE with ran=True is a verdict; an escalated PLO must say code
+    disagreed with it, like any other finished verdict."""
+
+    async def late(draft, ctx, metadata, *, enabled=True, allow_repair=True):  # noqa: ANN001
+        return sa.SmartAgentResult(
+            statement_th=_BAD.statement_th,
+            statement_en=None,
+            bloom_level=_BAD.bloom_level,
+            action_verb_th=_BAD.action_verb_th,
+            rationale_th=_BAD.rationale_th,
+            distinctive_feature_th=None,
+            source_need_ids=["N1"],
+            diagnosis_th="ผ่านทุกข้อ (หมดเวลา — ใช้ผลตรวจรอบล่าสุด)",
+            reason=sa.ValidationReason.DEADLINE,
+            ran=True,
+        )
+
+    monkeypatch.setattr(ps, "run_smart_agent", late)
+
+    plo = await ps.validate_and_build(
+        _BAD,
+        metadata=META,
+        needs=[_need()],
+        program_id="cs-test",
+        plo_id="PLO1",
+        known_need_ids={"N1"},
+    )
+
+    assert plo is not None and plo.smart_escalated is True
+    assert (plo.smart_diagnosis_th or "").startswith("โค้ดตรวจประโยคสุดท้ายแล้วยังไม่ผ่าน")

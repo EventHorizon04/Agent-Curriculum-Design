@@ -196,23 +196,24 @@ def _build() -> str:
             sibling_count=5,
         )
     )
-    repair = _render(
-        build_agent_repair_prompt(
-            statement_th="<ประโยค PLO เดิม>",
-            bloom_level="apply",
-            action_verb_th="<กริยา>",
-            degree_level="bachelor",
-            instruction_th="<คำสั่งแก้จาก validation agent>",
-            criteria=["M_forbidden"],
-            keep_th="<สาระที่ต้องคงไว้>",
-        )
-    )
     bloom_note = build_bloom_redraft_note_th(BloomLevel.ANALYZE, "<เหตุผลของผู้ตรวจ>")
     context_line = build_program_context_th({"field": "<สาขาวิชา>", "degree_level": "bachelor"})
     repair_instruction = build_vote_repair_instruction_th(
         ["<คำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน>"],
         [("M_assessable", "<หมายเหตุของผู้ตรวจที่เป็นตัวแทนเสียงข้างมาก>")],
         "<repair_hint_th ของผู้ตรวจที่เป็นตัวแทน>",
+    )
+    # As production calls it: `_repair` always passes keep_th=None.
+    repair = _render(
+        build_agent_repair_prompt(
+            statement_th="<ประโยค PLO เดิม>",
+            bloom_level="apply",
+            action_verb_th="<กริยา>",
+            degree_level="bachelor",
+            instruction_th=repair_instruction,
+            criteria=["M_forbidden", "M_assessable"],
+            keep_th=None,
+        )
     )
     refusal_observation = build_refusal_observation("<เหตุผลที่ระบบปฏิเสธ>")
 
@@ -439,11 +440,6 @@ monotone: หดรายการที่ไม่ผ่านได้ ปร
 |---|---|
 | `build_tool_observation(observation)` | ผลของเครื่องมือหนึ่งตัว — สำเร็จส่ง JSON, ล้มเหลวส่ง `ผลของ <tool>: ปฏิเสธ — <เหตุผล>` |
 | `build_refusal_observation(reason_th)` | ระบบปฏิเสธคำสั่งล่าสุด เช่น รูปแบบคำตอบผิด หรือเรียกเครื่องมือด้วยอาร์กิวเมนต์เดิมซ้ำ |
-| `build_vote_repair_instruction_th(...)` | คำสั่งซ่อมเดียวที่ส่งให้ slot `plo_synthesis` สร้างจากคำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน + ข้อที่ผู้ตรวจเสียงข้างมากไม่ผ่าน (ไม่รวม A_actor/A_scope) + hint ของผู้ตรวจตัวแทน ยาวไม่เกิน 800 ตัวอักษร |
-
-```text
-{repair_instruction}
-```
 
 ```text
 {refusal_observation}
@@ -466,6 +462,13 @@ monotone: หดรายการที่ไม่ผ่านได้ ปร
 **นี่คือ invariant กลางของ SMART loop:** เสียงข้างมากของ judge run กับ `hard_failures` ตัดสินใจ *ว่าจะซ่อมไหม* และออกคำสั่ง ส่วนภาษาไทยที่
 ผู้ออกแบบจะยื่นต่อ อว. เขียนโดย slot `plo_synthesis` เสมอ · `Finish` จึงไม่มี field
 `statement_th` เลย (มีแค่ `repair_hint_th` สั้น ๆ) — ถ้ามี "การซ่อมไม่เคยถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่าง" จะห่างจากเท็จอยู่ field เดียว
+
+`instruction_th` สร้างโดย `build_vote_repair_instruction_th(...)` จากคำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน + ข้อที่ผู้ตรวจ
+เสียงข้างมากไม่ผ่าน (ไม่รวม A_actor/A_scope) + `repair_hint_th` ของผู้ตรวจตัวแทน ยาวไม่เกิน 800 ตัวอักษร · ตัวอย่าง:
+
+```text
+{repair_instruction}
+```
 
 prompt ซ่อมพกแค่คำสั่ง + ประโยคเดิม ไม่มีผลเครื่องมือ ไม่มี PLO พี่น้อง ไม่มีการท่องเกณฑ์ซ้ำ เพราะโมเดลที่
 เขียนคำวินิจฉัยไม่ใช่โมเดลที่เขียนคำแก้ `instruction_th` จึงต้องอยู่ได้ด้วยตัวเอง
