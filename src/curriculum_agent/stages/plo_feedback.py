@@ -87,13 +87,16 @@ REASON_MERGED_EARLIER = "PLO นี้เพิ่งรวมมาในรอ
 class LoopMemory:
     """What the send-back loop carries between rounds.
 
-    `merged` is the `(plo_id, statement_th)` of every PLO an applied redundancy
-    wrote in an earlier round: a later review that names one of them again is
-    judging the fruit of our own merge, and merging it again only drifts (decision
-    13). The statement is part of the key because a freed id is reused.
+    `merged` is the Need set (`frozenset(source_need_ids)`) of every PLO an
+    applied redundancy wrote in an earlier round: a later review that names one of
+    them again is judging the fruit of our own merge, and merging it again only
+    drifts (decision 13). Keyed on the Needs, not on `(plo_id, statement_th)`: a
+    later alignment or Bloom redraft of the merged PLO rewrites its statement but
+    drafts from the same Needs, and a statement key let that redraft launder the
+    merge. The Needs also outlive a freed id being reused.
     """
 
-    merged: set[tuple[str, str]] = field(default_factory=set)
+    merged: set[frozenset[str]] = field(default_factory=set)
 
 
 def _naive_utc(moment: datetime) -> datetime:
@@ -373,7 +376,7 @@ async def _send_redundancy(rnd: _Round, finding: RedundancyFinding) -> FeedbackA
         return rnd.skipped(
             "redundancy", gone, plo_ids=named, need_ids=[], finding_reason_th=finding.reason_th
         )
-    if any((pid, live[pid].statement_th) in rnd.memory.merged for pid in named):
+    if any(frozenset(live[pid].source_need_ids) in rnd.memory.merged for pid in named):
         return rnd.skipped(
             "redundancy",
             REASON_MERGED_EARLIER,
@@ -400,13 +403,8 @@ async def _send_redundancy(rnd: _Round, finding: RedundancyFinding) -> FeedbackA
         ),
         accept=_keep_original_unless_better(live, need_ids, None),
     )
-    if (
-        not rnd.dry_run
-        and action.outcome == "applied"
-        and action.result_plo_id
-        and action.result_statement_th
-    ):
-        rnd.memory.merged.add((action.result_plo_id, action.result_statement_th))
+    if not rnd.dry_run and action.outcome == "applied":
+        rnd.memory.merged.add(frozenset(need_ids))  # the merged PLO's Needs
     return action
 
 

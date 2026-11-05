@@ -879,7 +879,7 @@ async def test_bloom_without_level_change_or_verb_is_not_actionable(
 
 async def test_merge_drift_skip(monkeypatch: pytest.MonkeyPatch, plos: list[PLO]) -> None:
     env = _Env(monkeypatch, plos)
-    memory = pf.LoopMemory(merged={("PLO1", plos[0].statement_th)})
+    memory = pf.LoopMemory(merged={frozenset({"N1"})})  # keyed on the Need set (I2)
     (action,) = await pf.send_back(
         "cs-test", _review(redundancies=[_red("PLO1", "PLO2")]), env.initial, memory=memory
     )
@@ -896,7 +896,7 @@ async def test_applied_redundancy_is_added_to_memory(
         "cs-test", _review(redundancies=[_red("PLO1", "PLO2")]), env.initial, memory=memory
     )
     assert action.outcome == "applied"
-    assert memory.merged == {(str(action.result_plo_id), str(action.result_statement_th))}
+    assert memory.merged == {frozenset({"N1", "N2"})}  # the merged PLO's Needs (I2)
 
 
 async def test_dry_run_plans_without_redrafting(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1079,3 +1079,33 @@ def test_check_redraft_answers_what_redraft_from_needs_refuses() -> None:
     assert ceiling is not None and ceiling.startswith("การรวมนี้จะทำให้มี PLO หลัก 11 ข้อ")
     floor = check_redraft(_core(4), needs, ["N1", "N2"])
     assert floor is not None and floor.startswith("การรวมนี้จะเหลือ PLO หลัก 3 ข้อ")
+
+
+# --------------------- final review I2: the drift guard survives a redraft ---------------------
+
+
+async def test_merge_memory_survives_a_later_redraft_of_the_merged_plo(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    """Round 1 merges PLO1+PLO2, round 2 redrafts the merged PLO (alignment) from the
+    same Needs with a new statement, round 3 names it in a redundancy again: still
+    skipped, because the memory is keyed on the Need set, which a redraft keeps."""
+    env = _Env(monkeypatch, plos)
+    memory = pf.LoopMemory()
+
+    (r1,) = await pf.send_back(
+        "cs-test", _review(redundancies=[_red("PLO1", "PLO2")]), list(env.plos), memory=memory
+    )
+    assert (r1.outcome, r1.result_plo_id) == ("applied", "PLO1")
+
+    env.draft_update = {"statement_th": "ร่างรอบสอง"}
+    (r2,) = await pf.send_back(
+        "cs-test", _review(alignment=[_align("PLO1")]), list(env.plos), memory=memory
+    )
+    assert r2.outcome == "applied" and r2.result_statement_th == "ร่างรอบสอง"
+
+    (r3,) = await pf.send_back(
+        "cs-test", _review(redundancies=[_red("PLO1", "PLO3")]), list(env.plos), memory=memory
+    )
+    assert (r3.outcome, r3.outcome_reason_th) == ("skipped", pf.REASON_MERGED_EARLIER)
+    assert env.redraft.await_count == 2
