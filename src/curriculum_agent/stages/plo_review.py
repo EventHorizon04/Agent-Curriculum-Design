@@ -406,12 +406,12 @@ async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
 async def fresh_review_with_feedback(
     program_id: str, plos: Sequence[PLO]
 ) -> tuple[PLOSetReview, list[FeedbackAction]]:
-    """`fresh_review`, also returning the send-back actions of this round.
+    """`fresh_review`, also returning every send-back row written by this job.
 
-    The review is stored before send-back starts and is returned whatever send-back
-    does: `send_back` does not raise, and a failure here is logged, not propagated.
-    The in-flight guard stays held through send-back, so a second review cannot
-    start against a set that is being redrafted.
+    Runs the review loop (`stages/plo_review_loop.py`; mode off is the phase-4
+    single pass). Each review is stored before send-back starts and send-back
+    failures are logged, not propagated. The in-flight guard stays held through the
+    whole loop, so a second review cannot start against a set being redrafted.
     """
     if program_id in _REVIEW_IN_FLIGHT:
         raise ReviewAlreadyRunning(
@@ -419,16 +419,26 @@ async def fresh_review_with_feedback(
         )
     _REVIEW_IN_FLIGHT.add(program_id)  # no await between the check and the add
     try:
-        review = await _review(program_id, plos)
-        await PLOReviewRepository().upsert(review)
-        feedback: list[FeedbackAction] = []
-        try:
-            feedback = await send_back(program_id, review, plos)
-        except Exception as exc:
-            logger.warning(f"plo_review: send-back for {program_id} failed: {exc!r}")
-        return review, feedback
+        from curriculum_agent.stages.plo_review_loop import run_review_loop
+
+        return await run_review_loop(program_id, plos)
     finally:
         _REVIEW_IN_FLIGHT.discard(program_id)
+
+
+async def _review_once_with_send_back(
+    program_id: str, plos: Sequence[PLO]
+) -> tuple[PLOSetReview, list[FeedbackAction]]:
+    """The phase-4 pass: one review, stored, then one send-back that never raises.
+    The loop's `off` mode and `plo_review_max_rounds=0` run exactly this."""
+    review = await _review(program_id, plos)
+    await PLOReviewRepository().upsert(review)
+    feedback: list[FeedbackAction] = []
+    try:
+        feedback = await send_back(program_id, review, plos)
+    except Exception as exc:
+        logger.warning(f"plo_review: send-back for {program_id} failed: {exc!r}")
+    return review, feedback
 
 
 def _worth_reusing(review: PLOSetReview) -> bool:

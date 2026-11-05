@@ -359,6 +359,14 @@ class Settings(BaseSettings):
     # unused-Need findings back as redrafts (stages/plo_feedback.py), each with a
     # trail row. False restores the advisory-only review.
     plo_review_send_back: bool = True
+    # Phase 6: the review -> send-back loop (stages/plo_review_loop.py). "off" is the
+    # phase-4 single pass; "shadow" reviews once and records what send-back would do
+    # (dry run, nothing written to the PLOs); "apply" repeats review and send-back
+    # for up to `plo_review_max_rounds` rounds (0 behaves like "off"), all under one
+    # wall-clock budget.
+    plo_review_loop_mode: Literal["off", "shadow", "apply"] = "shadow"
+    plo_review_max_rounds: int = Field(default=5, ge=0)
+    plo_review_loop_timeout_seconds: int = 5400
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
     # fans out a call per evidence item, and now one per window of each item

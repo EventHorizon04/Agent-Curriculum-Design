@@ -62,6 +62,14 @@ def _default_api_key_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _review_loop_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review loop defaults to shadow, which stores its own rows; tests written
+    for the single-pass review keep that behaviour. A loop test sets the mode itself
+    — a later `setattr` wins."""
+    monkeypatch.setattr(settings, "plo_review_loop_mode", "off")
+
+
+@pytest.fixture(autouse=True)
 def _no_need_dedup_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """The duplicate check before synthesis is on by default, so every test that
     runs `plo_synthesis.run` would otherwise make a real network call. Stubbed at
