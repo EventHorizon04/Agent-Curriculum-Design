@@ -132,6 +132,9 @@ class _Round:
         self.program_id = program_id
         self.review_created_at = _naive_utc(review.created_at)
         self.replaced: set[str] = set()
+        # Ids of applied rows `replace` already wrote in its own transaction;
+        # `_record` must not write them a second time.
+        self.written: set[str] = set()
 
     def skipped(
         self,
@@ -226,6 +229,28 @@ class _Round:
                 instruction_th=instruction_th,
                 round=self.round_no,
             )
+        built: list[FeedbackAction] = []
+
+        def trail(plo: PLO) -> FeedbackAction:
+            # Built for the accepted draft and written by `replace` in the same
+            # transaction as the swap, so the change cannot land without its row.
+            row = FeedbackAction(
+                program_id=self.program_id,
+                review_created_at=self.review_created_at,
+                kind=kind,
+                outcome="applied",
+                result_plo_id=plo.plo_id,
+                result_statement_th=plo.statement_th,
+                result_bloom_level=plo.bloom_level.value,
+                plo_ids=plo_ids,
+                need_ids=need_ids,
+                finding_reason_th=finding_reason_th,
+                instruction_th=instruction_th,
+                round=self.round_no,
+            )
+            built.append(row)
+            return row
+
         try:
             plo, replaced = await redraft_from_needs(
                 self.program,
@@ -234,6 +259,7 @@ class _Round:
                 note_th=instruction_th or None,
                 cause="review",
                 accept=accept,
+                trail=trail,
             )
         except RedraftRefused as exc:
             return self.skipped(
@@ -253,20 +279,12 @@ class _Round:
                 instruction_th=instruction_th,
             )
         self.replaced.update(replaced)
-        return FeedbackAction(
-            program_id=self.program_id,
-            review_created_at=self.review_created_at,
-            kind=kind,
-            outcome="applied",
-            result_plo_id=plo.plo_id,
-            result_statement_th=plo.statement_th,
-            result_bloom_level=plo.bloom_level.value,
-            plo_ids=plo_ids,
-            need_ids=need_ids,
-            finding_reason_th=finding_reason_th,
-            instruction_th=instruction_th,
-            round=self.round_no,
-        )
+        if built:
+            self.written.add(built[-1].id)
+            return built[-1]
+        # Only a redraft that returned without building its row reaches here;
+        # `_record` writes it then, as it did before the row moved into `replace`.
+        return trail(plo)
 
     def unavailable_reason(self, named: list[str], live: dict[str, PLO]) -> str | None:
         """Why the named PLOs cannot be acted on now, or None when all are live.
@@ -537,15 +555,22 @@ async def _send_unused(rnd: _Round, finding: UnusedNeedFinding) -> FeedbackActio
     )
 
 
-async def _record(actions: list[FeedbackAction], action: FeedbackAction) -> None:
-    """Keep the row and write it now, so an applied redraft is never left without
-    its trail row if the round is cancelled later. A failed write is logged at
-    error level with the row, and the round goes on."""
+async def _record(
+    actions: list[FeedbackAction], action: FeedbackAction, *, written: bool = False
+) -> None:
+    """Keep the row, log it, and write it now unless it is already written.
+
+    An applied row is `written`: `replace` inserted it in the transaction that
+    changed the PLOs. Skipped, failed and planned rows change nothing, so they
+    are written here, one at a time; a failed write is logged at error level with
+    the row, and the round goes on."""
     actions.append(action)
     logger.info(
         f"plo_feedback: {action.kind} {action.plo_ids or action.need_ids} "
         f"-> {action.outcome} {action.outcome_reason_th}".rstrip()
     )
+    if written:
+        return
     try:
         await PLOFeedbackRepository().add([action])
     except Exception as exc:
@@ -630,7 +655,7 @@ async def send_back(
                     need_ids=[],
                     finding_reason_th=red.reason_th,
                 )
-            await _record(actions, action)
+            await _record(actions, action, written=action.id in rnd.written)
         for al in aligns:
             try:
                 action = await _send_alignment(rnd, al)
@@ -639,7 +664,7 @@ async def send_back(
                 action = rnd.failed(
                     "alignment", plo_ids=[al.plo_id], need_ids=[], finding_reason_th=al.reason_th
                 )
-            await _record(actions, action)
+            await _record(actions, action, written=action.id in rnd.written)
         for bl in blooms:
             try:
                 action = await _send_bloom(rnd, bl)
@@ -648,7 +673,7 @@ async def send_back(
                 action = rnd.failed(
                     "bloom", plo_ids=[bl.plo_id], need_ids=[], finding_reason_th=bl.reason_th
                 )
-            await _record(actions, action)
+            await _record(actions, action, written=action.id in rnd.written)
         for category in review.ksec_coverage.missing:
             try:
                 action = await _send_ksec_gap(rnd, category)
@@ -660,7 +685,7 @@ async def send_back(
                     need_ids=[],
                     finding_reason_th=f"ไม่มี PLO หมวด {category}",
                 )
-            await _record(actions, action)
+            await _record(actions, action, written=action.id in rnd.written)
         for un in unused:
             try:
                 action = await _send_unused(rnd, un)
@@ -672,7 +697,7 @@ async def send_back(
                     need_ids=[un.need_id],
                     finding_reason_th=un.reason_th,
                 )
-            await _record(actions, action)
+            await _record(actions, action, written=action.id in rnd.written)
     except Exception as exc:
         logger.warning(f"plo_feedback: send-back for {program_id} stopped early: {exc!r}")
     return actions

@@ -649,6 +649,7 @@ class PLORepository:
         *,
         cause: str = "designer",
         expect: Mapping[str, str] | None = None,
+        trail_row: FeedbackAction | None = None,
     ) -> int:
         """Drop some outcomes and write others, in one transaction.
 
@@ -673,6 +674,11 @@ class PLORepository:
         `designer_edited_at` on a `review` replace raises
         `PLOChangedDuringRedraft` with nothing written. Without the check the
         delete below would take the designer's edit with it.
+
+        `trail_row` is send-back's `plo_feedback_actions` row for this change,
+        inserted in the same transaction: an applied change and its trail row
+        land together or not at all, so a loop cancelled right after the commit
+        cannot leave a changed PLO with no row saying why.
 
         Returns the number of rows removed.
         """
@@ -745,6 +751,8 @@ class PLORepository:
                 else:
                     for k, v in data.items():
                         setattr(existing, k, v)
+            if trail_row is not None:
+                session.add(PLOFeedbackActionTable(**trail_row.model_dump()))
             await session.commit()
             return removed
 

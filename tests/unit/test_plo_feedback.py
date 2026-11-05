@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -86,6 +86,9 @@ class _Env:
         self.plos = plos
         self.initial = list(plos)
         self.draft_update: dict[str, object] = {}
+        # Rows the fake `replace` wrote in its transaction (final review I4): an
+        # applied row lands here, never through `PLOFeedbackRepository`.
+        self.replace_rows: list[FeedbackAction] = []
         _LAST.append(self)
         monkeypatch.setattr(settings, "plo_review_send_back", True)
         self.program = AsyncMock(get=AsyncMock(return_value=_program()))
@@ -117,8 +120,10 @@ class _Env:
         note_th: str | None,
         cause: str,
         accept: object = None,
+        trail: object = None,
     ) -> tuple[PLO, list[str]]:
-        """Apply the swap the real function would: drop PLOs citing, add one."""
+        """Apply the swap the real function would: drop PLOs citing, add one, and
+        write the trail row `trail` builds in the same step, as `replace` does."""
         gone = [p.plo_id for p in self.plos if set(p.source_need_ids) & set(need_ids)]
         new_id = gone[0] if gone else "PLO9"
         new = _plo(new_id, need_ids).model_copy(
@@ -130,6 +135,8 @@ class _Env:
         )
         if callable(accept) and (reason := accept(new)) is not None:
             raise RedraftRefused(422, reason)
+        if callable(trail):
+            self.replace_rows.append(trail(new))
         self.plos = [p for p in self.plos if p.plo_id not in gone] + [new]
         return new, gone
 
@@ -153,8 +160,9 @@ async def test_order_is_redundancy_then_bloom_then_unused(
     assert all(a.outcome == "applied" for a in actions)
     assert [c.args[2] for c in env.redraft.await_args_list] == [["N1", "N2"], ["N3"], ["N7"]]
     assert all(c.kwargs["cause"] == "review" for c in env.redraft.await_args_list)
-    # one write per action, right after it
-    assert env.trail.add.await_args_list == [call([a]) for a in actions]
+    # each applied row is written by its replace, never a second time (final review I4)
+    assert env.replace_rows == actions
+    env.trail.add.assert_not_awaited()
     assert actions[0].result_plo_id == "PLO1" and actions[0].result_statement_th == "ใหม่ PLO1"
     assert actions[0].review_created_at == datetime(2026, 11, 3, 1, 2, 3)
 
@@ -338,11 +346,18 @@ async def test_an_error_outside_the_actions_is_swallowed(
 async def test_a_failed_trail_write_does_not_stop_the_round(
     monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
 ) -> None:
+    # Skipped rows: an applied row is written by `replace` now (final review I4),
+    # so the separate write this test is about is a non-applied row's.
     env = _Env(monkeypatch, plos)
     env.trail.add.side_effect = [RuntimeError("db"), None]
-    review = _review(unused_needs=[_unused("N7", agreed_runs=2), _unused("N8", agreed_runs=2)])
+    review = _review(
+        unused_needs=[
+            _unused("N7", agreed_runs=2, unwritten=True),
+            _unused("N8", agreed_runs=2, unwritten=True),
+        ]
+    )
     actions = await _sb(review)
-    assert [a.outcome for a in actions] == ["applied", "applied"]
+    assert [a.outcome for a in actions] == ["skipped", "skipped"]
     assert env.trail.add.await_count == 2
 
 
@@ -661,7 +676,8 @@ async def test_graph_review_of_a_stale_stored_review_runs_fresh_and_sends_back_o
     assert spy.await_args.args[0] == "cs-test" and spy.await_args.args[1] is fresh
     assert [p.plo_id for p in spy.await_args.args[2]] == [p.plo_id for p in plos]
     env.redraft.assert_awaited_once()
-    assert env.trail.add.await_count == 1
+    assert len(env.replace_rows) == 1  # the applied row, written by replace (I4)
+    env.trail.add.assert_not_awaited()
 
 
 async def test_send_back_skips_designer_edited_plo(
@@ -909,7 +925,7 @@ async def test_round_is_stored_on_every_row(
         "cs-test", _review(bloom=[_bloom("PLO3")]), env.initial, round_no=2
     )
     assert [a.round for a in actions] == [2]
-    assert env.trail.add.await_args.args[0][0].round == 2
+    assert env.replace_rows[0].round == 2  # applied: written by replace (I4)
 
 
 async def test_redundancy_note_includes_both_old_statements(

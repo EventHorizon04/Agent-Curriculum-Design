@@ -16,7 +16,7 @@ from curriculum_agent.data.repositories import (
     PLOChangedDuringRedraft,
     PLORepository,
 )
-from curriculum_agent.models import PLO, Need, ProgramMetadata
+from curriculum_agent.models import PLO, FeedbackAction, Need, ProgramMetadata
 
 REASON_CHANGED_DURING_REDRAFT = "PLO นี้ถูกแก้ระหว่างร่างใหม่ — ไม่เขียนทับ"
 
@@ -146,6 +146,7 @@ async def redraft_from_needs(
     note_th: str | None,
     cause: str,
     accept: Callable[[PLO], str | None] | None = None,
+    trail: Callable[[PLO], FeedbackAction] | None = None,
 ) -> tuple[PLO, list[str]]:
     """Draft one PLO from `need_ids` and swap it in for every PLO citing them.
 
@@ -158,6 +159,11 @@ async def redraft_from_needs(
     `accept`, when given, sees the finished draft before anything is written; a
     returned Thai reason raises `RedraftRefused(422, reason)`. The designer's route
     passes none.
+
+    `trail`, when given, builds the `plo_feedback_actions` row for the accepted
+    draft; `replace` writes it in the transaction that swaps the PLOs, so the
+    change and its trail row cannot be separated by a cancellation. Send-back
+    passes it; the designer's route does not.
     """
     from curriculum_agent.stages.need_grouping import is_in_scope  # noqa: PLC0415
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
@@ -236,6 +242,7 @@ async def redraft_from_needs(
 
     # `expect` is the set as read above, before a draft that can take minutes: a
     # hand edit that landed meanwhile refuses the replace instead of being deleted.
+    extra: dict[str, FeedbackAction] = {} if trail is None else {"trail_row": trail(plo)}
     try:
         removed = await PLORepository().replace(
             program_id,
@@ -243,6 +250,7 @@ async def redraft_from_needs(
             [plo],
             cause=cause,
             expect={p.plo_id: p.statement_th for p in superseded},
+            **extra,
         )
     except PLOChangedDuringRedraft as exc:
         logger.warning(
