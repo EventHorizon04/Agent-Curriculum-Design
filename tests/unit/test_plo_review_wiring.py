@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -16,6 +17,10 @@ from tests.support.jobs import InMemoryJobs, SpawnRecorder
 app = FastAPI()
 app.include_router(router, prefix="/programs/{program_id}/plos")
 client = TestClient(app)
+
+# These tests drive the real review job (POST /review/run, and the chain after
+# synthesis); conftest otherwise stubs `_start_review_job` with a recorder.
+pytestmark = pytest.mark.review_chain
 
 _SMART = SMARTCheck(specific=True, measurable=True, achievable=True, relevant=True, timely=True)
 _PLO = PLO(

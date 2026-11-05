@@ -38,6 +38,10 @@ from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 client = TestClient(app)
 
+# These tests drive the real review job (POST /review/run, and the chain after
+# synthesis); conftest otherwise stubs `_start_review_job` with a recorder.
+pytestmark = pytest.mark.review_chain
+
 BASE = "/programs/cs-test/plos"
 NOTE = "เน้นทักษะด้าน AI"
 NO_PLOS_TH = "ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterator
+from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -22,6 +23,7 @@ from curriculum_agent.config import Settings, settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
+    JobInfo,
     KSECCategory,
     Need,
     ProgramMetadata,
@@ -155,6 +157,34 @@ def jobs_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[InMemoryJobs]:
     store.recorder = recorder  # type: ignore[attr-defined]
     yield store
     recorder.close()
+
+
+@pytest.fixture(autouse=True)
+def review_chain_calls(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[str, bool]]:
+    """`POST /plos/run` chains the review job through `_start_review_job`, which
+    reads the stored PLOs through the route module's own `_repo` — a real asyncpg
+    connect from every synthesis-route test that did not think to patch it. A
+    recorder by default; the calls are returned for a test that cares. A test or
+    module that exercises the real review job marks itself `review_chain`."""
+    calls: list[tuple[str, bool]] = []
+    if request.node.get_closest_marker("review_chain") is not None:
+        return calls
+    from curriculum_agent.api.routes import plos as plos_route  # noqa: PLC0415
+
+    async def _record(program_id: str, *, or_409: bool) -> JobInfo:
+        calls.append((program_id, or_409))
+        return JobInfo(
+            job_id="review-chain-stub",
+            program_id=program_id,
+            kind="plo_review",
+            status="running",
+            created_at=datetime(2026, 1, 1),
+        )
+
+    monkeypatch.setattr(plos_route, "_start_review_job", _record)
+    return calls
 
 
 @pytest.fixture
