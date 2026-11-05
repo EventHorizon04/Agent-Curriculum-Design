@@ -941,3 +941,42 @@ def test_actionable_count() -> None:
         row("stopped"),
     ]
     assert pf.actionable_count(rows) == 4
+
+
+async def test_dry_run_alignment_on_plo_a_planned_redundancy_replaces_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    review = _review(redundancies=[_red("PLO1", "PLO2")], alignment=[_align("PLO1")])
+    actions = await pf.send_back("cs-test", review, env.initial, dry_run=True)
+    assert [(a.kind, a.outcome) for a in actions] == [
+        ("redundancy", "planned"),
+        ("alignment", "skipped"),
+    ]
+    assert actions[1].outcome_reason_th == pf.REASON_ALREADY_REPLACED
+
+
+async def test_dry_run_unused_on_need_a_ksec_gap_planned_is_skipped(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    _needs(monkeypatch, [_ksec_need("N7", ["E"], 0.9)])
+    review = _review(
+        ksec_coverage=KsecCoverage(missing=["E"]), unused_needs=[_unused("N7", agreed_runs=2)]
+    )
+    actions = await pf.send_back("cs-test", review, env.initial, dry_run=True)
+    assert [(a.kind, a.outcome) for a in actions] == [
+        ("ksec_gap", "planned"),
+        ("unused_need", "skipped"),
+    ]
+    assert actions[1].outcome_reason_th == pf.REASON_NEED_NOW_CITED
+
+
+async def test_dry_run_ksec_gap_does_not_plan_the_same_need_twice(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    _needs(monkeypatch, [_ksec_need("N7", ["E", "K"], 0.9)])
+    review = _review(ksec_coverage=KsecCoverage(missing=["E", "K"]))
+    actions = await pf.send_back("cs-test", review, env.initial, dry_run=True)
+    assert [a.outcome for a in actions] == ["planned", "skipped"]

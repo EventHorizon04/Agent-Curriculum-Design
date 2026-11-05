@@ -177,6 +177,12 @@ class _Round:
     ) -> FeedbackAction:
         """Run one redraft and turn whatever happens into a trail row."""
         if self.dry_run:
+            # Book what a live run would have done, so the later actions of the
+            # round see the same world: the PLOs this one would replace count as
+            # replaced, and its Needs as taken.
+            live = await _live_plos(self.program_id)
+            self.replaced.update(p.plo_id for p in plos_citing(live.values(), need_ids))
+            self.replaced.update(pid for pid in plo_ids if pid in live)
             self.planned_needs.update(need_ids)
             return FeedbackAction(
                 program_id=self.program_id,
@@ -448,6 +454,14 @@ async def _send_unused(rnd: _Round, finding: UnusedNeedFinding) -> FeedbackActio
         return rnd.skipped(
             "unused_need",
             REASON_DESIGNER_EDITED,
+            plo_ids=[],
+            need_ids=[finding.need_id],
+            finding_reason_th=finding.reason_th,
+        )
+    if finding.need_id in rnd.planned_needs:  # dry run: planned earlier this round
+        return rnd.skipped(
+            "unused_need",
+            REASON_NEED_NOW_CITED,
             plo_ids=[],
             need_ids=[finding.need_id],
             finding_reason_th=finding.reason_th,
