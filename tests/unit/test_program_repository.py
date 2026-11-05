@@ -280,7 +280,7 @@ async def test_delete_cascade_deletes_tables_in_fk_safe_order() -> None:
     is a FK into EvidenceTable. Everything else has no cross-dependency."""
     repo = ProgramRepository()
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(13)])
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(14)])
     mock_ctx = MagicMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -298,17 +298,18 @@ async def test_delete_cascade_deletes_tables_in_fk_safe_order() -> None:
     assert executed_sql[5].startswith("DELETE FROM llm_usage")
     assert executed_sql[6].startswith("DELETE FROM plos")
     assert executed_sql[7].startswith("DELETE FROM plo_reviews")
-    assert executed_sql[8].startswith("DELETE FROM checkpoints")
-    assert executed_sql[9].startswith("DELETE FROM sessions")
-    assert executed_sql[10].startswith("DELETE FROM jobs")
-    assert executed_sql[11].startswith("DELETE FROM evidence")
-    assert executed_sql[12].startswith("DELETE FROM programs")
+    assert executed_sql[8].startswith("DELETE FROM plo_reports")
+    assert executed_sql[9].startswith("DELETE FROM checkpoints")
+    assert executed_sql[10].startswith("DELETE FROM sessions")
+    assert executed_sql[11].startswith("DELETE FROM jobs")
+    assert executed_sql[12].startswith("DELETE FROM evidence")
+    assert executed_sql[13].startswith("DELETE FROM programs")
 
 
 async def test_delete_cascade_returns_false_when_program_missing() -> None:
     repo = ProgramRepository()
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=0) for _ in range(13)])
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=0) for _ in range(14)])
     mock_ctx = MagicMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -322,7 +323,7 @@ async def test_delete_cascade_returns_false_when_program_missing() -> None:
 async def test_delete_cascade_commits_once() -> None:
     repo = ProgramRepository()
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(13)])
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(14)])
     mock_ctx = MagicMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)

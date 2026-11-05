@@ -51,6 +51,7 @@ REASON_UNUSED_NOT_WRITABLE = "Need นี้ยังไม่มีประโ
 REASON_NEED_NOW_CITED = "Need นี้มี PLO อ้างถึงแล้วในรอบนี้"
 REASON_GROUP_TOO_BIG = f"รวมแล้วเกิน {MAX_GROUP_SIZE} Need"
 REASON_EDITED_SINCE_REVIEW = "PLO นี้ถูกแก้หลังการตรวจ — ไม่ส่งกลับ"
+REASON_DESIGNER_EDITED = "PLO นี้ผู้ออกแบบแก้เอง — ไม่เขียนทับ"
 REASON_DRAFT_ESCALATED = "ร่างใหม่ไม่ผ่าน SMART — คงข้อเดิมไว้"
 REASON_DRAFT_WRONG_LEVEL = "ร่างใหม่ไม่ได้ระดับ Bloom ที่ขอ — คงข้อเดิมไว้"
 
@@ -175,7 +176,8 @@ class _Round:
     def unavailable_reason(self, named: list[str], live: dict[str, PLO]) -> str | None:
         """Why the named PLOs cannot be acted on now, or None when all are live.
 
-        Order: replaced this round, edited since the review, then missing. Replaced
+        Order: replaced this round, edited since the review, designer-edited, then
+        missing. Replaced
         is judged first: a freed id can be reused by the new outcome, so
         presence in the live set alone would not tell a replaced PLO from a live one.
         """
@@ -183,6 +185,8 @@ class _Round:
             return REASON_ALREADY_REPLACED
         if any(self._edited_since_review(pid, live) for pid in named):
             return REASON_EDITED_SINCE_REVIEW
+        if any(pid in live and live[pid].designer_edited_at is not None for pid in named):
+            return REASON_DESIGNER_EDITED
         if any(pid not in live for pid in named):
             return REASON_PLO_MISSING
         return None
@@ -293,6 +297,15 @@ async def _send_unused(rnd: _Round, finding: UnusedNeedFinding) -> FeedbackActio
             finding_reason_th=finding.reason_th,
         )
     live = await _live_plos(rnd.program_id)
+    # An unused Need's draft replaces whatever cites it; a hand-written outcome stays.
+    if any(p.designer_edited_at is not None for p in plos_citing(live.values(), [finding.need_id])):
+        return rnd.skipped(
+            "unused_need",
+            REASON_DESIGNER_EDITED,
+            plo_ids=[],
+            need_ids=[finding.need_id],
+            finding_reason_th=finding.reason_th,
+        )
     # Redrafting from a Need a PLO now cites would replace that PLO, undoing what
     # an earlier action of this round just wrote.
     if any(finding.need_id in p.source_need_ids for p in live.values()):

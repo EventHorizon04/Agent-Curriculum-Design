@@ -16,6 +16,7 @@ from curriculum_agent.data.orm import (
     EvidenceTable,
     NeedTable,
     PLOFeedbackActionTable,
+    PLOReportTable,
     PLOReviewTable,
     PLOTable,
     ProgramTable,
@@ -496,3 +497,48 @@ def test_evidence_only_copy_has_no_feedback_trail() -> None:
         src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
     )
     assert copy.feedback == []
+
+
+def _with_report(src: ProgramRows, *, fingerprint: str) -> ProgramRows:
+    from dataclasses import replace
+
+    report = PLOReportTable(
+        program_id="program-2",
+        plo_fingerprint=fingerprint,
+        created_at=datetime(2026, 11, 5),
+        report={"summary_th": "ภาพรวม", "plos": [{"plo_id": "PLO1", "need_ids": ["nd-1"]}]},
+    )
+    return replace(src, report=report)
+
+
+def test_full_copies_report_refingerprinted() -> None:
+    src = _source()
+    src = _with_report(src, fingerprint=_fingerprint(src.plos, src.needs))
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+    assert copy.report is not None
+    assert copy.report.program_id == "program-2-run-1"
+    # Current for the source stays current for the copy, whose Need ids changed.
+    assert copy.report.plo_fingerprint == _fingerprint(copy.plos, copy.needs)
+    assert copy.report.plo_fingerprint != src.report.plo_fingerprint  # type: ignore[union-attr]
+    # The body is JSONB, so its Need ids follow the re-keying.
+    assert "nd-1" not in json.dumps(copy.report.report)
+    assert src.report.report["plos"][0]["need_ids"] == ["nd-1"]  # type: ignore[union-attr]
+
+
+def test_a_stale_report_stays_stale_in_the_copy() -> None:
+    src = _with_report(_source(), fingerprint="0" * 64)
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+    assert copy.report is not None
+    assert copy.report.plo_fingerprint == "0" * 64
+
+
+def test_evidence_only_copies_no_report() -> None:
+    src = _with_report(_source(), fingerprint="0" * 64)
+    copy = build_copy(
+        src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
+    )
+    assert copy.report is None
+
+
+def test_no_report_means_no_report() -> None:
+    assert build_copy(_source(), "x", now=NOW, new_uuid=_new_uuid_factory()).report is None

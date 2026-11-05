@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -508,6 +509,8 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
             "soft_flags": [],
             "smart_escalated": bool(fails),
             "smart_validated_by": "stale",
+            # The marker Agent 4's send-back reads to leave this outcome alone.
+            "designer_edited_at": datetime.now(UTC).replace(tzinfo=None),
             "smart_diagnosis_th": (
                 'แก้ข้อความแล้ว ตรวจด้วยกฎพื้นฐานเท่านั้น — กด "ตรวจ SMART ซ้ำ" เพื่อให้ผู้ตรวจอ่านประโยคใหม่'
             ),
@@ -583,7 +586,14 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
         if revalidated is None:
             raise HTTPException(status_code=502, detail="ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่")
 
-        updated = revalidated.model_copy(update={"version": match.version + 1})
+        # validate_and_build builds a fresh PLO; the hand-edit marker is the
+        # stored row's, and nothing but a replacement of the outcome clears it.
+        updated = revalidated.model_copy(
+            update={
+                "version": match.version + 1,
+                "designer_edited_at": match.designer_edited_at,
+            }
+        )
         await _repo.bulk_insert([updated])
         logger.info(
             f"Revalidated {plo_id}: escalated={updated.smart_escalated} "

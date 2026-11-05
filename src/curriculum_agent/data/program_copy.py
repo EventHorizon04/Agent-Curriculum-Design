@@ -43,6 +43,7 @@ from curriculum_agent.data.orm import (
     EvidenceTable,
     NeedTable,
     PLOFeedbackActionTable,
+    PLOReportTable,
     PLOReviewTable,
     PLOTable,
     ProgramTable,
@@ -74,6 +75,7 @@ class ProgramRows:
     skill_groups: list[SkillGroupTable] = field(default_factory=list)
     superseded: list[SupersededPLOTable] = field(default_factory=list)
     feedback: list[PLOFeedbackActionTable] = field(default_factory=list)
+    report: PLOReportTable | None = None
 
 
 def _uuid4() -> str:
@@ -176,6 +178,7 @@ def build_copy(
             skill_groups=[],
             superseded=[],
             feedback=[],
+            report=None,
         )
     id_map: dict[str, str] = {}
     for e in src.evidence:
@@ -232,6 +235,17 @@ def build_copy(
             fingerprint = copied_fp
         review = _clone(src.review, id_map, program_id=new_id, plo_fingerprint=fingerprint)
 
+    # The stored report is fingerprinted like the review, so it gets the same
+    # treatment: a current one stays current, a stale one stays stale.
+    report: PLOReportTable | None = None
+    if src.report is not None:
+        source_fp = _fingerprint(src.plos, src.needs)
+        copied_fp = _fingerprint(plos, needs)
+        fingerprint = src.report.plo_fingerprint
+        if source_fp is not None and copied_fp is not None and fingerprint == source_fp:
+            fingerprint = copied_fp
+        report = _clone(src.report, id_map, program_id=new_id, plo_fingerprint=fingerprint)
+
     return ProgramRows(
         program=program,
         evidence=evidence,
@@ -242,6 +256,7 @@ def build_copy(
         skill_groups=skill_groups,
         superseded=superseded,
         feedback=feedback,
+        report=report,
     )
 
 
@@ -265,6 +280,7 @@ async def load_rows(session: AsyncSession, program_id: str) -> ProgramRows | Non
         skill_groups=await _all(SkillGroupTable, SkillGroupTable.program_id),
         superseded=await _all(SupersededPLOTable, SupersededPLOTable.program_id),
         feedback=await _all(PLOFeedbackActionTable, PLOFeedbackActionTable.program_id),
+        report=await session.get(PLOReportTable, program_id),
     )
 
 
@@ -304,12 +320,15 @@ async def copy_program(
             await session.flush()
         if copy.review is not None:
             session.add(copy.review)
+        if copy.report is not None:
+            session.add(copy.report)
         await session.commit()
     logger.info(
         f"program copy ({mode}): {source_id} -> {new_id} ({len(copy.evidence)} evidence, "
         f"{len(copy.skills)} skills, {len(copy.skill_groups)} skill groups, "
         f"{len(copy.needs)} Needs, {len(copy.plos)} PLOs, "
         f"{len(copy.superseded)} superseded PLOs, {len(copy.feedback)} feedback actions, "
-        f"review={'yes' if copy.review is not None else 'no'})"
+        f"review={'yes' if copy.review is not None else 'no'}, "
+        f"report={'yes' if copy.report is not None else 'no'})"
     )
     return True

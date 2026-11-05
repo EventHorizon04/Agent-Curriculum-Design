@@ -19,6 +19,7 @@ from curriculum_agent.data.orm import (
     LLMUsageTable,
     NeedTable,
     PLOFeedbackActionTable,
+    PLOReportTable,
     PLOReviewTable,
     PLOTable,
     ProgramTable,
@@ -38,6 +39,7 @@ from curriculum_agent.models import (
     JobUsage,
     LLMUsage,
     Need,
+    PLOReport,
     PLOSetReview,
     ProgramMetadata,
     ProgramSummary,
@@ -88,6 +90,23 @@ async def _programs_with_a_current_review(program_ids: Iterable[str]) -> set[str
 
 def _row_to_dict(row: Base) -> dict[str, Any]:
     return {c.key: getattr(row, c.key) for c in row.__table__.columns}
+
+
+def _plo_row_data(plo: PLO) -> dict[str, Any]:
+    """Column values for a PLO row. `model_dump(mode="json")` renders datetimes as
+    ISO strings with an offset, which the ORM DateTime column rejects, so the
+    timestamp is handed over as the naive-UTC datetime the column stores."""
+    data = plo.model_dump(mode="json")
+    edited = plo.designer_edited_at
+    if edited is not None and edited.tzinfo is not None:
+        edited = edited.astimezone(UTC).replace(tzinfo=None)
+    data["designer_edited_at"] = edited
+    return data
+
+
+def _json_safe(data: dict[str, Any]) -> dict[str, Any]:
+    """A row as a JSONB snapshot: datetimes become ISO strings."""
+    return {k: v.isoformat() if isinstance(v, datetime) else v for k, v in data.items()}
 
 
 def _fix_datetimes(data: dict[str, Any], table_cls: type[Base]) -> dict[str, Any]:
@@ -208,7 +227,7 @@ class ProgramRepository:
         Deletes skill_groups before skills (their ids point at skill rows), and skills
         before evidence because SkillTable.source_evidence_id
         is a FK into EvidenceTable. Returns False (no-op) if program_id
-        doesn't exist — the twelve deletes before the program's own affect zero rows either way.
+        doesn't exist — the thirteen deletes before the program's own affect zero rows either way.
         """
         async with AsyncSessionLocal() as session:
             await session.execute(
@@ -230,6 +249,9 @@ class ProgramRepository:
             await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id))
             await session.execute(
                 delete(PLOReviewTable).where(PLOReviewTable.program_id == program_id)
+            )
+            await session.execute(
+                delete(PLOReportTable).where(PLOReportTable.program_id == program_id)
             )
             await session.execute(
                 delete(CheckpointTable).where(CheckpointTable.program_id == program_id)
@@ -538,8 +560,9 @@ class PLORepository:
         need_combination has already deleted the Needs they cited. The result is
         a PLO whose trace resolves to nothing.
 
-        The program's superseded history goes in the same transaction: it hangs
-        off the PLO set the designer is discarding, and a re-run starts clean.
+        The program's superseded history and its stored report go in the same
+        transaction: they hang off the PLO set the designer is discarding, and a
+        re-run starts clean.
         """
         async with AsyncSessionLocal() as session:
             await session.execute(
@@ -549,6 +572,9 @@ class PLORepository:
                 delete(PLOFeedbackActionTable).where(
                     PLOFeedbackActionTable.program_id == program_id
                 )
+            )
+            await session.execute(
+                delete(PLOReportTable).where(PLOReportTable.program_id == program_id)
             )
             result = cast(
                 CursorResult[Any],
@@ -560,7 +586,7 @@ class PLORepository:
     async def bulk_insert(self, plos: list[PLO]) -> None:
         async with AsyncSessionLocal() as session:
             for plo in plos:
-                data = plo.model_dump(mode="json")
+                data = _plo_row_data(plo)
                 # Composite identity — plo_id alone repeats across programs, and
                 # session.get(PLOTable, plo.plo_id) used to resolve to whichever
                 # program got there first, moving its row to this one on upsert.
@@ -627,7 +653,7 @@ class PLORepository:
                                 id=str(uuid.uuid4()),
                                 program_id=program_id,
                                 plo_id=row.plo_id,
-                                snapshot=_row_to_dict(row),
+                                snapshot=_json_safe(_row_to_dict(row)),
                                 superseded_by=add[0].plo_id,
                                 superseded_at=now,
                                 cause=cause,
@@ -644,7 +670,7 @@ class PLORepository:
                 )
                 removed = result.rowcount
             for plo in add:
-                data = plo.model_dump(mode="json")
+                data = _plo_row_data(plo)
                 # Same composite identity as bulk_insert — see the comment there.
                 existing = await session.get(
                     PLOTable, {"program_id": plo.program_id, "plo_id": plo.plo_id}
@@ -892,6 +918,50 @@ def _add_totals(a: UsageTotals, b: UsageTotals) -> UsageTotals:
 # Stored in their own columns; everything else rides in the JSONB body, so a new
 # field is stored by default.
 _REVIEW_COLUMN_FIELDS = {"program_id", "plo_fingerprint", "model", "created_at"}
+
+
+class PLOReportRepository:
+    """The latest PLO report per program (phase 6), one row replaced in place."""
+
+    async def get(self, program_id: str) -> PLOReport | None:
+        async with AsyncSessionLocal() as session:
+            row = await session.get(PLOReportTable, program_id)
+            if row is None:
+                return None
+            return PLOReport(
+                program_id=row.program_id,
+                plo_fingerprint=row.plo_fingerprint,
+                created_at=row.created_at,
+                report=row.report,
+            )
+
+    async def upsert(self, report: PLOReport) -> None:
+        created_at = report.created_at
+        if created_at.tzinfo is not None:
+            created_at = created_at.astimezone(UTC).replace(tzinfo=None)
+        async with AsyncSessionLocal() as session:
+            existing = await session.get(PLOReportTable, report.program_id)
+            if existing is None:
+                session.add(
+                    PLOReportTable(
+                        program_id=report.program_id,
+                        plo_fingerprint=report.plo_fingerprint,
+                        created_at=created_at,
+                        report=report.report,
+                    )
+                )
+            else:
+                existing.plo_fingerprint = report.plo_fingerprint
+                existing.created_at = created_at
+                existing.report = report.report
+            await session.commit()
+
+    async def delete_by_program(self, program_id: str) -> None:
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(PLOReportTable).where(PLOReportTable.program_id == program_id)
+            )
+            await session.commit()
 
 
 class PLOReviewRepository:

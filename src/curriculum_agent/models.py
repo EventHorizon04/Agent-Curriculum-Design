@@ -560,6 +560,19 @@ class PLO(BaseModel):
     # on the outcome.
     smart_diagnosis_th: str | None = None
     is_optional: bool = False
+    # Set when a designer changes the statement by hand (PUT /plos/{id}); nothing
+    # but a replacement of the outcome clears it. Agent 4's send-back reads it to
+    # leave a hand-written outcome alone. Naive UTC like every column here.
+    designer_edited_at: datetime | None = None
+
+    # Sent with its offset because a browser reads a naive ISO string as local time.
+    @field_serializer("designer_edited_at", when_used="json")
+    def _utc_edited(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
 
     @model_validator(mode="after")
     def check_no_forbidden_words(self) -> PLO:
@@ -636,6 +649,26 @@ class SupersededPLO(BaseModel):
     # Stored naive UTC; sent with its offset because a browser reads a naive ISO
     # string as local time. JSON only, like JobInfo.
     @field_serializer("superseded_at", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class PLOReport(BaseModel):
+    """The stored PLO report of a program (phase 6): one row, the latest.
+
+    `plo_fingerprint` says which PLO set it was built from, as on the QA review;
+    `report` is the report body, opaque here.
+    """
+
+    program_id: str
+    plo_fingerprint: str
+    created_at: datetime
+    report: dict[str, Any]
+
+    # Stored naive UTC; sent with its offset like FeedbackAction. JSON only.
+    @field_serializer("created_at", when_used="json")
     def _utc(self, value: datetime) -> str:
         if value.tzinfo is None:
             value = value.replace(tzinfo=UTC)

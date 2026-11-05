@@ -646,3 +646,59 @@ async def test_graph_review_of_a_stale_stored_review_runs_fresh_and_sends_back_o
     assert [p.plo_id for p in spy.await_args.args[2]] == [p.plo_id for p in plos]
     env.redraft.assert_awaited_once()
     assert env.trail.add.await_count == 1
+
+
+async def test_send_back_skips_designer_edited_plo(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    """A hand-edited PLO is not overwritten, whichever finding names it. The
+    review saw the edited text, so this is not the 'edited since review' case."""
+    edited = datetime(2026, 11, 4, 8, 0, 0)
+    plos[1] = plos[1].model_copy(update={"designer_edited_at": edited})
+    env = _Env(monkeypatch, plos)
+    review = _review(
+        redundancies=[_red("PLO1", "PLO2")],
+        bloom=[_bloom("PLO2")],
+        unused_needs=[_unused("N2", agreed_runs=2)],
+    )
+    actions = await _sb(review)
+    assert [(a.kind, a.outcome, a.outcome_reason_th) for a in actions] == [
+        ("redundancy", "skipped", pf.REASON_DESIGNER_EDITED),
+        ("bloom", "skipped", pf.REASON_DESIGNER_EDITED),
+        ("unused_need", "skipped", pf.REASON_DESIGNER_EDITED),
+    ]
+    assert pf.REASON_DESIGNER_EDITED == "PLO นี้ผู้ออกแบบแก้เอง — ไม่เขียนทับ"
+    env.redraft.assert_not_awaited()
+
+
+async def test_edited_since_review_is_judged_before_designer_edited(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    edited = datetime(2026, 11, 4, 8, 0, 0)
+    env = _Env(monkeypatch, plos)
+    env.plos[2] = env.plos[2].model_copy(
+        update={"statement_th": "แก้ด้วยมือ", "designer_edited_at": edited}
+    )
+    (action,) = await _sb(_review(bloom=[_bloom("PLO3")]))
+    assert action.outcome_reason_th == EDITED
+
+
+async def test_designer_edited_is_judged_before_missing(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    edited = datetime(2026, 11, 4, 8, 0, 0)
+    plos[0] = plos[0].model_copy(update={"designer_edited_at": edited})
+    env = _Env(monkeypatch, plos)
+    del env.plos[1]  # PLO2 vanished, PLO1 is hand-edited and unchanged since the review
+    (action,) = await _sb(_review(redundancies=[_red("PLO1", "PLO2")]))
+    assert action.outcome_reason_th == pf.REASON_DESIGNER_EDITED
+
+
+async def test_an_unedited_neighbour_of_a_designer_edited_plo_is_still_acted_on(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    plos[1] = plos[1].model_copy(update={"designer_edited_at": datetime(2026, 11, 4)})
+    env = _Env(monkeypatch, plos)
+    (action,) = await _sb(_review(bloom=[_bloom("PLO3")]))
+    assert action.outcome == "applied"
+    env.redraft.assert_awaited_once()

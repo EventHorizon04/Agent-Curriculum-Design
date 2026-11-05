@@ -572,6 +572,74 @@ def test_put_leaves_the_provenance_alone_when_the_text_did_not_change(
     assert resp.json()["smart_validated_by"] == "agent"
 
 
+def _put(statement: str, plo_id: str = "PLO1") -> dict[str, object]:
+    return client.put(
+        f"/programs/cs-test/plos/{plo_id}",
+        json={
+            "statement_th": statement,
+            "bloom_level": "create",
+            "action_verb_th": "ออกแบบ",
+            "rationale_th": "เหตุผล",
+        },
+    ).json()
+
+
+def test_put_changed_statement_sets_designer_edited_at(monkeypatch: pytest.MonkeyPatch) -> None:
+    stored = _plo("PLO1", ["N1"])
+    insert = _stored(monkeypatch, [stored])
+    before = datetime.utcnow()
+    body = _put("ออกแบบระบบฐานข้อมูลสำหรับองค์กรได้")
+    assert str(body["designer_edited_at"]).endswith("+00:00")
+    written = insert.await_args.args[0][0]
+    assert written.designer_edited_at is not None
+    assert written.designer_edited_at.tzinfo is None
+    assert before <= written.designer_edited_at <= datetime.utcnow()
+
+
+def test_put_same_statement_keeps_designer_edited_at_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = _plo("PLO1", ["N1"])
+    _stored(monkeypatch, [stored])
+    assert _put(stored.statement_th)["designer_edited_at"] is None
+
+
+def test_put_same_statement_keeps_an_earlier_designer_edited_at(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    earlier = datetime(2026, 11, 4, 8, 0, 0)
+    stored = _plo("PLO1", ["N1"]).model_copy(update={"designer_edited_at": earlier})
+    insert = _stored(monkeypatch, [stored])
+    _put(stored.statement_th)
+    assert insert.await_args.args[0][0].designer_edited_at == earlier
+
+
+def test_revalidate_keeps_designer_edited_at(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    edited_at = datetime(2026, 11, 4, 8, 0, 0)
+    stale = _plo("PLO1", ["N1"]).model_copy(
+        update={"smart_validated_by": "stale", "designer_edited_at": edited_at}
+    )
+    insert = _stored(monkeypatch, [stale])
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+
+    async def fake_validate(draft, **kwargs):  # noqa: ANN001, ANN003
+        # validate_and_build builds a fresh PLO, which knows nothing of the edit.
+        return _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "agent"})
+
+    with patch(
+        "curriculum_agent.stages.plo_synthesis.validate_and_build", side_effect=fake_validate
+    ):
+        resp = client.post("/programs/cs-test/plos/PLO1/revalidate")
+        assert resp.status_code == 202, resp.text
+        spawned.drain()
+
+    job = jobs_store.rows[resp.json()["job_id"]]
+    assert job.status == "succeeded", job.error_th
+    assert insert.await_args.args[0][0].designer_edited_at == edited_at
+
+
 def test_revalidate_rejudges_the_stored_statement(
     monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:

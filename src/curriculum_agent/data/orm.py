@@ -177,6 +177,7 @@ class PLOTable(Base):
     smart_validated_by: Mapped[str] = mapped_column(String(20), default="legacy")
     smart_diagnosis_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    designer_edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class SupersededPLOTable(Base):
@@ -276,6 +277,23 @@ class PLOReviewTable(Base):
     model: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime)
     review: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class PLOReportTable(Base):
+    """The stored PLO report, one row per program (phase 6).
+
+    Keyed by program alone like `plo_reviews`: the latest report replaces the
+    last. `plo_fingerprint` says which PLO set it was built from.
+    """
+
+    __tablename__ = "plo_reports"
+
+    program_id: Mapped[str] = mapped_column(
+        String, ForeignKey("programs.program_id"), primary_key=True
+    )
+    plo_fingerprint: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    report: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
 class JobTable(Base):
