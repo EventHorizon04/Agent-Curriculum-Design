@@ -288,6 +288,19 @@ over five runs because one run was measured to be unstable.
 27. **Docs.** CLAUDE.md immutable rules 5 and 7 and `.claude/rules/plo-review.md` /
     `smart-gate.md` / `api-data.md` are updated to say this, with the
     designer's date.
+28. **(designer, 2026-11-06) Each PLO gets at most one alignment redraft per loop.**
+    The live apply run (`.scratch/reports/2026-11-06-phase6c-loop.md`) showed
+    alignment redrafting the same outcome round after round: PLO3 three times,
+    each round's reviewers naming a different part of a multi-part Need, and PLO5
+    swinging between the Need's out-of-scope ask and the scope check.
+    - Within one loop, once an alignment finding on a PLO has been applied, a
+      later alignment finding on the same outcome is recorded `skipped`
+      ("PLO นี้แก้ความสอดคล้องไปแล้วในรอบก่อน — เป็นข้อสังเกต") and stays a comment.
+    - "The same outcome" is keyed on its Need set, like the merge-drift guard
+      (decision 13), so a later Bloom redraft or a renumbering does not reset it.
+    - The skip is a comment, not actionable work: it never keeps the loop running
+      and does not stop a round from counting as a pass.
+    - Shadow mode plans one round only, so the guard never fires there.
 
 ## Goals
 
