@@ -136,7 +136,7 @@ async def _rounds(run: _Run, plos: Sequence[PLO]) -> None:
         last_agent = review
         # "Pass" is a fact about the review (nothing agreed to act on), read before
         # send-back changes the set, never inferred from the rows it wrote.
-        work = await has_agreed_work(run.program_id, review, reviewed)
+        work = await has_agreed_work(run.program_id, review, reviewed, mem)
         # `send_back` appends each row to `run.rows` as it writes it, so an abandoned
         # round still has them in the result. Called on a pass too: it records the
         # KSEC gaps that have no Need, the designer's comments.

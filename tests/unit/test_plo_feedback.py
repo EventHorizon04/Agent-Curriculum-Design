@@ -1109,3 +1109,74 @@ async def test_merge_memory_survives_a_later_redraft_of_the_merged_plo(
     )
     assert (r3.outcome, r3.outcome_reason_th) == ("skipped", pf.REASON_MERGED_EARLIER)
     assert env.redraft.await_count == 2
+
+
+# --------------------- decision 28: one alignment redraft per PLO per loop ---------------------
+
+
+async def test_alignment_applied_once_per_plo_per_loop(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    memory = pf.LoopMemory()
+    (r1,) = await pf.send_back(
+        "cs-test", _review(alignment=[_align("PLO1")]), list(env.plos), memory=memory
+    )
+    assert r1.outcome == "applied"
+    assert memory.aligned == {frozenset({"N1"})}
+    (r2,) = await pf.send_back(
+        "cs-test", _review(alignment=[_align("PLO1")]), list(env.plos), memory=memory
+    )
+    assert (r2.outcome, r2.outcome_reason_th) == (
+        "skipped",
+        "PLO นี้แก้ความสอดคล้องไปแล้วในรอบก่อน — เป็นข้อสังเกต",
+    )
+    assert env.redraft.await_count == 1
+
+
+async def test_alignment_guard_survives_bloom_redraft(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    memory = pf.LoopMemory()
+    (r1,) = await pf.send_back(
+        "cs-test", _review(alignment=[_align("PLO1")]), list(env.plos), memory=memory
+    )
+    assert r1.outcome == "applied"
+    env.draft_update = {"statement_th": "ร่างรอบสอง"}
+    (r2,) = await pf.send_back(
+        "cs-test", _review(bloom=[_bloom("PLO1")]), list(env.plos), memory=memory
+    )
+    assert r2.outcome == "applied" and r2.result_statement_th == "ร่างรอบสอง"
+    (r3,) = await pf.send_back(
+        "cs-test", _review(alignment=[_align("PLO1")]), list(env.plos), memory=memory
+    )
+    assert (r3.outcome, r3.outcome_reason_th) == ("skipped", pf.REASON_ALIGNED_EARLIER)
+    assert env.redraft.await_count == 2
+
+
+def test_guarded_alignment_is_not_actionable() -> None:
+    row = FeedbackAction(
+        program_id="cs-test",
+        review_created_at=datetime(2026, 11, 3),
+        kind="alignment",
+        outcome="skipped",
+        outcome_reason_th=pf.REASON_ALIGNED_EARLIER,
+    )
+    assert pf.actionable_count([row]) == 0
+
+
+async def test_dry_run_never_adds_to_aligned(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    env = _Env(monkeypatch, plos)
+    memory = pf.LoopMemory()
+    (action,) = await pf.send_back(
+        "cs-test",
+        _review(alignment=[_align("PLO1")]),
+        list(env.plos),
+        dry_run=True,
+        memory=memory,
+    )
+    assert action.outcome == "planned"
+    assert memory.aligned == set()

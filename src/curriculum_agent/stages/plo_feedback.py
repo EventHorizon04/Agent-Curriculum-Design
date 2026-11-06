@@ -81,6 +81,7 @@ REASON_DRAFT_ESCALATED = "ร่างใหม่ไม่ผ่าน SMART �
 REASON_DRAFT_WRONG_LEVEL = "ร่างใหม่ไม่ได้ระดับ Bloom ที่ขอ — คงข้อเดิมไว้"
 REASON_KSEC_NO_NEED = "ไม่มี Need หมวดนี้ — ต้องเพิ่มที่ขั้น Need"
 REASON_MERGED_EARLIER = "PLO นี้เพิ่งรวมมาในรอบก่อน"
+REASON_ALIGNED_EARLIER = "PLO นี้แก้ความสอดคล้องไปแล้วในรอบก่อน — เป็นข้อสังเกต"
 
 
 @dataclass
@@ -97,6 +98,10 @@ class LoopMemory:
     """
 
     merged: set[frozenset[str]] = field(default_factory=set)
+    # Need set of every PLO an applied alignment redraft wrote: one alignment
+    # redraft per PLO per loop (decision 28). Keyed on the Needs for the same
+    # reason as `merged` — a later Bloom redraft rewrites the statement only.
+    aligned: set[frozenset[str]] = field(default_factory=set)
 
 
 def _naive_utc(moment: datetime) -> datetime:
@@ -421,7 +426,15 @@ async def _send_alignment(rnd: _Round, finding: AlignmentFinding) -> FeedbackAct
         )
     plo = live[finding.plo_id]
     need_ids = list(plo.source_need_ids)
-    return await rnd.redraft(
+    if frozenset(need_ids) in rnd.memory.aligned:
+        return rnd.skipped(
+            "alignment",
+            REASON_ALIGNED_EARLIER,
+            plo_ids=[finding.plo_id],
+            need_ids=need_ids,
+            finding_reason_th=finding.reason_th,
+        )
+    action = await rnd.redraft(
         "alignment",
         plo_ids=[finding.plo_id],
         need_ids=need_ids,
@@ -431,6 +444,9 @@ async def _send_alignment(rnd: _Round, finding: AlignmentFinding) -> FeedbackAct
         ),
         accept=_keep_original_unless_better(live, need_ids, None),
     )
+    if not rnd.dry_run and action.outcome == "applied":
+        rnd.memory.aligned.add(frozenset(need_ids))
+    return action
 
 
 def _level_change(finding: BloomFinding) -> BloomLevel | None:
@@ -604,13 +620,24 @@ def _agreed(
     )
 
 
-async def has_agreed_work(program_id: str, review: PLOSetReview, reviewed: Sequence[PLO]) -> bool:
+async def has_agreed_work(
+    program_id: str,
+    review: PLOSetReview,
+    reviewed: Sequence[PLO],
+    memory: LoopMemory | None = None,
+) -> bool:
     """Whether the review leaves send-back anything to act on: an agreed finding, or
     a missing KSEC category with a Need a gap draft could use (judged against the
     reviewed set). The loop's "pass" is this being False — a fact about the review,
     not about the rows send-back happened to write. Reads the Needs only when a
     category is missing and nothing else is agreed."""
-    if any(_agreed(review)):
+    reds, aligns, blooms, unused = _agreed(review)
+    if memory is not None and memory.aligned:
+        needs_of = {p.plo_id: frozenset(p.source_need_ids) for p in reviewed}
+        # An agreed alignment finding on a PLO already aligned this loop is a
+        # comment, not work (decision 28).
+        aligns = [a for a in aligns if needs_of.get(a.plo_id) not in memory.aligned]
+    if reds or aligns or blooms or unused:
         return True
     if not review.ksec_coverage.missing:
         return False
@@ -626,7 +653,10 @@ def actionable_count(actions: Sequence[FeedbackAction]) -> int:
         1
         for a in actions
         if a.outcome in ("applied", "failed", "planned")
-        or (a.outcome == "skipped" and a.outcome_reason_th != REASON_KSEC_NO_NEED)
+        or (
+            a.outcome == "skipped"
+            and a.outcome_reason_th not in (REASON_KSEC_NO_NEED, REASON_ALIGNED_EARLIER)
+        )
     )
 
 
@@ -666,7 +696,11 @@ async def send_back(
             return []
         # A dry run reads the loop's memory but must not teach it about merges that
         # never happened, so it works on a copy.
-        use_memory = LoopMemory(merged=set(memory.merged)) if dry_run and memory else memory
+        use_memory = (
+            LoopMemory(merged=set(memory.merged), aligned=set(memory.aligned))
+            if dry_run and memory
+            else memory
+        )
         rnd = _Round(
             program,
             program_id,

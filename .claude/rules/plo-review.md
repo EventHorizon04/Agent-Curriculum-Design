@@ -213,6 +213,14 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   Bloom redraft of the merged PLO in between, which rewrites the statement but
   drafts from the same Needs. The floors
   (`MIN_CORE_AFTER_MERGE`, `MAX_GROUP_SIZE`) still hold.
+- **One alignment redraft per PLO per loop (designer decision 28).** Same pattern as
+  the merge guard: `LoopMemory.aligned` holds the Need set of every PLO an applied
+  alignment redraft wrote (a dry run never adds). A later alignment finding on a live
+  PLO with that Need set is `skipped` with `REASON_ALIGNED_EARLIER` ("PLO นี้แก้ความสอดคล้อง
+  ไปแล้วในรอบก่อน — เป็นข้อสังเกต"), checked after `unavailable_reason` and before any
+  redraft, so it survives a Bloom redraft in between. `actionable_count` ignores such
+  rows (like `REASON_KSEC_NO_NEED`), and `has_agreed_work(..., memory)` does not count
+  an agreed alignment finding on a guarded PLO, so a round with nothing else is a pass.
 - **A PLO the designer edited by hand is never rewritten by send-back
   (`designer_edited_at`, designer's decision of 2026-11-04).** `PUT /plos/{id}` with a
   changed statement sets it, and nothing clears it but replacing the outcome

@@ -10,7 +10,11 @@ from curriculum_agent.config import settings
 from curriculum_agent.models import AlignmentFinding, FeedbackAction, KsecCoverage, PLOSetReview
 from curriculum_agent.stages import plo_review as pr
 from curriculum_agent.stages import plo_review_loop as loop
-from curriculum_agent.stages.plo_feedback import REASON_KSEC_NO_NEED
+from curriculum_agent.stages.plo_feedback import (
+    REASON_ALIGNED_EARLIER,
+    REASON_KSEC_NO_NEED,
+    LoopMemory,
+)
 from tests.unit.test_api_plos import _plo
 
 
@@ -350,3 +354,34 @@ async def test_a_first_round_code_only_review_still_says_no_agent(
     env = _Env(monkeypatch, [_rev("code_only", n=1)])
     await loop.run_review_loop("p", [])
     assert env.ends()[0].outcome_reason_th == "ไม่มีผลตรวจจาก agent — ไม่ส่งกลับ"
+
+
+async def test_round_with_only_guarded_alignment_is_a_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Round 1 applies an alignment redraft on PLO1; round 2's only agreed finding
+    is alignment on PLO1 again (guarded, decision 28): a pass, no third review."""
+    env = _Env(monkeypatch, [_rev(n=1), _rev(n=2)])
+    calls: list[int] = []
+
+    async def _send(*_a: object, **kw: object) -> list[FeedbackAction]:
+        mem = kw["memory"]
+        assert isinstance(mem, LoopMemory)
+        rnd = kw["round_no"]
+        assert isinstance(rnd, int)
+        calls.append(rnd)
+        if rnd == 1:
+            mem.aligned.add(frozenset({"N1"}))
+            rows = [_row("applied", 1)]
+        else:
+            rows = [_row("skipped", 2, REASON_ALIGNED_EARLIER)]
+        sink = kw["sink"]
+        assert isinstance(sink, list)
+        sink.extend(rows)
+        return rows
+
+    monkeypatch.setattr(loop, "send_back", _send)
+    await loop.run_review_loop("p", [])
+    assert calls == [1, 2]
+    assert env.review_calls == 2
+    assert env.ends()[0].outcome_reason_th == "ผ่านการตรวจ — ไม่มีข้อที่ต้องแก้"
