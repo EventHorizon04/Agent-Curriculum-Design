@@ -69,8 +69,13 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   change votes for the declared level, so a verb-only entry never carries a level
   change on its own (a minority level suggestion cannot ride on a verb majority:
   the level change is the plurality of the agreeing runs, ties go to the level
-  nearest the declared one), and the verb is the most common one (a tie keeps the
-  first seen). Send-back acts on a Bloom finding with a level change **or** a
+  nearest the declared one). The verb mirrors that rule (final review M2): an
+  agreeing entry that names no verb votes to *keep* the verb, a verb is carried
+  only when it beats keep, keep wins a tie against any verb, and a tie between
+  verbs that beat keep takes the first seen — so {level change, verb X, verb Y}
+  carries no verb, where counting only the entries that named one used to carry X.
+  `review_key` already separates every vote and stayed as it was; a parametrised
+  test covers each of its components. Send-back acts on a Bloom finding with a level change **or** a
   verb; acceptance still requires the suggested level when one is given, because
   the verb is guidance and the SMART checks govern it.
 - **The KSEC gap is a code fact, acted on only inside the agent loop.** A category
@@ -103,16 +108,25 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   a redraft can renumber an outcome. Known one-round limit: overlapping redundancy groups
   (PLO1+PLO6, then PLO3+PLO6) apply the first and skip the second; a later review
   may catch PLO3. **The trail:** one `plo_feedback_actions` row per considered
-  actionable finding (`applied` / `skipped` / `failed`, with a Thai reason),
-  written right after its action so an applied change is never left without a
-  row if the round stops later; a failed trail write is logged at error level and
+  actionable finding (`applied` / `skipped` / `failed`, with a Thai reason). An
+  **applied** row is written by `PLORepository.replace` in the transaction that
+  swaps the PLOs (`redraft_from_needs(trail=...)` builds it for the accepted
+  draft, `replace(trail_row=...)` inserts it; final review I4): written afterwards,
+  the loop's `asyncio.timeout` could cancel between the commit and the row and
+  leave a changed PLO with no row saying why. `_record` then only keeps and logs
+  it. Skipped, failed and planned rows change nothing and are written right after
+  their action, one at a time; a failed write of one is logged at error level and
   the round continues.
   **`send_back` receives the set the review judged** and, before each action,
   skips a named PLO whose live `statement_th` or `source_need_ids` differ
   ("PLO นี้ถูกแก้หลังการตรวจ — ไม่ส่งกลับ"); order of skip checks: replaced this
   round, edited since the review, not found. `PUT /plos/{id}` is not blocked
-  while a review runs; this check is what keeps a hand edit from being
-  redrafted away. **`redraft_from_needs(..., accept=...)`** is called after a
+  while a review runs; this check is what keeps a hand edit made *before* the
+  action from being redrafted away. A hand edit made *during* the action's draft
+  (which can take minutes) is caught at the write: `replace` gets `expect`, the
+  superseded PLOs' statements as read before the draft, re-reads them locked, and
+  refuses when one is gone, reads differently or is designer-edited — `skipped`
+  "PLO นี้ถูกแก้ระหว่างร่างใหม่ — ไม่เขียนทับ" (final review I1). **`redraft_from_needs(..., accept=...)`** is called after a
   successful draft and before `replace`; a returned Thai reason raises
   `RedraftRefused(422, reason)` with nothing written. `from-needs` passes none.
   Send-back's accept refuses a `smart_escalated` draft unless every PLO it
@@ -151,12 +165,22 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   `plo_review_max_rounds=0` run. A round is: review the live set, store it,
   `send_back(round_no=i)`; the cap counts **send-backs**, so the loop makes at most
   `max_rounds + 1` reviews (6) and the last step is always a review. **Stop
-  reasons**, each a Thai `loop_end` row (`outcome="stopped"`, with the round): pass
-  (a round had no actionable row), no change (a round applied nothing: every
-  action skipped or failed, so another round would read the same set; this covers
-  every action skipped for a hand edit, the floors or an earlier merge), cap, no
-  agent review (`code_only` or send-back off: nothing to send), error, and
-  timeout. The whole loop runs under `plo_review_loop_timeout_seconds` (5400): when
+  reasons**, each a Thai `loop_end` row (`outcome="stopped"`, with the round).
+  Pass — read off the stored review, not off the rows (final review M3): no finding
+  agreed by send-back's own rule (`plo_feedback.has_agreed_work`) and no missing
+  KSEC category with a Need a gap draft could use; send-back still runs on a pass,
+  so the no-Need KSEC comments are recorded. Send-back failed ("ส่งกลับไม่สำเร็จ —
+  หยุด"): agreed work, yet no actionable row, because `send_back` stopped early and
+  logged why. No change (a round applied nothing: every action skipped or failed,
+  so another round would read the same set; this covers every action skipped for a
+  hand edit, the floors or an earlier merge). Cap. Send-back off ("ปิดการส่งกลับ —
+  ไม่แก้ PLO", its own reason, not "no agent"). No agent review (a `code_only`
+  first review). Reviewer late ("ผู้ตรวจไม่ตอบในรอบนี้ — ใช้ผลตรวจรอบก่อน", final
+  review M4): a round ≥ 2 review came back `code_only` after an agent review in
+  this loop; the last agent review is stored again so the checkpoint keeps its
+  comments, but only when its fingerprint equals the code-only one's — a stored
+  review must describe the stored set, and usually it no longer does, since the
+  round before applied something. Error, and timeout. The whole loop runs under `plo_review_loop_timeout_seconds` (5400): when
   it runs out the round in progress is abandoned, its rows stay (every redraft is a
   complete replace with its own trail row, and `send_back` appends to the caller's
   list as it writes), and one final review of the stored set runs under the normal
@@ -167,18 +191,27 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   shown, its unresolved findings being the comments at the checkpoint.
 - **Shadow mode is the default and writes no PLO.** `plo_review_loop_mode="shadow"`
   reviews once and calls `send_back(dry_run=True)`: every action runs its checks
-  and is recorded `planned` with its instruction, nothing is redrafted. A dry run
-  books what a live one would have (the PLOs an action would replace count as
-  replaced and its Needs as taken), so later actions of the round see the same
-  world and the plan does not overstate real actions; the designer reads the plan
+  and is recorded `planned` with its instruction, nothing is redrafted. The checks
+  include every one `redraft_from_needs` makes before its draft —
+  `plo_redraft.check_redraft` (unknown, merged-away, excluded or unwritten Need,
+  the `MAX_CORE_PLOS` ceiling, the `MIN_CORE_AFTER_MERGE` floor), the function the
+  live path calls, so a refusal is `skipped` with the same text (final review I3);
+  only the post-draft `accept` cannot be planned. A dry run books what a live one
+  would have (the PLOs an action would replace count as replaced, its Needs as
+  taken, and one stand-in PLO per planned draft joins the set the next check
+  counts), so later actions of the round see the same world and the plan does not
+  overstate real actions; the designer reads the plan
   before flipping to `apply`. It works on a copy of the loop's memory and teaches
   it nothing. `apply` is opt-in; do not make it the default until the designer has
   read a shadow run.
 - **Merge drift guard: a PLO a redundancy merge wrote is not merged again within
   the loop.** Phase 4's live runs merged more on every review (9 -> 8 -> 7 PLOs).
-  `LoopMemory.merged` holds `(plo_id, statement_th)` of every PLO an applied
-  redundancy wrote; a later round naming one is `skipped` ("PLO นี้เพิ่งรวมมาในรอบก่อน").
-  The statement is in the key because a freed `plo_id` is reused. The floors
+  `LoopMemory.merged` holds the Need set (`frozenset(source_need_ids)`) of every
+  PLO an applied redundancy wrote; a later round naming a live PLO with that Need
+  set is `skipped` ("PLO นี้เพิ่งรวมมาในรอบก่อน"). Keyed on the Needs since final
+  review I2: the old `(plo_id, statement_th)` key was laundered by any alignment or
+  Bloom redraft of the merged PLO in between, which rewrites the statement but
+  drafts from the same Needs. The floors
   (`MIN_CORE_AFTER_MERGE`, `MAX_GROUP_SIZE`) still hold.
 - **A PLO the designer edited by hand is never rewritten by send-back
   (`designer_edited_at`, designer's decision of 2026-11-04).** `PUT /plos/{id}` with a
