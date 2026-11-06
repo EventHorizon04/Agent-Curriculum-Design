@@ -581,7 +581,7 @@ class PLOChangedDuringRedraft(Exception):
     """A PLO `replace` was asked to supersede is not the one the caller read.
 
     Raised from inside the transaction before anything is written: the row is
-    gone, its statement differs from the one expected, or (for a `review`
+    gone, its version differs from the one expected, or (for a `review`
     replace) the designer has edited it since. `plo_id` names the first such row.
     """
 
@@ -641,6 +641,34 @@ class PLORepository:
                         setattr(existing, k, v)
             await session.commit()
 
+    async def update_if_version(self, plo: PLO, *, expected_version: int) -> bool:
+        """Overwrite one stored PLO only if its `version` is still `expected_version`.
+
+        `PUT /plos/{id}` reads, edits and writes back; between the read and the write a
+        redraft can merge the row away or another PUT can move it. `bulk_insert` is an
+        upsert, so it would resurrect the first and overwrite the second. This is a
+        conditional UPDATE built from the same row mapping and never inserts: False means
+        no row matched (gone, or the version moved), and nothing was written.
+        """
+        data = _plo_row_data(plo)
+        for key in ("program_id", "plo_id"):
+            data.pop(key, None)
+        async with AsyncSessionLocal() as session:
+            result = cast(
+                CursorResult[Any],
+                await session.execute(
+                    update(PLOTable)
+                    .where(
+                        PLOTable.program_id == plo.program_id,
+                        PLOTable.plo_id == plo.plo_id,
+                        PLOTable.version == expected_version,
+                    )
+                    .values(**data)
+                ),
+            )
+            await session.commit()
+            return result.rowcount == 1
+
     async def replace(
         self,
         program_id: str,
@@ -648,7 +676,7 @@ class PLORepository:
         add: list[PLO],
         *,
         cause: str = "designer",
-        expect: Mapping[str, str] | None = None,
+        expect: Mapping[str, int] | None = None,
         trail_row: FeedbackAction | None = None,
     ) -> int:
         """Drop some outcomes and write others, in one transaction.
@@ -667,10 +695,11 @@ class PLORepository:
         `cause` is written on each history row: "designer" for a merge on the PLO
         page, "review" for Agent 4's send-back.
 
-        `expect` (plo_id -> `statement_th` as the caller read it before drafting)
+        `expect` (plo_id -> `version` as the caller read it before drafting)
         is optimistic concurrency for a redraft: the draft takes minutes and
         `PUT /plos/{id}` is not blocked meanwhile, so the rows are re-read here,
-        locked, and a row that is gone, reads differently, or carries
+        locked, and a row that is gone, has a different version (any PUT bumps it,
+        even one that leaves the statement alone), or carries
         `designer_edited_at` on a `review` replace raises
         `PLOChangedDuringRedraft` with nothing written. Without the check the
         delete below would take the designer's edit with it.
@@ -702,11 +731,11 @@ class PLORepository:
                     .all()
                 )
                 current = {row.plo_id: row for row in rows}
-            for plo_id, statement in (expect or {}).items():
+            for plo_id, version in (expect or {}).items():
                 row = current.get(plo_id)
                 if (
                     row is None
-                    or row.statement_th != statement
+                    or row.version != version
                     or (cause == "review" and row.designer_edited_at is not None)
                 ):
                     raise PLOChangedDuringRedraft(plo_id)

@@ -55,7 +55,7 @@ async def test_cause_reaches_replace(monkeypatch: pytest.MonkeyPatch) -> None:
     # `expect` carries the superseded PLOs as read before the draft (final review I1).
     assert replace.await_args.kwargs == {
         "cause": "review",
-        "expect": {"PLO1": existing[0].statement_th},
+        "expect": {"PLO1": existing[0].version},
     }
 
 

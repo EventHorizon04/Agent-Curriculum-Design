@@ -36,6 +36,15 @@ from tests.unit.test_superseded_plos import _plo as _stored_plo
 CHANGED = "PLO นี้ถูกแก้ระหว่างร่างใหม่ — ไม่เขียนทับ"
 
 
+def _bumped_row(plo_id: str, statement: str, **changes: Any) -> PLOTable:
+    """A row a PUT has since written: version 2, plus whatever the PUT changed."""
+    row = _plo_row(plo_id, statement)
+    row.version = 2
+    for key, value in changes.items():
+        setattr(row, key, value)
+    return row
+
+
 def _edited_row(plo_id: str, statement: str) -> PLOTable:
     row = _plo_row(plo_id, statement)
     row.designer_edited_at = datetime(2026, 11, 5, 9, 0)
@@ -47,7 +56,7 @@ def _deletes(session: _Session) -> list[str]:
 
 
 async def _replace(
-    session: _Session, expect: dict[str, str] | None, *, cause: str = "review", **kw: Any
+    session: _Session, expect: dict[str, int] | None, *, cause: str = "review", **kw: Any
 ) -> int:
     with _patched(session):
         return await PLORepository().replace(
@@ -69,14 +78,14 @@ def test_the_reason_text_is_exact() -> None:
 
 async def test_an_unchanged_row_is_replaced() -> None:
     session = _Session(select_rows=[_plo_row("PLO1", "ออกแบบระบบ ก ได้")])
-    await _replace(session, {"PLO1": "ออกแบบระบบ ก ได้"})
+    await _replace(session, {"PLO1": 1})
     assert session.commits == 1 and len(_deletes(session)) == 1
 
 
 @pytest.mark.parametrize(
     "rows",
     [
-        pytest.param([_plo_row("PLO1", "แก้ด้วยมือ")], id="statement-changed"),
+        pytest.param([_bumped_row("PLO1", "แก้ด้วยมือ")], id="version-bumped"),
         pytest.param([], id="row-gone"),
         pytest.param([_edited_row("PLO1", "ออกแบบระบบ ก ได้")], id="designer-edited"),
     ],
@@ -84,21 +93,38 @@ async def test_an_unchanged_row_is_replaced() -> None:
 async def test_a_moved_row_refuses_and_writes_nothing(rows: list[PLOTable]) -> None:
     session = _Session(select_rows=rows)
     with pytest.raises(PLOChangedDuringRedraft):
-        await _replace(session, {"PLO1": "ออกแบบระบบ ก ได้"})
+        await _replace(session, {"PLO1": 1})
     assert session.commits == 0
     assert _deletes(session) == [] and session.added == []
+
+
+async def test_replace_refuses_on_version_change_only() -> None:
+    """A PUT that moved only the verb leaves the statement as read; the version still
+    differs, so the replace refuses (the statement comparison let this through)."""
+    row = _bumped_row("PLO1", "ออกแบบระบบ ก ได้", action_verb_th="พัฒนา")
+    session = _Session(select_rows=[row])
+    with pytest.raises(PLOChangedDuringRedraft):
+        await _replace(session, {"PLO1": 1})
+    assert session.commits == 0 and _deletes(session) == []
+
+
+async def test_a_statement_that_differs_at_the_same_version_is_not_a_conflict() -> None:
+    """The version is the signal now; the statement is no longer compared."""
+    session = _Session(select_rows=[_plo_row("PLO1", "ข้อความอื่น")])
+    await _replace(session, {"PLO1": 1})
+    assert session.commits == 1
 
 
 async def test_a_designer_edited_row_is_the_designers_to_replace() -> None:
     """The designer's own merge may replace a hand-edited PLO; only `review` may not."""
     session = _Session(select_rows=[_edited_row("PLO1", "ออกแบบระบบ ก ได้")])
-    await _replace(session, {"PLO1": "ออกแบบระบบ ก ได้"}, cause="designer")
+    await _replace(session, {"PLO1": 1}, cause="designer")
     assert session.commits == 1
 
 
 async def test_the_check_reads_before_it_deletes_in_the_same_transaction() -> None:
     session = _Session(select_rows=[_plo_row("PLO1", "ออกแบบระบบ ก ได้")])
-    await _replace(session, {"PLO1": "ออกแบบระบบ ก ได้"})
+    await _replace(session, {"PLO1": 1})
     sql = session.sql()
     select_at = next(i for i, s in enumerate(sql) if s.startswith("select"))
     assert select_at < next(i for i, s in enumerate(sql) if s.startswith("delete"))
@@ -122,7 +148,7 @@ def _wire_real_redraft(
     monkeypatch.setattr(PLORepository, "list_by_program", AsyncMock(side_effect=env._list))
 
     async def _draft(*_a: object, **_k: object) -> PLO:
-        session.select_rows = [_plo_row("PLO3", edit_to)]  # the PUT, mid-draft
+        session.select_rows = [_bumped_row("PLO3", edit_to)]  # the PUT, mid-draft
         return _plo("PLO3", ["N3"]).model_copy(update={"statement_th": "ร่างใหม่ PLO3"})
 
     synth = AsyncMock(side_effect=_draft)
@@ -168,7 +194,7 @@ def test_from_needs_answers_409_when_a_plo_is_edited_mid_draft(
     monkeypatch.setattr(PLORepository, "list_by_program", AsyncMock(return_value=existing))
 
     async def _draft(*_a: object, **_k: object) -> PLO:
-        session.select_rows = [_plo_row("PLO1", "แก้ด้วยมือระหว่างร่าง")]
+        session.select_rows = [_bumped_row("PLO1", "แก้ด้วยมือระหว่างร่าง")]
         return _plo("PLO1", ["N1", "N2"])
 
     monkeypatch.setattr(

@@ -336,11 +336,32 @@ async def test_aware_review_time_is_stored_naive_utc(
 async def test_an_error_outside_the_actions_is_swallowed(
     monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
 ) -> None:
-    env = _Env(monkeypatch, plos)
-    env.trail.add.side_effect = RuntimeError("db")
-    review = _review(unused_needs=[_unused("N7", agreed_runs=2)])
+    """`_record` runs outside each action's own try. When it raises on the second
+    row, the send-back still returns without raising, with the rows recorded so far."""
+    _Env(monkeypatch, plos)
+    real_record = pf._record
+    calls = 0
+
+    async def _flaky(
+        actions: list[FeedbackAction], action: FeedbackAction, *, written: bool
+    ) -> None:
+        nonlocal calls
+        calls += 1
+        await real_record(actions, action, written=written)
+        if calls == 2:
+            raise RuntimeError("outside the actions")
+
+    monkeypatch.setattr(pf, "_record", _flaky)
+    review = _review(
+        unused_needs=[
+            _unused("N7", agreed_runs=2, unwritten=True),
+            _unused("N8", agreed_runs=2, unwritten=True),
+            _unused("N9", agreed_runs=2, unwritten=True),
+        ]
+    )
     actions = await _sb(review)
-    assert len(actions) == 1 and actions[0].outcome == "applied"
+    assert calls == 2
+    assert [a.need_ids for a in actions] == [["N7"], ["N8"]]
 
 
 async def test_a_failed_trail_write_does_not_stop_the_round(

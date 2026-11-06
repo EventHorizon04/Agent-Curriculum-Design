@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime
+from typing import cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -420,7 +421,15 @@ def _stored(monkeypatch: pytest.MonkeyPatch, plos: list[PLO]) -> AsyncMock:
     )
     insert = AsyncMock()
     monkeypatch.setattr(plos_route.PLORepository, "bulk_insert", insert)
+    # PUT writes through the version-checked update, never the upsert.
+    monkeypatch.setattr(plos_route.PLORepository, "update_if_version", AsyncMock(return_value=True))
     return insert
+
+
+def _stored_put(monkeypatch: pytest.MonkeyPatch, plos: list[PLO]) -> AsyncMock:
+    """`_stored` for a PUT test: returns the `update_if_version` mock."""
+    _stored(monkeypatch, plos)
+    return cast(AsyncMock, plos_route.PLORepository.update_if_version)
 
 
 def test_put_runs_the_code_gate_so_an_edited_row_can_be_read_back(
@@ -438,7 +447,7 @@ def test_put_runs_the_code_gate_so_an_edited_row_can_be_read_back(
     stored = _plo("PLO1", ["N1"]).model_copy(
         update={"smart_escalated": False, "smart_validated_by": "agent"}
     )
-    insert = _stored(monkeypatch, [stored])
+    insert = _stored_put(monkeypatch, [stored])
 
     resp = client.put(
         "/programs/cs-test/plos/PLO1",
@@ -457,7 +466,7 @@ def test_put_runs_the_code_gate_so_an_edited_row_can_be_read_back(
     assert body["smart_check"]["measurable"] is False
     assert "M_forbidden" in {f["criterion"] for f in body["smart_check"]["findings"]}
 
-    written = insert.await_args.args[0][0]
+    written = insert.await_args.args[0]
     # The row a repository would read back. Raises before the fix.
     assert PLO.model_validate(written.model_dump(mode="json")).smart_escalated is True
 
@@ -502,7 +511,7 @@ def test_put_ignores_a_client_supplied_verdict(monkeypatch: pytest.MonkeyPatch) 
             ),
         }
     )
-    insert = _stored(monkeypatch, [escalated])
+    insert = _stored_put(monkeypatch, [escalated])
 
     resp = client.put(
         "/programs/cs-test/plos/PLO1",
@@ -526,7 +535,7 @@ def test_put_ignores_a_client_supplied_verdict(monkeypatch: pytest.MonkeyPatch) 
     assert resp.status_code == 200, resp.text
     assert resp.json()["smart_escalated"] is True
     assert resp.json()["smart_check"]["specific"] is False
-    written = insert.await_args.args[0][0]
+    written = insert.await_args.args[0]
     assert written.smart_escalated is True
 
 
@@ -586,11 +595,11 @@ def _put(statement: str, plo_id: str = "PLO1") -> dict[str, object]:
 
 def test_put_changed_statement_sets_designer_edited_at(monkeypatch: pytest.MonkeyPatch) -> None:
     stored = _plo("PLO1", ["N1"])
-    insert = _stored(monkeypatch, [stored])
+    insert = _stored_put(monkeypatch, [stored])
     before = datetime.utcnow()
     body = _put("ออกแบบระบบฐานข้อมูลสำหรับองค์กรได้")
     assert str(body["designer_edited_at"]).endswith("+00:00")
-    written = insert.await_args.args[0][0]
+    written = insert.await_args.args[0]
     assert written.designer_edited_at is not None
     assert written.designer_edited_at.tzinfo is None
     assert before <= written.designer_edited_at <= datetime.utcnow()
@@ -609,9 +618,81 @@ def test_put_same_statement_keeps_an_earlier_designer_edited_at(
 ) -> None:
     earlier = datetime(2026, 11, 4, 8, 0, 0)
     stored = _plo("PLO1", ["N1"]).model_copy(update={"designer_edited_at": earlier})
-    insert = _stored(monkeypatch, [stored])
+    insert = _stored_put(monkeypatch, [stored])
     _put(stored.statement_th)
-    assert insert.await_args.args[0][0].designer_edited_at == earlier
+    assert insert.await_args.args[0].designer_edited_at == earlier
+
+
+_PUT_BODY = {
+    "statement_th": "ออกแบบระบบฐานข้อมูลสำหรับองค์กรได้",
+    "bloom_level": "create",
+    "action_verb_th": "ออกแบบ",
+    "rationale_th": "เหตุผล",
+}
+_CHANGED_DURING_EDIT = "PLO นี้ถูกเปลี่ยนระหว่างแก้ไข — โหลดใหม่แล้วลองอีกครั้ง"
+
+
+def test_put_conflicting_version_answers_409_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two PUTs raced: the second finds the version moved, so its UPDATE matches no row."""
+    stored = _plo("PLO1", ["N1"]).model_copy(update={"version": 3})
+    insert = _stored(monkeypatch, [stored])
+    update = AsyncMock(return_value=False)
+    monkeypatch.setattr(plos_route.PLORepository, "update_if_version", update)
+
+    resp = client.put("/programs/cs-test/plos/PLO1", json=_PUT_BODY)
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == _CHANGED_DURING_EDIT
+    update.assert_awaited_once()
+    assert update.await_args.kwargs == {"expected_version": 3}
+    assert update.await_args.args[0].version == 4
+    insert.assert_not_awaited()
+
+
+def test_put_on_row_deleted_between_read_and_write_answers_409_no_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A redraft merged the PLO away after PUT read it: no row matches, nothing is
+    re-inserted (the old upsert resurrected it)."""
+    insert = _stored(monkeypatch, [_plo("PLO1", ["N1"])])
+    monkeypatch.setattr(
+        plos_route.PLORepository, "update_if_version", AsyncMock(return_value=False)
+    )
+
+    resp = client.put("/programs/cs-test/plos/PLO1", json=_PUT_BODY)
+
+    assert resp.status_code == 409, resp.text
+    insert.assert_not_awaited()
+
+
+def test_put_success_bumps_version_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    stored = _plo("PLO1", ["N1"]).model_copy(update={"version": 2})
+    insert = _stored(monkeypatch, [stored])
+    update = AsyncMock(return_value=True)
+    monkeypatch.setattr(plos_route.PLORepository, "update_if_version", update)
+
+    resp = client.put("/programs/cs-test/plos/PLO1", json=_PUT_BODY)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 3
+    update.assert_awaited_once()
+    assert update.await_args.kwargs == {"expected_version": 2}
+    insert.assert_not_awaited()
+
+
+def test_put_unchanged_statement_is_version_checked_too(monkeypatch: pytest.MonkeyPatch) -> None:
+    stored = _plo("PLO1", ["N1"])
+    insert = _stored(monkeypatch, [stored])
+    monkeypatch.setattr(
+        plos_route.PLORepository, "update_if_version", AsyncMock(return_value=False)
+    )
+    resp = client.put(
+        "/programs/cs-test/plos/PLO1", json={**_PUT_BODY, "statement_th": stored.statement_th}
+    )
+    assert resp.status_code == 409
+    insert.assert_not_awaited()
 
 
 def test_revalidate_keeps_designer_edited_at(

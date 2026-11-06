@@ -249,7 +249,7 @@ async def redraft_from_needs(
             sorted(superseded_ids),
             [plo],
             cause=cause,
-            expect={p.plo_id: p.statement_th for p in superseded},
+            expect={p.plo_id: p.version for p in superseded},
             **extra,
         )
     except PLOChangedDuringRedraft as exc:

@@ -534,7 +534,7 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
         updated = match.model_copy(
             update={**body.model_dump(), "version": match.version + 1, "program_id": program_id}
         )
-        await _repo.bulk_insert([updated])
+        await _write_edit(updated, expected_version=match.version)
         return updated
 
     known_need_ids = {n.need_id for n in await NeedRepository().list_active_by_program(program_id)}
@@ -576,8 +576,16 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
             ),
         }
     )
-    await _repo.bulk_insert([updated])
+    await _write_edit(updated, expected_version=match.version)
     return updated
+
+
+async def _write_edit(updated: PLO, *, expected_version: int) -> None:
+    """Store a PUT's row only if nobody moved it since it was read, else 409.
+
+    Update-only: a PLO a redraft merged away in the meantime stays gone."""
+    if not await _repo.update_if_version(updated, expected_version=expected_version):
+        raise HTTPException(status_code=409, detail="PLO นี้ถูกเปลี่ยนระหว่างแก้ไข — โหลดใหม่แล้วลองอีกครั้ง")
 
 
 @router.post(
