@@ -459,6 +459,85 @@ def test_review_key_equal_for_same_findings_any_order() -> None:
     assert review_key(r1) != review_key(r3)
 
 
+def _key_review(**kw: object) -> PLOSetReview:
+    from datetime import datetime
+
+    return PLOSetReview(
+        program_id="p",
+        plo_fingerprint="f",
+        model="m",
+        created_at=datetime(2026, 1, 1),
+        **kw,  # type: ignore[arg-type]
+    )
+
+
+def _key_items() -> dict[str, tuple[dict[str, object], dict[str, object]]]:
+    """Per review_key component, two reviews that differ in that component only."""
+    from curriculum_agent.models import (
+        AlignmentFinding,
+        BloomFinding,
+        BloomLevel,
+        KsecFinding,
+        UnusedNeedFinding,
+    )
+
+    def bloom(level: BloomLevel | None, verb: str | None = None) -> dict[str, object]:
+        return {
+            "bloom": [
+                BloomFinding(
+                    plo_id="PLO1",
+                    declared=BloomLevel.APPLY,
+                    suggested_level=level,
+                    suggested_verb_th=verb,
+                )
+            ]
+        }
+
+    def unused(verdict: str) -> dict[str, object]:
+        return {
+            "unused_needs": [
+                UnusedNeedFinding(
+                    need_id="N9",
+                    statement_th="ต้องการ",
+                    demand_score=0.4,
+                    exclusion="lost_on_demand",
+                    verdict=verdict,
+                )
+            ]
+        }
+
+    def ksec(suggested: list[str]) -> dict[str, object]:
+        return {
+            "ksec": [
+                KsecFinding(
+                    plo_id="PLO1", current=["S"], suggested=suggested, agrees=suggested == ["S"]
+                )
+            ]
+        }
+
+    return {
+        "alignment": (
+            {"alignment": [AlignmentFinding(plo_id="PLO1", reason_th="ก")]},
+            {"alignment": [AlignmentFinding(plo_id="PLO2", reason_th="ก")]},
+        ),
+        "bloom_level": (bloom(BloomLevel.ANALYZE), bloom(BloomLevel.CREATE)),
+        "bloom_verb": (bloom(None, "ประเมิน"), bloom(None, "ออกแบบ")),
+        "unused_verdict": (unused("consider"), unused("ok_to_leave")),
+        "ksec": (ksec(["K"]), ksec(["K", "S"])),
+    }
+
+
+@pytest.mark.parametrize("component", list(_key_items()))
+def test_review_key_differs_when_one_component_differs(component: str) -> None:
+    """Final review M7: every component of the key, not only redundancy, must tell
+    two votes apart, or an early stop would count unequal runs as unanimous."""
+    from curriculum_agent.stages.plo_review_consensus import review_key
+
+    a, b = _key_items()[component]
+    assert review_key(_key_review(**a)) != review_key(_key_review(**b))
+    assert review_key(_key_review(**a)) == review_key(_key_review(**a))
+
+
 async def test_unanimous_first_batch_stops_at_three(
     live: AsyncMock, monkeypatch: pytest.MonkeyPatch
 ) -> None:

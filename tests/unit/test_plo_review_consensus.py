@@ -282,7 +282,10 @@ def test_a_verb_only_bloom_entry_votes_and_the_verb_is_a_plurality() -> None:
     assert b.suggestion_th == "verb ออกแบบ"
 
 
-def test_a_verb_tie_takes_the_first_and_a_minority_level_is_not_carried() -> None:
+def test_a_level_change_and_two_different_verbs_carry_no_verb() -> None:
+    """{level change, verb X, verb Y}: the level entry names no verb, so it votes to
+    keep the verb, and keep wins a 1-1-1 tie against any verb (final review M2).
+    This case used to carry X, a verb one run of three named."""
     review = _consensus(
         _run(verbs={"PLO1": "ประเมิน"}),
         _run(verbs={"PLO1": "ออกแบบ"}),
@@ -290,5 +293,37 @@ def test_a_verb_tie_takes_the_first_and_a_minority_level_is_not_carried() -> Non
     )
     b = review.bloom[0]
     assert b.agreed_runs == 3
-    assert b.suggested_verb_th == "ประเมิน"
+    assert b.suggested_verb_th is None
     assert b.suggested_level is None  # declared (2 entries) beats create (1)
+
+
+def test_a_verb_tie_that_beats_keep_takes_the_first_seen() -> None:
+    review = consensus_review(
+        [
+            _run(verbs={"PLO1": "ประเมิน"}),
+            _run(verbs={"PLO1": "ออกแบบ"}),
+            _run(verbs={"PLO1": "ประเมิน"}),
+            _run(verbs={"PLO1": "ออกแบบ"}),
+            _run(bloom={"PLO1": BloomLevel.CREATE}),
+        ],
+        runs_requested=5,
+        max_group=3,
+    )
+    assert review.bloom[0].suggested_verb_th == "ประเมิน"
+
+
+def test_keep_wins_a_tie_against_a_verb() -> None:
+    review = _consensus(
+        _run(verbs={"PLO1": "ประเมิน"}),
+        _run(bloom={"PLO1": BloomLevel.CREATE}),
+    )
+    assert review.bloom[0].suggested_verb_th is None
+
+
+def test_a_verb_named_by_most_entries_is_carried_beside_a_level_change() -> None:
+    review = _consensus(
+        _run(verbs={"PLO1": "ประเมิน"}),
+        _run(verbs={"PLO1": "ประเมิน"}),
+        _run(bloom={"PLO1": BloomLevel.CREATE}),
+    )
+    assert review.bloom[0].suggested_verb_th == "ประเมิน"

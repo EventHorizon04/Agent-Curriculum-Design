@@ -162,6 +162,20 @@ def _ksec(runs: Sequence[PLOSetReview]) -> list[KsecFinding]:
     return out
 
 
+def _verb_vote(entries: Sequence[BloomFinding]) -> str | None:
+    """The verb to carry, mirroring the level rule: among every agreeing entry, one
+    that names no verb votes to keep the declared verb. A verb is carried only when
+    it beats "keep"; keep wins a tie against any verb, and a tie between verbs that
+    beat keep takes the first seen. Counting only the entries that named a verb let
+    one run in three carry its verb beside two that proposed none."""
+    verbs = Counter(e.suggested_verb_th for e in entries if e.suggested_verb_th)
+    if not verbs:
+        return None
+    verb, top = verbs.most_common(1)[0]  # a tie keeps the first seen
+    keep = sum(1 for e in entries if not e.suggested_verb_th)
+    return verb if top > keep else None
+
+
 def _bloom(runs: Sequence[PLOSetReview]) -> list[BloomFinding]:
     by_plo: dict[str, list[BloomFinding]] = {}
     for run in runs:
@@ -185,13 +199,13 @@ def _bloom(runs: Sequence[PLOSetReview]) -> list[BloomFinding]:
             return (abs(i - declared), i)
 
         level = min(tied, key=distance)
-        verbs = Counter(e.suggested_verb_th for e in entries if e.suggested_verb_th)
-        verb = verbs.most_common(1)[0][0] if verbs else None  # a tie keeps the first seen
+        verb = _verb_vote(entries)
         src = next(
             (
                 e
                 for e in entries
-                if (e.suggested_level or declared_level) == level and e.suggested_verb_th == verb
+                if (e.suggested_level or declared_level) == level
+                and (e.suggested_verb_th or None) == verb
             ),
             None,
         ) or next(e for e in entries if (e.suggested_level or declared_level) == level)
