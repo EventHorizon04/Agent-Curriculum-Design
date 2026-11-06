@@ -516,8 +516,16 @@ async def run(state: AgentState) -> AgentState:
     state["plo_review"] = review.model_dump(mode="json") if review is not None else None
     if plos:
         # Send-back may have redrafted or merged PLOs; the state must carry what is
-        # stored now, not the set the review started from.
-        stored = await PLORepository().list_by_program(program_id)
-        state["plos"] = [p.model_dump(mode="json") for p in stored]
+        # stored now, not the set the review started from. Advisory like the review:
+        # a failed read keeps the state's set (the checkpoint reloads on resume).
+        try:
+            stored = await PLORepository().list_by_program(program_id)
+        except Exception as exc:
+            logger.warning(
+                f"plo_review: could not reload the PLOs of {program_id} after the review, "
+                f"keeping the session's copy: {exc!r}"
+            )
+        else:
+            state["plos"] = [p.model_dump(mode="json") for p in stored]
     state["current_stage"] = "plo_review"
     return state

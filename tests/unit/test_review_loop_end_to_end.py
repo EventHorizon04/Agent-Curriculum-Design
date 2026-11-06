@@ -167,3 +167,20 @@ async def test_graph_node_in_shadow_mode_reloads_the_plos_and_succeeds(
         ("loop_end", "stopped"),
     ]
     assert "cs-test" not in pr._REVIEW_IN_FLIGHT
+
+
+async def test_graph_node_keeps_the_state_plos_when_the_reload_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Final review M5: the reload after the review is advisory; a read failure
+    logs and keeps the state's PLOs rather than failing the session."""
+    world = _World(monkeypatch, [_review(1)])
+    monkeypatch.setattr(settings, "plo_review_loop_mode", "shadow")
+    state_plos = [p.model_dump(mode="json") for p in world.plos]
+    # Nothing else reads the PLOs here: shadow mode with no finding plans nothing.
+    monkeypatch.setattr(
+        PLORepository, "list_by_program", AsyncMock(side_effect=RuntimeError("db down"))
+    )
+    state = await pr.run({"program_id": "cs-test", "plos": list(state_plos)})
+    assert state["plos"] == state_plos
+    assert state["current_stage"] == "plo_review" and state["plo_review"] is not None

@@ -30,13 +30,21 @@ from curriculum_agent.data.repositories import (
 )
 from curriculum_agent.models import PLO, FeedbackAction, PLOSetReview
 from curriculum_agent.stages import plo_review
-from curriculum_agent.stages.plo_feedback import LoopMemory, actionable_count, send_back
+from curriculum_agent.stages.plo_feedback import (
+    LoopMemory,
+    actionable_count,
+    has_agreed_work,
+    send_back,
+)
 
 REASON_SHADOW = "โหมดทดลอง — ยังไม่แก้ PLO"
 REASON_PASS = "ผ่านการตรวจ — ไม่มีข้อที่ต้องแก้"
 REASON_NO_CHANGE = "รอบนี้แก้อะไรไม่ได้ — หยุด"
 REASON_NO_AGENT = "ไม่มีผลตรวจจาก agent — ไม่ส่งกลับ"
 REASON_ERROR = "เกิดข้อผิดพลาด — หยุด"
+REASON_SEND_BACK_OFF = "ปิดการส่งกลับ — ไม่แก้ PLO"
+REASON_SEND_BACK_FAILED = "ส่งกลับไม่สำเร็จ — หยุด"
+REASON_REVIEWER_LATE = "ผู้ตรวจไม่ตอบในรอบนี้ — ใช้ผลตรวจรอบก่อน"
 
 
 def _reason_cap(max_rounds: int) -> str:
@@ -89,9 +97,24 @@ async def _review_live(run: _Run, plos: Sequence[PLO] | None) -> Sequence[PLO]:
     return plos
 
 
+async def _keep_last_agent_review(run: _Run, last_agent: PLOSetReview) -> None:
+    """A later round's reviewer did not answer: show the last agent review again,
+    so the checkpoint keeps its comments — but only while it still describes the
+    stored set. When the set changed after it (it normally did: that round applied
+    something), the code-only review stays, because a stored review must describe
+    the stored set."""
+    review = run.review
+    assert review is not None
+    if review.plo_fingerprint != last_agent.plo_fingerprint:
+        return
+    await PLOReviewRepository().upsert(last_agent)
+    run.review = last_agent
+
+
 async def _rounds(run: _Run, plos: Sequence[PLO]) -> None:
     max_rounds = settings.plo_review_max_rounds
     mem = LoopMemory()
+    last_agent: PLOSetReview | None = None
     for i in range(1, max_rounds + 2):
         run.round_no = i
         reviewed = await _review_live(run, plos if i == 1 else None)
@@ -100,16 +123,33 @@ async def _rounds(run: _Run, plos: Sequence[PLO]) -> None:
         if i == max_rounds + 1:
             await _end(run, _reason_cap(max_rounds))
             return
-        if review.reviewed_by != "agent" or not settings.plo_review_send_back:
-            await _end(run, REASON_NO_AGENT)
+        if not settings.plo_review_send_back:
+            await _end(run, REASON_SEND_BACK_OFF)
             return
+        if review.reviewed_by != "agent":
+            if last_agent is not None:
+                await _keep_last_agent_review(run, last_agent)
+                await _end(run, REASON_REVIEWER_LATE)
+            else:
+                await _end(run, REASON_NO_AGENT)
+            return
+        last_agent = review
+        # "Pass" is a fact about the review (nothing agreed to act on), read before
+        # send-back changes the set, never inferred from the rows it wrote.
+        work = await has_agreed_work(run.program_id, review, reviewed)
         # `send_back` appends each row to `run.rows` as it writes it, so an abandoned
-        # round still has them in the result.
+        # round still has them in the result. Called on a pass too: it records the
+        # KSEC gaps that have no Need, the designer's comments.
         start = len(run.rows)
         await send_back(run.program_id, review, reviewed, round_no=i, memory=mem, sink=run.rows)
         rows = run.rows[start:]
-        if actionable_count(rows) == 0:
+        if not work:
             await _end(run, REASON_PASS)
+            return
+        if actionable_count(rows) == 0:
+            # There was agreed work and no row says what came of it: send_back
+            # stopped early (it logs why and never raises).
+            await _end(run, REASON_SEND_BACK_FAILED)
             return
         if not any(r.outcome == "applied" for r in rows):
             await _end(run, REASON_NO_CHANGE)

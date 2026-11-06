@@ -25,7 +25,7 @@ docs/superpowers/specs/2026-11-03-four-agent-pipeline-phase4-design.md.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -474,22 +474,34 @@ async def _send_bloom(rnd: _Round, finding: BloomFinding) -> FeedbackAction:
     )
 
 
+def _ksec_gap_candidates(
+    category: str, plos: Iterable[PLO], needs: Sequence[Need], taken: Iterable[str] = ()
+) -> list[Need]:
+    """Needs of `category` a KSEC-gap draft may use: cited by no PLO, not taken this
+    round, written and in scope."""
+    cited = {nid for p in plos for nid in p.source_need_ids} | set(taken)
+    return [
+        n
+        for n in needs
+        if category in n.ksec_categories
+        and n.need_id not in cited
+        and not is_unwritten_need(n)
+        and exclusion_reason(n) != "out_of_scope"
+    ]
+
+
 async def _send_ksec_gap(rnd: _Round, category: str) -> FeedbackAction:
     """Fill a category the set has no PLO in, from the best Need nothing cites.
 
     No vote: `missing` is computed in code. A Need that is unwritten or out of
     scope is not a candidate, the same filter synthesis applies."""
     live = await _live_plos(rnd.program_id)
-    cited = {nid for p in live.values() for nid in p.source_need_ids}
-    candidates = [
-        n
-        for n in await NeedRepository().list_active_by_program(rnd.program_id)
-        if category in n.ksec_categories
-        and n.need_id not in cited
-        and n.need_id not in rnd.planned_needs
-        and not is_unwritten_need(n)
-        and exclusion_reason(n) != "out_of_scope"
-    ]
+    candidates = _ksec_gap_candidates(
+        category,
+        live.values(),
+        await NeedRepository().list_active_by_program(rnd.program_id),
+        rnd.planned_needs,
+    )
     reason = f"ไม่มี PLO หมวด {category}"
     if not candidates:
         return rnd.skipped(
@@ -575,6 +587,37 @@ async def _record(
         logger.error(f"plo_feedback: could not write trail row {action.model_dump_json()}: {exc!r}")
 
 
+def _agreed(
+    review: PLOSetReview,
+) -> tuple[
+    list[RedundancyFinding], list[AlignmentFinding], list[BloomFinding], list[UnusedNeedFinding]
+]:
+    """The findings send-back acts on: a majority of the runs *asked for* (so one
+    run of five that happened to succeed is never enough), and for Bloom only an
+    entry with a level change or a verb, for unused Needs only `consider`."""
+    threshold = max(review.agreement_threshold, review.runs_requested // 2 + 1)
+    return (
+        [r for r in review.redundancies if r.agreed_runs >= threshold],
+        [a for a in review.alignment if a.agreed_runs >= threshold],
+        [b for b in review.bloom if b.agreed_runs >= threshold and _actionable_bloom(b)],
+        [u for u in review.unused_needs if u.agreed_runs >= threshold and u.verdict == "consider"],
+    )
+
+
+async def has_agreed_work(program_id: str, review: PLOSetReview, reviewed: Sequence[PLO]) -> bool:
+    """Whether the review leaves send-back anything to act on: an agreed finding, or
+    a missing KSEC category with a Need a gap draft could use (judged against the
+    reviewed set). The loop's "pass" is this being False — a fact about the review,
+    not about the rows send-back happened to write. Reads the Needs only when a
+    category is missing and nothing else is agreed."""
+    if any(_agreed(review)):
+        return True
+    if not review.ksec_coverage.missing:
+        return False
+    needs = await NeedRepository().list_active_by_program(program_id)
+    return any(_ksec_gap_candidates(c, reviewed, needs) for c in review.ksec_coverage.missing)
+
+
 def actionable_count(actions: Sequence[FeedbackAction]) -> int:
     """Rows that show the round had something to do: applied, failed or planned, or
     skipped for a reason other than "no Need for this KSEC category" (a comment,
@@ -633,14 +676,7 @@ async def send_back(
             dry_run=dry_run,
             memory=use_memory,
         )
-        threshold = max(review.agreement_threshold, review.runs_requested // 2 + 1)
-
-        reds = [r for r in review.redundancies if r.agreed_runs >= threshold]
-        aligns = [a for a in review.alignment if a.agreed_runs >= threshold]
-        blooms = [b for b in review.bloom if b.agreed_runs >= threshold and _actionable_bloom(b)]
-        unused = [
-            u for u in review.unused_needs if u.agreed_runs >= threshold and u.verdict == "consider"
-        ]
+        reds, aligns, blooms, unused = _agreed(review)
 
         for red in reds:
             try:

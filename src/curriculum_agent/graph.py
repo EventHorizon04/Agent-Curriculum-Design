@@ -237,9 +237,13 @@ def stage_reached(
     built from) and so is the QA review; each counts only while current for the
     stored set, because a stale one means the set changed after it was made. The
     report is last in the order, so a current report wins over a current review.
-    The review's own send-back changes the set right after the review is stored,
-    so the rail shows the PLO stage until the designer re-runs the review — the
-    set changed and has not been reviewed.
+    In the review loop's `shadow` mode (the default) send-back only plans, so the
+    review stays current. In `apply` mode the loop ends on a fresh review of the
+    set it changed, so that review is current too — except when the loop stops
+    without one (an error before its last review, or a failed final review), or
+    in `off` mode, where the single send-back changes the set right after the
+    review is stored: then the rail shows the PLO stage until the designer re-runs
+    the review — the set changed and has not been reviewed.
     """
     if has_current_report:
         return "plo_report"
