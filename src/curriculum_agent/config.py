@@ -363,8 +363,9 @@ class Settings(BaseSettings):
     # phase-4 single pass; "shadow" reviews once and records what send-back would do
     # (dry run, nothing written to the PLOs); "apply" repeats review and send-back
     # for up to `plo_review_max_rounds` rounds (0 behaves like "off"), all under one
-    # wall-clock budget.
-    plo_review_loop_mode: Literal["off", "shadow", "apply"] = "shadow"
+    # wall-clock budget. "apply" is the default since the designer's decision of
+    # 2026-11-11 (phase 6 spec, decision 29), after the guarded apply run.
+    plo_review_loop_mode: Literal["off", "shadow", "apply"] = "apply"
     plo_review_max_rounds: int = Field(default=5, ge=0)
     plo_review_loop_timeout_seconds: int = 5400
     # skill_extraction has its own knob too, kept separate from the heavy one

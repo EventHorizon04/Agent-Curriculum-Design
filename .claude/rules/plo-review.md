@@ -189,7 +189,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   review reaches the caller, as the single pass always did; a timeout or error
   later is a stop reason, never a failed session. The last stored review is the one
   shown, its unresolved findings being the comments at the checkpoint.
-- **Shadow mode is the default and writes no PLO.** `plo_review_loop_mode="shadow"`
+- **Shadow mode writes no PLO; `apply` is the default since 2026-11-11.** `plo_review_loop_mode="shadow"`
   reviews once and calls `send_back(dry_run=True)`: every action runs its checks
   and is recorded `planned` with its instruction, nothing is redrafted. The checks
   include every one `redraft_from_needs` makes before its draft —
@@ -201,9 +201,9 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   taken, and one stand-in PLO per planned draft joins the set the next check
   counts), so later actions of the round see the same world and the plan does not
   overstate real actions; the designer reads the plan
-  before flipping to `apply`. It works on a copy of the loop's memory and teaches
-  it nothing. `apply` is opt-in; do not make it the default until the designer has
-  read a shadow run.
+  to see what `apply` would do. It works on a copy of the loop's memory and teaches
+  it nothing. The designer made `apply` the default on 2026-11-11 (spec decision
+  29) after the guarded apply run; `shadow` stays available for a dry look.
 - **Merge drift guard: a PLO a redundancy merge wrote is not merged again within
   the loop.** Phase 4's live runs merged more on every review (9 -> 8 -> 7 PLOs).
   `LoopMemory.merged` holds the Need set (`frozenset(source_need_ids)`) of every

@@ -65,7 +65,7 @@ def _default_api_key_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _review_loop_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The review loop defaults to shadow, which stores its own rows; tests written
+    """The review loop defaults to apply, which stores its own rows and redrafts; tests written
     for the single-pass review keep that behaviour. A loop test sets the mode itself
     — a later `setattr` wins."""
     monkeypatch.setattr(settings, "plo_review_loop_mode", "off")

@@ -301,6 +301,12 @@ over five runs because one run was measured to be unstable.
     - The skip is a comment, not actionable work: it never keeps the loop running
       and does not stop a round from counting as a pass.
     - Shadow mode plans one round only, so the guard never fires there.
+29. **(designer, 2026-11-11) `plo_review_loop_mode` defaults to `apply`, for the
+    research runs.** The guarded apply run (`program-run-11`, report §5) took 3
+    rounds and redrafted no PLO for alignment twice, so the remaining question
+    was cost (about 5.8× the baseline prompt tokens), which the designer
+    accepted. This supersedes the "default `shadow`" line under 6c below;
+    `shadow` and `off` remain available.
 
 ## Goals
 
