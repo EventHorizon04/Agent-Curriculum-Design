@@ -702,7 +702,7 @@ def test_revalidate_keeps_designer_edited_at(
     stale = _plo("PLO1", ["N1"]).model_copy(
         update={"smart_validated_by": "stale", "designer_edited_at": edited_at}
     )
-    insert = _stored(monkeypatch, [stale])
+    insert = _stored_put(monkeypatch, [stale])
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
 
     allow_repair_seen: list[bool] = []
@@ -721,7 +721,7 @@ def test_revalidate_keeps_designer_edited_at(
 
     job = jobs_store.rows[resp.json()["job_id"]]
     assert job.status == "succeeded", job.error_th
-    assert insert.await_args.args[0][0].designer_edited_at == edited_at
+    assert insert.await_args.args[0].designer_edited_at == edited_at
     # The designer's own sentence is judged, never rewritten by a repair.
     assert allow_repair_seen == [False]
 
@@ -734,7 +734,7 @@ def test_revalidate_rejudges_the_stored_statement(
     input, and no synthesis call happens unless the validator asks for one."""
     stale = _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "stale"})
     other = _plo("PLO2", ["N2"])
-    insert = _stored(monkeypatch, [stale, other])
+    insert = _stored_put(monkeypatch, [stale, other])
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
         plos_route.NeedRepository,

@@ -479,6 +479,14 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
   // Deliberate mutation: `review` is the object already stored in db.reviews, so
   // this re-stamps the stored review as round 2's (the final review of the job).
   review.created_at = new Date(Date.now() + 1).toISOString().replace('Z', '')
+  // Round 2 stops as a pass, so it found no agreed redundancy or Bloom finding:
+  // the scenario's are what the loop acted on, and the review it stored is the
+  // one read after. They stay as findings below the threshold, like the real one.
+  const agreedAt = Math.max(review.agreement_threshold ?? 2, Math.floor((review.runs_requested ?? 3) / 2) + 1)
+  const belowThreshold = Math.max(0, agreedAt - 1)
+  for (const f of [...review.redundancies, ...review.bloom]) {
+    if ((f.agreed_runs ?? 0) >= agreedAt) f.agreed_runs = belowThreshold
+  }
   push(
     {
       kind: 'loop_end',

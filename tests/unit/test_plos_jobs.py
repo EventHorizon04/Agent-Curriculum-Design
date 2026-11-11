@@ -120,11 +120,13 @@ class _Env:
         self.needs = AsyncMock(return_value=[_need()])
         self.plos = AsyncMock(return_value=[_plo()])
         self.bulk_insert = AsyncMock()
+        self.update_if_version = AsyncMock(return_value=True)
         monkeypatch.setattr(plos_route.ProgramRepository, "get", self.program)
         monkeypatch.setattr(plos_route.NeedRepository, "list_active_by_program", self.needs)
         # On the class, never the module-level `_repo` instance (see test_api_plos).
         monkeypatch.setattr(plos_route.PLORepository, "list_by_program", self.plos)
         monkeypatch.setattr(plos_route.PLORepository, "bulk_insert", self.bulk_insert)
+        monkeypatch.setattr(plos_route.PLORepository, "update_if_version", self.update_if_version)
         # The set review is off in every test by default (tests/conftest.py); the
         # review route and the report's `review_enabled` need it on to be exercised.
         monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
@@ -334,7 +336,32 @@ def test_revalidate_result_is_the_old_plo_body_and_it_is_stored(
     assert job.result["plo_id"] == "PLO1"
     assert job.result["smart_validated_by"] == "agent"
     assert job.result["version"] == _plo().version + 1
-    env.bulk_insert.assert_awaited_once()
+    env.bulk_insert.assert_not_awaited()
+
+
+def test_revalidate_success_bumps_version_once(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    job = _finish(client.post(f"{BASE}/PLO1/revalidate"), jobs_store, spawned)
+
+    assert job.status == "succeeded"
+    env.update_if_version.assert_awaited_once()
+    args, kwargs = env.update_if_version.await_args
+    assert kwargs["expected_version"] == _plo().version
+    assert args[0].version == _plo().version + 1
+    env.bulk_insert.assert_not_awaited()
+
+
+def test_revalidate_conflicting_version_fails_job_writes_nothing(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    env.update_if_version.return_value = False
+
+    job = _finish(client.post(f"{BASE}/PLO1/revalidate"), jobs_store, spawned)
+
+    assert job.status == "failed"
+    assert job.error_th == "PLO นี้ถูกแก้ระหว่างตรวจ SMART — ตรวจใหม่อีกครั้ง"
+    env.bulk_insert.assert_not_awaited()
 
 
 # --- the synthesis switch and the note travel through the job ----------------

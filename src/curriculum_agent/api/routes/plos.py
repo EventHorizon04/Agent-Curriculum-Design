@@ -664,7 +664,11 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
                 "designer_edited_at": match.designer_edited_at,
             }
         )
-        await _repo.bulk_insert([updated])
+        # Update-only and version-conditional, like the PUT: the judging takes
+        # minutes, and a PLO edited or merged away meanwhile must not be
+        # overwritten or re-inserted with a verdict for the old sentence.
+        if not await _repo.update_if_version(updated, expected_version=match.version):
+            raise HTTPException(status_code=409, detail="PLO นี้ถูกแก้ระหว่างตรวจ SMART — ตรวจใหม่อีกครั้ง")
         logger.info(
             f"Revalidated {plo_id}: escalated={updated.smart_escalated} "
             f"by={updated.smart_validated_by}"
