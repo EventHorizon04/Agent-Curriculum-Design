@@ -115,3 +115,26 @@
 - [ ] **Step 2: UI smoke test.**
   - Open the frontend in mock mode and walk through: the review page (findings, the alignment section, rounds in the trail, the open-comments box, the approve button), then the report page (stored report, stale banner, empty state).
   - Note any defect for a fix task.
+
+### Task 4: revalidate write is version-checked; mock loop stop is consistent (found by Task 3)
+
+**Files:** `src/curriculum_agent/api/routes/plos.py` (`revalidate_plo` job body), `frontend/src/mock/handlers.ts`; tests `tests/unit/test_api_plos.py` (or the revalidate test file).
+
+**Interfaces:**
+- **`revalidate_plo`.** The job body writes the re-judged PLO through `PLORepository.update_if_version(updated, expected_version=match.version)` instead of `bulk_insert`. `updated` carries `version = match.version + 1` and keeps `designer_edited_at`, as today.
+  - On False the job fails with the Thai error `"PLO นี้ถูกแก้ระหว่างตรวจ SMART — ตรวจใหม่อีกครั้ง"`: raise so `jobs._run` records it as `error_th`, the way other job failures surface.
+  - Nothing is inserted.
+- **Mock (smoke test finding).**
+  - The mock review run's last round stops with "ผ่านแล้ว" while the stored review it leaves still has agreed redundancy and Bloom findings. That cannot happen against the real backend: pass means no agreed actionable finding.
+  - Make the mock consistent. Either:
+    - the stored round-2 review has no agreed actionable finding (findings below the threshold may stay); or
+    - keep the findings and stop with the real reason text for that case.
+  - Prefer the first option, so the open-comments box still shows the skipped unused-Need row.
+
+- [ ] **Step 1: write the failing tests.**
+  - `test_revalidate_conflicting_version_fails_job_writes_nothing`
+  - `test_revalidate_success_bumps_version_once`
+- [ ] **Step 2: run the tests and confirm they FAIL.**
+- [ ] **Step 3: implement.** Fix the mock.
+- [ ] **Step 4: run the backend verify, `npm run build` and `npm run lint`.**
+- [ ] **Step 5: commit** `fix(plos): version-checked revalidate write; mock loop stop matches its review`.
