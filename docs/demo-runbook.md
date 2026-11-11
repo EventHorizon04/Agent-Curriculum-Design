@@ -12,7 +12,8 @@ acceptable for an invited demo and unacceptable for anything wider.
 **Every write route requires `X-API-Key` when `API_KEY` is set.** Set it in
 `.env` and hand the key to the designer out of band: the UI opens a "กรอก API key"
 dialog on the first 401, keeps the key in that browser tab only
-(`sessionStorage`) and retries the request. GET routes stay open. If `API_KEY`
+(`sessionStorage`) and retries the request. GET routes stay open, except `GET …/evidence/classify-stream`, which runs the
+classifier. If `API_KEY`
 is left unset, writes are open to anyone past Access (`start-demo.ps1` warns).
 Cloudflare Access is still the outer barrier, so three conditions must hold:
 
@@ -216,5 +217,5 @@ Delete old zips from `dist\demo-package\`.
 
 Recorded so they are not mistaken for oversights. Closing them is separate work.
 
-- GET routes carry no `require_api_key`, so all data is readable by anyone past Access. Write routes all carry it.
+- GET routes (except `GET …/evidence/classify-stream`, which runs the classifier) carry no `require_api_key`, so all data is readable by anyone past Access. Write routes all carry it.
 - Any authorised user can delete any program.

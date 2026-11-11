@@ -1,10 +1,14 @@
-// The API key the designer types, kept for this tab only. It is read from
-// sessionStorage on every request so a key typed in the dialog takes effect at
-// once, and it never reaches a URL, a log or localStorage.
+// The API key the designer types, kept for this tab only. It is held in a
+// module variable and mirrored to sessionStorage (so a reload keeps it); the
+// variable is read first, so a key survives even when storage is blocked. It
+// never reaches a URL, a log or localStorage.
 
 const STORAGE_KEY = 'curriculum.apiKey'
 
+let memoryKey: string | null = null
+
 export function getApiKey(): string | null {
+  if (memoryKey) return memoryKey
   try {
     return window.sessionStorage.getItem(STORAGE_KEY) || null
   } catch {
@@ -13,10 +17,11 @@ export function getApiKey(): string | null {
 }
 
 export function setApiKey(key: string): void {
+  memoryKey = key
   try {
     window.sessionStorage.setItem(STORAGE_KEY, key)
   } catch {
-    // Storage blocked: the key lives only in the retried request.
+    // Storage blocked: the module variable still holds it for this tab.
   }
 }
 
@@ -56,14 +61,17 @@ export function answerKeyRequest(key: string | null): void {
 
 /** `fetch` that sends the key and, on a 401, asks for one and retries once. */
 export async function fetchWithKey(input: string, init: RequestInit = {}): Promise<Response> {
-  const send = (): Promise<Response> => {
+  const send = (): { response: Promise<Response>; sentKey: string | null } => {
     const headers = new Headers(init.headers)
     const key = getApiKey()
     if (key) headers.set('X-API-Key', key)
-    return fetch(input, { ...init, headers })
+    return { response: fetch(input, { ...init, headers }), sentKey: key }
   }
-  const first = await send()
+  const attempt = send()
+  const first = await attempt.response
   if (first.status !== 401) return first
+  // A key typed for another request since this one went out: use it, no prompt.
+  if (getApiKey() !== attempt.sentKey) return send().response
   const key = await requestApiKey()
-  return key ? send() : first
+  return key ? send().response : first
 }

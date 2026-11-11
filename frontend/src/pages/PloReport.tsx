@@ -38,6 +38,12 @@ interface NeedSummary {
  *  does "in scope and still unused" mean it lost on the ceiling. */
 type ExclusionReason = Exclude<ScopeVerdict, 'in_scope'> | 'lost_on_demand'
 
+// The backend sends naive UTC ISO strings (no offset); without a Z the browser
+// would read them as local time and show the wrong day.
+function utcDate(iso: string): Date {
+  return new Date(/(Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`)
+}
+
 function exclusionReason(n: NeedSummary): ExclusionReason {
   const verdict = scopeVerdict(n)
   return verdict === 'in_scope' ? 'lost_on_demand' : verdict
@@ -469,7 +475,7 @@ function ExcludedNeeds({ needs }: { needs: ExcludedNeed[] }) {
             </span>
             {n.excluded_at && (
               <span className="data shrink-0 text-xs text-lead">
-                {new Date(n.excluded_at).toLocaleDateString('th-TH')}
+                {utcDate(n.excluded_at).toLocaleDateString('th-TH')}
               </span>
             )}
           </li>

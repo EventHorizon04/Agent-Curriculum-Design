@@ -71,6 +71,8 @@ customer needs runs inside Docker.
   `_refuse_development_credentials_in_production` requires `API_KEY` under
   `production`, and the frontend never sends `X-API-Key`, so `production` would
   401 every write. Same reasoning as `docs/demo-runbook.md`.
+
+  > Superseded 2026-11-11: every write route now requires X-API-Key and the UI asks for it (plan 2026-11-11-phase-leftovers Task 2).
 - The API must be started through `python -m curriculum_agent.api`, not the
   uvicorn CLI (see the module docstring). Inside a Linux container the loop
   problem it works around does not occur, but the entrypoint also reads

@@ -72,7 +72,9 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   `field` gets `None` and the pre-context prompts byte-for-byte. The context is
   in the clustering **cache key** for the same reason `target_clusters` is: it
   reaches the prompt, so two programs whose skill names coincide must not share
-  an entry.
+  an entry. So is `ksec`: only the graduate-side EC bucket changes the prompt
+  (the institutional side is passed `None`), and the key carries whatever was
+  passed.
 - **`demand_score` is three blocks, and the two frequency blocks have separate
   denominators.** `0.20 × (สภาวิชาชีพ named it? 1 : 0) + 0.55 × share of the
   *practitioner* voices that named it + 0.25 × share of everyone else` —

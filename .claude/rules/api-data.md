@@ -12,7 +12,7 @@ paths:
 Moved out of the root CLAUDE.md so it loads only when working on the files above.
 These are standing project rules, not suggestions — same weight as CLAUDE.md.
 
-- **Every write route carries `require_api_key`, and a test walks the routes to prove it.** `tests/unit/test_api_auth_coverage.py` fails for any POST/PUT/PATCH/DELETE `APIRoute` without it (allowlist empty); add the `dependencies=[Depends(require_api_key)]` to a new write route. GETs stay open. Auth is off when `API_KEY` is unset or blank. The UI types the key once per tab (`sessionStorage['curriculum.apiKey']`, `frontend/src/api/apiKey.ts`), `client.ts` sends it and retries a 401 once after `ApiKeyDialog`; the classify-stream `fetch` goes through `fetchWithKey`. Mock mode never returns 401.
+- **Every write route carries `require_api_key`, and a test walks the routes to prove it.** `tests/unit/test_api_auth_coverage.py` fails for any POST/PUT/PATCH/DELETE `APIRoute` without it (allowlist empty); add the `dependencies=[Depends(require_api_key)]` to a new write route. GETs stay open, except `GET …/evidence/classify-stream`, which runs the classifier (it carries `require_api_key`, pinned by the same test file). Auth is off when `API_KEY` is unset or blank. The UI types the key once per tab (`sessionStorage['curriculum.apiKey']`, `frontend/src/api/apiKey.ts`), `client.ts` sends it and retries a 401 once after `ApiKeyDialog`; the classify-stream `fetch` goes through `fetchWithKey`. Mock mode never returns 401.
 - **`PLORepository.list_by_program` orders its rows, and that is load-bearing.**
   `plo_id` carries meaning — PLO1 is the outcome drafted from the most-demanded
   Need, which is why synthesis keeps demand order through `asyncio.gather` and

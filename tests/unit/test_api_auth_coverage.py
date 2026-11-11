@@ -42,6 +42,19 @@ def test_every_write_route_requires_the_api_key() -> None:
     assert unguarded == []
 
 
+def test_classify_stream_requires_the_api_key() -> None:
+    """The one GET with side effects (it runs the classifier) is guarded too."""
+    matches = [
+        route
+        for route in app.routes
+        if isinstance(route, APIRoute)
+        and route.path == "/programs/{program_id}/evidence/classify-stream"
+        and "GET" in route.methods
+    ]
+    assert len(matches) == 1
+    assert require_api_key in _calls(matches[0].dependant)
+
+
 def test_write_without_key_is_401_when_key_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(deps.settings, "api_key", SecretStr("test-key"))
     client = TestClient(app)

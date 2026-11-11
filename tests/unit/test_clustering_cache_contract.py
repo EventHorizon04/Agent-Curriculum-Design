@@ -243,7 +243,7 @@ async def test_cache_key_differs_by_ksec(monkeypatch: pytest.MonkeyPatch):
     assert len(set(seen)) == 3, "cache key ignores the KSEC bucket"
 
 
-async def test_ksec_reaches_the_pass_and_the_map_reduce_batches(monkeypatch: pytest.MonkeyPatch):
+async def test_ksec_reaches_the_single_pass(monkeypatch: pytest.MonkeyPatch):
     from curriculum_agent.models import KSECCategory
 
     got: list[KSECCategory | None] = []
@@ -271,3 +271,33 @@ def test_contract_fingerprint_covers_the_ec_variant(monkeypatch: pytest.MonkeyPa
 
     monkeypatch.setattr(lc, "build_cluster_skills_prompt", _reworded_ec)
     assert lc._clustering_contract_fingerprint() != before
+
+
+async def test_ksec_reaches_every_map_reduce_batch_and_not_the_merge(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from curriculum_agent.models import KSECCategory
+    from curriculum_agent.prompts.cluster_skills import build_merge_clusters_prompt
+
+    got: list[KSECCategory | None] = []
+    merge_prompts: list[object] = []
+
+    async def capture_pass(names, target, program_context=None, ksec=None):  # noqa: ANN001, ANN202
+        got.append(ksec)
+        return [("g", list(range(len(names))))]
+
+    async def capture_merge(schema, messages, **kwargs):  # noqa: ANN001, ANN202
+        merge_prompts.append(messages)
+        return lc.MergeGroupsResponse(groups=[[0, 1]])
+
+    names = [f"skill {i}" for i in range(lc.SINGLE_PASS_MAX + 1)]
+    monkeypatch.setattr(lc.LLMCacheRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(lc.LLMCacheRepository, "set", AsyncMock())
+    monkeypatch.setattr(lc, "_cluster_pass", capture_pass)
+    monkeypatch.setattr(lc, "complete_clustering", capture_merge)
+
+    await lc.cluster_skill_names(names, None, None, KSECCategory.EC)
+
+    assert len(got) == len(lc.split_batches(names)) >= 2
+    assert got == [KSECCategory.EC] * len(got)
+    assert merge_prompts == [build_merge_clusters_prompt(["g"] * len(got), None)]

@@ -193,6 +193,20 @@ def test_production_accepts_real_credentials() -> None:
     assert settings.app_env == "production"
 
 
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_production_treats_a_blank_api_key_as_unset(blank: str) -> None:
+    with pytest.raises(ValidationError) as exc:
+        Settings(
+            app_env="production",
+            postgres_dsn="postgresql+asyncpg://u:p@db.internal:5432/curriculum_agent",
+            minio_access_key="real-access-key",
+            minio_secret_key="real-secret-key",
+            api_key=blank,
+        )
+
+    assert "API_KEY" in str(exc.value)
+
+
 def test_development_is_the_default_and_keeps_working_with_no_env() -> None:
     """Forgetting APP_ENV can only make the check stricter by accident, never
     weaker — and a fresh checkout still runs against the compose stack."""

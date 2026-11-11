@@ -316,7 +316,10 @@ async def test_a_failing_bucket_cancels_the_other_in_flight_buckets(
     assert cancelled == started - 1
 
 
-async def test_grouping_passes_bucket_to_clustering(monkeypatch: pytest.MonkeyPatch):
+async def test_grouping_passes_bucket_to_clustering_for_the_graduate_side_only(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """The EC rule's framing was measured on graduate-side skills only."""
     seen: list[tuple[KSECCategory | None, int]] = []
 
     async def capture(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
@@ -327,3 +330,17 @@ async def test_grouping_passes_bucket_to_clustering(monkeypatch: pytest.MonkeyPa
     await sg.build_skill_groups(PROGRAM, _mixed_skills(), {"E1": "employer"})
 
     assert {k for k, _ in seen} == {KSECCategory.S, KSECCategory.K, KSECCategory.EC}
+
+    # Institutional-side buckets get no bucket framing.
+    inst_skills = [
+        _skill("S1", "บริหารงบประมาณหน่วยงาน", KSECCategory.C).model_copy(
+            update={"is_graduate_capability": False}
+        ),
+        _skill("S2", "ดูแลมาตรฐานคุณภาพของสถาบัน", KSECCategory.C).model_copy(
+            update={"is_graduate_capability": False}
+        ),
+    ]
+    seen.clear()
+    await sg.build_skill_groups(PROGRAM, inst_skills, {"E1": "employer"})
+    assert seen, "the institutional bucket was not clustered"
+    assert {k for k, _ in seen} == {None}

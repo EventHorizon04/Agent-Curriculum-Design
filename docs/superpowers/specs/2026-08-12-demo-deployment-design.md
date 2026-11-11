@@ -173,6 +173,8 @@ unset, because `require_api_key` disables itself when the setting is blank
 key would 401 every write in the UI. Access is therefore a single layer, and
 three conditions must hold for it to be sufficient:
 
+> Superseded 2026-11-11: every write route now requires X-API-Key and the UI asks for it (plan 2026-11-11-phase-leftovers Task 2).
+
 1. **Port 8000 is never exposed directly.** The only path in is the tunnel. An
    open port bypasses Access completely.
 2. **cloudflared targets `http://localhost:8000`**, matching the loopback bind.

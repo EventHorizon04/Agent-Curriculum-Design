@@ -225,7 +225,11 @@ async def build_skill_groups(
             logger.info(
                 f"Clustering {len(names)} unique {ksec.value} {side} skills into about {target}"
             )
-            return await cluster_skill_names(names, target, program_context, ksec)
+            # The EC rule ("where the graduate shows it") was measured on
+            # graduate-side skills only, so the institutional side gets no bucket.
+            return await cluster_skill_names(
+                names, target, program_context, ksec if is_grad else None
+            )
 
         return _call
 

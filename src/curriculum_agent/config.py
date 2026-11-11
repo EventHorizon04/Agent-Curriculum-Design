@@ -516,7 +516,7 @@ class Settings(BaseSettings):
             unset.append("MINIO_ACCESS_KEY (still 'minioadmin')")
         if self.minio_secret_key.get_secret_value() == _DEV_MINIO_SECRET_KEY:
             unset.append("MINIO_SECRET_KEY (still the checked-in development value)")
-        if self.api_key is None:
+        if self.api_key is None or not self.api_key.get_secret_value().strip():
             unset.append("API_KEY (unset means every write endpoint is unauthenticated)")
 
         if unset:

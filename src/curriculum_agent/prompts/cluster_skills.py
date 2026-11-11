@@ -63,7 +63,9 @@ def build_cluster_skills_prompt(
     variance on short Thai names, not from this wording; a fix belongs to the
     clustering model or method, not to the count rule.
 
-    `ksec` is the bucket being clustered, and only EC changes the prompt (2026-11-11
+    `ksec` is the bucket being clustered, and only EC changes the prompt, for the
+    graduate side only: the rule was measured on graduate-side skills, so
+    `skill_grouping` passes `None` for the institutional population (2026-11-11
     A/B, `.scratch/reports/2026-11-11-ec-k-grouping-ab.md`). Without a rule the EC
     bucket came back as two groups of which one was a grab-bag ("development,
     ethics and adaptation") that split differently on every run. Told to group each
