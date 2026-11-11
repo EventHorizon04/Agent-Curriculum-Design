@@ -113,11 +113,11 @@ evidence มาจากผู้มีส่วนได้ส่วนเส�
 
 | | |
 |---|---|
-| **builder** | `prompts/cluster_skills.py` → `build_cluster_skills_prompt(skill_names, target_clusters=None, program_context=None)` |
+| **builder** | `prompts/cluster_skills.py` → `build_cluster_skills_prompt(skill_names, target_clusters=None, program_context=None, ksec=None)` |
 | **ผู้เรียก** | `stages/llm_clustering.py` → `_cluster_pass` |
 | **slot / wrapper** | `clustering` → `complete_clustering` (`temperature=0`) |
 | **response model** | `ClusterAssignmentsResponse` |
-| **cache** | ที่ `cluster_skill_names`: ชื่อทักษะทั้งชุด + `clustering_model` + `_CLUSTERING_CONTRACT` + `target_clusters` + `program_context` |
+| **cache** | ที่ `cluster_skill_names`: ชื่อทักษะทั้งชุด + `clustering_model` + `_CLUSTERING_CONTRACT` + `target_clusters` + `program_context` + `ksec` |
 
 ทำงานด้วย **index** ไม่ใช่ชื่อ — โมเดลตอบเป็นเลขลำดับ `validate_assignments` จึงบังคับ
 "ทุก index ปรากฏครั้งเดียว" ได้ด้วยโค้ดหลังจากนั้น
@@ -157,6 +157,12 @@ Respond as a JSON object:
 List of skills (index: skill_name):
 0: <skill 0>
 1: <skill 1>
+```
+
+**บรรทัดที่เพิ่มเมื่อ bucket = `EC`** (ก่อนบรรทัด `label_th MUST...`)
+
+```text
+- These skills are attitudes (E) and adaptability or self-development traits (C). Do not gather them into one general 'good character' group. Group each trait by where the graduate shows it: in the quality of and accountability for their own work (accuracy, care, owning errors, professional integrity); toward other people and cultures (ethical conduct across cultures, respect for diversity, working relationships); or toward change and their own career (adapting to technology and society, lifelong learning, leadership, entrepreneurship). A trait that fits none of these may form a group of its own.
 ```
 
 ---

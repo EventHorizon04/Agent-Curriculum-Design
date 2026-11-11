@@ -98,7 +98,10 @@ async def test_the_silent_evidence_item_is_out_of_both_corpora(extracted, monkey
     assert len(extracted) == 2
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
@@ -126,7 +129,10 @@ async def test_a_single_skill_need_scores_exactly_what_its_skill_did(extracted, 
     must not carry two different demands."""
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 

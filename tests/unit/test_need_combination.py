@@ -62,7 +62,10 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch) -> None:
     """Cluster each bucket into singletons; summarize echoes the first skill name."""
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
@@ -109,7 +112,10 @@ async def test_ethics_and_character_skills_form_one_ec_need(monkeypatch: pytest.
     ]
 
     async def one_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
@@ -134,7 +140,10 @@ async def test_an_all_ethics_group_keeps_the_standalone_e_tag(monkeypatch: pytes
     ]
 
     async def one_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
@@ -161,7 +170,10 @@ async def test_needs_carry_their_source_stakeholder_types(monkeypatch: pytest.Mo
     ]
 
     async def one_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
@@ -205,7 +217,10 @@ async def test_freq_counts_mentions_not_unique_names(monkeypatch: pytest.MonkeyP
     ]
 
     async def one_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
@@ -343,7 +358,10 @@ async def test_evidence_text_in_the_state_never_reaches_the_prompt(
         return await _fake_summarize(model, messages)
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
@@ -416,7 +434,10 @@ async def test_a_group_whose_sentence_cannot_be_written_is_marked_for_review(
         raise RuntimeError("model unavailable")
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
@@ -617,7 +638,10 @@ async def test_names_reach_the_prompt_most_mentioned_first(monkeypatch: pytest.M
     ]
 
     async def one_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
@@ -813,7 +837,10 @@ async def test_the_call_site_passes_the_groups_frequencies_to_the_prompt(
     ]
 
     async def one_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
@@ -847,7 +874,10 @@ async def test_designer_note_usage_is_logged_once_per_run(monkeypatch: pytest.Mo
         )
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
@@ -892,7 +922,10 @@ async def test_one_create_member_does_not_make_the_need_create(monkeypatch: pyte
     rows[3] = rows[3].model_copy(update={"bloom_level": BloomLevel.CREATE})
 
     async def one_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 
@@ -938,7 +971,10 @@ async def test_run_stores_a_merge_and_loads_skills_when_the_state_has_none(
     ]
 
     async def singletons(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
@@ -1021,7 +1057,10 @@ async def test_the_sentence_call_sets_an_explicit_output_cap(monkeypatch: pytest
         return await _fake_summarize(model, messages)
 
     async def one_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [list(range(len(names)))]
 

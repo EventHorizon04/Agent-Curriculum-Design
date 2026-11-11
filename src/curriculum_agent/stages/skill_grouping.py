@@ -225,7 +225,7 @@ async def build_skill_groups(
             logger.info(
                 f"Clustering {len(names)} unique {ksec.value} {side} skills into about {target}"
             )
-            return await cluster_skill_names(names, target, program_context)
+            return await cluster_skill_names(names, target, program_context, ksec)
 
         return _call
 

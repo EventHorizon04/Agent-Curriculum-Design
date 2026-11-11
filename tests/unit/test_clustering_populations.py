@@ -53,7 +53,10 @@ def _record_calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple[list[str], int 
     seen: list[tuple[list[str], int | None]] = []
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         seen.append((list(names), target))
         return [list(range(len(names)))]

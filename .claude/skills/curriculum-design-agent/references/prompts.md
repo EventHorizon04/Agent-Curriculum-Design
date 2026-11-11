@@ -74,6 +74,8 @@ Evidence classification (`requirement` vs `general`) is decided entirely in code
 - `build_cluster_skills_prompt(skill_names)` — first-pass grouping of a batch of skill names by meaning, returns `{clusters: [{label_th, member_indices}]}`.
 - `build_merge_clusters_prompt(cluster_labels)` — merges same-meaning cluster labels produced across multiple first-pass batches, returns `{groups: [[index, ...]]}`.
 
+**The EC bucket carries one extra rule (2026-11-11).** `build_cluster_skills_prompt(..., ksec=KSECCategory.EC)` adds a line telling the model to group attitudes and adaptability traits by *where the graduate shows them* (own work and accountability / other people and cultures / change and career) rather than into one "good character" group. Without it the EC bucket came back as a grab-bag that split differently every run; with it 7 of 9 A/B runs gave the same three readable dimensions, usually one group over target (accepted: the target is soft). A matching K rule was tried and dropped. `ksec` is in the clustering cache key and the EC prompt is in the contract fingerprint. Evidence: `.scratch/reports/2026-11-11-ec-k-grouping-ab.md`.
+
 Because clustering and merging both run *inside* one KSEC bucket (bucketing happens before any of this in `stages/need_grouping.py`), no prompt here ever needs to ask the model to keep KSEC tags apart — it structurally cannot see skills from a different bucket.
 
 ---

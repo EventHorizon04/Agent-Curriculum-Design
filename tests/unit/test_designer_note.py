@@ -144,7 +144,10 @@ async def test_need_combination_forwards_the_note_to_the_summarize_prompt(
     seen: list[list[dict[str, str]]] = []
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 

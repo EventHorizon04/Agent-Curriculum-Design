@@ -109,6 +109,17 @@ def _build() -> str:
     cluster = _render(
         build_cluster_skills_prompt(["<skill 0>", "<skill 1>"], 4, "<program context>")
     )
+    # The EC bucket's system message differs from the others by one rule line; show
+    # that line, taken from the real builder, rather than a second full copy.
+    _plain = build_cluster_skills_prompt(["<skill 0>"], 4, "<program context>")[0]["content"]
+    _ec = build_cluster_skills_prompt(["<skill 0>"], 4, "<program context>", KSECCategory.EC)[0][
+        "content"
+    ]
+    ec_rule = "".join(line for line in _ec.splitlines(keepends=True) if line not in _plain)
+    cluster += (
+        "\n\n**บรรทัดที่เพิ่มเมื่อ bucket = `EC`** (ก่อนบรรทัด `label_th MUST...`)\n\n"
+        f"```text\n{ec_rule.rstrip()}\n```"
+    )
     merge = _render(build_merge_clusters_prompt(["<label 0>", "<label 1>"], 4))
     summarize = _render(
         build_summarize_need_prompt(
@@ -343,11 +354,11 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 
 | | |
 |---|---|
-| **builder** | `prompts/cluster_skills.py` → `build_cluster_skills_prompt(skill_names, target_clusters=None, program_context=None)` |
+| **builder** | `prompts/cluster_skills.py` → `build_cluster_skills_prompt(skill_names, target_clusters=None, program_context=None, ksec=None)` |
 | **ผู้เรียก** | `stages/llm_clustering.py` → `_cluster_pass` |
 | **slot / wrapper** | `clustering` → `complete_clustering` (`temperature=0`) |
 | **response model** | `ClusterAssignmentsResponse` |
-| **cache** | ที่ `cluster_skill_names`: ชื่อทักษะทั้งชุด + `clustering_model` + `_CLUSTERING_CONTRACT` + `target_clusters` + `program_context` |
+| **cache** | ที่ `cluster_skill_names`: ชื่อทักษะทั้งชุด + `clustering_model` + `_CLUSTERING_CONTRACT` + `target_clusters` + `program_context` + `ksec` |
 
 ทำงานด้วย **index** ไม่ใช่ชื่อ — โมเดลตอบเป็นเลขลำดับ `validate_assignments` จึงบังคับ
 "ทุก index ปรากฏครั้งเดียว" ได้ด้วยโค้ดหลังจากนั้น

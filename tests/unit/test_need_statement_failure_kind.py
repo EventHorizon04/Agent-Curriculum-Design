@@ -50,7 +50,10 @@ async def _run_with(monkeypatch: pytest.MonkeyPatch, error: Exception) -> list[d
         raise error
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i for i in range(len(names))]]
 

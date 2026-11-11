@@ -47,7 +47,10 @@ def test_contract_fingerprint_changes_when_a_prompt_changes(monkeypatch: pytest.
     before = lc._clustering_contract_fingerprint()
 
     def _reworded(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[dict[str, str]]:
         return [
             {"role": "system", "content": "cluster them however you like"},
@@ -186,7 +189,7 @@ async def test_program_context_reaches_the_clustering_prompt(monkeypatch: pytest
     """Threading it through the key is not enough — the model has to see it."""
     captured: dict[str, str | None] = {}
 
-    async def capture_pass(names, target, program_context=None):  # noqa: ANN001, ANN202
+    async def capture_pass(names, target, program_context=None, ksec=None):  # noqa: ANN001, ANN202
         captured["context"] = program_context
         return [("g", list(range(len(names))))]
 
@@ -209,11 +212,62 @@ def test_contract_fingerprint_covers_the_context_branch(monkeypatch: pytest.Monk
     before = lc._clustering_contract_fingerprint()
     real = lc.build_cluster_skills_prompt
 
-    def _reworded_context(names, target=None, program_context=None):  # noqa: ANN001, ANN202
-        messages = real(names, target, program_context)
+    def _reworded_context(names, target=None, program_context=None, ksec=None):  # noqa: ANN001, ANN202
+        messages = real(names, target, program_context, ksec)
         if program_context:
             messages[0] = {"role": "system", "content": "group them however the field suggests"}
         return messages
 
     monkeypatch.setattr(lc, "build_cluster_skills_prompt", _reworded_context)
+    assert lc._clustering_contract_fingerprint() != before
+
+
+async def test_cache_key_differs_by_ksec(monkeypatch: pytest.MonkeyPatch):
+    """The prompt varies by bucket now, so the bucket has to be in the key."""
+    from curriculum_agent.models import KSECCategory
+
+    seen: list[str] = []
+
+    async def capture(self, key: str):  # noqa: ANN001, ANN202
+        seen.append(key)
+        return None
+
+    monkeypatch.setattr(lc.LLMCacheRepository, "get", capture)
+    monkeypatch.setattr(lc.LLMCacheRepository, "set", AsyncMock())
+    monkeypatch.setattr(lc, "_cluster_pass", AsyncMock(return_value=[("g", [0, 1, 2])]))
+
+    await lc.cluster_skill_names(list(_NAMES), None, None, KSECCategory.EC)
+    await lc.cluster_skill_names(list(_NAMES), None, None, KSECCategory.K)
+    await lc.cluster_skill_names(list(_NAMES))
+
+    assert len(set(seen)) == 3, "cache key ignores the KSEC bucket"
+
+
+async def test_ksec_reaches_the_pass_and_the_map_reduce_batches(monkeypatch: pytest.MonkeyPatch):
+    from curriculum_agent.models import KSECCategory
+
+    got: list[KSECCategory | None] = []
+
+    async def capture_pass(names, target, program_context=None, ksec=None):  # noqa: ANN001, ANN202
+        got.append(ksec)
+        return [("g", list(range(len(names))))]
+
+    monkeypatch.setattr(lc.LLMCacheRepository, "get", AsyncMock(return_value=None))
+    monkeypatch.setattr(lc.LLMCacheRepository, "set", AsyncMock())
+    monkeypatch.setattr(lc, "_cluster_pass", capture_pass)
+    await lc.cluster_skill_names(list(_NAMES), None, None, KSECCategory.EC)
+    assert got == [KSECCategory.EC]
+
+
+def test_contract_fingerprint_covers_the_ec_variant(monkeypatch: pytest.MonkeyPatch):
+    before = lc._clustering_contract_fingerprint()
+    real = lc.build_cluster_skills_prompt
+
+    def _reworded_ec(names, target=None, program_context=None, ksec=None):  # noqa: ANN001, ANN202
+        messages = real(names, target, program_context, ksec)
+        if ksec is not None and ksec.value == "EC":
+            messages[0] = {"role": "system", "content": "group traits however"}
+        return messages
+
+    monkeypatch.setattr(lc, "build_cluster_skills_prompt", _reworded_ec)
     assert lc._clustering_contract_fingerprint() != before

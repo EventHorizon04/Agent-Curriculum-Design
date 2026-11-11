@@ -167,3 +167,28 @@ def test_the_target_never_licenses_merging_two_different_competencies() -> None:
 
     assert "stay two groups even when that leaves more groups than the target" in system
     assert "never makes two different competencies one" in system
+
+
+_EC_RULE_START = "- These skills are attitudes (E) and adaptability or self-development traits (C)."
+
+
+def test_ec_bucket_prompt_carries_the_dimension_rule() -> None:
+    """A/B 2026-11-11: the EC bucket is grouped by where the graduate shows a trait."""
+    from curriculum_agent.models import KSECCategory
+
+    system = build_cluster_skills_prompt(["a", "b"], 2, None, KSECCategory.EC)[0]["content"]
+    assert _EC_RULE_START in system
+    assert "Do not gather them into one general 'good character' group." in system
+    assert "A trait that fits none of these may form a group of its own." in system
+    # the rule sits immediately before the Thai-label line
+    assert system.index(_EC_RULE_START) < system.index("- label_th MUST be written in Thai")
+    rule_line = system.split(_EC_RULE_START)[1].split("\n")[0]
+    assert system.split(rule_line)[1].startswith("\n- label_th MUST be written in Thai")
+
+
+def test_other_buckets_prompt_unchanged() -> None:
+    from curriculum_agent.models import KSECCategory
+
+    base = build_cluster_skills_prompt(["a", "b"], 3, "ctx")
+    for ksec in (KSECCategory.K, KSECCategory.S, KSECCategory.E, KSECCategory.C, None):
+        assert build_cluster_skills_prompt(["a", "b"], 3, "ctx", ksec) == base

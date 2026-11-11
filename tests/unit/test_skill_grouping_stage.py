@@ -83,7 +83,7 @@ async def test_grouping_never_mixes_buckets(monkeypatch: pytest.MonkeyPatch):
         _skill("C1", "ความรับผิดชอบต่อหน้าที่", KSECCategory.C),
     ]
 
-    async def one_cluster(names, target=None, program_context=None):  # noqa: ANN001
+    async def one_cluster(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
         return [list(range(len(names)))]
 
     monkeypatch.setattr(sg, "cluster_skill_names", one_cluster)
@@ -232,11 +232,11 @@ async def test_bucket_clustering_calls_overlap_and_groups_match_sequential(
     peak = 0
     all_started = asyncio.Event()
 
-    async def answer(names, target=None, program_context=None):  # noqa: ANN001
+    async def answer(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
         # One singleton group per name, reversed, so order is observable.
         return [[i] for i in reversed(range(len(names)))]
 
-    async def sequential(names, target=None, program_context=None):  # noqa: ANN001
+    async def sequential(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
         return await answer(names, target, program_context)
 
     monkeypatch.setattr(settings, "llm_max_concurrency", 1)
@@ -246,7 +246,7 @@ async def test_bucket_clustering_calls_overlap_and_groups_match_sequential(
 
     started = 0
 
-    async def overlapping(names, target=None, program_context=None):  # noqa: ANN001
+    async def overlapping(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
         nonlocal in_flight, peak, started
         in_flight += 1
         started += 1
@@ -273,7 +273,7 @@ async def test_bucket_clustering_respects_the_concurrency_ceiling(
     in_flight = 0
     peak = 0
 
-    async def counting(names, target=None, program_context=None):  # noqa: ANN001
+    async def counting(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
         nonlocal in_flight, peak
         in_flight += 1
         peak = max(peak, in_flight)
@@ -294,7 +294,7 @@ async def test_a_failing_bucket_cancels_the_other_in_flight_buckets(
     cancelled = 0
     first_ran = asyncio.Event()
 
-    async def one_fails(names, target=None, program_context=None):  # noqa: ANN001
+    async def one_fails(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
         nonlocal started, cancelled
         started += 1
         if started == 1:
@@ -314,3 +314,16 @@ async def test_a_failing_bucket_cancels_the_other_in_flight_buckets(
     assert first_ran.is_set()
     assert started >= 3
     assert cancelled == started - 1
+
+
+async def test_grouping_passes_bucket_to_clustering(monkeypatch: pytest.MonkeyPatch):
+    seen: list[tuple[KSECCategory | None, int]] = []
+
+    async def capture(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
+        seen.append((ksec, len(names)))
+        return [list(range(len(names)))]
+
+    monkeypatch.setattr(sg, "cluster_skill_names", capture)
+    await sg.build_skill_groups(PROGRAM, _mixed_skills(), {"E1": "employer"})
+
+    assert {k for k, _ in seen} == {KSECCategory.S, KSECCategory.K, KSECCategory.EC}

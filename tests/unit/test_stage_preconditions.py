@@ -157,7 +157,7 @@ async def test_skill_grouping_loads_skills_when_state_carries_none(
     monkeypatch.setattr(sg.SkillGroupRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(sg.SkillGroupRepository, "bulk_insert", AsyncMock())
 
-    async def fake_cluster(names, target=None, program_context=None):  # noqa: ANN001
+    async def fake_cluster(names, target=None, program_context=None, ksec=None):  # noqa: ANN001
         return [[i] for i in range(len(names))]
 
     monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
