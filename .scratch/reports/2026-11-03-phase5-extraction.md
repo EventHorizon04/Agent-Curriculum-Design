@@ -72,14 +72,14 @@ The last column counts core Needs whose sentence says there is no graduate need:
 - "ต้องการหลักสูตรที่…" (a need of the program, not of the graduate).
 
 **Reading:**
-- **Skills.** The bound again costs about 10 skills, all from the S tail (55-60 vs 65-67).
+- **Skills.** The bound again costs about 10 skills, mostly from the S tail (55-60 vs 65-67; K and C move by a few either way).
 - **Needs.** That loss reaches the Needs only weakly. Bounded gives 7-10 core Needs, unbounded 11-12.
   - The themes are the same in both modes: AI-assisted translation and post-editing, negotiation interpreting, legal and contract translation, translation ethics (EC), Thai-Chinese business work, bilingual marketing content, and adapting or self-development (C).
   - The difference between two runs of the same mode is about as large as the difference between modes. B2 merged 3 groups and kept 7 core Needs; B1 merged 1 and kept 10.
   - PLO synthesis takes the top 10 core Needs, so unbounded's extra Needs mostly fall below that cut.
-- **Time.** Agent 1 takes 58-64 s bounded against 267-455 s unbounded (4-7×).
-- **Non-graduate Needs.** Both unbounded runs put Needs into the *core* pool whose own sentence says they are not a graduate's need (3 in total). The bounded runs put such sentences only into the optional pool (B2: 2) or produced none.
+- **Time.** Agent 1 takes 58-64 s bounded against 267-455 s unbounded (4-8×).
+- **Non-graduate Needs (n=2 per arm, so suggestive only).** Both unbounded runs put Needs into the *core* pool whose own sentence says they are not a graduate's need (3 in total). The bounded runs put such sentences only into the optional pool (B2: 2) or produced none.
   - The extra S-tail skills are mostly institutional (research, network-building, curriculum improvement). They form groups the scope check does not mark optional.
   - This is a separate defect: the optional/scope decision does not see a Need sentence that itself says "no graduate need". It is worth a ticket whichever bound is used.
 
-**Decision:** keep the bound as the default. The loss is in the S tail and does not change which themes reach the Needs, and unbounded adds non-graduate Needs to the core pool. Unbounded stays available with `0` for a research run.
+**Decision:** keep the bound as the default. The loss is in the S tail and does not change which themes reach the Needs, and unbounded is 4-8× slower. Non-graduate Needs in the core pool were seen in both unbounded runs and in neither bounded run, but two runs per arm cannot separate that from run-to-run spread. Unbounded stays available with `0` for a research run.
