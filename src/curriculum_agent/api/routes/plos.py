@@ -70,6 +70,10 @@ class PLOReportResponse(BaseModel):
     # synthesis failed. Carried through for the same reason as `counts` — computing
     # it in the stage and dropping it at the route would hide the cap.
     needs_not_synthesized: list[str] = []
+    # Needs the designer excluded at the Need stage. Defaulted so a report stored
+    # before this key existed still validates, and carried through so the GET and
+    # the job result both show it rather than the model dropping it.
+    needs_excluded: list[dict[str, Any]] = []
 
 
 @router.get("/", response_model=list[PLO])
@@ -328,6 +332,7 @@ async def run_plo_report(program_id: str) -> JobInfo:
             counts=report["counts"],
             needs_by_id={k: Need.model_validate(v) for k, v in report["needs_by_id"].items()},
             needs_not_synthesized=report["needs_not_synthesized"],
+            needs_excluded=report.get("needs_excluded", []),
         )
 
     return await start_job_or_409(program_id, "plo_report", {}, work)

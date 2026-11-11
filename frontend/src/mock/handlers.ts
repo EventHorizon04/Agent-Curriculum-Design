@@ -314,6 +314,17 @@ function buildReport(pid: string) {
   const needs = activeNeeds(of(getDb().needs, pid))
   const cited = new Set(plos.flatMap((p) => p.source_need_ids))
   const notSynthesized = needs.map((n) => n.need_id).filter((id) => !cited.has(id))
+  // Excluded by the designer; a merged-away original is a fold, not an exclusion.
+  const excluded = of(getDb().needs, pid)
+    .filter((n) => n.excluded_at !== null && n.merged_into === null)
+    .sort((a, b) => (a.excluded_at as string).localeCompare(b.excluded_at as string) || a.need_id.localeCompare(b.need_id))
+    .map((n) => ({
+      need_id: n.need_id,
+      statement_th: n.statement_th,
+      ksec_categories: n.ksec_categories,
+      demand_score: n.demand_score,
+      excluded_at: n.excluded_at,
+    }))
   const core = plos.filter((p) => !p.is_optional).length
   return {
     plos,
@@ -325,9 +336,11 @@ function buildReport(pid: string) {
       stale: plos.filter((p) => p.smart_validated_by === 'stale').length,
       code_only: plos.filter((p) => p.smart_validated_by === 'code_only').length,
       needs_not_synthesized: notSynthesized.length,
+      needs_excluded: excluded.length,
     },
     needs_by_id: Object.fromEntries(needs.map((n) => [n.need_id, n])),
     needs_not_synthesized: notSynthesized,
+    needs_excluded: excluded,
   }
 }
 

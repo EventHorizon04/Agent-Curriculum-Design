@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -39,6 +40,12 @@ def _plo(pid: str, need_ids: list[str], *, optional: bool = False, escalated: bo
         is_optional=optional,
         smart_escalated=escalated,
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_stored_needs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The report reads every Need (for the excluded list); default to none."""
+    monkeypatch.setattr(pr.NeedRepository, "list_by_program", AsyncMock(return_value=[]))
 
 
 async def _run(monkeypatch: pytest.MonkeyPatch, state: dict) -> dict:
@@ -96,6 +103,7 @@ async def test_report_counts_split_core_and_optional(monkeypatch: pytest.MonkeyP
         "stale": 0,
         "code_only": 0,
         "needs_not_synthesized": 0,
+        "needs_excluded": 0,
     }
 
 
@@ -128,6 +136,7 @@ async def test_report_counts_surface_escalated_plos(monkeypatch: pytest.MonkeyPa
         "stale": 0,
         "code_only": 0,
         "needs_not_synthesized": 0,
+        "needs_excluded": 0,
     }
     # Escalated PLOs must stay visible, never dropped from the assembled set.
     assert {p["plo_id"] for p in state["report"]["plos"]} == {"PLO1", "PLO2"}
@@ -223,3 +232,66 @@ async def test_plo_report_reads_stored_not_state(monkeypatch: pytest.MonkeyPatch
 
     assert state["report"]["plos"][0]["statement_th"] == stored.statement_th
     assert state["plos"][0]["statement_th"] == stored.statement_th
+
+
+def _excluded(nid: str, at: datetime, **kw) -> Need:
+    return _need(nid).model_copy(update={"excluded_at": at, **kw})
+
+
+async def _report_with(monkeypatch: pytest.MonkeyPatch, active: list[Need], every: list[Need]):
+    monkeypatch.setattr(pr.NeedRepository, "list_active_by_program", AsyncMock(return_value=active))
+    monkeypatch.setattr(pr.NeedRepository, "list_by_program", AsyncMock(return_value=every))
+    monkeypatch.setattr(pr.PLOReportRepository, "upsert", AsyncMock())
+    state = await _run(
+        monkeypatch,
+        {"program_id": "cs-test", "plos": [_plo("PLO1", ["N1"]).model_dump(mode="json")]},
+    )
+    return state["report"]
+
+
+async def test_report_lists_excluded_needs(monkeypatch: pytest.MonkeyPatch):
+    n1 = _need("N1")
+    late = _excluded("N3", datetime(2026, 11, 5, 9, 0))
+    early_b = _excluded("N2b", datetime(2026, 11, 1, 8, 0))
+    early_a = _excluded("N2a", datetime(2026, 11, 1, 8, 0))
+    report = await _report_with(monkeypatch, [n1], [n1, late, early_b, early_a])
+
+    assert [x["need_id"] for x in report["needs_excluded"]] == ["N2a", "N2b", "N3"]
+    first = report["needs_excluded"][0]
+    assert set(first) == {
+        "need_id",
+        "statement_th",
+        "ksec_categories",
+        "demand_score",
+        "excluded_at",
+    }
+    assert first["excluded_at"] == "2026-11-01T08:00:00"
+    assert first["ksec_categories"] == ["S"]
+    assert report["counts"]["needs_excluded"] == 3
+
+
+async def test_merged_original_is_not_listed_as_excluded(monkeypatch: pytest.MonkeyPatch):
+    n1 = _need("N1")
+    merged_away = _excluded("O1", datetime(2026, 11, 1), merged_into="N1")
+    report = await _report_with(monkeypatch, [n1], [n1, merged_away])
+
+    assert report["needs_excluded"] == []
+    assert report["counts"]["needs_excluded"] == 0
+
+
+async def test_excluded_need_is_not_also_not_synthesized(monkeypatch: pytest.MonkeyPatch):
+    n1, n2 = _need("N1"), _need("N2")
+    gone = _excluded("X1", datetime(2026, 11, 1))
+    report = await _report_with(monkeypatch, [n1, n2], [n1, n2, gone])
+
+    assert report["needs_not_synthesized"] == ["N2"]
+    assert [x["need_id"] for x in report["needs_excluded"]] == ["X1"]
+    assert "X1" not in report["needs_by_id"]
+
+
+async def test_report_without_exclusions_has_empty_list(monkeypatch: pytest.MonkeyPatch):
+    n1 = _need("N1")
+    report = await _report_with(monkeypatch, [n1], [n1])
+
+    assert report["needs_excluded"] == []
+    assert report["counts"]["needs_excluded"] == 0

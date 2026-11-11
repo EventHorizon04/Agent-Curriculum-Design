@@ -42,6 +42,25 @@ async def run(state: AgentState) -> AgentState:
     needs = await NeedRepository().list_active_by_program(program_id)
     needs_by_id = {n.need_id: n for n in needs}
 
+    # Needs the designer excluded at the Need stage. A merged-away original is a
+    # fold (`merged_into`), not an exclusion, so it is left out. The active read
+    # drops both kinds, so these never also appear in `needs_not_synthesized`.
+    every = await NeedRepository().list_by_program(program_id)
+    excluded = sorted(
+        (n for n in every if n.excluded_at is not None and n.merged_into is None),
+        key=lambda n: (n.excluded_at, n.need_id),
+    )
+    needs_excluded = [
+        {
+            "need_id": n.need_id,
+            "statement_th": n.statement_th,
+            "ksec_categories": list(n.ksec_categories),
+            "demand_score": n.demand_score,
+            "excluded_at": n.excluded_at.isoformat() if n.excluded_at else None,
+        }
+        for n in excluded
+    ]
+
     # Every PLO must trace to evidence (project rule); a source_need_id that
     # resolves to nothing here would ship a checkpoint the designer cannot
     # actually drill into. The old classification stage surfaced this same
@@ -89,6 +108,9 @@ async def run(state: AgentState) -> AgentState:
         # any whose synthesis failed. Listed, not just counted, so the review page
         # can name them.
         "needs_not_synthesized": not_synthesized,
+        # Needs the designer excluded: listed so the approved report says what
+        # was left out on purpose, apart from what simply lost the cut.
+        "needs_excluded": needs_excluded,
         "counts": {
             "total": len(plos),
             "core": core,
@@ -97,6 +119,7 @@ async def run(state: AgentState) -> AgentState:
             "stale": stale,
             "code_only": code_only,
             "needs_not_synthesized": len(not_synthesized),
+            "needs_excluded": len(needs_excluded),
         },
     }
 

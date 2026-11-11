@@ -1252,7 +1252,15 @@ function seedTranslation(db: MockDb, programId: string, createdAt: string): void
  * render. Keyed by Need so the states do not move when demand reorders.
  */
 function seedCompletePlos(db: MockDb, programId: string): void {
-  const needs = db.needs.filter((n) => n.program_id === programId)
+  // The designer excluded one Need at the Need stage, so no outcome is drafted
+  // from it and the report lists it under "ตัดออก".
+  const networkStatement = NEED_BY_KEY.get('network')?.statement_th
+  for (const n of db.needs) {
+    if (n.program_id === programId && n.statement_th === networkStatement) {
+      n.excluded_at = '2026-09-20T04:30:00'
+    }
+  }
+  const needs = activeNeeds(db.needs.filter((n) => n.program_id === programId))
   const skills = db.skills.filter((s) => s.program_id === programId)
   const plos = synthesizePlos(programId, needs, skills).map((p) => {
     // Reset the fresh-run soft finding; states are assigned explicitly below.

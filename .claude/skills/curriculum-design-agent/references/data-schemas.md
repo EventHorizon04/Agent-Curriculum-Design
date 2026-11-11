@@ -444,7 +444,7 @@ class PLOReport(BaseModel):
     program_id: str
     plo_fingerprint: str          # which PLO set it was built from, as on the review
     created_at: datetime          # naive UTC in the DB, +00:00 in JSON
-    report: dict[str, Any]        # plos, needs_by_id, needs_not_synthesized, counts (opaque to the repository)
+    report: dict[str, Any]        # plos, needs_by_id, needs_not_synthesized, needs_excluded (designer-excluded Needs, not merged-away originals), counts (opaque to the repository)
 ```
 
 `plo_reviews` is one row per program (`program_id` primary key, FK to `programs.program_id`, cascade-deleted with it), holding `plo_fingerprint`, `model`, `created_at`, and the rest of `PLOSetReview` in a single JSONB `review` column — no migration needed for a new finding field, the same reasoning as `SMARTCheck.findings`.

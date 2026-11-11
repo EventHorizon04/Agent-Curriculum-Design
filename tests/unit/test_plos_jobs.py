@@ -245,7 +245,13 @@ def test_report_result_is_the_old_report_payload(
     job = _finish(client.post(f"{BASE}/report/run"), jobs_store, spawned)
 
     env.report.assert_awaited_once()
-    assert set(job.result) == {"plos", "counts", "needs_by_id", "needs_not_synthesized"}
+    assert set(job.result) == {
+        "plos",
+        "counts",
+        "needs_by_id",
+        "needs_not_synthesized",
+        "needs_excluded",
+    }
     assert [p["plo_id"] for p in job.result["plos"]] == ["PLO1"]
     assert job.result["needs_by_id"]["N1"]["need_id"] == "N1"
 

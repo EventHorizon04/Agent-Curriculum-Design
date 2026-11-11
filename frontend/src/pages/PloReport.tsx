@@ -43,6 +43,16 @@ function exclusionReason(n: NeedSummary): ExclusionReason {
   return verdict === 'in_scope' ? 'lost_on_demand' : verdict
 }
 
+/** A Need the designer excluded at the Need stage (`report.needs_excluded`). */
+interface ExcludedNeed {
+  need_id: string
+  statement_th: string
+  ksec_categories: string[]
+  demand_score?: number
+  /** ISO string. */
+  excluded_at: string | null
+}
+
 interface ReportCounts {
   total: number
   core: number
@@ -105,7 +115,12 @@ interface NeedTraceResponse {
 
 /** `GET /plos/report`: the report stored when the designer approved the set. */
 interface StoredReportResponse {
-  report: { plos: PLO[]; needs_by_id: Record<string, NeedSummary> } | null
+  report: {
+    plos: PLO[]
+    needs_by_id: Record<string, NeedSummary>
+    /** Absent on a report stored before the excluded list existed. */
+    needs_excluded?: ExcludedNeed[]
+  } | null
   /** The PLOs or Needs changed after the report was stored. */
   stale: boolean
   created_at: string | null
@@ -241,6 +256,7 @@ export default function PloReport() {
     const cited = new Set(plos.flatMap((p) => p.source_need_ids))
     return Object.values(needsById).filter((n) => !cited.has(n.need_id))
   }, [plos, needsById])
+  const [excludedNeeds, setExcludedNeeds] = useState<ExcludedNeed[]>([])
   const [hasReport, setHasReport] = useState(false)
   const [stale, setStale] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -258,6 +274,7 @@ export default function PloReport() {
       setStale(report !== null && isStale)
       setPlos(report?.plos ?? [])
       setNeedsById(report?.needs_by_id ?? {})
+      setExcludedNeeds(report?.needs_excluded ?? [])
       setCounts(countsFrom(report?.plos ?? []))
     } catch {
       setError('โหลดข้อมูลไม่สำเร็จ ตรวจว่า API ทำงานอยู่ แล้วลองใหม่')
@@ -391,6 +408,7 @@ export default function PloReport() {
           </p>
 
           {unusedNeeds.length > 0 && <UnusedNeeds needs={unusedNeeds} programId={programId} />}
+          {excludedNeeds.length > 0 && <ExcludedNeeds needs={excludedNeeds} />}
 
           <p className="border-t border-hair pt-4 text-sm text-pencil">
             <Link to="/plo-review" className="link">
@@ -430,6 +448,33 @@ function UnusedNeeds({ needs, programId }: { needs: NeedSummary[]; programId: st
       </ul>
 
       {guarded.length > 0 && <ScopeRerunNote count={guarded.length} />}
+    </section>
+  )
+}
+
+/** Needs the designer cut at the Need stage. Kept apart from the unused ones:
+ *  those lost on demand or to the scope guard, these were removed by a person. */
+function ExcludedNeeds({ needs }: { needs: ExcludedNeed[] }) {
+  return (
+    <section id="excluded-needs" className="border-t border-hair pt-5">
+      <h2 className="section-title">Need ที่ผู้ออกแบบตัดออก</h2>
+      <p className="mt-1 text-sm text-pencil">ตัดออกที่ขั้นวิเคราะห์ Need — กู้คืนได้ที่หน้า Need</p>
+      <ul className="mt-3 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
+        {needs.map((n) => (
+          <li key={n.need_id} className="flex items-baseline gap-3 px-4 py-2.5 text-sm">
+            <span className="data shrink-0 text-xs text-lead">{n.need_id}</span>
+            <span className="min-w-0 flex-1 text-pencil">{n.statement_th}</span>
+            <span className="shrink-0 text-xs text-lead">
+              {n.ksec_categories.map(ksecLabel).join(' + ')}
+            </span>
+            {n.excluded_at && (
+              <span className="data shrink-0 text-xs text-lead">
+                {new Date(n.excluded_at).toLocaleDateString('th-TH')}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }
