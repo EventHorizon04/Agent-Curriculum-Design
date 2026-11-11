@@ -651,6 +651,30 @@ def test_put_conflicting_version_answers_409_and_writes_nothing(
     insert.assert_not_awaited()
 
 
+def test_put_read_at_v1_after_a_redraft_stored_the_id_at_v2_answers_409(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ABA hole: PUT read PLO3 at v1, then a redraft reused the id and stored the
+    new outcome at v2 (a reused id moves the version forward). The conditional UPDATE
+    must see the mismatch, so the mock answers from the version it is asked for."""
+    read = _plo("PLO3", ["N3"]).model_copy(update={"version": 1})
+    insert = _stored(monkeypatch, [read])
+    stored_version_now = 2
+
+    async def _update(_plo: PLO, *, expected_version: int) -> bool:
+        return expected_version == stored_version_now
+
+    update = AsyncMock(side_effect=_update)
+    monkeypatch.setattr(plos_route.PLORepository, "update_if_version", update)
+
+    resp = client.put("/programs/cs-test/plos/PLO3", json=_PUT_BODY)
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == _CHANGED_DURING_EDIT
+    assert update.await_args.kwargs == {"expected_version": 1}
+    insert.assert_not_awaited()
+
+
 def test_put_on_row_deleted_between_read_and_write_answers_409_no_insert(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -572,6 +572,18 @@ async def test_a_plo_whose_needs_changed_since_the_review_is_skipped(
     env.redraft.assert_not_awaited()
 
 
+async def test_a_version_bump_since_review_is_edited_since_review(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    """A PUT that moved only the verb or rationale leaves statement and Needs alone;
+    the version still moved, so the review's verdict is about an older outcome."""
+    env = _Env(monkeypatch, plos)
+    env.plos[2] = env.plos[2].model_copy(update={"version": env.plos[2].version + 1})
+    (action,) = await _sb(_review(bloom=[_bloom("PLO3")]))
+    assert (action.outcome, action.outcome_reason_th) == ("skipped", pf.REASON_EDITED_SINCE_REVIEW)
+    env.redraft.assert_not_awaited()
+
+
 async def test_replaced_is_judged_before_edited_and_edited_before_missing(
     monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
 ) -> None:

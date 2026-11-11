@@ -315,7 +315,8 @@ class _Round:
     def _edited_since_review(self, pid: str, live: dict[str, PLO]) -> bool:
         """A live PLO that is not the one the review judged: someone changed it
         (or a hand edit renumbered it) while the review ran. The review's verdict
-        was about the old text, so it must not be acted on."""
+        was about the old text, so it must not be acted on. The version catches a
+        PUT that moved only the verb, Bloom level or rationale."""
         now = live.get(pid)
         if now is None:
             return False
@@ -324,6 +325,7 @@ class _Round:
             before is None
             or before.statement_th != now.statement_th
             or before.source_need_ids != now.source_need_ids
+            or before.version != now.version
         )
 
 

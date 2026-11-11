@@ -39,10 +39,11 @@ async def test_one_need_replaces_exactly_the_plo_citing_it(
         _program(), "cs-test", ["N2"], note_th=None, cause="designer"
     )
 
-    assert plo is draft
+    # PLO2 reuses the superseded row's id, so it is stored one version on.
+    assert plo == draft.model_copy(update={"version": 2})
     assert replaced == ["PLO2"]
     replace.assert_awaited_once()
-    assert replace.await_args.args == ("cs-test", ["PLO2"], [draft])
+    assert replace.await_args.args == ("cs-test", ["PLO2"], [plo])
 
 
 async def test_cause_reaches_replace(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -115,7 +116,7 @@ async def test_accept_returning_none_lets_the_replace_happen(
         _program(), "cs-test", ["N1"], note_th=None, cause="review", accept=lambda _d: None
     )
 
-    assert plo is draft
+    assert plo == draft.model_copy(update={"version": 2})
     replace.assert_awaited_once()
 
 

@@ -479,14 +479,18 @@ function sendBack(pid: string, review: PLOSetReview): FeedbackAction[] {
   // Deliberate mutation: `review` is the object already stored in db.reviews, so
   // this re-stamps the stored review as round 2's (the final review of the job).
   review.created_at = new Date(Date.now() + 1).toISOString().replace('Z', '')
-  // Round 2 stops as a pass, so it found no agreed redundancy or Bloom finding:
-  // the scenario's are what the loop acted on, and the review it stored is the
-  // one read after. They stay as findings below the threshold, like the real one.
+  // Round 2 stops as a pass, so it found no agreed redundancy, Bloom or unused-Need
+  // finding (the real `has_agreed_work` counts all three): the scenario's are what
+  // the loop acted on, and the review it stored is the one read after. They stay as
+  // findings below the threshold, like the real one. A missing KSEC category is a
+  // code fact, not a vote, and stays as the scenario drew it.
   const agreedAt = Math.max(review.agreement_threshold ?? 2, Math.floor((review.runs_requested ?? 3) / 2) + 1)
   const belowThreshold = Math.max(0, agreedAt - 1)
-  for (const f of [...review.redundancies, ...review.bloom]) {
+  for (const f of [...review.redundancies, ...review.bloom, ...review.unused_needs]) {
     if ((f.agreed_runs ?? 0) >= agreedAt) f.agreed_runs = belowThreshold
   }
+  // The scenario's summary describes round 1's findings; the stored review is round 2's.
+  review.summary_th = 'ชุด PLO ผ่านการตรวจ — เหลือข้อสังเกตที่เสียงยังไม่ถึงเกณฑ์'
   push(
     {
       kind: 'loop_end',

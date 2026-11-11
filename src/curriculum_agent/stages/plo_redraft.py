@@ -240,6 +240,14 @@ async def redraft_from_needs(
         if refusal is not None:
             raise RedraftRefused(422, refusal)
 
+    # The draft is synthesised at version 1 and may take a freed id (lowest free slot),
+    # so it can sit where a superseded row sat. A reused slot must move the version
+    # forward, or a stale PUT/revalidate that read the old row at the same version
+    # would match the new one and overwrite it.
+    reused_version = max((p.version for p in superseded if p.plo_id == plo.plo_id), default=0)
+    if reused_version:
+        plo = plo.model_copy(update={"version": reused_version + 1})
+
     # `expect` is the set as read above, before a draft that can take minutes: a
     # hand edit that landed meanwhile refuses the replace instead of being deleted.
     extra: dict[str, FeedbackAction] = {} if trail is None else {"trail_row": trail(plo)}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from sqlalchemy.dialects import postgresql
+
 from curriculum_agent.data.repositories import PLORepository
 
 
@@ -58,7 +60,6 @@ async def test_the_plo_list_is_ordered_core_first_then_numerically() -> None:
 
 async def test_update_if_version_updates_only_the_expected_version_and_never_inserts() -> None:
     from tests.unit.test_superseded_plos import (  # noqa: PLC0415
-        PID,
         _patched,
         _plo,
         _plo_row,
@@ -72,9 +73,10 @@ async def test_update_if_version_updates_only_the_expected_version_and_never_ins
         )
     assert ok is True and session.commits == 1 and session.added == []
     (sql,) = session.sql()
-    assert sql.startswith("update plos") and "version" in sql
-    assert "program_id" in sql and "plo_id" in sql
-    assert PID == "cs-test"
+    assert sql.startswith("update plos")
+    where = sql.split(" where ", 1)[1]
+    assert "plos.program_id" in where and "plos.plo_id" in where and "plos.version" in where
+    assert session.statements[0].compile(dialect=postgresql.dialect()).params["version_1"] == 3
 
 
 async def test_update_if_version_is_false_when_no_row_matches() -> None:

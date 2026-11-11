@@ -103,7 +103,7 @@ async def test_redraft_hands_the_trail_row_to_replace(monkeypatch: pytest.Monkey
         _program(), "cs-test", ["N2"], note_th=None, cause="review", trail=trail
     )
 
-    assert seen == [draft]
+    assert seen == [draft.model_copy(update={"version": 2})]
     row = replace.await_args.kwargs["trail_row"]
     assert isinstance(row, FeedbackAction) and row.result_plo_id == "PLO2"
 

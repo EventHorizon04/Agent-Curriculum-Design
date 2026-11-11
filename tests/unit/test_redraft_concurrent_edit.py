@@ -108,8 +108,10 @@ async def test_replace_refuses_on_version_change_only() -> None:
     assert session.commits == 0 and _deletes(session) == []
 
 
-async def test_a_statement_that_differs_at_the_same_version_is_not_a_conflict() -> None:
-    """The version is the signal now; the statement is no longer compared."""
+async def test_replace_compares_the_version_and_nothing_else() -> None:
+    """The version is the signal, not the statement. A redraft that reuses a PLO id
+    stores it at the superseded row's version + 1 (`redraft_from_needs`), so a stale
+    reader never meets an equal version on a different outcome."""
     session = _Session(select_rows=[_plo_row("PLO1", "ข้อความอื่น")])
     await _replace(session, {"PLO1": 1})
     assert session.commits == 1
@@ -129,6 +131,55 @@ async def test_the_check_reads_before_it_deletes_in_the_same_transaction() -> No
     select_at = next(i for i, s in enumerate(sql) if s.startswith("select"))
     assert select_at < next(i for i, s in enumerate(sql) if s.startswith("delete"))
     assert "for update" in sql[select_at]
+
+
+# --------------------------- a reused id moves the version forward ---------------------------
+
+
+def _install_redraft(monkeypatch: pytest.MonkeyPatch, existing: list[PLO], draft: PLO) -> AsyncMock:
+    monkeypatch.setattr(
+        NeedRepository,
+        "list_by_program",
+        AsyncMock(return_value=[_need(f"N{i}") for i in range(1, 7)]),
+    )
+    monkeypatch.setattr(PLORepository, "list_by_program", AsyncMock(return_value=existing))
+    replace = AsyncMock(return_value=1)
+    monkeypatch.setattr(PLORepository, "replace", replace)
+    monkeypatch.setattr(
+        "curriculum_agent.stages.plo_synthesis.synthesize_from_needs",
+        AsyncMock(return_value=draft),
+    )
+    return replace
+
+
+async def test_redraft_reusing_an_id_moves_the_version_forward(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = [_plo(f"PLO{i}", [f"N{i}"]) for i in range(1, 7)]
+    existing[2] = existing[2].model_copy(update={"version": 4})
+    replace = _install_redraft(monkeypatch, existing, _plo("PLO3", ["N3"]))
+
+    plo, _ = await redraft_from_needs(_program(), "cs-test", ["N3"], note_th=None, cause="review")
+
+    assert plo.plo_id == "PLO3" and plo.version == 5
+    assert replace.await_args.args[2] == [plo]
+    assert replace.await_args.args[2][0].version == 5
+
+
+async def test_redraft_under_a_new_id_keeps_the_drafted_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    existing = [_plo(f"PLO{i}", [f"N{i}"]) for i in range(1, 7)]
+    existing[2] = existing[2].model_copy(update={"version": 4})
+    # Merging N3 and N4 frees PLO3 and PLO4 but the draft is numbered PLO9 here.
+    replace = _install_redraft(monkeypatch, existing, _plo("PLO9", ["N3", "N4"]))
+
+    plo, _ = await redraft_from_needs(
+        _program(), "cs-test", ["N3", "N4"], note_th=None, cause="review"
+    )
+
+    assert plo.plo_id == "PLO9" and plo.version == 1
+    assert replace.await_args.args[2][0].version == 1
 
 
 # --------------------------- send-back: skipped, nothing replaced ---------------------------
