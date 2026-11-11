@@ -91,3 +91,35 @@ The final-review fixes (I1-I5, M1-M7) landed after these runs.
 - (b) Allow at most one alignment redraft per PLO per loop, with later findings as comments, mirroring the merge-drift guard.
 
 Both would have stopped this run after round 2.
+
+## 5. Apply re-run with the alignment guard (decision 28, 2026-11-11)
+
+`program-run-11` was run at commit 00adac6. That is phase 6, plus the final-review fixes, plus the one-alignment-redraft-per-PLO guard, plus the version-checked PUT. It used `PLO_REVIEW_LOOP_MODE=apply` and the same corpus and model.
+
+| run | synthesis s | review job s | total s | calls (failed) | prompt tokens | send-back rounds |
+|---|---|---|---|---|---|---|
+| apply, no guard (§3) | 469 | 1,505 | 1,974 | 432 (40) | 3,088,439 | 5 |
+| apply, with guard | 550 | 997 | 1,547 | 336 (34) | 2,398,004 | 3 (2 applied) |
+
+**Round 1:**
+- Redundancy PLO3+PLO6 was merged.
+- Alignment was applied to 3 PLOs.
+- Alignment on PLO3 and PLO6 was skipped, because the merge had already replaced both.
+- Bloom PLO7 was applied.
+
+**Round 2:** alignment was applied to the merged PLO3. This was its first alignment redraft, since it has a new Need set.
+
+**Round 3:** the only finding left was the two unwritable unused Needs. Stop: "รอบนี้แก้อะไรไม่ได้ — หยุด".
+
+**Outcome:**
+- No PLO received a second alignment redraft, so the PLO3 and PLO5 oscillation of §3 did not recur.
+- The final set has 8 PLOs, none escalated and none flagged.
+- The A_scope outcome of earlier runs was redrafted in round 1. It came out as business communication and document work in Thai-Chinese ("ปฏิบัติการสื่อสารทางธุรกิจและจัดทำเอกสารธุรกิจในภาษาไทย-จีน…"), and the vote no longer flags it.
+
+**Cost:**
+- About 5.8× the baseline prompt tokens and 6.4× its wall time.
+- That is 22% fewer tokens and 22% less time than apply without the guard.
+- Synthesis-slot instructor retries are still high (10 of 32 calls).
+- The review early stop again never fired (3 of 3 first batches split).
+
+**Recommendation:** the default stays `shadow`. Whether to switch the research runs to `apply` is now a cost decision, not a stability one.
