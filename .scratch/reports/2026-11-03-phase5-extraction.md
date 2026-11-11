@@ -51,3 +51,35 @@ skills lost are the long tail of S (the bucket that had 65-71); a full-pipeline 
 Side effect: the bound is part of the extraction cache key, so existing unbounded cache
 rows are not hit by the new default; the first run of each program re-extracts once.
 Sweep the unreachable rows with `uv run python -m curriculum_agent.data.prune_cache --older-than DAYS`.
+
+## Downstream: Needs with and without the bound (2026-11-11)
+
+These runs used the copy DB, at 04fcf5f/04953ef; the extraction path is unchanged from the default above.
+- **Setup:** each run was an evidence-only copy of `program`, followed by `POST /needs/run` (Agent 1 chained to Agent 2).
+- **Cold:** `llm_cache` was cleared before each run.
+- **Bounded:** the default. **Unbounded:** `EXTRACTION_MAX_TOKENS=0 EXTRACTION_REASONING_MAX_TOKENS=0`.
+
+| run | Agent 1 s | Agent 2 s | skills (K/S/E/C) | groups | active Needs (core + opt) | merged | Needs that are not a graduate's need, in core |
+|---|---|---|---|---|---|---|---|
+| B1 bounded | 64 | 44 | 79 (7/55/5/12) | 13 | 12 (10 + 2) | 1 | 0 |
+| B2 bounded | 58 | 64 | 83 (6/60/6/11) | 13 | 9 (7 + 2) | 3 | 0 |
+| U1 unbounded | 267 | 115 | 90 (5/67/7/11) | 16 | 14 (12 + 2) | 2 | 2 |
+| U2 unbounded | 455 | 67 | 91 (6/65/5/15) | 12 | 11 (11 + 0) | 1 | 1 |
+
+The last column counts core Needs whose sentence says there is no graduate need:
+- "ไม่พบความต้องการ…";
+- "[ต้องทบทวน] …";
+- "ต้องการหลักสูตรที่…" (a need of the program, not of the graduate).
+
+**Reading:**
+- **Skills.** The bound again costs about 10 skills, all from the S tail (55-60 vs 65-67).
+- **Needs.** That loss reaches the Needs only weakly. Bounded gives 7-10 core Needs, unbounded 11-12.
+  - The themes are the same in both modes: AI-assisted translation and post-editing, negotiation interpreting, legal and contract translation, translation ethics (EC), Thai-Chinese business work, bilingual marketing content, and adapting or self-development (C).
+  - The difference between two runs of the same mode is about as large as the difference between modes. B2 merged 3 groups and kept 7 core Needs; B1 merged 1 and kept 10.
+  - PLO synthesis takes the top 10 core Needs, so unbounded's extra Needs mostly fall below that cut.
+- **Time.** Agent 1 takes 58-64 s bounded against 267-455 s unbounded (4-7×).
+- **Non-graduate Needs.** Both unbounded runs put Needs into the *core* pool whose own sentence says they are not a graduate's need (3 in total). The bounded runs put such sentences only into the optional pool (B2: 2) or produced none.
+  - The extra S-tail skills are mostly institutional (research, network-building, curriculum improvement). They form groups the scope check does not mark optional.
+  - This is a separate defect: the optional/scope decision does not see a Need sentence that itself says "no graduate need". It is worth a ticket whichever bound is used.
+
+**Decision:** keep the bound as the default. The loss is in the S tail and does not change which themes reach the Needs, and unbounded adds non-graduate Needs to the core pool. Unbounded stays available with `0` for a research run.
