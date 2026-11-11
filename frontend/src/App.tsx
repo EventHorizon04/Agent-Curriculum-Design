@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import ApiKeyDialog from './components/ApiKeyDialog'
 import StageLayout from './components/StageLayout'
 import Programs from './pages/Programs'
 import Intake from './pages/Intake'
@@ -13,6 +14,7 @@ import Pipeline from './pages/Pipeline'
 export default function App() {
   return (
     <BrowserRouter>
+      <ApiKeyDialog />
       <Routes>
         <Route element={<StageLayout />}>
           <Route index element={<Programs />} />

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../api/client'
+import { fetchWithKey } from '../api/apiKey'
 import NextStageLink from '../components/NextStageLink'
 import { useProgram } from '../hooks/useProgram'
 import { STAKEHOLDER_GROUPS, classStyle, stakeholderLabel } from '../constants/stakeholder'
@@ -227,7 +228,7 @@ export default function StakeholderNeeds() {
     setClassifyProgress(null)
     setError('')
     try {
-      const response = await fetch(
+      const response = await fetchWithKey(
         `/programs/${programId}/evidence/classify-stream`,
         { headers: { 'Accept': 'text/event-stream' } }
       )

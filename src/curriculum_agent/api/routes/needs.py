@@ -4,10 +4,11 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from curriculum_agent.api.deps import require_api_key
 from curriculum_agent.api.jobs import JobConflict, start_job, start_job_or_409, sync_writer
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
@@ -80,7 +81,7 @@ async def list_needs(program_id: str, active_only: bool = False) -> list[Need]:
     return await _repo.list_by_program(program_id)
 
 
-@router.post("/{need_id}/split", response_model=list[Need])
+@router.post("/{need_id}/split", response_model=list[Need], dependencies=[Depends(require_api_key)])
 async def split_need(program_id: str, need_id: str) -> list[Need]:
     """Undo a merge at the Need checkpoint: drop the merged Need, free its originals.
 
@@ -145,14 +146,14 @@ async def _set_exclusion(program_id: str, need_id: str, *, exclude: bool) -> Nee
             raise HTTPException(status_code=404, detail="ไม่พบ Need นี้") from exc
 
 
-@router.post("/{need_id}/exclude", response_model=Need)
+@router.post("/{need_id}/exclude", response_model=Need, dependencies=[Depends(require_api_key)])
 async def exclude_need(program_id: str, need_id: str) -> Need:
     """Take a Need out of the working set without deleting it. Refused with 409 when
     a stored PLO cites it: an outcome has to go (or be merged) first."""
     return await _set_exclusion(program_id, need_id, exclude=True)
 
 
-@router.post("/{need_id}/restore", response_model=Need)
+@router.post("/{need_id}/restore", response_model=Need, dependencies=[Depends(require_api_key)])
 async def restore_need(program_id: str, need_id: str) -> Need:
     """Bring an excluded Need back. No PLO check: nothing can cite an excluded Need."""
     return await _set_exclusion(program_id, need_id, exclude=False)
@@ -167,7 +168,7 @@ class ManualMergeRequest(BaseModel):
 _MANUAL_MERGE_REASON_TH = "ผู้ออกแบบหลักสูตรเลือกรวม Need เหล่านี้"
 
 
-@router.post("/merge", response_model=Need)
+@router.post("/merge", response_model=Need, dependencies=[Depends(require_api_key)])
 async def merge_needs(program_id: str, body: ManualMergeRequest) -> Need:
     """The designer folds 2-5 active Needs into one merged Need.
 
@@ -399,7 +400,9 @@ async def _start_need_job(
     return await starter(program_id, "need_combination", params, work)
 
 
-@router.post("/run", response_model=JobInfo, status_code=202)
+@router.post(
+    "/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
 async def run_need_pipeline(program_id: str, body: DesignerNoteRequest | None = None) -> JobInfo:
     """Agent 1 then Agent 2, as two chained jobs: the first run of a program.
 
@@ -425,7 +428,9 @@ async def run_need_pipeline(program_id: str, body: DesignerNoteRequest | None = 
     )
 
 
-@router.post("/skills/run", response_model=JobInfo, status_code=202)
+@router.post(
+    "/skills/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
 async def run_skill_extraction(program_id: str, body: DesignerNoteRequest | None = None) -> JobInfo:
     """Agent 1 alone: extract skills, group them, and stop. Answers 202; the
     result (a `SkillRunResult`) arrives through `GET /jobs`.
@@ -444,7 +449,9 @@ async def run_skill_extraction(program_id: str, body: DesignerNoteRequest | None
     )
 
 
-@router.post("/combine/run", response_model=JobInfo, status_code=202)
+@router.post(
+    "/combine/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
 async def run_need_combination(program_id: str, body: DesignerNoteRequest | None = None) -> JobInfo:
     """Agent 2 alone: turn the stored skill groups into Needs. Answers 202; the
     result (a `NeedRunResult`) arrives through `GET /jobs`.

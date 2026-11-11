@@ -9,9 +9,12 @@ Everyone who gets through Cloudflare Access shares one dataset. There are no use
 accounts. Any authorised person can read and delete any program. That is
 acceptable for an invited demo and unacceptable for anything wider.
 
-**The API has no authentication of its own.** `API_KEY` stays unset because the
-frontend does not send `X-API-Key`; setting it would make every write fail with
-401. Cloudflare Access is the only barrier, so three conditions must hold:
+**Every write route requires `X-API-Key` when `API_KEY` is set.** Set it in
+`.env` and hand the key to the designer out of band: the UI opens a "กรอก API key"
+dialog on the first 401, keeps the key in that browser tab only
+(`sessionStorage`) and retries the request. GET routes stay open. If `API_KEY`
+is left unset, writes are open to anyone past Access (`start-demo.ps1` warns).
+Cloudflare Access is still the outer barrier, so three conditions must hold:
 
 1. Port 8000 is never exposed directly — the tunnel is the only way in.
 2. `cloudflared` points at `http://127.0.0.1:8000` (not `localhost`, which
@@ -27,9 +30,9 @@ frontend does not send `X-API-Key`; setting it would make every write fail with
    ```
 
 2. **Confirm `.env` has:** `POSTGRES_PASSWORD`, `POSTGRES_DSN`,
-   `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENROUTER_API_KEY`. Leave
-   `API_KEY` unset. `start-demo.ps1` checks `OPENROUTER_API_KEY` is set and
-   `API_KEY` is not, but it cannot check `POSTGRES_PASSWORD` /
+   `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`, `OPENROUTER_API_KEY`. Set
+   `API_KEY` and give its value to the designer. `start-demo.ps1` checks
+   `OPENROUTER_API_KEY` is set and warns when `API_KEY` is not, but it cannot check `POSTGRES_PASSWORD` /
    `POSTGRES_DSN` against each other — see step 3 if you are rotating the
    Postgres password rather than starting from a fresh volume.
 
@@ -213,5 +216,5 @@ Delete old zips from `dist\demo-package\`.
 
 Recorded so they are not mistaken for oversights. Closing them is separate work.
 
-- GET routes carry no `require_api_key`, so all data is readable by anyone past Access.
+- GET routes carry no `require_api_key`, so all data is readable by anyone past Access. Write routes all carry it.
 - Any authorised user can delete any program.

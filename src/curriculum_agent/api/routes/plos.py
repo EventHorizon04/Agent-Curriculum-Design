@@ -248,7 +248,9 @@ class PLOSynthesisRunRequest(DesignerNoteRequest):
     run_validation: bool = True
 
 
-@router.post("/run", response_model=JobInfo, status_code=202)
+@router.post(
+    "/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
 async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None = None) -> JobInfo:
     """Synthesize the program's PLOs from its stored Needs. Answers 202; the
     result (a `list[PLO]`) arrives through `GET /jobs`.
@@ -306,7 +308,9 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
     )
 
 
-@router.post("/report/run", response_model=JobInfo, status_code=202)
+@router.post(
+    "/report/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
 async def run_plo_report(program_id: str) -> JobInfo:
     """Assemble the report. Answers 202; the result (a `PLOReportResponse`)
     arrives through `GET /jobs`. The QA review is stage 06 and runs on its own
@@ -419,7 +423,9 @@ async def _start_review_job(program_id: str, *, or_409: bool) -> JobInfo:
     return await starter(program_id, "plo_review", {}, work)
 
 
-@router.post("/review/run", response_model=JobInfo, status_code=202)
+@router.post(
+    "/review/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
 async def run_plo_review(program_id: str) -> JobInfo:
     """Run the closing-stage QA review afresh. Answers 202; the result (a
     `PLOReviewRunResponse`) arrives through `GET /jobs`.
@@ -442,7 +448,7 @@ class MergeNeedsRequest(DesignerNoteRequest):
     need_ids: list[str] = Field(min_length=2)
 
 
-@router.post("/from-needs", response_model=PLO)
+@router.post("/from-needs", response_model=PLO, dependencies=[Depends(require_api_key)])
 async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO:
     """Synthesize one PLO covering several designer-selected Needs.
 

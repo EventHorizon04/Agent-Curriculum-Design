@@ -70,7 +70,7 @@ async def _run_graph(
         await repo.set_status(session_id, "failed", message=str(exc))
 
 
-@router.post("/", response_model=SessionInfo)
+@router.post("/", response_model=SessionInfo, dependencies=[Depends(require_api_key)])
 async def create_session(
     program_id: str,
     request: Request,
@@ -135,7 +135,9 @@ async def get_session(program_id: str, session_id: str) -> SessionInfo:
     return session
 
 
-@router.post("/{session_id}/approve", response_model=SessionInfo)
+@router.post(
+    "/{session_id}/approve", response_model=SessionInfo, dependencies=[Depends(require_api_key)]
+)
 async def approve_session(
     program_id: str,
     session_id: str,
@@ -168,7 +170,9 @@ async def approve_session(
     return session
 
 
-@router.post("/{session_id}/reject", response_model=SessionInfo)
+@router.post(
+    "/{session_id}/reject", response_model=SessionInfo, dependencies=[Depends(require_api_key)]
+)
 async def reject_session(program_id: str, session_id: str, request: Request) -> SessionInfo:
     repo = SessionRepository()
     session = await repo.get(session_id)
