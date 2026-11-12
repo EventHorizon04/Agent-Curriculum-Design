@@ -587,6 +587,7 @@ function PLOCard({
     try {
       const res = await api.put<PLO>(`/programs/${programId}/plos/${p.plo_id}`, draft)
       onUpdate(res.data)
+      setDraft(res.data)
       setEditing(false)
     } catch (err) {
       // The server says why. Guessing "forbidden word" was wrong more often
@@ -730,7 +731,12 @@ function PLOCard({
         {!editing && (
           <div className="flex shrink-0 flex-row flex-wrap gap-1.5 sm:flex-col">
             <button
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                // Start from the latest row: `draft` was set once at mount and
+                // can hold an older version after a revalidate or an earlier save.
+                setDraft(p)
+                setEditing(true)
+              }}
               disabled={Boolean(pending)}
               className="btn btn-sm btn-secondary"
             >

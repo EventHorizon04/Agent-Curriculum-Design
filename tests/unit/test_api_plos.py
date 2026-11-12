@@ -719,6 +719,54 @@ def test_put_unchanged_statement_is_version_checked_too(monkeypatch: pytest.Monk
     insert.assert_not_awaited()
 
 
+def test_put_with_stale_body_version_answers_409_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tab 2 still holds v2 text after tab 1 saved v2 -> v3: its PUT must not overwrite."""
+    stored = _plo("PLO1", ["N1"]).model_copy(update={"version": 3})
+    insert = _stored(monkeypatch, [stored])
+    update = AsyncMock(return_value=True)
+    monkeypatch.setattr(plos_route.PLORepository, "update_if_version", update)
+
+    resp = client.put("/programs/cs-test/plos/PLO1", json={**_PUT_BODY, "version": 2})
+
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["detail"] == _CHANGED_DURING_EDIT
+    update.assert_not_awaited()
+    insert.assert_not_awaited()
+
+
+def test_put_with_current_body_version_succeeds_and_bumps_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stored = _plo("PLO1", ["N1"]).model_copy(update={"version": 3})
+    insert = _stored(monkeypatch, [stored])
+    update = AsyncMock(return_value=True)
+    monkeypatch.setattr(plos_route.PLORepository, "update_if_version", update)
+
+    resp = client.put("/programs/cs-test/plos/PLO1", json={**_PUT_BODY, "version": 3})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 4
+    update.assert_awaited_once()
+    assert update.await_args.kwargs == {"expected_version": 3}
+    assert update.await_args.args[0].version == 4
+    insert.assert_not_awaited()
+
+
+def test_put_without_body_version_keeps_old_behaviour(monkeypatch: pytest.MonkeyPatch) -> None:
+    stored = _plo("PLO1", ["N1"]).model_copy(update={"version": 3})
+    _stored(monkeypatch, [stored])
+    update = AsyncMock(return_value=True)
+    monkeypatch.setattr(plos_route.PLORepository, "update_if_version", update)
+
+    resp = client.put("/programs/cs-test/plos/PLO1", json=_PUT_BODY)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["version"] == 4
+    assert update.await_args.kwargs == {"expected_version": 3}
+
+
 def test_revalidate_keeps_designer_edited_at(
     monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:

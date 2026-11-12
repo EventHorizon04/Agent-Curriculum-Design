@@ -485,6 +485,9 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         return plo
 
 
+_PLO_CHANGED_DURING_EDIT_TH = "PLO นี้ถูกเปลี่ยนระหว่างแก้ไข — โหลดใหม่แล้วลองอีกครั้ง"
+
+
 class PLOStatementUpdate(BaseModel):
     """The fields a designer edits by hand.
 
@@ -497,6 +500,10 @@ class PLOStatementUpdate(BaseModel):
     `extra="ignore"` (the default) is what keeps the frontend working unchanged:
     it PUTs the whole object, and the verdict fields in it are now dropped
     rather than trusted.
+
+    `version` is the version the client's edit started from. The route refuses a
+    body built from an older one (409); `None` is an older client, compared
+    against the row read now, as before.
     """
 
     statement_th: str
@@ -505,6 +512,7 @@ class PLOStatementUpdate(BaseModel):
     action_verb_th: str
     rationale_th: str
     distinctive_feature_th: str | None = None
+    version: int | None = None
 
 
 @router.put("/{plo_id}", response_model=PLO, dependencies=[Depends(require_api_key)])
@@ -539,11 +547,16 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
     match = next((p for p in existing if p.plo_id == plo_id), None)
     if match is None:
         raise HTTPException(status_code=404, detail="PLO not found")
+    if body.version is not None and body.version != match.version:
+        raise HTTPException(status_code=409, detail=_PLO_CHANGED_DURING_EDIT_TH)
 
+    # `version` is the client's starting point, not a column to write: the explicit
+    # bump below is the only version this route stores.
+    fields = body.model_dump(exclude={"version"})
     edited = body.statement_th.strip() != match.statement_th.strip()
     if not edited:
         updated = match.model_copy(
-            update={**body.model_dump(), "version": match.version + 1, "program_id": program_id}
+            update={**fields, "version": match.version + 1, "program_id": program_id}
         )
         await _write_edit(updated, expected_version=match.version)
         return updated
@@ -573,7 +586,7 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
     )
     updated = match.model_copy(
         update={
-            **body.model_dump(),
+            **fields,
             "version": match.version + 1,
             "program_id": program_id,
             "smart_check": smart_check,
@@ -596,7 +609,7 @@ async def _write_edit(updated: PLO, *, expected_version: int) -> None:
 
     Update-only: a PLO a redraft merged away in the meantime stays gone."""
     if not await _repo.update_if_version(updated, expected_version=expected_version):
-        raise HTTPException(status_code=409, detail="PLO นี้ถูกเปลี่ยนระหว่างแก้ไข — โหลดใหม่แล้วลองอีกครั้ง")
+        raise HTTPException(status_code=409, detail=_PLO_CHANGED_DURING_EDIT_TH)
 
 
 @router.post(

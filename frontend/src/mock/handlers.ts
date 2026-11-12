@@ -1515,6 +1515,10 @@ export function buildRouter(): Router {
     const db = getDb()
     const match = of(db.plos, pid).find((p) => p.plo_id === req.params.ploId)
     if (!match) return detail(404, 'PLO not found')
+    // The version the client's edit started from, as the route compares it.
+    if (typeof b.version === 'number' && b.version !== match.version) {
+      return detail(409, 'PLO นี้ถูกเปลี่ยนระหว่างแก้ไข — โหลดใหม่แล้วลองอีกครั้ง')
+    }
 
     // PLOStatementUpdate: text only. Verdict fields in the body are ignored.
     const text = {
