@@ -50,6 +50,7 @@ from curriculum_agent.stages.need_grouping import (
     MAX_CORE_PLOS,
     MIN_CORE_AFTER_MERGE,
     group_bloom,
+    is_core_candidate,
     is_in_scope,
     is_unwritten_need,
     merge_bloom,
@@ -273,8 +274,8 @@ def mark_merged(needs: list[Need], merged: list[Need]) -> list[Need]:
 
 
 def _core_count(needs: Sequence[Need]) -> int:
-    """Active, non-optional Needs: what a PLO set's 6-10 band is counted over."""
-    return sum(1 for n in needs if n.merged_into is None and not n.is_optional)
+    """Active Needs that could become core PLOs: what the 6-10 band is counted over."""
+    return sum(1 for n in needs if n.merged_into is None and is_core_candidate(n))
 
 
 async def merge_duplicates(

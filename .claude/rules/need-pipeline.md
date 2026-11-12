@@ -145,6 +145,14 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   makes it look free; it is not, because the band is a property of the stored set
   and `POST /plos/from-needs` checks against it, so the padding lands in a number
   the designer is judged against and cannot reach.
+- **The Need-stage core count is `is_core_candidate`, not `not is_optional`.**
+  `need_grouping.is_core_candidate` (not optional, in scope, written) is what the
+  below-`MIN_NEEDS` warning, `need_merge._core_count` and the manual-merge floor in
+  `POST /needs/merge` count. The measured non-graduate sentences ("ไม่พบความต้องการ…",
+  `[ต้องทบทวน]`, "ต้องการหลักสูตรที่…") were all out of scope or unwritten markers, so
+  `plo_synthesis` never drafted them while the old count still held a slot for each.
+  `is_optional` is left alone: it decides OPT numbering, and flagging an out-of-scope
+  Need optional would turn a designer's scope override into an OPT PLO.
 - **`supporting_indices` is self-report, and only its low end means anything.**
   The summarize call numbers the member names and asks which ones the sentence
   speaks for; `need_grouping.supporting_coverage` weighs the answer by mentions

@@ -399,3 +399,28 @@ async def test_manual_merge_while_session_paused(
     ids = [n["need_id"] for n in result["needs"]]
     assert merged_id in ids
     assert "A" not in ids and "B" not in ids
+
+
+def test_manual_merge_floor_counts_only_in_scope_core_needs(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs
+) -> None:
+    """Out-of-scope Needs are padding no PLO can come from: 4 in-scope + 3 out of
+    scope is a core count of 4, so folding two in-scope Needs leaves 3."""
+    needs = [_need(n) for n in "ABCD"]
+    needs += [_need(f"X{i}", graduate_capability_skill_count=0) for i in range(3)]
+    _, sentence = _install(monkeypatch, needs)
+
+    response = _merge(["A", "B"])
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == "การรวมนี้จะเหลือ Need หลัก 3 ข้อ ต่ำกว่าขั้นต่ำ 4 ข้อ"
+    assert sentence.calls == 0
+
+
+def test_manual_merge_floor_allows_the_same_merge_when_the_padding_is_in_scope(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs
+) -> None:
+    needs = [_need(n) for n in "ABCD"] + [_need(f"X{i}") for i in range(3)]
+    _install(monkeypatch, needs)
+
+    assert _merge(["A", "B"]).status_code == 200

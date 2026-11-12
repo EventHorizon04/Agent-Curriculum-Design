@@ -12,6 +12,7 @@ import type { JobUsage, SessionUsage, SlotUsage, UsageSummary, UsageTotals } fro
 import type { SMARTCheck, SmartFinding } from '../types/plo'
 import type { FeedbackAction, PLOSetReview } from '../types/ploReview'
 import { MAX_CORE_PLOS, MAX_MERGE_NEEDS, fallbackKind } from '../constants/needPolicy'
+import { scopeVerdict } from '../constants/scope'
 import {
   clone,
   consumeFailNextRun,
@@ -1122,8 +1123,11 @@ export function buildRouter(): Router {
     }
     // Worst case: the merged Need counts as core whenever any member is.
     const active = activeNeeds(of(db.needs, pid))
-    const currentCore = active.filter((n) => !n.is_optional).length
-    const selectedCore = picked.filter((n) => !n.is_optional).length
+    // Mirrors is_core_candidate: not optional, in scope, written.
+    const isCoreCandidate = (n: NeedRow) =>
+      !n.is_optional && scopeVerdict(n) === 'in_scope' && !fallbackKind(n.statement_th)
+    const currentCore = active.filter(isCoreCandidate).length
+    const selectedCore = picked.filter(isCoreCandidate).length
     const projected = currentCore - selectedCore + (selectedCore > 0 ? 1 : 0)
     if (projected < MIN_CORE_AFTER_MERGE && projected < currentCore) {
       return detail(

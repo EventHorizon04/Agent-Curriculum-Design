@@ -24,6 +24,7 @@ from curriculum_agent.stages.need_grouping import (
     PROVIDER_MARKER_TH,
     REVIEW_MARKER_TH,
     find_code_identifier,
+    is_core_candidate,
     supporting_coverage,
 )
 from curriculum_agent.stages.need_merge import merge_duplicates
@@ -324,7 +325,7 @@ async def run(state: AgentState) -> AgentState:
     needs = await _merge_duplicates(state, program_id, needs)
 
     # Active Needs only: an original a merge absorbed is no longer a candidate PLO.
-    core_count = sum(1 for n in needs if not n.is_optional and n.merged_into is None)
+    core_count = sum(1 for n in needs if n.merged_into is None and is_core_candidate(n))
     if core_count < MIN_NEEDS:
         logger.warning(
             f"need_combination produced only {core_count} core Needs (policy is at least "

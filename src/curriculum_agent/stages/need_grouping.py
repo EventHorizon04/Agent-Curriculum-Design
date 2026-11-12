@@ -96,6 +96,21 @@ def is_in_scope(need: Need) -> bool:
     )
 
 
+def is_core_candidate(need: Need) -> bool:
+    """Could synthesis draft this Need as a core PLO?
+
+    The core count the 6-10 band and the manual-merge floor are judged on has to
+    be the Needs `plo_synthesis` can actually draft as core PLOs: not optional,
+    in scope, and written. Counting `not is_optional` alone also counted Needs
+    the scope guard and the marker filter drop before synthesis, so the number
+    the designer was held to included padding no PLO could ever come from.
+    `is_optional` itself is left alone — it decides OPT numbering, and flagging
+    an out-of-scope Need optional would turn a designer's scope override into an
+    OPT PLO.
+    """
+    return not need.is_optional and is_in_scope(need) and not is_unwritten_need(need)
+
+
 def passes_scope_axes(in_field_count: int, graduate_count: int, member_count: int) -> bool:
     """The same cut, over raw counters rather than a built `Need`.
 

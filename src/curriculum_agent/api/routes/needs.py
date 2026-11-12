@@ -35,6 +35,7 @@ from curriculum_agent.stages.demand import build_scoring_corpus
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE, FoldGroup
 from curriculum_agent.stages.need_grouping import (
     MIN_CORE_AFTER_MERGE,
+    is_core_candidate,
     is_in_scope,
     is_unwritten_need,
 )
@@ -215,8 +216,8 @@ async def merge_needs(program_id: str, body: ManualMergeRequest) -> Need:
             )
         # Worst case: the merged Need counts as core whenever any member is.
         active = [n for n in all_needs if n.merged_into is None and n.excluded_at is None]
-        current_core = sum(1 for n in active if not n.is_optional)
-        selected_core = sum(1 for n in selected if not n.is_optional)
+        current_core = sum(1 for n in active if is_core_candidate(n))
+        selected_core = sum(1 for n in selected if is_core_candidate(n))
         projected = current_core - selected_core + (1 if selected_core else 0)
         if projected < MIN_CORE_AFTER_MERGE and projected < current_core:
             raise HTTPException(

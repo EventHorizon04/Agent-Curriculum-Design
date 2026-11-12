@@ -1150,3 +1150,58 @@ async def test_rewrite_deletes_before_inserting_and_carries_no_manual_state(
     assert not {n.need_id for n in store} & {"OLD-EXCLUDED", "OLD-MERGED"}
     assert all(n.excluded_at is None for n in store)
     assert all(n.merged_by in (None, "agent") for n in store)
+
+
+async def test_run_warns_when_out_of_scope_needs_pad_the_core_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Six non-optional Needs, two of them out of scope: the count is 4, not 6."""
+    import loguru  # noqa: PLC0415
+
+    from curriculum_agent.models import Need  # noqa: PLC0415
+
+    rows = [_skill("ทักษะวิชาชีพ", KSECCategory.S, f"S{j}", f"E{j}") for j in range(2)]
+
+    async def one_group(
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
+    ) -> list[list[int]]:
+        return [[i] for i in range(len(names))]
+
+    monkeypatch.setattr(sg, "cluster_skill_names", one_group)
+    monkeypatch.setattr(nc, "complete_need_combination", _fake_summarize)
+    corpus = {s.source_evidence_id: s.source_stakeholder_type.value for s in rows}
+    groups = await sg.build_skill_groups("cs-test", rows, corpus)
+
+    def _need(i: int, graduate: int) -> Need:
+        return Need(
+            need_id=f"N{i}",
+            program_id="cs-test",
+            statement_th=f"ต้องการบัณฑิตที่ทำงานด้านที่ {i} ในสถานประกอบการจริงได้",
+            ksec_categories=[KSECCategory.S],
+            bloom_level=BloomLevel.APPLY,
+            member_skill_ids=[f"S{i}"],
+            source_evidence_ids=[f"E{i}"],
+            freq=1,
+            demand_score=0.5,
+            in_field_skill_count=1,
+            graduate_capability_skill_count=graduate,
+        )
+
+    padded = [_need(i, 1 if i < 4 else 0) for i in range(6)]
+    monkeypatch.setattr(nc, "_merge_duplicates", AsyncMock(return_value=padded))
+    monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
+    monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
+
+    warnings: list[str] = []
+    sink = loguru.logger.add(lambda m: warnings.append(m.record["message"]), level="WARNING")
+    try:
+        await nc.run(
+            {"program_id": "cs-test", "skill_groups": [g.model_dump(mode="json") for g in groups]}
+        )
+    finally:
+        loguru.logger.remove(sink)
+
+    assert any("only 4 core Needs" in m for m in warnings)
