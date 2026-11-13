@@ -1,6 +1,6 @@
 # Prompt-lock candidate: three full runs after the S vs E/C rule (2026-11-13)
 
-At a861a4c (extraction rule added). Copy DB, apply loop (default), GLM on every slot. Each run is an evidence-only copy of `program` (`program-run-6`, `-7`, `-8`), run back to back through `POST /needs/run` then `POST /plos/run`.
+At a861a4c (extraction rule added). The backend was started at 18:24, before f8d06b2 and 032ee6b (concurrency 5 → 15, PLO fan-out 3 → 8, eager second wave) landed at 18:47 from another session and was not reloaded, so all three runs ran **without** those two commits. Wall times below are the old concurrency. Copy DB, apply loop (default), GLM on every slot. Each run is an evidence-only copy of `program` (`program-run-6`, `-7`, `-8`), run back to back through `POST /needs/run` then `POST /plos/run`.
 
 Pass criteria, chosen by the builder for Research Plan phase 1 ("complete, cites evidence, right format"): every job succeeded; 6-10 core PLOs; every PLO has `source_need_ids` and `source_evidence_ids`; no `smart_escalated` PLO.
 
