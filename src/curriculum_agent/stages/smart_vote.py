@@ -87,6 +87,22 @@ def is_decided(runs: Sequence[JudgeRun | None], requested: int) -> bool:
     return True
 
 
+def can_still_decide(done: Sequence[JudgeRun | None], batch_pending: int, requested: int) -> bool:
+    """True when the `batch_pending` still-running first-batch runs could leave the
+    vote decided. Each criterion is checked on its own, which over-approximates:
+    True when unsure only means waiting, never starting a run too early."""
+    t = vote_threshold(requested)
+    unrequested = requested - len(done) - batch_pending
+    ok = len(_successes(done))
+    if not any(n >= t or n + unrequested < t for n in range(ok, ok + batch_pending + 1)):
+        return False
+    for code in _SOFT_ORDER:
+        f = sum(1 for run in _successes(done) if code in run.failed)
+        if not any(n >= t or n + unrequested < t for n in range(f, f + batch_pending + 1)):
+            return False
+    return True
+
+
 def vote(runs: Sequence[JudgeRun | None], requested: int) -> SoftVote | None:
     """The majority verdict, or None when too few runs succeeded to hold a vote."""
     t = vote_threshold(requested)

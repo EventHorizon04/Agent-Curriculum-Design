@@ -41,7 +41,9 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   Why not five runs that each repair: five different statements and nothing to
   vote on, so judging is parallel and the repair is one call. Early stop
   (`first_batch_size`, `is_decided`): 3 runs first, and the other 2 only when the
-  first 3 leave a criterion open, which gives the same answer as always running 5
+  first 3 leave a criterion open (they start as soon as the first batch provably cannot
+  decide, `smart_vote.can_still_decide` via `eager_waves.run_eager_waves`, without
+  waiting for its slowest run; cost and the set of runs started are unchanged), which gives the same answer as always running 5
   (7 of 9 PLOs stopped at 3 on the measured run). The repair instruction is built in
   code (`build_vote_repair_instruction_th`) from the hard failures' fix hints, the
   majority-failed repairable criteria with the representative run's note, and that

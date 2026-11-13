@@ -600,3 +600,61 @@ async def test_single_run_unchanged(live: AsyncMock, monkeypatch: pytest.MonkeyP
 
 
 _FINISH_OTHER = ReviewFinish(kind="finish", summary_th="ไม่พบข้อซ้ำ")  # a different vote
+
+
+async def test_split_is_detected_before_the_slow_first_batch_run_finishes(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run 2 of the first batch disagrees with run 1 while run 3 is held: the rest
+    must start without waiting for run 3, and the order stays launch order."""
+    _five(monkeypatch)
+    release = asyncio.Event()
+    started: list[int] = []
+    scripts = [_FINISH, _FINISH_OTHER, _FINISH, _FINISH, _FINISH]
+
+    async def run(dossier, unused, voices):  # type: ignore[no-untyped-def]
+        n = len(started)
+        started.append(n)
+        if n == 2:  # the slow one
+            await asyncio.wait_for(release.wait(), timeout=2)
+        elif n == 4:
+            release.set()  # last of the second wave started: let run 3 go
+        return AgentOutcome(scripts[n], None, [])
+
+    live.side_effect = run
+    review = await pr.fresh_review("p", _PLOS)
+    assert len(started) == 5
+    assert (review.runs_requested, review.runs_succeeded) == (5, 5)
+
+
+async def test_unanimous_first_batch_never_starts_the_rest_even_when_slow(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _five(monkeypatch)
+
+    async def run(dossier, unused, voices):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(0.01)
+        return AgentOutcome(_FINISH, None, [])
+
+    live.side_effect = run
+    review = await pr.fresh_review("p", _PLOS)
+    assert live.await_count == 3
+    assert review.runs_succeeded == 3
+
+
+async def test_run_numbers_in_the_log_follow_launch_index(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loguru import logger
+
+    _five(monkeypatch)
+    live.side_effect = [AgentOutcome(None, "failed", [])] * 5
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        await pr.fresh_review("p", _PLOS)
+    finally:
+        logger.remove(sink)
+    text = "".join(messages)
+    for i in range(1, 6):
+        assert f"run {i}/5 ended failed" in text

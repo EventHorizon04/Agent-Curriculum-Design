@@ -673,3 +673,55 @@ async def test_a_timeout_that_returned_the_vote_still_gets_the_code_disagreed_no
 
     assert plo is not None and plo.smart_escalated is True
     assert (plo.smart_diagnosis_th or "").startswith("โค้ดตรวจประโยคสุดท้ายแล้วยังไม่ผ่าน")
+
+
+# ---------------------- the second wave starts eagerly ----------------------
+
+
+async def test_second_wave_starts_before_a_slow_first_batch_run_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run 1 fails M and run 2 passes: two verdicts disagree and the third, still
+    held, cannot settle M by itself with two runs unrequested, so the other two
+    must start while run 3 is blocked. Run count stays five."""
+    release = asyncio.Event()
+    calls = 0
+    started_while_held = 0
+
+    async def judge(response_model, messages, **kwargs):  # noqa: ANN001, ANN003
+        nonlocal calls, started_while_held
+        calls += 1
+        n = calls
+        if n == 3:
+            await asyncio.wait_for(release.wait(), timeout=2)
+        else:
+            if n >= 4:
+                started_while_held += 1
+                if n == 5:
+                    release.set()
+            action = _finish(**_FAIL_M, diagnosis_th="วัดไม่ได้") if n == 1 else _finish()
+            return sa.JudgeStep(reasoning_th="สรุปผล", action=action)
+        return sa.JudgeStep(reasoning_th="สรุปผล", action=_finish())
+
+    monkeypatch.setattr(sa, "complete_validation", judge)
+
+    result = await sa.run_smart_agent(_draft(), _ctx(), META)
+
+    assert calls == 5
+    assert started_while_held == 2
+    assert result.ran is True
+
+
+async def test_eager_second_wave_starts_no_more_runs_than_waiting_would(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Three failing runs decide M at once (3 of 5): the other two are not run."""
+    judges = _judges(monkeypatch, [_finish(**_FAIL_M, diagnosis_th="วัดไม่ได้")], delay=0.01)
+    _repairs(monkeypatch, _draft())
+
+    async def one_round() -> list[Any]:
+        return await sa._judge_round(_draft(), _ctx(), META, 5, [])
+
+    runs = await one_round()
+    assert len(runs) == 3
+    assert judges.calls == 3

@@ -71,6 +71,7 @@ from curriculum_agent.prompts.smart_agent import (
     build_vote_repair_instruction_th,
 )
 from curriculum_agent.smart_vocabulary import HARD_CODES, SmartFindingCode
+from curriculum_agent.stages.eager_waves import run_eager_waves
 from curriculum_agent.stages.smart_agent_tools import (
     TOOL_REQUIRED_ARG,
     ToolBudget,
@@ -83,8 +84,8 @@ from curriculum_agent.stages.smart_vote import (
     SOFT_VERDICTS,
     JudgeRun,
     SoftVote,
+    can_still_decide,
     first_batch_size,
-    is_decided,
     repairable,
     vote,
 )
@@ -639,20 +640,22 @@ async def _judge_round(
     requested: int,
     failures: list[ValidationReason],
 ) -> list[JudgeRun | None]:
-    """The runs of one round: a first batch, and the rest only if it left the
-    vote open. Every run waits on the shared semaphore, so N PLOs times M runs
-    stays inside `llm_max_concurrency`."""
+    """The runs of one round, in launch order: a first batch, and the rest only if
+    it leaves the vote open. The rest start as soon as the first batch provably
+    cannot decide, without waiting for its slowest run; the runs started are the
+    ones a wait-for-all version would start. Every run waits on the shared
+    semaphore, so N PLOs times M runs stays inside `llm_max_concurrency`."""
 
-    async def one() -> JudgeRun | None:
+    async def one(_index: int) -> JudgeRun | None:
         async with _judge_semaphore():
             return await _judge_once(draft, ctx, metadata, failures=failures)
 
-    runs: list[JudgeRun | None] = list(
-        await asyncio.gather(*(one() for _ in range(first_batch_size(requested))))
+    return await run_eager_waves(
+        one,
+        first=first_batch_size(requested),
+        requested=requested,
+        can_still_decide=lambda done, pending: can_still_decide(done, pending, requested),
     )
-    if not is_decided(runs, requested):
-        runs += await asyncio.gather(*(one() for _ in range(requested - len(runs))))
-    return runs
 
 
 async def _voted_loop(
