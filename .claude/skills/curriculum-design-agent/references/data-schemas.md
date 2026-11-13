@@ -13,7 +13,7 @@ StakeholderEvidence (raw)
   ↓ source_evidence_id + evidence_span_th (verified in code)
 ExtractedSkill (per evidence item)
   ↓ member_skill_ids
-Need (grouped skills, one KSEC tag, one sentence)
+Need (grouped skills, one KSEC tag — several when merged — one sentence)
   ↓ source_need_ids
 PLO (final artifact — agent scope ends here)
 ```
@@ -174,7 +174,10 @@ class Need(BaseModel):
     statement_th: str = Field(min_length=1)
     statement_en: str | None = None
     rationale_th: str = ""  # why this group is one demand — an explanation, NOT a trail
-    ksec_category: KSECCategory  # single-valued by construction — see below; one of K/S/EC/E/C
+    # One tag unless this Need is a merge (Agent 2), which carries the sorted union
+    # of its originals' tags in K, S, E, C order. At least one, no duplicates.
+    # A checkpoint dict with the old `ksec_category` key is mapped to [value].
+    ksec_categories: list[KSECCategory] = Field(min_length=1)
     bloom_level: BloomLevel  # lower mention-weighted median of member levels (group_bloom)
     member_skill_ids: list[str] = Field(min_length=1)  # ExtractedSkill IDs
     source_evidence_ids: list[str] = Field(min_length=1)
@@ -184,7 +187,38 @@ class Need(BaseModel):
     demand_score: float = Field(ge=0, le=1)  # 0.30 mandate block + 0.70 frequency block
     is_optional: bool = False  # majority-want group → supplementary, not core
     classification_coverage: dict[str, int] = {}  # member-skill count per classification
+    # Set only on a merged Need: the skills that stand for it (rank order, top 7 by
+    # importance_score), its originals in demand order, and the dedup reason.
+    top_skill_ids: list[str] = []
+    merged_from: list[str] = []
+    merged_into: str | None = None  # set on an ORIGINAL: hides it from every reader
+    merge_reason_th: str = ""
+    merged_by: Literal["agent", "designer"] | None = None  # who decided the merge; None on rows merged before 2026-11-03
+    excluded_at: datetime | None = None  # set when the designer excludes it: hides it from every reader, restorable
+
+class SkillGroup(BaseModel):
+    """Agent 1's output, stored so Agent 2 starts without calling the clustering
+    slot. One cluster inside ONE KSEC bucket; mirrors the candidate group
+    need_combination writes a Need sentence from."""
+    group_id: str
+    program_id: str
+    ksec: KSECCategory  # K / S / EC / E / C — resolved tag of the bucket
+    skill_ids: list[str]
+    evidence_ids: list[str]
+    skill_names: list[str]  # most-mentioned first
+    skill_frequencies: list[int]  # skill_frequencies[i] = member rows behind skill_names[i]
+    bloom_level: BloomLevel  # group_bloom
+    demand_score: float
+    is_optional: bool
+    is_graduate: bool  # graduate capability, not purely institutional
+    classification_coverage: dict[str, int]
+    stakeholder_coverage: dict[StakeholderType, int]
+    stakeholder_types: list[StakeholderType]
+    in_field_skill_count: int
+    graduate_capability_skill_count: int
 ```
+
+**Merged and active Needs.** Agent 2's duplicate check (up to 5 Needs, across KSEC) writes one new Need per group and keeps the originals with `merged_into = <merged need_id>`; readers use only active Needs (`merged_into is None` and `excluded_at is None`, `NeedRepository.list_active_by_program`). Since phase 2 (2026-11-03) the designer can also merge 2-5 active Needs at the Need checkpoint (`POST /needs/merge`, `merged_by="designer"`; a selected merged Need nests rather than flattens) and exclude/restore a Need (`POST /needs/{id}/exclude|restore`); both are refused for a Need a stored PLO cites, and a re-run of Agent 2 discards them. A merged Need's `member_skill_ids` and `source_evidence_ids` are the union over its originals (the trail is never smaller), `top_skill_ids` are the top 7 pooled skills by `importance_score`, and its scores are recomputed from the pooled skills, not the max of the originals. `POST /programs/{id}/needs/{need_id}/split` deletes the merged Need and clears `merged_into` on its originals. `skill_groups` is a table (`SkillGroupRepository`), replaced with the skills on a re-run of Agent 1.
 
 `rationale_th` is the model's account of why these skills form one demand, written by the same call that writes the sentence. Keep it apart from traceability: `source_evidence_ids` is what immutable rule 2 is about and is assembled in code, while this is free text nothing validates against the evidence — so the prompt forbids citing anything outside the skill names it was given, and both UI cards label it "คำอธิบายของโมเดล" and keep it out of the trail panel. `_NeedStatement` bounds it (20-240 characters) and rejects an empty answer with the same `find_vague_phrase` the statement uses. It defaults to `""` rather than being required, because a Need also arrives as a plain dict from a LangGraph checkpoint suspended across the deploy that added the column (migration `c7e2f81a4b93`, which backfills a self-identifying `[สร้างย้อนหลัง]` sentence into pre-existing rows rather than composing a reason nobody gave).
 
@@ -202,7 +236,7 @@ A Need holds no evidence text. `sample_quotes_th` was dropped (migration `e1a7c9
 
 Rules 1–2 outrank 3 on purpose — a mandated skill is never dropped for being judged off-field. Semantic matching is deliberately not used in rule 2 (that is what LLM clustering does one stage later, in `need_combination`); only normalized-name matching.
 
-**Single-tag guarantee (`Need.ksec_category`):** `need_combination` buckets `ExtractedSkill`s by `ksec_category` (`bucket_by_ksec` in `stages/need_grouping.py`) *before* clustering — `E` and `C` share one `EC` bucket, everything else buckets by its own tag — and clustering never fuses groups across buckets. A Need mixing two of `K`/`S`/`EC` is therefore structurally impossible. After a group forms, `resolve_need_ksec` decides its tag from its raw member tags: all-`E` → `E`, all-`C` → `C`, mixed → `EC`.
+**Single-tag guarantee for unmerged Needs (`Need.ksec_categories`):** Agent 1 (`stages/skill_grouping.py`) buckets `ExtractedSkill`s by `ksec_category` (`bucket_by_ksec` in `stages/need_grouping.py`) *before* clustering — `E` and `C` share one `EC` bucket, everything else buckets by its own tag — and clustering never fuses groups across buckets. An unmerged Need therefore has exactly one tag. After a group forms, `resolve_need_ksec` decides its tag from its raw member tags: all-`E` → `E`, all-`C` → `C`, mixed → `EC`. Only Agent 2's merge (designer's decision of 2026-10-26) produces a Need with more than one tag.
 
 `demand_score` is the signal the agent uses to decide which Needs are core vs optional. It is also what the 10-PLO ceiling ranks by. The rule (`compute_demand_score` in `stages/demand.py`, shared by skill-level `importance_score` and Need-level `demand_score`):
 
@@ -265,13 +299,28 @@ class PLO(BaseModel):
     rationale_th: str  # why this PLO exists, for designer review
     distinctive_feature_th: str | None = None  # what differentiates this PLO
     version: int = 1
-    smart_retry_count: int = 0  # repair drafts the validator asked for (max 3)
+    smart_retry_count: int = 0  # repair drafts the voted SMART loop ran (max 3)
     smart_escalated: bool = False  # still hard-failing after repairs → human repair
     soft_flags: list[str] = []  # non-blocking: "S_object", "M_assessable", "A_level", "R_needs", "T_horizon"
     smart_validated_by: str = "legacy"  # agent | code_only | stale | legacy — see below
     smart_diagnosis_th: str | None = None  # the validator's reason, for the designer
     is_optional: bool = False  # PLO from want-dominant Need(s), exempt from the core-Need count
+    designer_edited_at: datetime | None = None  # set by PUT /plos/{id} on a changed statement; cleared by nothing but replacing the outcome. Send-back and SMART repair leave such a PLO alone
 ```
+
+**`SupersededPLO` — history of replaced outcomes.** `POST /plos/from-needs` (and review send-back, `cause=review`) replaces every PLO citing a selected Need; `PLORepository.replace` snapshots each removed row into `superseded_plos` in the same transaction as the delete. Read-only: nothing restores from it.
+
+```python
+class SupersededPLO(BaseModel):
+    id: str
+    program_id: str
+    superseded_by: str       # plo_id of the PLO that replaced it
+    superseded_at: datetime  # naive UTC in the DB; "+00:00" in JSON output
+    plo: PLO                 # the row as it stood when removed (JSONB snapshot)
+    cause: str | None = None # designer | review; None (older rows) reads as designer
+```
+
+`GET /programs/{id}/plos/superseded` lists newest first (ties by `plo_id`) and skips, with a warning, a snapshot that no longer passes `PLO.model_validate`. The table is cleared with the program's PLOs and cascade-deleted with the program; a full program copy clones it (fresh ids, remapped), `evidence_only` copies none.
 
 **One Need → one PLO, with a designer escape hatch.** `stages/plo_synthesis.run()` drafts exactly one PLO per Need — a single focused LLM call each, not a batch call over all Needs. A designer can also merge several Needs into one PLO via `POST /programs/{id}/plos/from-needs`, which calls the same `synthesize_from_needs()` function with more than one Need; that function is shared by both paths so both get identical SMART enforcement and evidence handling. When multiple Needs feed one PLO, `is_optional` is true only if *every* contributing Need is optional. `plo_report` no longer classifies the result generic vs specific — that split (and the `SS`/`GS` KSEC tags it read) no longer exists; the report shows each PLO's actual KSEC tag (`K`/`S`/`EC`/`E`/`C`) instead.
 
@@ -283,12 +332,12 @@ Validation rules for PLO (enforce in code):
 - `statement_th` must not contain forbidden words (รู้, จำ, เข้าใจ, ซาบซึ้ง, ตระหนัก, ศรัทธา, รัก) — see `obe-principles.md`. Exception: a PLO with `smart_escalated=True` may carry them — it exists precisely so a human can repair it, and the SMART gate already failed it loudly.
 - `source_need_ids` must be non-empty (no PLO without a Need behind it), and `source_evidence_ids` must be non-empty (no PLO without an evidence trail) — two separate validators, both hard rejects.
 - `smart_check` all five fields must be `True` to mark the PLO ready
-- Hard vs soft failure handling: S-verb / M-forbidden / R-evidence are pure code (`stages/smart_rules.py`) and are the floor — `validate_and_build` runs them on the final statement whatever the validator said, and that call alone sets `smart_escalated`. The five soft verdicts (`S_object`, `M_assessable`, `A_level`, `R_needs`, `T_horizon`) come from the validation agent, land in `soft_flags` and in the matching `SMARTCheck` field, and never block. Repairs are bounded at 3 per PLO. Implement per the SMART validation checklist in `obe-principles.md`.
+- Hard vs soft failure handling: S-verb / M-forbidden / R-evidence are pure code (`stages/smart_rules.py`) and are the floor — `validate_and_build` runs them on the final statement whatever the validator said, and that call alone sets `smart_escalated`. The seven soft verdicts (`S_object`, `M_assessable`, `A_level`, `A_actor`, `A_scope`, `R_needs`, `T_horizon`) come from the validation agent, land in `soft_flags` and in the matching `SMARTCheck` field, and never block or escalate. Since phase 6 a soft verdict counts only when a majority of the `validation_runs` (5) judge runs failed it (`stages/smart_vote.py`, early stop at 3 runs when decided); a PLO that fails a round gets one repair from the synthesis slot (instruction built in code from the hard failures, the majority-failed soft criteria and the representative run's `repair_hint_th`), then is judged again by fresh runs. At most 3 repairs per PLO, so 4 judgings. `A_actor` and `A_scope` are never repaired, and a repair that adds a hard failure the previous statement did not have is discarded. Implement per the SMART validation checklist in `obe-principles.md`.
 - `SMARTCheck.findings: list[SmartFinding]` carries *why*: `criterion` (one of the eight codes), `severity` (`hard`/`soft`), Thai `note_th`. It rides inside the existing `smart_check` JSONB column, so it needed no migration and rows written before it deserialise on the model's default. Do not make it required and do not give `SMARTCheck` `extra="forbid"` — either makes a pre-migration row unreadable, which loses a whole program's PLO list on GET rather than one field.
 - `soft_flags` stays `list[str]`, not the enum. A row carrying a code this build no longer knows would otherwise raise on read, and `R_alignment` was emitted for months. The typed detail is in `findings`; a validator keeps the flat list and the soft findings in step, exempting a row that has flags but no findings (that is what `legacy` means).
-- `smart_validated_by` distinguishes four facts the UI must not conflate: `agent` (judged and this is the verdict), `code_only` (the validator could not run; the pure checks decided alone), `stale` (a designer edited the statement and nothing has re-judged it — set by `PUT /plos/{id}`), `legacy` (predates the validator). `POST /plos/{id}/revalidate` is what moves a `stale` row back to `agent`.
+- `smart_validated_by` distinguishes four facts the UI must not conflate: `agent` (judged and this is the verdict), `code_only` (the validator could not run; the pure checks decided alone), `stale` (a designer edited the statement and nothing has re-judged it — set by `PUT /plos/{id}`), `legacy` (predates the validator). `POST /plos/{id}/revalidate` is what moves a `stale` row back to `agent`. `designer_edited_at` is separate from `stale` on purpose: a revalidate overwrites `smart_validated_by`, but a hand-edited sentence must stay unrewritten (revalidate judges it with `allow_repair=False`; send-back skips it with a trail reason).
 
-## Stage 6: PLO QA review (advisory)
+## Stage 6: PLO QA review (advisory findings, acted on by send-back)
 
 ```python
 class RedundancyFinding(BaseModel):
@@ -317,7 +366,18 @@ class BloomFinding(BaseModel):
     declared: BloomLevel
     suggested_level: BloomLevel | None = None
     reason_th: str = ""
+    suggested_verb_th: str | None = None                 # phase 6: the verb the reviewer thinks fits; guidance, the SMART checks govern it
+    suggestion_th: str = ""                              # phase 6: the reviewer's recommendation, quoted in the redraft note
     agreed_runs: int = 1                                 # runs that said this; 1 for one-run reviews and old rows
+
+class AlignmentFinding(BaseModel):
+    """Phase 6: a PLO that does not answer what the Needs it cites ask for. The
+    reviewer judges it from each cited Need's sentence and its voices (distinct
+    evidence items per stakeholder type, computed in code) — never evidence text."""
+    plo_id: str
+    reason_th: str
+    suggestion_th: str = ""                              # sent back as the redraft note
+    agreed_runs: int = 1
 
 class KsecCoverage(BaseModel):
     """PLOs per K/S/E/C (optional included), computed in code. Plain str keys and flags."""
@@ -361,6 +421,7 @@ class PLOSetReview(BaseModel):
     redundancies: list[RedundancyFinding] = Field(default_factory=list)
     ksec: list[KsecFinding] = Field(default_factory=list)
     bloom: list[BloomFinding] = Field(default_factory=list)
+    alignment: list[AlignmentFinding] = Field(default_factory=list)          # phase 6
     bloom_distribution_th: str = ""
     summary_th: str = ""
     ksec_coverage: KsecCoverage = Field(default_factory=KsecCoverage)        # code
@@ -376,9 +437,42 @@ class PLOSetReview(BaseModel):
     agreement_threshold: int = 1                         # runs_succeeded // 2 + 1 when >=2 runs
 ```
 
+**`PLOReport` — the stored report (phase 6).** `plo_report` stores its result instead of re-persisting PLOs: table `plo_reports`, one row per program (`program_id` primary key, FK, cascade-deleted with it), holding the fingerprint of the set it describes (the review's own: PLOs plus the `(need_id, demand_score)` pairs), `created_at` and the report body in a JSONB column, so a new report field needs no migration. It is current while that fingerprint matches the stored set, and `stage_reached` reports `plo_report` only for a current one. Cleared with the program's PLOs, copied (re-fingerprinted when current) by a full copy, not by `evidence_only`; `GET /programs/{id}/plos/report` returns it with `stale`.
+
+```python
+class PLOReport(BaseModel):
+    program_id: str
+    plo_fingerprint: str          # which PLO set it was built from, as on the review
+    created_at: datetime          # naive UTC in the DB, +00:00 in JSON
+    report: dict[str, Any]        # plos, needs_by_id, needs_not_synthesized, needs_excluded (designer-excluded Needs, not merged-away originals), counts (opaque to the repository)
+```
+
 `plo_reviews` is one row per program (`program_id` primary key, FK to `programs.program_id`, cascade-deleted with it), holding `plo_fingerprint`, `model`, `created_at`, and the rest of `PLOSetReview` in a single JSONB `review` column — no migration needed for a new finding field, the same reasoning as `SMARTCheck.findings`.
 
-**Advisory only.** The QA agent reads the finished PLO set as a whole, after the report (it is stage 06; the graph runs `plo_synthesis → [PLO checkpoint] → plo_report → plo_review → END`), and writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table and nothing else. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. The stage 06 page shows a stored review and labels it stale once `plo_fingerprint` no longer matches the current PLO set and Needs (the fingerprint hashes the PLOs plus the program's `(need_id, demand_score)` pairs); `plo_report` no longer carries a review. Every number and the unused-Need selection are code's (`stages/plo_review_facts.py`); only the judgements are the agent's. A review that could not run (slot disabled, failure, timeout) is stored with `reviewed_by="code_only"`, a `code_only_reason`, the code facts and no agent finding — none is manufactured — and never blocks anything. Every new field defaults, so rows written before them still read; no migration (JSONB, the `SMARTCheck.findings` reasoning).
+**The agent only advises.** The QA agent reads the finished PLO set as a whole, before the PLO checkpoint and the report (it is stage 06; since phase 6 the graph runs `plo_synthesis → plo_review → [PLO checkpoint] → plo_report → END`, the review being a loop of review and send-back, see `plo-review.md`), and itself writes nothing back to a PLO, a Need, a KSEC tag, or a Bloom level — it has its own table. Agreed redundancy, alignment, Bloom/verb and unused-Need findings, and a KSEC category with no PLO (a code fact), are then acted on by code (send-back, `stages/plo_feedback.py`, through `plo_redraft`) and recorded as `FeedbackAction` below; per-PLO KSEC suggestions stay advisory. A PLO the designer edited by hand (`designer_edited_at`) is never acted on; its findings stay as comments. `current`, `agrees`, and `declared` in `KsecFinding`/`BloomFinding` are computed from the PLO's own Needs and `bloom_level` in code, never taken from the model; only `suggested`/`suggestion_th`/`reason_th` are the reviewer's. The stage 06 page shows a stored review and labels it stale once `plo_fingerprint` no longer matches the current PLO set and Needs (the fingerprint hashes the PLOs plus the program's `(need_id, demand_score)` pairs); `plo_report` does not carry a review. Every number and the unused-Need selection are code's (`stages/plo_review_facts.py`); only the judgements are the agent's. A review that could not run (slot disabled, failure, timeout) is stored with `reviewed_by="code_only"`, a `code_only_reason`, the code facts and no agent finding — none is manufactured — and never blocks anything. Every new field defaults, so rows written before them still read; no migration (JSONB, the `SMARTCheck.findings` reasoning).
+
+**`FeedbackAction` — the send-back trail.** One row per actionable finding Agent 4 considered, written right after its action; table `plo_feedback_actions`, same life as `superseded_plos` (cleared with the program's PLOs, cascade-deleted, cloned by a full copy, not by `evidence_only`). `GET /programs/{id}/plos/feedback` lists newest first.
+
+```python
+class FeedbackAction(BaseModel):
+    id: str
+    program_id: str
+    review_created_at: datetime   # the review the finding came from
+    kind: str                     # redundancy | alignment | bloom | ksec_gap | unused_need | loop_end (plain string: a new kind needs no migration)
+    plo_ids: list[str] = []
+    need_ids: list[str] = []
+    finding_reason_th: str = ""   # the reviewer's reason
+    instruction_th: str = ""      # what was sent to the redraft
+    outcome: str                  # applied | skipped | failed | planned (shadow-mode dry run) | stopped (loop_end row)
+    outcome_reason_th: str = ""
+    result_plo_id: str | None = None   # the PLO written, when applied
+    result_statement_th: str | None = None   # its statement, so the trail still reads after later edits
+    result_bloom_level: str | None = None    # its Bloom level (BloomLevel value)
+    round: int = 0                # phase 6: which loop round wrote the row; 0 for a single send-back and older rows
+    created_at: datetime          # when the row was written; orders actions within a round
+```
+
+A `loop_end` row (`outcome="stopped"`, the loop's final `round`, a Thai `outcome_reason_th`) records why the review loop stopped: pass, nothing applied in the last round, the round cap, no agent review, an error or the loop's time budget. In `plo_review_loop_mode="shadow"` the rows are `planned`.
 
 ## Cross-stage: human-in-the-loop checkpoint
 
@@ -404,7 +498,7 @@ LangGraph's interrupt mechanism saves a `StageCheckpoint` and waits. The React U
 
 Note: `skill_extraction` and `need_combination` are separate graph nodes but share one checkpoint, placed after `need_combination` — the designer reviews raw extracted skills and the distilled Needs together in one review, not at two separate boundaries. Every other stage boundary gets its own checkpoint.
 
-Exception: after the PLO checkpoint, `plo_report` and `plo_review` run to the end with none (waived by the designer, 2026-10-12; see CLAUDE.md rule 7). The Literal keeps both values because `models.py` does; the graph writes no checkpoint for them.
+Since phase 6 (designer's decision of 2026-11-04) the PLO checkpoint is at the end, on the output: `plo_synthesis → plo_review → [checkpoint at stage plo_review] → plo_report → END`. Synthesis and the review loop run with no checkpoint between them, and `plo_report` runs after the designer approves, so the report is built from the approved set (see CLAUDE.md rule 7). `plo_report` has no checkpoint of its own.
 
 ## Cross-stage: background jobs
 
@@ -434,6 +528,48 @@ The seven long run routes answer 202 with a `JobInfo` instead of holding the req
 `jobs` is one row per run (`job_id` primary key, FK to `programs.program_id`), `kind` and `status` as plain strings, `params` and `result` as JSONB. Its datetimes are naive UTC like every other table's; `JobInfo` adds `+00:00` only when serialised to JSON, so a browser does not read them as local time.
 
 **One writer per program.** A `running` job, or a graph session whose status is `running`, blocks every other job and the synchronous writers (`POST /sessions/`, `/approve`, `/plos/from-needs`, `/copy`) with a 409 whose `detail` is a Thai string. Rows still `running` after a restart belong to a dead process and are marked `failed` at startup. A job is an operational record, not an OBE artifact: it carries no evidence trail and no stage reads it.
+
+## Cross-stage: LLM usage accounting
+
+```python
+class LLMUsage(BaseModel):
+    """One provider response and what it cost. Instructor retries are rows too."""
+    id: str
+    program_id: str | None    # null for a call made outside a program
+    job_id: str | None
+    session_id: str | None
+    slot: str                 # the stage-named slot that made the call
+    provider: str
+    model: str
+    prompt_tokens: int
+    completion_tokens: int
+    reasoning_tokens: int | None  # null when the endpoint does not report it
+    latency_ms: int
+    ok: bool                  # False: the response failed validation or the call errored
+    created_at: datetime      # naive UTC, +00:00 only in JSON
+
+class UsageTotals(BaseModel):  # nulls count as 0
+    calls: int; failed_calls: int
+    prompt_tokens: int; completion_tokens: int; reasoning_tokens: int; latency_ms: int
+
+class SlotUsage(UsageTotals):
+    slot: str
+
+class JobUsage(BaseModel):
+    job_id: str
+    kind: str          # from the jobs row; "" if that row is gone
+    label_th: str      # filled by the API from JOB_KIND_LABEL_TH; "" for an unknown kind
+    started: datetime
+    total: UsageTotals
+    by_slot: list[SlotUsage]
+
+class UsageSummary(BaseModel):  # GET /programs/{id}/usage
+    total: UsageTotals
+    by_slot: list[SlotUsage]
+    by_job: list[JobUsage]      # newest first; rows with no job count in total/by_slot only
+```
+
+`llm_usage` is an operational ledger, like `jobs`: it carries no evidence trail and no stage reads it. It is deleted with its program, not copied by a program copy, and not cleared by a re-run.
 
 ## Versioning
 

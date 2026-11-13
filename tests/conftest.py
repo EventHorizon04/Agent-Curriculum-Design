@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 from collections.abc import Iterator
+from datetime import datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 if sys.platform == "win32":
@@ -21,6 +23,7 @@ from curriculum_agent.config import Settings, settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
+    JobInfo,
     KSECCategory,
     Need,
     ProgramMetadata,
@@ -61,6 +64,14 @@ def _default_api_key_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _review_loop_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review loop defaults to apply, which stores its own rows and redrafts; tests written
+    for the single-pass review keep that behaviour. A loop test sets the mode itself
+    — a later `setattr` wins."""
+    monkeypatch.setattr(settings, "plo_review_loop_mode", "off")
+
+
+@pytest.fixture(autouse=True)
 def _no_need_dedup_calls(monkeypatch: pytest.MonkeyPatch) -> None:
     """The duplicate check before synthesis is on by default, so every test that
     runs `plo_synthesis.run` would otherwise make a real network call. Stubbed at
@@ -83,6 +94,35 @@ class _NoStoredReview:
 
 
 @pytest.fixture(autouse=True)
+def _no_skill_group_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    """skill_extraction.run drops the program's stored skill groups, which would
+    otherwise reach the database from every test that runs the stage. A test about
+    that drop patches it again — a later `setattr` wins."""
+    from curriculum_agent.stages import skill_extraction  # noqa: PLC0415
+
+    monkeypatch.setattr(
+        skill_extraction.SkillGroupRepository, "delete_by_program", AsyncMock(return_value=0)
+    )
+
+
+@pytest.fixture(autouse=True)
+def usage_rows(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Usage accounting writes a row per provider response. Off the database in
+    tests: the recorder gets an in-memory repository, and the rows it was handed
+    are returned for the tests that care (`test_llm_usage_recording.py`)."""
+    from curriculum_agent import llm  # noqa: PLC0415
+
+    rows: list[Any] = []
+
+    class _MemoryUsage:
+        async def add(self, row: Any) -> None:
+            rows.append(row)
+
+    monkeypatch.setattr(llm, "LLMUsageRepository", _MemoryUsage)
+    return rows
+
+
+@pytest.fixture(autouse=True)
 def _plo_review_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     """The set review runs before every report, and both reach the network and
     the database. Off by default in tests — the same answer as the kill switch,
@@ -91,6 +131,9 @@ def _plo_review_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
 
     monkeypatch.setattr(settings, "plo_review_provider", "")
+    # Send-back redrafts PLOs through the database and an LLM; its own tests
+    # (test_plo_feedback.py) turn it on and fake both.
+    monkeypatch.setattr(settings, "plo_review_send_back", False)
     monkeypatch.setattr(plo_review, "PLOReviewRepository", _NoStoredReview)
 
 
@@ -114,6 +157,34 @@ def jobs_store(monkeypatch: pytest.MonkeyPatch) -> Iterator[InMemoryJobs]:
     store.recorder = recorder  # type: ignore[attr-defined]
     yield store
     recorder.close()
+
+
+@pytest.fixture(autouse=True)
+def review_chain_calls(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> list[tuple[str, bool]]:
+    """`POST /plos/run` chains the review job through `_start_review_job`, which
+    reads the stored PLOs through the route module's own `_repo` — a real asyncpg
+    connect from every synthesis-route test that did not think to patch it. A
+    recorder by default; the calls are returned for a test that cares. A test or
+    module that exercises the real review job marks itself `review_chain`."""
+    calls: list[tuple[str, bool]] = []
+    if request.node.get_closest_marker("review_chain") is not None:
+        return calls
+    from curriculum_agent.api.routes import plos as plos_route  # noqa: PLC0415
+
+    async def _record(program_id: str, *, or_409: bool) -> JobInfo:
+        calls.append((program_id, or_409))
+        return JobInfo(
+            job_id="review-chain-stub",
+            program_id=program_id,
+            kind="plo_review",
+            status="running",
+            created_at=datetime(2026, 1, 1),
+        )
+
+    monkeypatch.setattr(plos_route, "_start_review_job", _record)
+    return calls
 
 
 @pytest.fixture

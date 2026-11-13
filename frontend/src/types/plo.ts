@@ -49,4 +49,20 @@ export interface PLO {
   smart_validated_by: ValidatedBy
   smart_diagnosis_th: string | null
   is_optional: boolean
+  /** ISO timestamp (+00:00) of the designer's last hand edit; null when none. */
+  designer_edited_at?: string | null
+}
+
+/** A PLO a merge replaced, kept so the designer can see what it said. The live
+ *  list never contains one. */
+export interface SupersededPLO {
+  id: string
+  program_id: string
+  /** plo_id of the outcome that replaced it. */
+  superseded_by: string
+  /** ISO timestamp with an offset. */
+  superseded_at: string
+  /** Who replaced it: the designer's merge, or the review's send-back. Null on rows from before the field: the designer. */
+  cause?: 'designer' | 'review' | null
+  plo: PLO
 }

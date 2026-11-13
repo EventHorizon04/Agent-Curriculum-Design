@@ -99,7 +99,7 @@ class NeedTable(Base):
     # default catches a row written by a path that predates the field — a
     # suspended checkpoint resuming — without failing the insert.
     rationale_th: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-    ksec_category: Mapped[str] = mapped_column(String(2))
+    ksec_categories: Mapped[list[str]] = mapped_column(JSONB)
     bloom_level: Mapped[str] = mapped_column(String(20))
     member_skill_ids: Mapped[list[str]] = mapped_column(JSONB)
     source_evidence_ids: Mapped[list[str]] = mapped_column(JSONB)
@@ -109,6 +109,37 @@ class NeedTable(Base):
     demand_score: Mapped[float] = mapped_column(Float)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
     classification_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    in_field_skill_count: Mapped[int] = mapped_column(Integer, default=0)
+    graduate_capability_skill_count: Mapped[int] = mapped_column(Integer, default=0)
+    top_skill_ids: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    merged_from: Mapped[list[str]] = mapped_column(JSONB, server_default="[]", default=list)
+    merged_into: Mapped[str | None] = mapped_column(String, nullable=True)
+    merge_reason_th: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    excluded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    merged_by: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class SkillGroupTable(Base):
+    __tablename__ = "skill_groups"
+
+    __table_args__ = (Index("ix_skill_groups_program_id", "program_id"),)
+
+    group_id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
+    # Stored order: list_by_program sorts on this, set at insert.
+    ordinal: Mapped[int] = mapped_column(Integer, default=0)
+    ksec: Mapped[str] = mapped_column(String(2))
+    skill_ids: Mapped[list[str]] = mapped_column(JSONB)
+    evidence_ids: Mapped[list[str]] = mapped_column(JSONB)
+    skill_names: Mapped[list[str]] = mapped_column(JSONB)
+    skill_frequencies: Mapped[list[int]] = mapped_column(JSONB)
+    bloom_level: Mapped[str] = mapped_column(String(20))
+    demand_score: Mapped[float] = mapped_column(Float)
+    is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_graduate: Mapped[bool] = mapped_column(Boolean, default=False)
+    classification_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    stakeholder_coverage: Mapped[dict[str, int]] = mapped_column(JSONB, default=dict)
+    stakeholder_types: Mapped[list[str]] = mapped_column(JSONB, default=list)
     in_field_skill_count: Mapped[int] = mapped_column(Integer, default=0)
     graduate_capability_skill_count: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -146,6 +177,88 @@ class PLOTable(Base):
     smart_validated_by: Mapped[str] = mapped_column(String(20), default="legacy")
     smart_diagnosis_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
+    designer_edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class SupersededPLOTable(Base):
+    """A PLO a designer's merge replaced, kept read-only as history.
+
+    The live `plos` table cannot hold it: its key is (program_id, plo_id) and a
+    merge normally reuses the lowest freed plo_id. The whole replaced PLO rides
+    in one JSONB snapshot because nothing queries inside it; `superseded_by` is
+    the plo_id that replaced it.
+    """
+
+    __tablename__ = "superseded_plos"
+    __table_args__ = (Index("ix_superseded_plos_program_id", "program_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
+    plo_id: Mapped[str] = mapped_column(String)
+    snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    superseded_by: Mapped[str] = mapped_column(String)
+    superseded_at: Mapped[datetime] = mapped_column(DateTime)
+    # "designer" | "review"; null on rows from before phase 4 (reads as designer).
+    cause: Mapped[str | None] = mapped_column(String, nullable=True)
+
+
+class PLOFeedbackActionTable(Base):
+    """One finding Agent 4 (the PLO set review) considered, and what came of it.
+
+    Same life as superseded_plos: cleared with the PLO set, copied by a full
+    program copy, not by an evidence-only one. `plo_ids`/`need_ids` are JSONB
+    lists, so a copy remaps the Need ids inside them.
+    """
+
+    __tablename__ = "plo_feedback_actions"
+    __table_args__ = (Index("ix_plo_feedback_actions_program_id", "program_id"),)
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str] = mapped_column(String, ForeignKey("programs.program_id"))
+    review_created_at: Mapped[datetime] = mapped_column(DateTime)
+    kind: Mapped[str] = mapped_column(String)
+    plo_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    need_ids: Mapped[list[str]] = mapped_column(JSONB, default=list)
+    finding_reason_th: Mapped[str] = mapped_column(Text, default="")
+    instruction_th: Mapped[str] = mapped_column(Text, default="")
+    outcome: Mapped[str] = mapped_column(String)
+    outcome_reason_th: Mapped[str] = mapped_column(Text, default="")
+    result_plo_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    result_statement_th: Mapped[str | None] = mapped_column(Text, nullable=True)
+    result_bloom_level: Mapped[str | None] = mapped_column(String, nullable=True)
+    round: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class LLMUsageTable(Base):
+    """One provider response (phase 5). History of spend: kept across re-runs,
+    deleted with the program, not copied by a program copy.
+
+    `job_id`/`session_id` are plain strings, not foreign keys: a job or session
+    row going away must not take the spend record with it.
+    """
+
+    __tablename__ = "llm_usage"
+    __table_args__ = (
+        Index("ix_llm_usage_program_id", "program_id"),
+        Index("ix_llm_usage_job_id", "job_id"),
+    )
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    program_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("programs.program_id"), nullable=True
+    )
+    job_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    slot: Mapped[str] = mapped_column(String)
+    provider: Mapped[str] = mapped_column(String, default="")
+    model: Mapped[str] = mapped_column(String, default="")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    reasoning_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    ok: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime)
 
 
 class PLOReviewTable(Base):
@@ -165,6 +278,23 @@ class PLOReviewTable(Base):
     model: Mapped[str] = mapped_column(String(128))
     created_at: Mapped[datetime] = mapped_column(DateTime)
     review: Mapped[dict[str, Any]] = mapped_column(JSONB)
+
+
+class PLOReportTable(Base):
+    """The stored PLO report, one row per program (phase 6).
+
+    Keyed by program alone like `plo_reviews`: the latest report replaces the
+    last. `plo_fingerprint` says which PLO set it was built from.
+    """
+
+    __tablename__ = "plo_reports"
+
+    program_id: Mapped[str] = mapped_column(
+        String, ForeignKey("programs.program_id"), primary_key=True
+    )
+    plo_fingerprint: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime)
+    report: Mapped[dict[str, Any]] = mapped_column(JSONB)
 
 
 class JobTable(Base):

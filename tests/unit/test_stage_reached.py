@@ -26,17 +26,23 @@ def test_evidence_alone_is_stakeholder_needs():
     )
 
 
-def test_skills_and_needs_both_report_skill_extraction():
-    """Two engine stages behind one review gate, reviewed on one page — so they
-    are one stage as far as the designer's rail is concerned."""
-    just_skills = stage_reached(has_evidence=True, has_skills=True, has_needs=False, has_plos=False)
-    and_needs = stage_reached(has_evidence=True, has_skills=True, has_needs=True, has_plos=False)
-    assert just_skills == and_needs == "skill_extraction"
+def test_skills_alone_are_skill_extraction():
+    assert (
+        stage_reached(has_evidence=True, has_skills=True, has_needs=False, has_plos=False)
+        == "skill_extraction"
+    )
 
 
-def test_plos_are_the_furthest_derivable_stage():
-    """plo_report re-persists the PLOs synthesis already wrote and leaves nothing
-    of its own, so a program that has been through it is indistinguishable here."""
+def test_needs_are_need_analysis():
+    """Agent 2 has its own page and rail stage, behind the one review gate."""
+    assert (
+        stage_reached(has_evidence=True, has_skills=True, has_needs=True, has_plos=False)
+        == "need_analysis"
+    )
+
+
+def test_plos_without_a_review_or_report_are_plo_synthesis():
+    """The stage is derived from what is stored: PLOs alone are synthesis."""
     assert (
         stage_reached(has_evidence=True, has_skills=True, has_needs=True, has_plos=True)
         == "plo_synthesis"
@@ -47,12 +53,20 @@ def test_every_outcome_is_a_designer_stage():
     """Anything outside this list reaches the UI as a stage it cannot place, and
     the program reads as though it had never started."""
     flags = [
-        {"has_evidence": e, "has_skills": s, "has_needs": n, "has_plos": p, "has_current_review": r}
+        {
+            "has_evidence": e,
+            "has_skills": s,
+            "has_needs": n,
+            "has_plos": p,
+            "has_current_review": r,
+            "has_current_report": c,
+        }
         for e in (False, True)
         for s in (False, True)
         for n in (False, True)
         for p in (False, True)
         for r in (False, True)
+        for c in (False, True)
     ]
     for combination in flags:
         assert stage_reached(**combination) in DESIGNER_STAGES, combination
@@ -85,3 +99,33 @@ def test_without_a_current_review_plos_are_still_plo_synthesis():
         stage_reached(has_evidence=True, has_skills=True, has_needs=True, has_plos=True)
         == "plo_synthesis"
     )
+
+
+def test_a_current_report_is_the_last_stage_and_wins_over_a_review():
+    assert (
+        stage_reached(
+            has_evidence=True,
+            has_skills=True,
+            has_needs=True,
+            has_plos=True,
+            has_current_review=True,
+            has_current_report=True,
+        )
+        == "plo_report"
+    )
+    assert (
+        stage_reached(
+            has_evidence=True,
+            has_skills=True,
+            has_needs=True,
+            has_plos=True,
+            has_current_report=True,
+        )
+        == "plo_report"
+    )
+
+
+def test_precedence_is_report_then_review_then_plos():
+    base = {"has_evidence": True, "has_skills": True, "has_needs": True, "has_plos": True}
+    assert stage_reached(**base, has_current_review=True) == "plo_review"
+    assert stage_reached(**base) == "plo_synthesis"

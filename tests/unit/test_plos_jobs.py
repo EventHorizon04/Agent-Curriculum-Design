@@ -23,6 +23,7 @@ from curriculum_agent.config import settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
+    FeedbackAction,
     JobInfo,
     KSECCategory,
     Need,
@@ -36,6 +37,10 @@ from curriculum_agent.stages.plo_synthesis import SynthesisAlreadyRunning
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
 client = TestClient(app)
+
+# These tests drive the real review job (POST /review/run, and the chain after
+# synthesis); conftest otherwise stubs `_start_review_job` with a recorder.
+pytestmark = pytest.mark.review_chain
 
 BASE = "/programs/cs-test/plos"
 NOTE = "เน้นทักษะด้าน AI"
@@ -115,11 +120,13 @@ class _Env:
         self.needs = AsyncMock(return_value=[_need()])
         self.plos = AsyncMock(return_value=[_plo()])
         self.bulk_insert = AsyncMock()
+        self.update_if_version = AsyncMock(return_value=True)
         monkeypatch.setattr(plos_route.ProgramRepository, "get", self.program)
-        monkeypatch.setattr(plos_route.NeedRepository, "list_by_program", self.needs)
+        monkeypatch.setattr(plos_route.NeedRepository, "list_active_by_program", self.needs)
         # On the class, never the module-level `_repo` instance (see test_api_plos).
         monkeypatch.setattr(plos_route.PLORepository, "list_by_program", self.plos)
         monkeypatch.setattr(plos_route.PLORepository, "bulk_insert", self.bulk_insert)
+        monkeypatch.setattr(plos_route.PLORepository, "update_if_version", self.update_if_version)
         # The set review is off in every test by default (tests/conftest.py); the
         # review route and the report's `review_enabled` need it on to be exercised.
         monkeypatch.setattr(settings, "plo_review_provider", "openrouter")
@@ -149,12 +156,14 @@ class _Env:
         self.synth = AsyncMock(side_effect=synth_run)
         self.review_run = AsyncMock(side_effect=review_run)
         self.report = AsyncMock(side_effect=report_run)
-        self.fresh_review = AsyncMock(return_value=_review())
+        self.fresh_review = AsyncMock(return_value=(_review(), []))
         self.validate = AsyncMock(side_effect=validate)
         monkeypatch.setattr("curriculum_agent.stages.plo_synthesis.run", self.synth)
         monkeypatch.setattr("curriculum_agent.stages.plo_review.run", self.review_run)
         monkeypatch.setattr("curriculum_agent.stages.plo_report.run", self.report)
-        monkeypatch.setattr("curriculum_agent.stages.plo_review.fresh_review", self.fresh_review)
+        monkeypatch.setattr(
+            "curriculum_agent.stages.plo_review.fresh_review_with_feedback", self.fresh_review
+        )
         monkeypatch.setattr(
             "curriculum_agent.stages.plo_synthesis.validate_and_build", self.validate
         )
@@ -236,7 +245,13 @@ def test_report_result_is_the_old_report_payload(
     job = _finish(client.post(f"{BASE}/report/run"), jobs_store, spawned)
 
     env.report.assert_awaited_once()
-    assert set(job.result) == {"plos", "counts", "needs_by_id", "needs_not_synthesized"}
+    assert set(job.result) == {
+        "plos",
+        "counts",
+        "needs_by_id",
+        "needs_not_synthesized",
+        "needs_excluded",
+    }
     assert [p["plo_id"] for p in job.result["plos"]] == ["PLO1"]
     assert job.result["needs_by_id"]["N1"]["need_id"] == "N1"
 
@@ -281,6 +296,43 @@ def test_review_result_is_the_old_review_body(
     assert job.result["review_enabled"] is True
 
 
+def test_review_result_carries_this_rounds_feedback(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    action = FeedbackAction(
+        program_id="cs-test",
+        review_created_at=datetime(2026, 10, 8),
+        kind="redundancy",
+        outcome="applied",
+        result_plo_id="PLO1",
+    )
+    env.fresh_review.return_value = (_review(), [action])
+
+    job = _finish(client.post(f"{BASE}/review/run"), jobs_store, spawned)
+
+    assert job.status == "succeeded", job.error_th
+    assert [f["result_plo_id"] for f in job.result["feedback"]] == ["PLO1"]
+
+
+def test_review_job_succeeds_when_a_send_back_action_failed(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    failed = FeedbackAction(
+        program_id="cs-test",
+        review_created_at=datetime(2026, 10, 8),
+        kind="bloom",
+        outcome="failed",
+        outcome_reason_th="ร่าง PLO ไม่สำเร็จ",
+    )
+    env.fresh_review.return_value = (_review(), [failed])
+
+    job = _finish(client.post(f"{BASE}/review/run"), jobs_store, spawned)
+
+    assert job.status == "succeeded", job.error_th
+    assert job.result["review"]["summary_th"] == "ดีแล้ว"
+    assert job.result["feedback"][0]["outcome"] == "failed"
+
+
 def test_revalidate_result_is_the_old_plo_body_and_it_is_stored(
     env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:
@@ -290,7 +342,32 @@ def test_revalidate_result_is_the_old_plo_body_and_it_is_stored(
     assert job.result["plo_id"] == "PLO1"
     assert job.result["smart_validated_by"] == "agent"
     assert job.result["version"] == _plo().version + 1
-    env.bulk_insert.assert_awaited_once()
+    env.bulk_insert.assert_not_awaited()
+
+
+def test_revalidate_success_bumps_version_once(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    job = _finish(client.post(f"{BASE}/PLO1/revalidate"), jobs_store, spawned)
+
+    assert job.status == "succeeded"
+    env.update_if_version.assert_awaited_once()
+    args, kwargs = env.update_if_version.await_args
+    assert kwargs["expected_version"] == _plo().version
+    assert args[0].version == _plo().version + 1
+    env.bulk_insert.assert_not_awaited()
+
+
+def test_revalidate_conflicting_version_fails_job_writes_nothing(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    env.update_if_version.return_value = False
+
+    job = _finish(client.post(f"{BASE}/PLO1/revalidate"), jobs_store, spawned)
+
+    assert job.status == "failed"
+    assert job.error_th == "PLO นี้ถูกแก้ระหว่างตรวจ SMART — ตรวจใหม่อีกครั้ง"
+    env.bulk_insert.assert_not_awaited()
 
 
 # --- the synthesis switch and the note travel through the job ----------------
@@ -531,3 +608,98 @@ def test_another_programs_running_job_does_not_block(
 
     assert r.status_code == 202, r.text
     spawned.drain()
+
+
+# --- phase 6: synthesis chains the review; the stored report ------------------
+
+
+def test_plos_run_chains_review_job(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    r = client.post(f"{BASE}/run")
+    assert r.status_code == 202, r.text
+    spawned.drain()
+
+    kinds = sorted(j.kind for j in jobs_store.rows.values())
+    assert kinds == ["plo_review", "plo_synthesis"]
+    assert all(j.status == "succeeded" for j in jobs_store.rows.values())
+    env.synth.assert_awaited_once()
+    env.fresh_review.assert_awaited_once()
+
+
+def test_plos_run_chain_conflict_keeps_synthesis_succeeded(
+    env: _Env, monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    async def busy(*_a: Any, **_k: Any) -> JobInfo:
+        raise plos_route.JobConflict("another writer")
+
+    monkeypatch.setattr(plos_route, "start_job", busy)
+    r = client.post(f"{BASE}/run")
+    assert r.status_code == 202, r.text
+    spawned.drain()
+
+    job = jobs_store.rows[r.json()["job_id"]]
+    assert job.kind == "plo_synthesis" and job.status == "succeeded"
+    assert [j.kind for j in jobs_store.rows.values()] == ["plo_synthesis"]
+    env.fresh_review.assert_not_awaited()
+
+
+def test_review_run_alone_does_not_chain(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    _finish(client.post(f"{BASE}/review/run"), jobs_store, spawned)
+    assert [j.kind for j in jobs_store.rows.values()] == ["plo_review"]
+
+
+def _stored_report(**kw: Any) -> Any:
+    from curriculum_agent.models import PLOReport
+
+    base: dict[str, Any] = {
+        "program_id": "cs-test",
+        "plo_fingerprint": plo_fingerprint([_plo()], need_demands([_need()])),
+        "created_at": datetime(2026, 11, 5, 9, 30),
+        "report": {
+            "plos": [_plo().model_dump(mode="json")],
+            "counts": {"total": 1},
+            "needs_by_id": {"N1": _need().model_dump(mode="json")},
+            "needs_not_synthesized": [],
+        },
+    }
+    base.update(kw)
+    return PLOReport(**base)
+
+
+def test_get_report_returns_the_stored_report(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        plos_route.PLOReportRepository, "get", AsyncMock(return_value=_stored_report())
+    )
+    r = client.get(f"{BASE}/report")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["stale"] is False
+    assert body["created_at"] == "2026-11-05T09:30:00+00:00"
+    assert [p["plo_id"] for p in body["report"]["plos"]] == ["PLO1"]
+    assert body["report"]["needs_by_id"]["N1"]["need_id"] == "N1"
+
+
+def test_get_report_is_stale_when_the_set_moved(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        plos_route.PLOReportRepository,
+        "get",
+        AsyncMock(return_value=_stored_report(plo_fingerprint="0" * 64)),
+    )
+    assert client.get(f"{BASE}/report").json()["stale"] is True
+
+
+def test_get_report_is_none_when_nothing_is_stored(
+    env: _Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(plos_route.PLOReportRepository, "get", AsyncMock(return_value=None))
+    r = client.get(f"{BASE}/report")
+    assert r.status_code == 200
+    assert r.json() == {"report": None, "stale": False, "created_at": None}
+
+
+def test_get_report_404_for_an_unknown_program(env: _Env, monkeypatch: pytest.MonkeyPatch) -> None:
+    env.program.return_value = None
+    assert client.get(f"{BASE}/report").status_code == 404

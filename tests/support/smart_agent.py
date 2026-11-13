@@ -78,6 +78,7 @@ class ScriptedAgent:
         self._verdicts = list(verdicts)
         self.calls: list[tuple[Any, Any]] = []
         self.enabled_flags: list[bool] = []
+        self.allow_repair_flags: list[bool] = []
 
     async def __call__(
         self,
@@ -87,9 +88,11 @@ class ScriptedAgent:
         *,
         need_statements_th: Any = (),
         enabled: bool = True,
+        allow_repair: bool = True,
     ) -> SmartAgentResult:
         self.calls.append((draft, ctx))
         self.enabled_flags.append(enabled)
+        self.allow_repair_flags.append(allow_repair)
         index = min(len(self.calls) - 1, len(self._verdicts) - 1)
         chosen = self._verdicts[index] if self._verdicts else None
         if chosen is None:

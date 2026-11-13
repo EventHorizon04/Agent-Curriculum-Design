@@ -135,6 +135,29 @@ async def test_cache_hit_skips_llm():
     cache.set.assert_not_called()
 
 
+async def test_cache_disabled_skips_get_and_set_and_calls_the_model(monkeypatch):
+    monkeypatch.setattr(settings, "llm_cache_enabled", False)
+    resp = ClusterAssignmentsResponse(
+        clusters=[ClusterAssignment(label_th="x", member_indices=[0, 1, 2])]
+    )
+    cache = _mock_cache(hit="[[0, 2], [1]]")
+    with (
+        patch(
+            "curriculum_agent.stages.llm_clustering.complete_clustering",
+            new=AsyncMock(return_value=resp),
+        ) as llm,
+        patch(
+            "curriculum_agent.stages.llm_clustering.LLMCacheRepository",
+            return_value=cache,
+        ),
+    ):
+        groups = await cluster_skill_names(["a", "b", "c"])
+    assert groups == [[0, 1, 2]]
+    llm.assert_called_once()
+    cache.get.assert_not_called()
+    cache.set.assert_not_called()
+
+
 async def test_map_reduce_path_batches_then_merges():
     names = [f"skill-{i}" for i in range(160)]  # > SINGLE_PASS_MAX → 2 batches (100+60)
     batch_sizes = iter([100, 60])
@@ -165,3 +188,32 @@ async def test_map_reduce_path_batches_then_merges():
     assert llm.call_count == 3  # 2 batch passes + 1 merge
     assert groups == [sorted(range(160))]
     cache.set.assert_called_once()
+
+
+async def test_both_clustering_calls_bound_hidden_reasoning():
+    names = [f"skill-{i}" for i in range(160)]  # 2 batch passes + 1 merge
+    batch_sizes = iter([100, 60])
+
+    async def dispatch(response_model, messages, **kwargs):
+        if response_model is ClusterAssignmentsResponse:
+            size = next(batch_sizes)
+            return ClusterAssignmentsResponse(
+                clusters=[ClusterAssignment(label_th="กลุ่ม", member_indices=list(range(size)))]
+            )
+        return MergeGroupsResponse(groups=[[0, 1]])
+
+    with (
+        patch(
+            "curriculum_agent.stages.llm_clustering.complete_clustering",
+            new=AsyncMock(side_effect=dispatch),
+        ) as llm,
+        patch(
+            "curriculum_agent.stages.llm_clustering.LLMCacheRepository",
+            return_value=_mock_cache(),
+        ),
+    ):
+        await cluster_skill_names(names)
+
+    models = [c.args[0] for c in llm.call_args_list]
+    assert ClusterAssignmentsResponse in models and MergeGroupsResponse in models
+    assert all(c.kwargs.get("reasoning_max_tokens") == 1024 for c in llm.call_args_list)

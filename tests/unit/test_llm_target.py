@@ -10,6 +10,9 @@ _ROUTER_KEY = "sk-or-v1-1111111111111111111111111111"
 
 
 def _settings(**overrides: object) -> Settings:
+    # These tests are about the per-slot mechanism, so the branch's pipeline pair
+    # is opted out unless a test sets it.
+    overrides.setdefault("pipeline_provider", None)
     return Settings(_env_file=None, **overrides)  # type: ignore[arg-type]
 
 

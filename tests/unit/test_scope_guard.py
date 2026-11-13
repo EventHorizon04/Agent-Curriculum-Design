@@ -14,7 +14,12 @@ from unittest.mock import AsyncMock
 import pytest
 
 from curriculum_agent.models import BloomLevel, KSECCategory, Need
-from curriculum_agent.stages.need_grouping import is_in_scope, passes_scope_axes
+from curriculum_agent.stages.need_grouping import (
+    REVIEW_MARKER_TH,
+    is_core_candidate,
+    is_in_scope,
+    passes_scope_axes,
+)
 
 
 def _need(**overrides: object) -> Need:
@@ -241,3 +246,17 @@ def test_the_counter_form_answers_true_when_nothing_was_measured() -> None:
     `Need._ratio` answers 1.0 in the same case for the same reason. Filtering
     here would drop a group for having no members rather than for its members."""
     assert passes_scope_axes(0, 0, 0) is True
+
+
+def test_is_core_candidate() -> None:
+    """The core count is the Needs synthesis could draft as core PLOs: not
+    optional, in scope, and written."""
+    ok = {"in_field_skill_count": 3, "graduate_capability_skill_count": 3}
+    assert is_core_candidate(_need(**ok)) is True
+    assert is_core_candidate(_need(is_optional=True, **ok)) is False
+    assert (
+        is_core_candidate(_need(in_field_skill_count=3, graduate_capability_skill_count=0)) is False
+    )
+    assert (
+        is_core_candidate(_need(statement_th=f"{REVIEW_MARKER_TH} ทักษะ ก, ทักษะ ข", **ok)) is False
+    )

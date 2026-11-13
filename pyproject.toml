@@ -66,3 +66,6 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "review_chain: run the real api.routes.plos._start_review_job instead of the conftest recorder",
+]

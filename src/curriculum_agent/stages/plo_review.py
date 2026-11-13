@@ -1,11 +1,17 @@
-"""Stage 06: the QA agent's review of the finished PLO set. Advisory only.
+"""Stage 06: the QA agent's review of the finished PLO set.
 
 Every other check reads one PLO against its own Needs; this reads the set —
 redundancy between drafts, a domain that spans KSEC tags, the Bloom
-distribution, the important Needs no PLO cites. It runs after the report, which
-is why it can read the set the report persisted, and it changes nothing: its
-findings are stored per program and shown beside the report. See
-docs/superpowers/specs/2026-10-12-plo-qa-agent-design.md.
+distribution, the important Needs no PLO cites. It runs after synthesis and
+before the PLO checkpoint and the report (phase 6), reading the stored PLOs. The
+review itself only judges: its findings are stored per program and shown on the
+review page. Since phase 4 a fresh agent review is followed by
+`plo_feedback.send_back`, which acts on the findings a majority agreed on and
+records a trail, and since phase 6 the pair repeats as a loop
+(`plo_review_loop`); that is a separate step, and the review row is never altered
+by it. See
+docs/superpowers/specs/2026-10-12-plo-qa-agent-design.md and
+docs/superpowers/specs/2026-11-03-four-agent-pipeline-phase4-design.md.
 
 The review stored is one of three things: the agent's answer, judged entry by
 entry in `accept_review` — the agent runs `plo_review_runs` times and the stored
@@ -21,7 +27,6 @@ declared level.
 
 from __future__ import annotations
 
-import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
@@ -30,15 +35,19 @@ from loguru import logger
 
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
+    EvidenceRepository,
     NeedRepository,
+    PLORepository,
     PLOReviewRepository,
     ProgramRepository,
 )
 from curriculum_agent.graph import AgentState
 from curriculum_agent.models import (
     PLO,
+    AlignmentFinding,
     BloomFinding,
     BloomLevel,
+    FeedbackAction,
     KsecFinding,
     Need,
     PLOSetReview,
@@ -47,12 +56,15 @@ from curriculum_agent.models import (
     UnusedNeedFinding,
 )
 from curriculum_agent.prompts.program_context import build_program_context_th
+from curriculum_agent.stages.eager_waves import run_eager_waves
+from curriculum_agent.stages.plo_feedback import send_back
 from curriculum_agent.stages.plo_review_agent import (
+    AgentOutcome,
     ReviewFinish,
     UnusedVerdict,
     run_review_agent,
 )
-from curriculum_agent.stages.plo_review_consensus import consensus_review
+from curriculum_agent.stages.plo_review_consensus import consensus_review, review_key
 from curriculum_agent.stages.plo_review_facts import (
     ReviewDossier,
     build_dossier,
@@ -64,6 +76,10 @@ from curriculum_agent.stages.plo_review_facts import (
 )
 
 MAX_REDUNDANCY_GROUP = 3
+
+# The agent reads the whole dossier on every step; past this many PLOs its step
+# budget and the 300 s timeout were never measured (phase 5). A warning only.
+MAX_DOSSIER_PLOS_WARN = 15
 
 
 def _bloom_level(raw: str | None) -> BloomLevel | None:
@@ -143,6 +159,20 @@ def accept_review(
             )
         )
 
+    alignment: list[AlignmentFinding] = []
+    alignment_seen: set[str] = set()
+    for al in answer.alignment:
+        pid = al.plo_id.strip()
+        if pid not in by_id or pid in alignment_seen or not al.reason_th.strip():
+            drops["alignment"] += 1
+            continue
+        alignment_seen.add(pid)
+        alignment.append(
+            AlignmentFinding(
+                plo_id=pid, reason_th=al.reason_th.strip(), suggestion_th=al.suggestion_th.strip()
+            )
+        )
+
     bloom: list[BloomFinding] = []
     bloom_seen: set[str] = set()
     for b in answer.bloom:
@@ -152,13 +182,24 @@ def accept_review(
             continue
         declared = by_id[pid].bloom_level
         level = _bloom_level(b.suggested_level)
-        if (level is None or level == declared) and not b.reason_th.strip():
+        # A verb is advice only when it differs from the declared one; an empty
+        # or unchanged verb is no proposal.
+        verb = (b.suggested_verb_th or "").strip() or None
+        if verb == by_id[pid].action_verb_th.strip():
+            verb = None
+        proposes = verb is not None or (level is not None and level != declared)
+        if not proposes and not b.reason_th.strip():
             drops["bloom"] += 1
             continue
         bloom_seen.add(pid)
         bloom.append(
             BloomFinding(
-                plo_id=pid, declared=declared, suggested_level=level, reason_th=b.reason_th.strip()
+                plo_id=pid,
+                declared=declared,
+                suggested_level=level,
+                suggested_verb_th=verb,
+                reason_th=b.reason_th.strip(),
+                suggestion_th=b.suggestion_th.strip(),
             )
         )
 
@@ -194,6 +235,7 @@ def accept_review(
         redundancies=redundancies,
         ksec=ksec,
         bloom=bloom,
+        alignment=alignment,
         bloom_distribution_th=answer.bloom_distribution_th.strip(),
         summary_th=answer.summary_th.strip(),
         ksec_coverage=dossier.ksec_coverage,
@@ -238,6 +280,7 @@ def has_agent_findings(review: PLOSetReview) -> bool:
         review.redundancies
         or review.ksec
         or review.bloom
+        or review.alignment
         or review.summary_th
         or review.coverage_th
         or review.bloom_distribution_th
@@ -259,8 +302,11 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
     """One review: the agent's judged answer, or the code facts. Raises only on a
     read failure — the caller decides whether that fails a job or is swallowed."""
     metadata = await ProgramRepository().get(program_id)
-    needs = await NeedRepository().list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
     needs_by_id = {n.need_id: n for n in needs}
+    # Voices need the stakeholder type of each evidence item; read once here.
+    evidence = await EvidenceRepository().list_by_program(program_id)
+    stakeholder_by_evidence = {e.evidence_id: e.stakeholder_type.value for e in evidence}
     dossier = build_dossier(
         plos,
         needs,
@@ -268,7 +314,13 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
         if metadata
         else None,
         degree_level=metadata.degree_level if metadata else "",
+        stakeholder_by_evidence=stakeholder_by_evidence,
     )
+    if len(dossier.items) > MAX_DOSSIER_PLOS_WARN:
+        logger.warning(
+            f"plo_review: dossier carries {len(dossier.items)} PLOs, above "
+            f"{MAX_DOSSIER_PLOS_WARN}; the review agent was measured on smaller sets"
+        )
     fingerprint = plo_fingerprint(plos, need_demands(needs))
     now = datetime.now(UTC).replace(tzinfo=None)
     if not settings.plo_review_provider:
@@ -288,12 +340,15 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
     # answers differently from run to run even at temperature 0, and a finding
     # most runs repeat is one the designer can trust. Each run keeps its own
     # budget and timeout; none sees another's answer.
-    outcomes = await asyncio.gather(*(run_review_agent(dossier, unused) for _ in range(requested)))
-    judged: list[PLOSetReview] = []
-    for i, outcome in enumerate(outcomes, start=1):
+    # Spec 2026-11-04 decision 26: the first batch is a majority of the runs asked
+    # for; when it already agrees on every question the rest would only repeat it.
+    first = min(requested, requested // 2 + 1)
+
+    def judge(outcome: AgentOutcome, i: int) -> PLOSetReview | None:
+        """The kept review of run `i` (1-based launch index), or None."""
         if outcome.finish is None:
             logger.warning(f"plo_review: run {i}/{requested} ended {outcome.reason}")
-            continue
+            return None
         review, drops = accept_review(
             outcome.finish,
             plos,
@@ -307,14 +362,43 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
         )
         logger.info(
             f"plo_review: run {i}/{requested} kept {len(review.redundancies)} redundancy / "
-            f"{len(review.ksec)} ksec / {len(review.bloom)} bloom / "
+            f"{len(review.ksec)} ksec / {len(review.alignment)} alignment / "
+            f"{len(review.bloom)} bloom / "
             f"{sum(1 for u in review.unused_needs if u.verdict)} unused verdict(s), "
             f"dropped {dict(drops) or 'nothing'}, {len(review.tool_calls)} tool call(s)"
         )
         if not has_agent_findings(review):
             logger.warning(f"plo_review: run {i}/{requested} held nothing usable")
-            continue
-        judged.append(review)
+            return None
+        return review
+
+    async def one(index: int) -> tuple[AgentOutcome, PLOSetReview | None]:
+        outcome = await run_review_agent(dossier, unused, stakeholder_by_evidence)
+        return outcome, judge(outcome, index + 1)
+
+    def can_still_agree(
+        done: Sequence[tuple[AgentOutcome, PLOSetReview | None]], pending: int
+    ) -> bool:
+        # Unanimity needs every first-batch run usable and every key equal; one
+        # unusable run or two different keys already rule it out, so the rest
+        # start without waiting for the slow runs.
+        reviews = [review for _, review in done]
+        agree = all(r is not None for r in reviews) and (
+            len({review_key(r) for r in reviews if r is not None}) <= 1
+        )
+        if not agree:
+            logger.info(f"plo_review: running {requested - first} more (split)")
+        return agree
+
+    # The rest start as soon as the first batch cannot be unanimous, not when its
+    # slowest run finishes; the runs started are the same as before.
+    results = await run_eager_waves(
+        one, first=first, requested=requested, can_still_decide=can_still_agree
+    )
+    outcomes = [outcome for outcome, _ in results]
+    judged = [review for _, review in results if review is not None]
+    if len(results) == first and requested > first:
+        logger.info(f"plo_review: early stop after {first}/{requested} runs (unanimous)")
 
     if not judged:
         reason = "timeout" if all(o.reason == "timeout" for o in outcomes) else "failed"
@@ -341,18 +425,52 @@ async def _review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
 
 
 async def fresh_review(program_id: str, plos: Sequence[PLO]) -> PLOSetReview:
-    """Always runs, always stores. Raises ReviewAlreadyRunning or a database error."""
+    """Always runs, always stores, then sends the agreed findings back (phase 4).
+
+    Raises ReviewAlreadyRunning or a database error. The graph tail uses this form
+    and has no use for the round's trail; the REST job wants it and calls
+    `fresh_review_with_feedback`.
+    """
+    review, _feedback = await fresh_review_with_feedback(program_id, plos)
+    return review
+
+
+async def fresh_review_with_feedback(
+    program_id: str, plos: Sequence[PLO]
+) -> tuple[PLOSetReview, list[FeedbackAction]]:
+    """`fresh_review`, also returning every send-back row written by this job.
+
+    Runs the review loop (`stages/plo_review_loop.py`; mode off is the phase-4
+    single pass). Each review is stored before send-back starts and send-back
+    failures are logged, not propagated. The in-flight guard stays held through the
+    whole loop, so a second review cannot start against a set being redrafted.
+    """
     if program_id in _REVIEW_IN_FLIGHT:
         raise ReviewAlreadyRunning(
             f"กำลังตรวจชุด PLO ของโปรแกรม '{program_id}' อยู่ — รอให้รอบเดิมเสร็จก่อน"
         )
     _REVIEW_IN_FLIGHT.add(program_id)  # no await between the check and the add
     try:
-        review = await _review(program_id, plos)
-        await PLOReviewRepository().upsert(review)
-        return review
+        from curriculum_agent.stages.plo_review_loop import run_review_loop
+
+        return await run_review_loop(program_id, plos)
     finally:
         _REVIEW_IN_FLIGHT.discard(program_id)
+
+
+async def _review_once_with_send_back(
+    program_id: str, plos: Sequence[PLO]
+) -> tuple[PLOSetReview, list[FeedbackAction]]:
+    """The phase-4 pass: one review, stored, then one send-back that never raises.
+    The loop's `off` mode and `plo_review_max_rounds=0` run exactly this."""
+    review = await _review(program_id, plos)
+    await PLOReviewRepository().upsert(review)
+    feedback: list[FeedbackAction] = []
+    try:
+        feedback = await send_back(program_id, review, plos)
+    except Exception as exc:
+        logger.warning(f"plo_review: send-back for {program_id} failed: {exc!r}")
+    return review, feedback
 
 
 def _worth_reusing(review: PLOSetReview) -> bool:
@@ -372,7 +490,7 @@ async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview |
     one. Never raises — an advisory step must not fail the session."""
     try:
         stored = await PLOReviewRepository().get(program_id)
-        needs = await NeedRepository().list_by_program(program_id)
+        needs = await NeedRepository().list_active_by_program(program_id)
     except Exception as exc:
         logger.warning(f"plo_review: could not read inputs for {program_id}: {exc!r}")
         return None
@@ -397,10 +515,23 @@ async def review_plo_set(program_id: str, plos: Sequence[PLO]) -> PLOSetReview |
 
 
 async def run(state: AgentState) -> AgentState:
-    """Graph entry, stage 06: after the report, review the set it persisted."""
+    """Graph entry, stage 06: review the synthesized set, before the PLO checkpoint."""
     program_id = state.get("program_id", "unknown")
     plos = [PLO.model_validate(d) for d in state.get("plos", [])]
     review = await review_plo_set(program_id, plos) if plos else None
     state["plo_review"] = review.model_dump(mode="json") if review is not None else None
+    if plos:
+        # Send-back may have redrafted or merged PLOs; the state must carry what is
+        # stored now, not the set the review started from. Advisory like the review:
+        # a failed read keeps the state's set (the checkpoint reloads on resume).
+        try:
+            stored = await PLORepository().list_by_program(program_id)
+        except Exception as exc:
+            logger.warning(
+                f"plo_review: could not reload the PLOs of {program_id} after the review, "
+                f"keeping the session's copy: {exc!r}"
+            )
+        else:
+            state["plos"] = [p.model_dump(mode="json") for p in stored]
     state["current_stage"] = "plo_review"
     return state

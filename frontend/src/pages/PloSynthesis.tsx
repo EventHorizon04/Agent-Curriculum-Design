@@ -9,18 +9,24 @@ import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
 import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import DesignerNote from './components/DesignerNote'
+import SupersededPlos from './components/SupersededPlos'
+import { plosCiting } from './components/plosCiting'
+import MergeNeedPicker from './components/MergeNeedPicker'
+import { attachBlockedReason, unusedNeedsOf, type PickerNeed } from './components/pickerNeed'
+import { AttachButton, AttachPanel } from './components/AttachNeed'
 import ValidationToggle, { type ValidationStatus } from './components/ValidationToggle'
 import { classStyle, ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import { SMART_KEYS, SMART_LABEL_TH, VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
 import { BLOOM_LABEL } from '../constants/bloom'
-import type { PLO } from '../types/plo'
+import type { PLO, SupersededPLO } from '../types/plo'
+import type { FeedbackAction } from '../types/ploReview'
 
 interface NeedSummary {
   need_id: string
   statement_th: string
   statement_en: string | null
-  ksec_category: string
+  ksec_categories: string[]
   bloom_level: string
   demand_score: number
   source_evidence_ids: string[]
@@ -43,10 +49,7 @@ interface PLOTrace {
   missing_evidence_ids: string[]
 }
 
-interface NeedListItem {
-  need_id: string
-  statement_th: string
-}
+type NeedListItem = PickerNeed
 
 /** The jobs this page owns: the synthesis run, and the SMART re-check of one
  *  outcome. They are what it shows as running and what its failure notice is
@@ -55,17 +58,26 @@ const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate']
 /** The jobs that change what this page lists, whichever page started them: the
  *  PLOs it shows are written by the first two, the Needs it offers for merging
  *  by the last two. */
-const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate', 'needs_pipeline', 'need_combination']
+/* plo_review is chained after synthesis and may change PLOs (send-back). */
+const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_review', 'plo_revalidate', 'needs_pipeline', 'skill_extraction', 'need_combination']
+
+/** Wall clock, read from an event handler: kept out of the component body so
+ *  the purity lint does not mistake the handler for render. */
+const clockMs = (): number => Date.now()
 
 export default function PloSynthesis() {
   const { programId } = useProgram()
   const [plos, setPlos] = useState<PLO[]>([])
+  const [superseded, setSuperseded] = useState<SupersededPLO[]>([])
   const [needs, setNeeds] = useState<NeedListItem[]>([])
+  const [feedback, setFeedback] = useState<FeedbackAction[]>([])
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [loading, setLoading] = useState(false)
   // Between a click and the job being known, and during the synchronous merge.
   const [starting, setStarting] = useState(false)
   const [merging, setMerging] = useState(false)
+  // The cards a merge in flight will replace, and when it began.
+  const [mergeFlight, setMergeFlight] = useState<{ ids: Set<string>; since: number } | null>(null)
   const [error, setError] = useState('')
   const [note, setNote] = useState('')
   const [runValidation, setRunValidation] = useState(true)
@@ -112,12 +124,22 @@ export default function PloSynthesis() {
       if (!quiet) setLoading(true)
       setError('')
       try {
-        const [ploRes, needRes] = await Promise.all([
+        const [ploRes, supersededRes, needRes, feedbackRes] = await Promise.all([
           api.get<PLO[]>(`/programs/${programId}/plos/`),
-          api.get<NeedListItem[]>(`/programs/${programId}/needs/`),
+          // The replaced list is secondary: its failure must not blank the PLOs.
+          api
+            .get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`)
+            .catch(() => ({ data: [] as SupersededPLO[] })),
+          api.get<NeedListItem[]>(`/programs/${programId}/needs/?active_only=true`),
+          // The chip is secondary too: no trail, no chip, the PLOs still show.
+          api
+            .get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`)
+            .catch(() => ({ data: [] as FeedbackAction[] })),
         ])
         setPlos(ploRes.data)
+        setSuperseded(supersededRes.data)
         setNeeds(needRes.data)
+        setFeedback(feedbackRes.data)
       } catch {
         setError('โหลด PLO ไม่สำเร็จ')
       } finally {
@@ -193,24 +215,43 @@ export default function PloSynthesis() {
 
   // Still synchronous — it is not one of the background jobs — but it is a
   // writer like them, so a 409 here means the program already has one running.
-  const mergeSelected = async () => {
-    if (selected.size < 2 || !programId || busy) return
+  // The picker and the card's attach control both come through here, so the
+  // cards a merge replaces and the page line behave the same for either.
+  /** True only after the POST succeeded. */
+  const submitMerge = async (needIds: string[], mergeNote: string | null): Promise<boolean> => {
+    if (needIds.length < 2 || !programId || busy) return false
     setMerging(true)
+    // Same rule as the server's: every outcome citing a selected Need goes.
+    setMergeFlight({ ids: new Set(plosCiting(plos, needIds).map(p => p.plo_id)), since: clockMs() })
     setError('')
     try {
       await api.post(`/programs/${programId}/plos/from-needs`, {
-        need_ids: [...selected],
-        note_th: note.trim() || null,
+        need_ids: needIds,
+        note_th: mergeNote,
       })
-      setSelected(new Set())
       await fetchPlos()
+      return true
     } catch (err: unknown) {
       const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
       setError(res?.data?.detail ?? 'รวม Need เป็น PLO เดียวไม่สำเร็จ')
       if (res?.status === 409) void refresh()
+      return false
     } finally {
       setMerging(false)
+      setMergeFlight(null)
     }
+  }
+
+  /** What a card is waiting on, if anything: its own SMART re-check, or the
+   *  merge that will replace it. */
+  const pendingOf = (ploId: string): Pending | undefined => {
+    if (revalidatingId === ploId && mine) {
+      return { label: REVALIDATING_LABEL, since: Date.parse(mine.created_at) }
+    }
+    if (mergeFlight?.ids.has(ploId)) {
+      return { label: 'กำลังร่าง PLO ใหม่แทนข้อนี้', since: mergeFlight.since }
+    }
+    return undefined
   }
 
   if (!programId) {
@@ -222,6 +263,9 @@ export default function PloSynthesis() {
     )
   }
 
+  const citedNeedIds = new Set(plos.flatMap(p => p.source_need_ids))
+  const unusedNeeds = unusedNeedsOf(needs, citedNeedIds)
+
   const smartPassCount = plos.filter(p =>
     SMART_KEYS.every(k => p.smart_check[k] === true)
   ).length
@@ -232,14 +276,20 @@ export default function PloSynthesis() {
   return (
     <div>
       <div className="mb-6">
-        <p className="eyebrow">ขั้นที่ 4</p>
+        <p className="eyebrow">ขั้นที่ 5</p>
         <h1 className="page-title">สังเคราะห์ PLO</h1>
         <p className="mt-1 text-sm text-pencil">ตรวจสอบและแก้ไข Program Learning Outcomes ที่ AI สังเคราะห์</p>
+        <p className="mt-1 text-xs text-lead">
+          เมื่อสังเคราะห์เสร็จ ระบบตรวจคุณภาพทั้งชุดต่อทันที และอาจส่งบาง PLO กลับไปแก้ — ดูผลที่ขั้นตรวจคุณภาพ
+        </p>
         <p className="data mt-1 text-xs text-lead">{programId}</p>
       </div>
 
       {error && (
         <div className="notice notice-error mb-6">{error}</div>
+      )}
+      {running?.kind === 'plo_review' && (
+        <p className="notice notice-warn mb-6">กำลังตรวจคุณภาพชุด PLO ต่อจากการสังเคราะห์ — PLO อาจเปลี่ยนเมื่อตรวจเสร็จ</p>
       )}
       {last?.status === 'failed' && (
         <div className="mb-6">
@@ -261,8 +311,6 @@ export default function PloSynthesis() {
           plan={synthesis.params.run_validation !== false ? PLO_SYNTHESIS_PLAN : PLO_SYNTHESIS_CODE_ONLY_PLAN}
           since={Date.parse(synthesis.created_at)}
         />
-      ) : merging ? (
-        <RunProgress plan={agentWillRun ? PLO_SYNTHESIS_PLAN : PLO_SYNTHESIS_CODE_ONLY_PLAN} />
       ) : loading ? (
         <LoadingLine />
       ) : plos.length === 0 ? (
@@ -320,66 +368,53 @@ export default function PloSynthesis() {
                 programId={programId}
                 onUpdate={handleUpdate}
                 busy={busy}
-                revalidating={revalidatingId === p.plo_id}
+                pending={pendingOf(p.plo_id)}
                 onRevalidate={() => revalidate(p.plo_id)}
+                unusedNeeds={unusedNeeds}
+                needs={needs}
+                onAttach={(needId) => void submitMerge([...p.source_need_ids, needId], null)}
+                reviewFixed={feedback.some(
+                  (f) =>
+                    f.outcome === 'applied' &&
+                    f.result_plo_id === p.plo_id &&
+                    f.result_statement_th === p.statement_th,
+                )}
               />
             ))}
           </div>
 
+          <SupersededPlos items={superseded} needs={needs} />
+
           {needs.length >= 2 && (
-            <div className="panel mt-8 bg-sunk p-5">
-              <h2 className="section-title mb-1">
-                รวม Need หลายรายการเป็น PLO เดียว
-              </h2>
-              <p className="mb-3 text-xs text-pencil">
-                เลือก Need ตั้งแต่ 2 รายการที่ต้องการให้ AI สังเคราะห์รวมเป็น PLO เดียว
-              </p>
-              {note.trim() && (
-                <p className="notice notice-info mb-3 text-xs">
-                  ใช้หมายเหตุด้านบน: <span className="text-graphite">{note.trim()}</span>
-                </p>
+            <MergeNeedPicker
+              needs={needs}
+              plos={plos}
+              selected={selected}
+              onToggle={toggleNeed}
+              note={note}
+              busy={busy}
+              merging={merging}
+              onSubmit={() => void submitMerge([...selected], note.trim() || null).then(ok => { if (ok) setSelected(new Set()) })}
+              flight={mergeFlight && (
+                <PendingLine
+                  pending={{ label: 'กำลังร่าง PLO จาก Need ที่เลือก', since: mergeFlight.since }}
+                  announce
+                />
               )}
-              <div className="space-y-2 mb-4">
-                {needs.map(n => (
-                  <label
-                    key={n.need_id}
-                    className={`flex cursor-pointer items-start gap-2.5 rounded-[3px] border p-3 transition-colors ${
-                      selected.has(n.need_id)
-                        ? 'border-stamp bg-stamp-wash'
-                        : 'border-hair bg-sheet hover:border-hair-strong'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selected.has(n.need_id)}
-                      onChange={() => toggleNeed(n.need_id)}
-                      className="mt-1.5 accent-stamp"
-                    />
-                    <span className="record text-base">{n.statement_th}</span>
-                  </label>
-                ))}
-              </div>
-              <button
-                onClick={mergeSelected}
-                disabled={selected.size < 2 || busy}
-                className="btn btn-primary"
-              >
-                รวมเป็น PLO เดียว ({selected.size})
-              </button>
-            </div>
+            />
           )}
         </>
       )}
 
-      {/* The report reads the stored PLOs, so anything drafted is enough to go
+      {/* The review reads the stored PLOs, so anything drafted is enough to go
           on — including a set carrying escalations, which is exactly what the
-          report page is there to show. */}
+          review page is there to show. */}
       <NextStageLink
         from="plo_synthesis"
         ready={Boolean(programId) && plos.length > 0 && mine === null && !merging}
         blockedReason={
           mine !== null || merging
-            ? 'รอให้งานที่กำลังทำเสร็จก่อน — รายงานต้องอ่านจาก PLO ชุดนี้'
+            ? 'รอให้งานที่กำลังทำเสร็จก่อน — การตรวจคุณภาพต้องอ่านจาก PLO ชุดนี้'
             : 'ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน'
         }
       />
@@ -443,7 +478,7 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
                 </span>
               </div>
               <p className="mt-1.5 text-xs text-pencil">
-                <span className="data">{c.source_evidence_ids.length}</span> evidence · {ksecLabel(c.ksec_category)} · {c.bloom_level}
+                <span className="data">{c.source_evidence_ids.length}</span> evidence · {c.ksec_categories.map(ksecLabel).join(' + ')} · {c.bloom_level}
               </p>
             </div>
           ))}
@@ -477,21 +512,64 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
   )
 }
 
+const REVALIDATING_LABEL = 'กำลังตรวจ SMART ใหม่'
+
+/** A card that is waiting on a job: dimmed, its actions off, a sweep line with
+ *  the seconds it has waited. `since` is epoch ms. */
+interface Pending {
+  label: string
+  since: number
+}
+
+function PendingLine({ pending, announce = false }: { pending: Pending; announce?: boolean }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(id)
+  }, [])
+  const since = Number.isFinite(pending.since) ? pending.since : now
+  const seconds = Math.max(0, Math.floor((now - since) / 1000))
+  return (
+    <div className="mb-3">
+      <div className="relative h-1 overflow-hidden rounded-[2px] bg-sunk ring-1 ring-hair ring-inset">
+        <span className="animate-run-sweep absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-transparent via-stamp/25 to-transparent" />
+      </div>
+      <p className="mt-1 text-xs text-pencil">
+        {/* Only the label is announced; the ticking count stays outside the live region. */}
+        <span role={announce ? 'status' : undefined} aria-live={announce ? 'polite' : undefined}>{pending.label}</span>
+        {' · '}<span className="data tabular-nums">{seconds}</span> วินาที
+      </p>
+    </div>
+  )
+}
+
 function PLOCard({
   plo: p,
   programId,
   onUpdate,
   busy,
-  revalidating,
+  pending,
   onRevalidate,
+  unusedNeeds,
+  needs,
+  onAttach,
+  reviewFixed,
 }: {
+  /** The current text is what the review's send-back wrote (same id and statement). */
+  reviewFixed: boolean
+  unusedNeeds: PickerNeed[]
+  /** Every active Need, to tell a cited Need that is no longer in the set. */
+  needs: PickerNeed[]
+  /** Redraft this outcome from its Needs plus the chosen one. */
+  onAttach: (needId: string) => void
   plo: PLO
   programId: string
   onUpdate: (plo: PLO) => void
   /** The program has a writer running, whatever it is; nothing here may start another. */
   busy: boolean
-  /** The SMART re-check of *this* outcome is the job that is running. */
-  revalidating: boolean
+  /** A job concerning *this* outcome is running: its SMART re-check, or the
+   *  merge that will replace it. */
+  pending?: Pending
   onRevalidate: () => void
 }) {
   const [editing, setEditing] = useState(false)
@@ -499,6 +577,7 @@ function PLOCard({
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState('')
   const [traceOpen, setTraceOpen] = useState(false)
+  const [attachOpen, setAttachOpen] = useState(false)
 
   const smartPassed = SMART_KEYS.every(k => p.smart_check[k] === true)
 
@@ -508,6 +587,7 @@ function PLOCard({
     try {
       const res = await api.put<PLO>(`/programs/${programId}/plos/${p.plo_id}`, draft)
       onUpdate(res.data)
+      setDraft(res.data)
       setEditing(false)
     } catch (err) {
       // The server says why. Guessing "forbidden word" was wrong more often
@@ -532,8 +612,10 @@ function PLOCard({
     <div
       className={`panel p-4 sm:p-5 ${
         p.smart_escalated ? 'border-mandate border-l-4' : ''
-      }`}
+      } ${pending ? 'opacity-60' : ''}`}
+      aria-busy={pending ? true : undefined}
     >
+      {pending && <PendingLine pending={pending} announce={pending.label === REVALIDATING_LABEL} />}
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start">
         <div className="flex-1 min-w-0">
@@ -563,6 +645,11 @@ function PLOCard({
             >
               {p.is_optional ? 'เสริม' : 'หลัก'}
             </span>
+            {reviewFixed && (
+              <Link to="/plo-review" className="chip chip-marker" title="ข้อนี้ถูกส่งกลับไปแก้ตามผลตรวจชุด PLO — ดูรายละเอียดที่หน้าตรวจคุณภาพ">
+                แก้ตามผลตรวจ
+              </Link>
+            )}
             {p.smart_escalated && (
               <span className="chip bg-mandate font-semibold whitespace-normal text-sheet">
                 ไม่ผ่าน SMART หลังแก้ {p.smart_retry_count} รอบ — ต้องแก้ด้วยมือ
@@ -616,6 +703,7 @@ function PLOCard({
               draft={draft}
               setDraft={setDraft}
               saving={saving}
+              disabled={Boolean(pending)}
               saveError={saveError}
               onSave={handleSave}
               onCancel={() => { setEditing(false); setDraft(p); setSaveError('') }}
@@ -643,7 +731,13 @@ function PLOCard({
         {!editing && (
           <div className="flex shrink-0 flex-row flex-wrap gap-1.5 sm:flex-col">
             <button
-              onClick={() => setEditing(true)}
+              onClick={() => {
+                // Start from the latest row: `draft` was set once at mount and
+                // can hold an older version after a revalidate or an earlier save.
+                setDraft(p)
+                setEditing(true)
+              }}
+              disabled={Boolean(pending)}
               className="btn btn-sm btn-secondary"
             >
               แก้ไข
@@ -657,11 +751,25 @@ function PLOCard({
               disabled={busy}
               className="btn btn-sm btn-secondary"
             >
-              {revalidating ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
+              {pending?.label === REVALIDATING_LABEL ? 'กำลังตรวจ...' : 'ตรวจ SMART ซ้ำ'}
             </button>
+            <AttachButton
+              blocked={attachBlockedReason(p.source_need_ids, needs, unusedNeeds)}
+              busy={busy || Boolean(pending)}
+              onOpen={() => setAttachOpen(true)}
+            />
           </div>
         )}
       </div>
+
+      {attachOpen && !editing && (
+        <AttachPanel
+          unused={unusedNeeds}
+          busy={busy || Boolean(pending)}
+          onAttach={onAttach}
+          onClose={() => setAttachOpen(false)}
+        />
+      )}
 
       {/* SMART check */}
       {!editing && (
@@ -742,6 +850,7 @@ function EditForm({
   draft,
   setDraft,
   saving,
+  disabled,
   saveError,
   onSave,
   onCancel,
@@ -749,6 +858,8 @@ function EditForm({
   draft: PLO
   setDraft: React.Dispatch<React.SetStateAction<PLO>>
   saving: boolean
+  /** A job is working on this outcome: nothing here may be saved meanwhile. */
+  disabled: boolean
   saveError: string
   onSave: () => void
   onCancel: () => void
@@ -761,6 +872,7 @@ function EditForm({
         </label>
         <textarea
           className="input record resize-none"
+          disabled={disabled}
           rows={3}
           value={draft.statement_th}
           onChange={e => setDraft(d => ({ ...d, statement_th: e.target.value }))}
@@ -771,6 +883,7 @@ function EditForm({
         <label className="field-label">Action Verb (Thai)</label>
         <input
           className="input"
+          disabled={disabled}
           value={draft.action_verb_th}
           onChange={e => setDraft(d => ({ ...d, action_verb_th: e.target.value }))}
         />
@@ -779,6 +892,7 @@ function EditForm({
         <label className="field-label">Rationale (Thai)</label>
         <textarea
           className="input resize-none"
+          disabled={disabled}
           rows={2}
           value={draft.rationale_th}
           onChange={e => setDraft(d => ({ ...d, rationale_th: e.target.value }))}
@@ -792,7 +906,7 @@ function EditForm({
       <div className="flex flex-wrap gap-2 pt-1">
         <button
           onClick={onSave}
-          disabled={saving}
+          disabled={saving || disabled}
           className="btn btn-sm btn-primary"
         >
           {saving ? 'กำลังบันทึก...' : 'บันทึก'}

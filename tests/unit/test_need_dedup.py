@@ -102,33 +102,31 @@ def test_a_need_already_in_an_accepted_group_drops_the_later_group_whole() -> No
     assert _ids(folds) == [["a", "b"]], "the second group is dropped, not trimmed to N3+N4"
 
 
-def test_a_group_spanning_two_ksec_tags_is_dropped() -> None:
-    """A K Need folded into an S sentence is the knowledge disappearing."""
+def test_mixed_ksec_group_accepted() -> None:
+    """A K Need and an S Need that ask for one capability fold into one multi-tag Need."""
     labelled = label_needs([_need("a", ksec=KSECCategory.K), _need("b", ksec=KSECCategory.S)])
 
-    assert accept_groups(_answer(["N1", "N2"]), labelled) == []
+    assert _ids(accept_groups(_answer(["N1", "N2"]), labelled)) == [["a", "b"]]
 
 
-def test_a_group_of_four_is_dropped_not_trimmed() -> None:
-    labelled = label_needs([_need(x) for x in "abcd"])
+def test_group_of_five_accepted_six_dropped() -> None:
+    labelled = label_needs([_need(x) for x in "abcdef"])
 
-    assert accept_groups(_answer(["N1", "N2", "N3", "N4"]), labelled) == []
-
-
-def test_a_group_of_three_is_the_largest_accepted() -> None:
-    labelled = label_needs([_need(x) for x in "abc"])
-
-    assert _ids(accept_groups(_answer(["N1", "N2", "N3"]), labelled)) == [["a", "b", "c"]]
+    assert _ids(accept_groups(_answer(["N1", "N2", "N3", "N4", "N5"]), labelled)) == [
+        ["a", "b", "c", "d", "e"]
+    ]
+    assert accept_groups(_answer(["N1", "N2", "N3", "N4", "N5", "N6"]), labelled) == []
+    assert nd.MAX_GROUP_SIZE == 5
 
 
 def test_a_dropped_group_does_not_reserve_its_members() -> None:
-    """Only an *accepted* group takes its members: a group dropped for mixing
-    KSEC must not stop a later, valid group from using one of them."""
-    labelled = label_needs([_need("a"), _need("b", ksec=KSECCategory.K), _need("c")])
+    """Only an *accepted* group takes its members: a group dropped for size
+    must not stop a later, valid group from using one of them."""
+    labelled = label_needs([_need(x) for x in "abcdefg"])
 
-    folds = accept_groups(_answer(["N1", "N2"], ["N1", "N3"]), labelled)
+    folds = accept_groups(_answer(["N1", "N2", "N3", "N4", "N5", "N6"], ["N1", "N7"]), labelled)
 
-    assert _ids(folds) == [["a", "c"]]
+    assert _ids(folds) == [["a", "g"]]
 
 
 def test_an_empty_answer_accepts_nothing() -> None:
@@ -139,7 +137,7 @@ def test_the_answer_is_summarised_in_one_line(monkeypatch: pytest.MonkeyPatch) -
     """Accepted and dropped counts, for the per-stage figures a study reports."""
     logger = Mock()
     monkeypatch.setattr(nd, "logger", logger)
-    labelled = label_needs([_need("a"), _need("b"), _need("c", ksec=KSECCategory.K)])
+    labelled = label_needs([_need("a"), _need("b"), _need("c")])
 
     accept_groups(_answer(["N1", "N2"], ["N2", "N3"]), labelled)
 
@@ -169,7 +167,9 @@ async def test_the_kill_switch_makes_no_call(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(nd, "complete_need_dedup", call)
     monkeypatch.setattr(nd.settings, "need_dedup_provider", "")
 
-    assert await find_duplicate_groups([_need("a"), _need("b")], _METADATA) == []
+    folds = await find_duplicate_groups([_need("a"), _need("b")], _METADATA)
+    assert folds == []
+    assert folds.call == "disabled"
     call.assert_not_awaited()
 
 
@@ -186,4 +186,127 @@ async def test_a_failing_call_folds_nothing(monkeypatch: pytest.MonkeyPatch) -> 
     so an outage costs duplicates and never a PLO."""
     monkeypatch.setattr(nd, "complete_need_dedup", AsyncMock(side_effect=RuntimeError("down")))
 
-    assert await find_duplicate_groups([_need("a"), _need("b")], _METADATA) == []
+    folds = await find_duplicate_groups([_need("a"), _need("b")], _METADATA)
+    assert folds == []
+    assert folds.call == "failed"
+
+
+# --------------------------- the vote ---------------------------
+
+
+def _five() -> list[Need]:
+    return [_need(f"n{i}") for i in range(1, 6)]
+
+
+def _fake(monkeypatch: pytest.MonkeyPatch, *answers: DedupAnswer | Exception) -> AsyncMock:
+    call = AsyncMock(side_effect=list(answers))
+    monkeypatch.setattr(nd, "complete_need_dedup", call)
+    monkeypatch.setattr(nd.settings, "need_dedup_runs", len(answers))
+    return call
+
+
+async def test_only_a_pair_a_majority_names_is_merged(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake(
+        monkeypatch,
+        _answer(["N1", "N2"], ["N3", "N4"]),
+        _answer(["N1", "N2"], ["N3", "N4"]),
+        _answer(["N1", "N2"]),
+        _answer(),
+        _answer(),
+    )
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert _ids(folds) == [["n1", "n2"]]
+    assert folds.call == "ok"
+    assert folds.proposed == 5
+    assert folds[0].reason_th == "งานเดียวกัน"
+
+
+async def test_a_group_of_three_survives_when_every_pair_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _fake(monkeypatch, *[_answer(["N3", "N1", "N2"])] * 3)
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert _ids(folds) == [["n1", "n2", "n3"]]
+
+
+def test_a_component_with_an_unnamed_pair_yields_one_pair_by_support() -> None:
+    runs = [
+        [(["N1", "N2"], "a")],
+        [(["N1", "N2"], "a")],
+        [(["N2", "N3"], "b")],
+        [(["N2", "N3"], "b")],
+        [(["N2", "N3"], "b")],
+    ]
+
+    # N1+N2 and N2+N3 both pass; N1+N3 is never named, so no 3-group forms.
+    voted, support = nd._vote(runs, 2)
+
+    assert voted == [(["N2", "N3"], "b")]
+    assert support[("N2", "N3")] == 3 and support[("N1", "N2")] == 2
+
+
+async def test_failed_calls_do_not_vote(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two of five raise: the threshold is a majority of the three that answered (2)."""
+    _fake(
+        monkeypatch,
+        RuntimeError("down"),
+        _answer(["N1", "N2"]),
+        RuntimeError("down"),
+        _answer(["N1", "N2"]),
+        _answer(),
+    )
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert _ids(folds) == [["n1", "n2"]]
+    assert folds.call == "ok"
+
+
+async def test_every_call_failing_is_a_failed_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fake(monkeypatch, *[RuntimeError("down")] * 5)
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert folds == []
+    assert folds.call == "failed"
+
+
+async def test_one_run_keeps_every_accepted_group(monkeypatch: pytest.MonkeyPatch) -> None:
+    call = _fake(monkeypatch, _answer(["N1", "N2"], ["N4", "N5"]))
+
+    folds = await find_duplicate_groups(_five(), _METADATA)
+
+    assert _ids(folds) == [["n1", "n2"], ["n4", "n5"]]
+    assert call.await_count == 1
+
+
+async def test_every_call_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    call = _fake(monkeypatch, *[_answer()] * 3)
+
+    await find_duplicate_groups(_five(), _METADATA)
+
+    assert call.await_count == 3
+    for c in call.await_args_list:
+        assert c.kwargs["max_tokens"] == nd._MAX_TOKENS
+        assert c.kwargs["reasoning_max_tokens"] == nd._REASONING_MAX_TOKENS
+
+
+async def test_many_eligible_needs_log_a_size_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    from loguru import logger
+
+    monkeypatch.setattr(nd, "complete_need_dedup", AsyncMock(return_value=DedupAnswer()))
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        await find_duplicate_groups([_need(f"n{i}") for i in range(nd.MAX_NEEDS_WARN)], _METADATA)
+        assert not any("exceeds" in m for m in messages)
+        await find_duplicate_groups(
+            [_need(f"n{i}") for i in range(nd.MAX_NEEDS_WARN + 1)], _METADATA
+        )
+    finally:
+        logger.remove(sink)
+    assert sum("exceeds" in m for m in messages) == 1

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any, Literal
@@ -127,9 +128,19 @@ class KSECCategory(StrEnum):
 # `_SkillItem.ksec_category: Literal["K", "S", "E", "C"]` in
 # `stages/skill_extraction.py`, which Instructor uses to constrain what the
 # extraction LLM can return. That module asserts its Literal against this
-# frozenset at import time (mirroring the `_KSEC_LABEL_TH` guard in
+# frozenset at import time (mirroring the `KSEC_LABEL_TH` guard in
 # `prompts/summarize_need.py`), so the two cannot silently drift apart.
 SKILL_KSEC = frozenset({KSECCategory.K, KSECCategory.S, KSECCategory.E, KSECCategory.C})
+
+
+# Canonical order of a Need's tags.
+_KSEC_TAG_ORDER = (
+    KSECCategory.K,
+    KSECCategory.S,
+    KSECCategory.E,
+    KSECCategory.C,
+    KSECCategory.EC,
+)
 
 
 # Bloom levels in order, used for monotonicity check
@@ -304,8 +315,10 @@ class Need(BaseModel):
     # LangGraph checkpoint suspended across the deploy that added the column, and
     # those never pass through the migration.
     rationale_th: str = ""
-    # Single-valued by construction: grouping runs inside one KSEC bucket.
-    ksec_category: KSECCategory
+    # Clustering stays inside one KSEC bucket, so a skill-grouped Need carries one
+    # tag; a Need merged from same-purpose Needs of different tags carries the
+    # union. At least one, no duplicates, in K, S, E, C, EC order.
+    ksec_categories: list[KSECCategory] = Field(min_length=1)
     # What most of the group asks for — the lower mention-weighted median of the
     # members' levels (need_grouping.group_bloom), not the highest one.
     bloom_level: BloomLevel
@@ -327,6 +340,49 @@ class Need(BaseModel):
     # which is why these are plain ints rather than a coverage dict.
     in_field_skill_count: int = 0
     graduate_capability_skill_count: int = 0
+    # The most-demanded member skills, kept for display on a merged Need.
+    top_skill_ids: list[str] = Field(default_factory=list)
+    # A merged Need lists its originals (demand order); an original points back.
+    # Originals are stored, never deleted: `merged_into` hides them from every
+    # active read and a split clears it.
+    merged_from: list[str] = Field(default_factory=list)
+    merged_into: str | None = None
+    merge_reason_th: str = ""
+    # Set when the designer takes the Need out of the PLO pool. The row stays,
+    # still tracing to its evidence; `list_active_by_program` just skips it, so
+    # no stage needs its own filter. A timestamp rather than a bool so a restore
+    # clears one nullable field and the UI can say when it happened. Defaults to
+    # None for the same reason as the counters above: older rows and suspended
+    # checkpoints arrive without the key.
+    excluded_at: datetime | None = None
+    # Who wrote a merged Need: Agent 2's duplicate check or the designer's manual
+    # merge. None on an original and on rows that predate the field.
+    merged_by: Literal["agent", "designer"] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_single_ksec(cls, data: Any) -> Any:
+        """Map the old single `ksec_category` key to `ksec_categories=[value]`.
+
+        Rows and LangGraph checkpoints written before the column became a list
+        still carry the old key. Copy first, for the same reason as below.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "ksec_categories" not in data and "ksec_category" in data:
+            data = {**data}
+            data["ksec_categories"] = [data.pop("ksec_category")]
+        return data
+
+    @field_validator("ksec_categories")
+    @classmethod
+    def _dedupe_and_order_tags(cls, tags: list[KSECCategory]) -> list[KSECCategory]:
+        present = set(tags)
+        return [t for t in _KSEC_TAG_ORDER if t in present]
+
+    @property
+    def is_merged(self) -> bool:
+        return bool(self.merged_from)
 
     @model_validator(mode="before")
     @classmethod
@@ -377,6 +433,35 @@ class Need(BaseModel):
 
 
 # --------------------------- Stage 3 -----------------------------
+
+
+class SkillGroup(BaseModel):
+    """A cluster of extracted skills that agent 1 hands to agent 2.
+
+    Stored between the two agents so Need writing can start from the groups in
+    a separate job. Fields mirror the candidate group `need_combination` builds
+    before a Need's sentence is written; `is_graduate` records whether the
+    group is a graduate capability rather than a purely in-field one.
+    """
+
+    group_id: str
+    program_id: str
+    ksec: KSECCategory
+    skill_ids: list[str]
+    evidence_ids: list[str]
+    # Most-mentioned first; skill_frequencies[i] is how many member rows
+    # collapsed into skill_names[i].
+    skill_names: list[str]
+    skill_frequencies: list[int]
+    bloom_level: BloomLevel
+    demand_score: float
+    is_optional: bool
+    is_graduate: bool
+    classification_coverage: dict[str, int]
+    stakeholder_coverage: dict[StakeholderType, int]
+    stakeholder_types: list[StakeholderType]
+    in_field_skill_count: int
+    graduate_capability_skill_count: int
 
 
 class SmartFinding(BaseModel):
@@ -475,6 +560,19 @@ class PLO(BaseModel):
     # on the outcome.
     smart_diagnosis_th: str | None = None
     is_optional: bool = False
+    # Set when a designer changes the statement by hand (PUT /plos/{id}); nothing
+    # but a replacement of the outcome clears it. Agent 4's send-back reads it to
+    # leave a hand-written outcome alone. Naive UTC like every column here.
+    designer_edited_at: datetime | None = None
+
+    # Sent with its offset because a browser reads a naive ISO string as local time.
+    @field_serializer("designer_edited_at", when_used="json")
+    def _utc_edited(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
 
     @model_validator(mode="after")
     def check_no_forbidden_words(self) -> PLO:
@@ -532,6 +630,177 @@ class PLO(BaseModel):
         return self
 
 
+class SupersededPLO(BaseModel):
+    """A PLO a designer's merge replaced, read-only history (phase 3).
+
+    `plo` is the snapshot as it stood when it was replaced; `superseded_by` is
+    the plo_id of the merged outcome that took its place.
+    """
+
+    id: str
+    program_id: str
+    superseded_by: str
+    superseded_at: datetime
+    plo: PLO
+    # Who replaced it: "designer" (a merge on the PLO page) or "review" (Agent 4's
+    # send-back). None on rows written before the column existed; read as designer.
+    cause: str | None = None
+
+    # Stored naive UTC; sent with its offset because a browser reads a naive ISO
+    # string as local time. JSON only, like JobInfo.
+    @field_serializer("superseded_at", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class PLOReport(BaseModel):
+    """The stored PLO report of a program (phase 6): one row, the latest.
+
+    `plo_fingerprint` says which PLO set it was built from, as on the QA review;
+    `report` is the report body, opaque here.
+    """
+
+    program_id: str
+    plo_fingerprint: str
+    created_at: datetime
+    report: dict[str, Any]
+
+    # Stored naive UTC; sent with its offset like FeedbackAction. JSON only.
+    @field_serializer("created_at", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class FeedbackAction(BaseModel):
+    """One finding of the PLO set review that Agent 4 considered (phase 4).
+
+    The trail of what the review sent back: `outcome` is `applied`, `skipped`,
+    `failed`, `planned` (dry run) or `stopped` (loop end), with the Thai reason.
+    `kind` (redundancy, bloom, alignment, ksec_gap, unused_need, loop_end) and
+    `outcome` stay plain strings so a new value needs no migration.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    program_id: str
+    review_created_at: datetime
+    kind: str
+    plo_ids: list[str] = Field(default_factory=list)
+    need_ids: list[str] = Field(default_factory=list)
+    finding_reason_th: str = ""
+    instruction_th: str = ""
+    outcome: str
+    outcome_reason_th: str = ""
+    result_plo_id: str | None = None
+    result_statement_th: str | None = None
+    result_bloom_level: str | None = None
+    # Which loop round wrote the row; 0 for a single send-back and for older rows.
+    round: int = 0
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
+
+    # Stored naive UTC; sent with its offset like SupersededPLO. JSON only.
+    @field_serializer("review_created_at", "created_at", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class LLMUsage(BaseModel):
+    """One provider response and what it cost (phase 5).
+
+    Every response is a row, instructor retries included (`ok=False` for a response
+    that failed validation). Attribution fields are null for a call made outside a
+    program, job or session. `reasoning_tokens` is null when the endpoint does not
+    report it.
+    """
+
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    program_id: str | None = None
+    job_id: str | None = None
+    session_id: str | None = None
+    slot: str
+    provider: str = ""
+    model: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int | None = None
+    latency_ms: int = 0
+    ok: bool = True
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC).replace(tzinfo=None))
+
+    # Stored naive UTC; sent with its offset like FeedbackAction. JSON only.
+    @field_serializer("created_at", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class UsageTotals(BaseModel):
+    """Summed usage. Nulls count as 0."""
+
+    calls: int = 0
+    failed_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    reasoning_tokens: int = 0
+    latency_ms: int = 0
+
+
+class SlotUsage(UsageTotals):
+    slot: str
+
+
+class JobUsage(BaseModel):
+    """One job's usage; `kind` comes from the jobs row ("" if that row is gone)."""
+
+    job_id: str
+    kind: str = ""
+    # Filled by the route from api/jobs.py JOB_KIND_LABEL_TH; "" for an unknown kind.
+    label_th: str = ""
+    started: datetime
+    total: UsageTotals = Field(default_factory=UsageTotals)
+    by_slot: list[SlotUsage] = Field(default_factory=list)
+
+    @field_serializer("started", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class SessionUsage(BaseModel):
+    """One graph session's usage: calls attributed to a session and to no job."""
+
+    session_id: str
+    started: datetime
+    total: UsageTotals = Field(default_factory=UsageTotals)
+    by_slot: list[SlotUsage] = Field(default_factory=list)
+
+    @field_serializer("started", when_used="json")
+    def _utc(self, value: datetime) -> str:
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+class UsageSummary(BaseModel):
+    """A program's usage: overall, per slot, per job and per session (newest first).
+
+    Rows with a session and no job are grouped in `by_session`; rows with neither
+    count toward `total` and `by_slot` only.
+    """
+
+    total: UsageTotals = Field(default_factory=UsageTotals)
+    by_slot: list[SlotUsage] = Field(default_factory=list)
+    by_job: list[JobUsage] = Field(default_factory=list)
+    by_session: list[SessionUsage] = Field(default_factory=list)
+
+
 # ------------------------- PLO set review -------------------------
 
 
@@ -570,8 +839,21 @@ class BloomFinding(BaseModel):
     declared: BloomLevel
     suggested_level: BloomLevel | None = None
     reason_th: str = ""
+    # The verb the reviewer thinks fits the work better, and why. Advice only:
+    # nothing here is a PLO field. Both default empty for rows written before.
+    suggested_verb_th: str | None = None
+    suggestion_th: str = ""
     # How many of the review's runs said this (stages/plo_review_consensus.py).
     # 1 for a one-run review and for rows written before the field existed.
+    agreed_runs: int = 1
+
+
+class AlignmentFinding(BaseModel):
+    """A PLO that does not answer what the Needs it cites ask for."""
+
+    plo_id: str
+    reason_th: str
+    suggestion_th: str = ""
     agreed_runs: int = 1
 
 
@@ -603,7 +885,7 @@ class UnusedNeedFinding(BaseModel):
     need_id: str
     statement_th: str
     demand_score: float
-    ksec_category: str
+    ksec_categories: list[str] = Field(default_factory=list)
     stakeholder_types: list[str] = Field(default_factory=list)
     exclusion: str
     # The Need's statement is a fallback ("[ต้องทบทวน]" plus skill names). Separate
@@ -616,6 +898,15 @@ class UnusedNeedFinding(BaseModel):
     # How many of the review's runs said this (stages/plo_review_consensus.py).
     # 1 for a one-run review and for rows written before the field existed.
     agreed_runs: int = 1
+
+    @model_validator(mode="before")
+    @classmethod
+    def _legacy_single_ksec(cls, data: Any) -> Any:
+        """Reviews stored before Needs carried several tags hold one `ksec_category`."""
+        if isinstance(data, dict) and "ksec_categories" not in data and "ksec_category" in data:
+            data = {**data}
+            data["ksec_categories"] = [data.pop("ksec_category")]
+        return data
 
 
 class ReviewToolCall(BaseModel):
@@ -639,6 +930,7 @@ class PLOSetReview(BaseModel):
     redundancies: list[RedundancyFinding] = Field(default_factory=list)
     ksec: list[KsecFinding] = Field(default_factory=list)
     bloom: list[BloomFinding] = Field(default_factory=list)
+    alignment: list[AlignmentFinding] = Field(default_factory=list)
     bloom_distribution_th: str = ""
     summary_th: str = ""
     ksec_coverage: KsecCoverage = Field(default_factory=KsecCoverage)

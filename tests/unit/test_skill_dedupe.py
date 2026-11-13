@@ -14,7 +14,8 @@ import pytest
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory
 from curriculum_agent.stages import need_combination as nc
 from curriculum_agent.stages import skill_extraction as se
-from tests.support.needs import RATIONALE_TH
+from curriculum_agent.stages import skill_grouping as sg
+from tests.support.needs import RATIONALE_TH, run_need_pipeline_from_skills
 
 _SPAN = "สามารถวิเคราะห์ข้อมูลขนาดใหญ่"
 _TEXT_A = "บริษัทต้องการผู้ที่สามารถวิเคราะห์ข้อมูลขนาดใหญ่และออกแบบระบบฐานข้อมูลได้"
@@ -160,7 +161,10 @@ async def test_need_combination_clears_previous_needs_before_inserting(
     """Same defect as skills: `need_id` is fresh per run and the repo upserts."""
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i] for i in range(len(names))]
 
@@ -171,7 +175,7 @@ async def test_need_combination_clears_previous_needs_before_inserting(
             rationale_th=RATIONALE_TH,
         )
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", fake_summarize)
 
     # An AsyncMock set on the class is not a descriptor, so `self` is not passed —
@@ -189,7 +193,7 @@ async def test_need_combination_clears_previous_needs_before_inserting(
     )
 
     skills = [_skill("เขียนโปรแกรมเว็บ", KSECCategory.S, "S1", "E1")]
-    await nc.run(
+    await run_need_pipeline_from_skills(
         {
             "program_id": "prog-1",
             "classified_evidence": [

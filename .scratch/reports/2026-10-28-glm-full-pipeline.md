@@ -1,0 +1,198 @@
+# Full pipeline on GLM (every slot z-ai/glm-5.3-flash): 2026-10-28
+
+- Branch: `feat/four-agent-pipeline` at 6fed282.
+- Database: the copy `curriculum_phase1`, program `program`.
+- Cache: `llm_cache` was cleared before every run.
+- Driver: `full_run.py` in the session scratchpad. It calls `POST /needs/run`, which chains Agent 1 into Agent 2, then `/plos/run`, `/plos/report/run` and `/plos/review/run`.
+
+## Runs
+
+| Run | Change before the run | Result |
+|---|---|---|
+| 1 | GLM pair made the default (610f5dc) | Agent 1 timed out. Extraction took 240 s. The S-graduate clustering call took 234 s, and the 300 s grouping budget ran out on the third call. |
+| 2 | Clustering reasoning bounded to 1024 (52ce022) | Agent 1 timed out in **extraction** at 300 s. Extraction time varies from run to run. |
+| 3 | Job step budget raised to 900 s (617bf43) | Completed, but unusable: Need calls ended `finish_reason='length'` ×15 and 4 of 12 Needs fell back; PLO1 lost, see below; 4 core PLOs. |
+| 4 | Need/PLO calls capped (6fed282) | **Completed cleanly.** See below. |
+
+PLO1 in run 3: the draft call had no `max_tokens`. GLM looped while writing the JSON and produced 131,072 tokens with no reasoning. Instructor retried twice more (131,078, then 262,150 tokens), so PLO synthesis took 79 min and PLO1 was lost.
+
+The fix in 6fed282:
+- **Need sentence and merged Need:** the output cap rises from 2048 to 4096, and reasoning is bounded to 1024.
+- **PLO draft and repair:** the output cap is 4096, and reasoning is bounded to 1024.
+
+## Run 4
+
+| Step | Wall time |
+|---|---|
+| Agent 1: extraction (86 skills) and grouping (15 groups) | 269 s |
+| Agent 2: Need sentences, dedup and merge | 66 s |
+| PLO synthesis and SMART | 144 s |
+| Report | 0 s |
+| plo_review (5 runs, 5 succeeded) | 48 s |
+| **Total** | **531 s** |
+
+- **Truncations:** zero (`finish_reason='length'` ×0).
+- **Dedup:** 5 groups proposed, 5 accepted, 5 merged, 3 of them multi-tag (`core_needs=13->10`). No merged sentence failed.
+- **Needs:** 10 active. All of them are real sentences; none fell back.
+- **PLOs:** 7 core, inside the 6-10 band. SMART escalations: 0.
+- **SMART validation:** 4 of 7 PLOs (PLO1, PLO2, PLO3, PLO7) ended `code_only` because the agent used up its 8-turn budget. It spent the turns on reading tools and never called Finish, so those PLOs carry no soft verdicts.
+- **plo_review findings:**
+  - Redundancy between PLO2 and PLO3 (both fix translations).
+  - Redundancy between PLO4 and PLO5 (the agent notes they differ in role).
+  - PLO7 should be Bloom `create`; the set has no `create` outcome at all.
+  - PLO4 and PLO5 should be tagged S only, not K+S.
+  - Three unused Needs are institution-level and can be left out.
+
+## Open
+
+1. ~~The SMART agent exhausts its 8-turn budget on GLM in 4 of 7 PLOs.~~ Addressed in f7391d6; see "SMART agent after f7391d6" below.
+2. Extraction takes 240-430 s per run. That is acceptable for now, since time is not a concern on this branch, but phase 5 still has to deal with it.
+3. Grouping quality under the reasoning bound: read group by group below. Group counts were 18 for GLM before the bound, 10 for llama and 15-16 for bounded GLM.
+4. One run only. The figures above are a signal, not a statistic.
+
+## Grouping quality, run 4 (bounded GLM): the experimenter's reading
+
+15 groups, of which 11 are graduate groups. The budget was EC=2, K=1, S=7.
+
+Coherent groups (one main task and object):
+- **S: AI post-editing** (9). Every member is about controlling or fixing AI translation output.
+- **S: legal and contract translation** (5).
+- **S: interpreting at the negotiation table** (4).
+- **S: translation accuracy and analysis** (5).
+- **S: digital-marketing content** (5).
+- **Institutional groups** (curriculum management, international networking, AI in teaching) stay separate from the graduate groups, as intended.
+
+Weak groups:
+- **EC #1** (10) is a grab-bag of generic attributes: leadership, lifelong learning, internationalisation, labour-market readiness. One member, "การพิจารณาความต้องการของผู้มีส่วนได้ส่วนเสียตามแนวทางของแผนพัฒนาฯ", is institutional work, not a graduate attribute.
+- **S: entrepreneurship** (10) mixes entrepreneurship with generic items ("การปฏิบัติงานได้จริง", "การคิดเชิงกลยุทธ์").
+- **K** (5) has no single object. Its members are cultural interpretation, knowledge transfer, human-AI work, labour-market awareness and consumer culture.
+- **K singletons** (2). Each became a 1-skill group. Agent 2's dedup then merged both into K+S Needs (business negotiation, interpreting), which is the multi-tag merge working as designed.
+
+**Verdict.** Under the bound, GLM groups the core professional skills (S) coherently. The weak groups are the generic EC and K buckets, where there is no single object to group around. These groups were not compared item by item with the llama run or the unbounded GLM run, so this is no evidence for or against a regression caused by the bound.
+
+## SMART agent after f7391d6 (2026-10-29)
+
+**Change.** Each observation now carries a "N turns left" note when 2 or fewer turns remain. When the 8 turns run out with no Finish, the agent gets one more call whose schema allows only `Finish` (reason `finished_at_budget`). If that call fails as well, the old `code_only` fallback still applies.
+
+**Re-runs.** The PLO stage alone was run 3 more times on the run-4 Needs (`plos/run` → report → review):
+
+| Run | PLO synthesis | Finished by the agent | Turns used | Closing call used | Soft flags |
+|---|---|---|---|---|---|
+| 5 | 254 s | 7/7 | 4-6 | 0 | PLO4 A_scope |
+| 6 | 289 s | 7/7 | 2-7 | 0 | none |
+| 7 | 235 s | 7/7 | 4-7 | 0 | PLO4 A_scope; PLO7 A_level, A_scope |
+
+- **Outcomes.** Across the three runs, 21 of 21 PLOs ended with the agent's own Finish, with 0 `code_only`, 0 escalations and 0 lost PLOs. Run 4 had 4 of 7 `code_only`.
+- **Reasoning runaway.** Three PLO steps reasoned up to the 4096-token step cap without answering. The existing bounded re-ask recovered all three.
+- **What is not shown.** The closing call never ran live; it is tested by unit tests only. The Finishes at turn 7 (PLO1 and PLO4 in run 6, PLO4 in run 7) came after the turns-left note appeared. Run 5 finished early without any note, though, so the drop from 4 of 7 `code_only` to 0 of 21 cannot be credited to the change alone. GLM's run-to-run variance explains part of it.
+- **Soft verdicts.** PLO4 (A_scope) was flagged in 2 of 3 runs. PLO7 (A_level) agrees with plo_review, which also asks for `create`.
+
+## Follow-up runs (2026-11-03)
+
+### SMART agent
+
+**The closing call has now run live.** With `VALIDATION_MAX_TURNS=1`:
+- 7 of 7 PLOs logged "closed at the budget".
+- Every stored verdict says `smart_validated_by=agent`.
+- PLO4 still received its A_scope flag.
+
+**The turns-left note cut investigation short, and that is fixed in 11b24ce.**
+- Before the fix, with `VALIDATION_MAX_TURNS=3`, the note came with turn 1's observation. Every PLO ran `check_hard` and then finished at turn 2.
+- The note now appears only once half the budget is spent. At the default of 8 nothing changes: it appears on turns 7 and 8.
+- After the fix, with 3 turns, every PLO used all 3 turns (`check_hard`, then `bloom_lookup`, then Finish). PLO4 used the closing call after one repair. 10 of 10 PLOs were finished by the agent.
+
+**A malformed repair instruction lost a verdict, and that is fixed in 6e471d2.**
+- In run 11, PLO4 asked twice for a repair whose `instruction_th` was over 400 characters. Instructor's re-ask, which shows the error, did not help, and the PLO ended `code_only` (MALFORMED).
+- The cap is now 800, the same as `reasoning_th`.
+- When malformed steps are exhausted, the loop now makes the same Finish-only closing call (`finished_after_malformed`) before falling back to the code-only verdict.
+
+### Repeat full runs (10 and 11; cold, 8-turn budget, before 6e471d2)
+
+| | Run 4 | Run 10 | Run 11 |
+|---|---|---|---|
+| Total wall time | 531 s | 477 s | 620 s |
+| Agent 1 | 269 s | 246 s | 280 s |
+| Skill groups | 15 | 13 | 16 |
+| Dedup groups merged (multi-tag) | 5 (3) | 1 (0) | **0** (0) |
+| Active Needs | 10 | 12 | 16 |
+| PLOs (core + optional) | 7 + 0 | 9 + 0 | 9 + 1 |
+| SMART `code_only` | 4 (turn budget, before f7391d6) | 0 | 1 (malformed, see above) |
+| Escalations | 0 | 0 | 0 |
+| `finish_reason='length'` | 0 | 0 | 0 |
+
+- **Every run completed cleanly.** All three finished, with 0 truncations and 0 Need fallbacks. Agent 1 took 246-280 s.
+- **New finding: the dedup check varies a lot.**
+  - Proposed merges went from 5 groups to 1 to 0. Run 11 kept 14 core Needs with no merge at all.
+  - Yet run 11's PLO1 ("แปลและสื่อสาร…"), PLO2 ("แปล… โดยใช้เครื่องมือ AI") and PLO9 ("แก้ปัญหาหน้างานในงานล่ามและการแปล") visibly overlap. plo_review reported 2-3 redundancies on every one of its 5 runs.
+  - The number of core PLOs, and how much they overlap, therefore depends on one stochastic dedup call.
+
+### Grouping: GLM vs llama on the same input
+
+Both models clustered the 89 skills run 11 extracted (`cluster_dump.py`, no DB writes). GLM's result is run 11's own; llama is `meta-llama/llama-3.3-70b-instruct` and took 13.7 s. Each produced 16 groups.
+
+- **GLM's S groups are clearly more coherent.** It keeps legal translation (6), AI post-editing (9), interpreting and negotiation (7), cross-cultural communication (6) and digital marketing (5) apart.
+- **llama's S groups mix things.**
+  - It puts legal translation into its AI group (12).
+  - It puts business-Chinese negotiation into marketing.
+  - It mixes interpreting analysis with business strategy.
+  - Its group 6 is a grab-bag: practical work, accuracy, diplomatic interpreting, certification and lifelong learning.
+- **GLM's weak spots:**
+  - S #7 (14 names) mixes business and entrepreneurship with generic items.
+  - EC is one 11-name grab-bag. llama splits EC into two, which are still mixed.
+- **Verdict.** On identical input, the reasoning-bounded GLM groups at least as well as llama, and better on S. The weak EC/K groups come from those buckets having no single object to group around; a different model would not fix them.
+
+### Dedup replay: same input, six calls
+
+`dedup_replay.py` called `find_duplicate_groups` six times on run 11's 10 eligible Needs. The call is not cached and runs at temperature 0.
+
+| Call | Time | Groups accepted |
+|---|---|---|
+| 1 | 153 s | N6+N9, N7+N10 |
+| 2 | 37 s | none |
+| 3 | 258 s | N1+N5, N7+N10 |
+| 4 | 30 s | none |
+| 5 | 56 s | none |
+| 6 | 47 s | N3+N10 |
+
+- **The variance comes from the model, not from different inputs.** Even at temperature 0, GLM's answer on identical input ranges from 0 to 2 groups. No pair reaches a majority: N7+N10 is the most frequent, at 2 of 6.
+- **The pairs are borderline.** One example is negotiation interpreting (N7) against applying Chinese business etiquette in interpreting (N10). N10 is also paired with N3 in another call, so the answers contradict each other.
+- **The call's hidden reasoning is unbounded.** Time ranged from 30 to 258 s.
+
+### Dedup after the majority vote (e524703)
+
+The designer chose a majority vote. Five parallel calls run with reasoning bounded to 1024, and a pair merges when at least 3 of the usable calls named it. The vote was replayed 3 times on the same run-11 Needs:
+
+| Replay | Time (5 calls) | Pair votes | Merged |
+|---|---|---|---|
+| 1 | 29 s | N1+N5=2, N3+N10=2, N1+N9=2, … | none |
+| 2 | 7 s | N3+N10=3 | N3+N10 |
+| 3 | 7 s | N3+N10=4, N7+N9=2, … | N3+N10 |
+
+- **Fewer distinct outcomes.** A single call had produced four different answers in six tries. The vote gives either nothing or N3+N10.
+- **Not fully stable.** N3+N10 sits right on the threshold (2, 3, 4 votes). A pair that close to even will still flip, and that is the borderline case the designer settles at the checkpoint.
+- **Much faster.** All five calls together now take 7-29 s, against 30-258 s for one unbounded call.
+- **Caveat on the bound.** The bound may have shifted the model's judgement. Unbounded, N7+N10 was the most frequent pair; bounded, it is N3+N10. Both are borderline, so it is unclear which is right.
+
+### Run 13: full cold run with every fix (at 95afecb)
+
+| Step | Wall time |
+|---|---|
+| Agent 1 | 241 s |
+| Agent 2 | 40 s (was 56-70 s) |
+| PLO synthesis | 167 s |
+| plo_review | 60 s |
+| **Total** | **513 s** |
+
+- **Dedup vote:** 5 of 5 calls were usable. N3+N4 got 3 votes and merged; N3+N7 got 1. Core Needs went from 12 to 11.
+- **PLOs:** 9 core.
+  - All 9 were finished by the agent: 0 `code_only`, 0 escalations, 0 truncations.
+  - One soft flag: PLO5 A_scope.
+- **plo_review:** 4 of 5 runs were usable. Exactly one redundancy finding reached a majority (1-2 per run). Runs 10 and 11 had 1-3 per run.
+- **Weak outcome:** PLO8, "อธิบายหลักการแปลภาษาไทย-ภาษาจีน" (understand), passed SMART but is thin as a program outcome.
+
+## Open (updated 2026-11-03)
+
+1. ~~SMART turn budget~~, ~~closing call never run live~~, and ~~malformed verdict loss~~ are all done: f7391d6, 11b24ce and 6e471d2.
+2. ~~Dedup varies from run to run~~ is addressed by the majority vote (e524703). Borderline pairs at the threshold remain; they are for the designer.
+3. The generic EC bucket and GLM's S business grab-bag. A prompt-level change would need its own experiment.
+4. Extraction takes 245-280 s per run. Deferred to phase 5.

@@ -5,14 +5,24 @@ import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from langgraph.constants import START
 from loguru import logger
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.api.jobs import program_busy, program_lock
-from curriculum_agent.data.program_copy import copy_program
-from curriculum_agent.data.repositories import ProgramRepository, SessionRepository
+from curriculum_agent.api.jobs import JOB_KIND_LABEL_TH, program_busy, program_lock
+from curriculum_agent.data.program_copy import CopyMode, copy_program
+from curriculum_agent.data.repositories import (
+    LLMUsageRepository,
+    ProgramRepository,
+    SessionRepository,
+)
 from curriculum_agent.graph import discard_thread
-from curriculum_agent.models import ProgramCreateRequest, ProgramMetadata, ProgramSummary
+from curriculum_agent.models import (
+    ProgramCreateRequest,
+    ProgramMetadata,
+    ProgramSummary,
+    UsageSummary,
+)
 
 router = APIRouter()
 
@@ -76,6 +86,12 @@ async def create_program(req: ProgramCreateRequest, request: Request) -> Program
     return metadata
 
 
+class ProgramCopyRequest(BaseModel):
+    """Optional body of the copy route; a request without one is a full copy."""
+
+    mode: CopyMode = "full"
+
+
 async def _generate_copy_id(source_id: str, repo: ProgramRepository) -> str:
     """`{source}-run-{n}`, smallest n >= 1 not taken. A copy of a copy nests
     (`program-2-run-1-run-1`) — accepted, the rule stays one line."""
@@ -90,7 +106,9 @@ async def _generate_copy_id(source_id: str, repo: ProgramRepository) -> str:
     response_model=ProgramMetadata,
     dependencies=[Depends(require_api_key)],
 )
-async def copy_program_route(program_id: str, request: Request) -> ProgramMetadata:
+async def copy_program_route(
+    program_id: str, request: Request, req: ProgramCopyRequest | None = None
+) -> ProgramMetadata:
     """Copy a program with everything it owns, so one run survives the next.
 
     Refused while the source has a running job or graph session: every stage
@@ -98,7 +116,11 @@ async def copy_program_route(program_id: str, request: Request) -> ProgramMetada
     check and the copy share the program's lock with `start_job`, so a job cannot
     start between them — the copy is a short database transaction, which is why
     holding the lock across it is affordable.
+
+    `mode="evidence_only"` copies the evidence and nothing derived from it, which
+    is how a designer changes evidence after extraction.
     """
+    mode: CopyMode = req.mode if req is not None else "full"
     repo = ProgramRepository()
     if not await repo.exists(program_id):
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
@@ -110,7 +132,7 @@ async def copy_program_route(program_id: str, request: Request) -> ProgramMetada
         for _ in range(_MAX_ID_ATTEMPTS):
             new_id = await _generate_copy_id(program_id, repo)
             try:
-                copied = await copy_program(program_id, new_id)
+                copied = await copy_program(program_id, new_id, mode=mode)
             except IntegrityError:
                 # Only an id collision is worth retrying under the next id; any
                 # other IntegrityError (e.g. a stale FK inside the copy) would
@@ -151,6 +173,17 @@ async def get_program(program_id: str) -> ProgramMetadata:
     if result is None:
         raise HTTPException(status_code=404, detail="Program not found")
     return result
+
+
+@router.get("/{program_id}/usage", response_model=UsageSummary)
+async def get_program_usage(program_id: str) -> UsageSummary:
+    """What the program's model calls cost: overall, per slot, per job."""
+    if not await ProgramRepository().exists(program_id):
+        raise HTTPException(status_code=404, detail="Program not found")
+    summary = await LLMUsageRepository().summary(program_id)
+    for job in summary.by_job:
+        job.label_th = JOB_KIND_LABEL_TH.get(job.kind, "")
+    return summary
 
 
 @router.put(
@@ -218,9 +251,14 @@ async def delete_program(program_id: str, request: Request) -> None:
     # Read the thread ids before the cascade, which deletes the session rows they
     # are recorded on. A checkpoint thread nobody has the id of can never be
     # found again, and it still holds that program's evidence and outcomes.
-    threads = [s.thread_id for s in await SessionRepository().list_by_program(program_id)]
-
-    deleted = await repo.delete_cascade(program_id)
+    # A running job or session writes a usage row on every model call, and a row
+    # landing between the cascade's two deletes would fail it with an IntegrityError.
+    # Checked under program_lock like the other writers; the delete runs inside it.
+    async with program_lock(program_id):
+        if (reason := await program_busy(program_id)) is not None:
+            raise HTTPException(status_code=409, detail=reason)
+        threads = [s.thread_id for s in await SessionRepository().list_by_program(program_id)]
+        deleted = await repo.delete_cascade(program_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
 

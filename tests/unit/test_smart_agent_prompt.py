@@ -18,7 +18,6 @@ from __future__ import annotations
 
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
-    build_repair_observation,
     build_smart_agent_prompt,
 )
 from curriculum_agent.smart_vocabulary import SmartFindingCode
@@ -124,13 +123,21 @@ def test_the_prompt_says_the_code_gate_has_the_last_word() -> None:
     system = _system()
 
     assert "ประกาศว่าผ่านเองไม่ได้" in system
-    assert "request_repair" in system
+    # A judge run reports; it has no repair action to spend its turns on.
+    assert "request_repair" not in system
 
 
 def test_the_prompt_says_it_does_not_write_the_sentence_itself() -> None:
     system = _system()
 
     assert "คุณไม่ได้เขียนประโยคเอง" in system
+
+
+def test_the_prompt_asks_for_a_repair_hint_never_a_full_sentence() -> None:
+    system = _system()
+
+    assert "repair_hint_th" in system
+    assert "ห้ามเขียนประโยค PLO ใหม่เต็มประโยค" in system
 
 
 def test_the_prompt_asks_for_the_code_check_first() -> None:
@@ -237,20 +244,6 @@ def test_the_repair_prompt_asks_for_the_verb_field_to_follow_the_sentence() -> N
     assert "action_verb_th" in user
 
 
-def test_the_repair_observation_reports_the_verdict_both_before_and_after() -> None:
-    observation = build_repair_observation(
-        before_statement="เข้าใจหลักการ",
-        after_statement="อธิบายหลักการได้",
-        before_failures=["M_forbidden"],
-        after_failures=[],
-    )
-
-    assert "M_forbidden" in observation
-    assert "(ไม่มี)" in observation
-    assert "เข้าใจหลักการ" in observation
-    assert "อธิบายหลักการได้" in observation
-
-
 # ------------------------- actor and scope -------------------------
 #
 # Nothing checked a PLO against who does the work or what profession the
@@ -298,7 +291,7 @@ def test_a_need_that_is_itself_out_of_scope_is_sent_back_not_repaired() -> None:
     in ticket 15 ran out of repairs before its real problem was looked at."""
     system = _system()
     assert "ส่งกลับขั้น Need" in system
-    assert "ห้ามสั่ง request_repair" in system
+    assert "อย่าเขียน repair_hint_th" in system
 
 
 # ------------------------- the ประยุกต์ใช้ wrapper -------------------------

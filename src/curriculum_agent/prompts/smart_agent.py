@@ -1,4 +1,4 @@
-"""Prompts for the SMART validation agent, and its repair request.
+"""Prompts for the SMART judge runs, and the repair instruction built from their vote.
 
 The rubric wording here is inherited from the light soft judge it replaces
 (`prompts/smart_validator.py`), and four of its clauses have scar tissue behind
@@ -36,22 +36,20 @@ _SYSTEM_TH = """คุณเป็นผู้ตรวจสอบคุณภ�
 คุณสืบค้นข้อมูลได้ด้วยเครื่องมือ แล้วจึงสรุปผล ตอบเป็น JSON object เดียวต่อหนึ่งรอบ:
 {"reasoning_th": "...", "action": {...}}
 
-action มีสามแบบ
+action มีสองแบบ
 1) เรียกเครื่องมือ: {"kind":"call_tool","tool":"<ชื่อ>", <อาร์กิวเมนต์>}
    - check_hard — ผลตรวจเกณฑ์ที่ตัดสินด้วยโค้ด (S ประโยคขึ้นต้นด้วย action_verb_th, S action_verb_th
      ประกาศกริยาเกินหนึ่งตัว, M คำที่วัดไม่ได้, R ร่องรอยหลักฐาน) พร้อมจำนวนกริยา Bloom ที่พบ
-     ใส่ statement_th/action_verb_th เพื่อทดลองสำนวนใหม่ก่อนสั่งแก้ก็ได้
+     ใส่ statement_th/action_verb_th เพื่อทดลองสำนวนอื่นเทียบดูก็ได้
      **ให้เรียกเครื่องมือนี้เป็นรอบแรกเสมอ**
    - bloom_lookup — กริยาที่ระบุอยู่ระดับ Bloom ใด เทียบกับระดับที่ PLO ประกาศไว้ (ต้องมี verb_th)
    - get_need — Need ที่ PLO นี้อ้างถึง (ต้องมี need_id)
    - get_evidence — ข้อความหลักฐานบางส่วนที่ PLO นี้อ้างถึง อ่านได้ไม่เกิน 3 รายการ (ต้องมี evidence_id)
    - list_sibling_plos — PLO อื่นในชุดเดียวกัน เพื่อดูว่าซ้ำซ้อนกันหรือไม่
-2) สั่งแก้ประโยค: {"kind":"request_repair","instruction_th":"...",
-   "criteria":["M_forbidden"],"keep_th":"..."}
-   - คุณไม่ได้เขียนประโยคเอง โมเดลที่เขียนภาษาไทยจะแก้ตามคำสั่งของคุณ แล้วคุณตรวจซ้ำ
-   - instruction_th ต้องอยู่ได้ด้วยตัวเอง ระบุว่าอะไรผิดและต้องแก้อย่างไร
-   - keep_th คือสาระที่ต้องคงไว้
-3) สรุปผล: {"kind":"finish", <ผลตรวจ 7 ข้อ>, "findings_th":{...}, "diagnosis_th":"..."}
+2) สรุปผล: {"kind":"finish", <ผลตรวจ 7 ข้อ>, "findings_th":{...}, "diagnosis_th":"...",
+   "repair_hint_th":"..."}
+   - คุณไม่ได้เขียนประโยคเอง และไม่ได้สั่งแก้ประโยคโดยตรง ระบบรวมผลจากผู้ตรวจหลายรอบ
+     แล้วโมเดลที่เขียนภาษาไทยจะแก้ตามข้อเสนอที่ผู้ตรวจส่วนใหญ่เห็นตรงกัน
 
 ผลตรวจ 7 ข้อใน finish (true = ผ่าน)
 - specific_object_ok: กรรมของกริยาเจาะจง ระบุพฤติกรรม/ทักษะ/สมรรถนะที่ชัดเจน
@@ -84,6 +82,9 @@ action มีสามแบบ
 findings_th: เหตุผลสั้น ๆ ต่อข้อที่ไม่ผ่าน ใช้ชื่อรหัสเป็นคีย์
 (S_object, M_assessable, A_level, A_actor, A_scope, R_needs, T_horizon)
 diagnosis_th: สรุปให้นักออกแบบหลักสูตรอ่าน ระบุว่าต้องแก้อะไรหรือเหตุใดจึงผ่าน
+repair_hint_th: ถ้ามีข้อที่ไม่ผ่านและแก้ได้ที่ถ้อยคำ ให้บอกสั้น ๆ ว่า "ควรแก้อะไร" (ไม่เกิน 400 ตัวอักษร)
+เช่น 'เปลี่ยนกรรมจากคำกว้างเป็นงานที่ระบุได้' ห้ามเขียนประโยค PLO ใหม่เต็มประโยค
+ถ้าผ่านทุกข้อ หรือที่ไม่ผ่านแก้ด้วยถ้อยคำไม่ได้ ให้ปล่อยว่าง
 
 หมายเหตุ
 - S_multi_verb ตัดสินจาก action_verb_th ไม่ใช่จากประโยค ประโยคมีกริยาในอนุประโยครอง
@@ -93,14 +94,14 @@ diagnosis_th: สรุปให้นักออกแบบหลักสู
   ผ่านได้ตามปกติ แต่งานที่ทำจริงซึ่งซ่อนอยู่ในอนุประโยค 'ในการ...'/'เพื่อ...' ใต้กริยา
   'ประยุกต์ใช้'/'ใช้' ไม่ใช่กรณีนั้น ให้ถือว่า S_object และ achievable_ok ไม่ผ่านตามที่ระบุไว้ข้างต้น
 - เกณฑ์ที่ตัดสินด้วยโค้ด (S กริยา, S จำนวนกริยาที่ประกาศ, M คำห้าม, R หลักฐาน) คุณประกาศว่าผ่านเองไม่ได้
-  โค้ดจะตรวจประโยคสุดท้ายอีกครั้งเสมอ ทางเดียวที่จะแก้ได้คือสั่ง request_repair
+  โค้ดจะตรวจประโยคสุดท้ายอีกครั้งเสมอ
 - ร่องรอยหลักฐานของ PLO (source_need_ids) ถูกตรึงด้วยโค้ดจาก Need ที่เลือกไว้ก่อนเรียกคุณ
-  request_repair เปลี่ยนมันไม่ได้ ถ้าเห็นว่าประโยคไม่ตรงกับ Need ให้สั่งแก้ *ประโยค* ให้ตอบ Need ที่มีอยู่
-  ไม่ใช่สั่งให้เปลี่ยน Need ที่อ้างถึง
+  การแก้ประโยคเปลี่ยนมันไม่ได้ ถ้าเห็นว่าประโยคไม่ตรงกับ Need ให้เสนอแก้ *ประโยค* ให้ตอบ Need ที่มีอยู่
+  ไม่ใช่เสนอให้เปลี่ยน Need ที่อ้างถึง
 - ถ้า actor_ok หรือ scope_ok ไม่ผ่านเพราะสาระของ Need เอง (Need คืองานของสถาบันเอง
-  หรือคืองานของวิชาชีพอื่น) ห้ามสั่ง request_repair เพราะแก้ถ้อยคำแล้วสาระของผลลัพธ์จะเปลี่ยน
-  ให้ finish แล้วเขียนใน diagnosis_th ว่าควรตัดข้อนี้หรือส่งกลับขั้น Need
-  สั่งแก้ได้เฉพาะเมื่อประโยคเติมส่วนที่เกินขอบเขตเข้ามาเองทั้งที่ Need ไม่ได้ขอ
+  หรือคืองานของวิชาชีพอื่น) การแก้ถ้อยคำทำให้สาระของผลลัพธ์เปลี่ยน ระบบจึงไม่แก้ข้อนี้ให้
+  ให้ finish แล้วเขียนใน diagnosis_th ว่าควรตัดข้อนี้หรือส่งกลับขั้น Need และอย่าเขียน repair_hint_th
+  เพื่อข้อนี้ เสนอแก้ได้เฉพาะเมื่อประโยคเติมส่วนที่เกินขอบเขตเข้ามาเองทั้งที่ Need ไม่ได้ขอ
 - get_need รับเฉพาะ need_id ที่แสดงไว้เท่านั้น ส่งข้อความของ Need เป็น need_id ไม่ได้
 - อย่าเรียกเครื่องมือเดิมด้วยอาร์กิวเมนต์เดิมซ้ำ
 - ถ้าข้อมูลพอแล้วให้สรุปด้วย finish ทันที ไม่ต้องเรียกเครื่องมือให้ครบทุกตัว"""
@@ -181,27 +182,60 @@ def build_refusal_observation(reason_th: str) -> str:
     return f"ระบบปฏิเสธคำสั่งล่าสุด: {reason_th}"
 
 
-def build_repair_observation(
-    *,
-    before_statement: str,
-    after_statement: str,
-    before_failures: list[str],
-    after_failures: list[str],
-) -> str:
-    """The rewrite *and* the code's verdict on it.
+def build_turns_left_note(turns_left: int) -> str:
+    """Said near the end, because the model is otherwise never told the budget."""
+    return f"เหลืออีก {turns_left} รอบ — เตรียมสรุปผลตรวจด้วย finish จากข้อมูลที่มีแล้ว ไม่ต้องเรียกเครื่องมือเพิ่ม"
 
-    Both, always. Handed only the new sentence, the agent has to trust its own
-    reading of a criterion pure code just decided — and cannot tell a rewrite it
-    likes from a rewrite that passes.
+
+def build_closing_instruction(turns: int) -> str:
+    """The one extra call after the turns are used up: a Finish and nothing else."""
+    return f"ใช้ครบ {turns} รอบแล้ว สรุปผลตรวจด้วย finish ตอนนี้จากข้อมูลที่มีอยู่ ห้ามเรียกเครื่องมืออีก"
+
+
+def build_closing_after_malformed_instruction() -> str:
+    """The one extra call after repeated malformed answers: a Finish and nothing else."""
+    return "คำตอบก่อนหน้านี้ไม่ตรงรูปแบบ สรุปผลตรวจด้วย finish ตอนนี้จากข้อมูลที่มีอยู่ ห้ามเรียกเครื่องมืออีก"
+
+
+# Longest instruction the repair prompt is given. The same ceiling the old
+# request_repair schema carried: the repair model reads the instruction and the
+# old sentence and nothing else, so it has to stay short enough to be read whole.
+_MAX_REPAIR_INSTRUCTION_CHARS = 800
+
+# Verdicts a rewrite cannot fix, because they are properties of the Need. Mirrors
+# smart_vote.REPAIR_EXCLUDED, by value so this module imports nothing from stages.
+_NEED_LEVEL_CODES = frozenset({"A_actor", "A_scope"})
+
+
+def build_vote_repair_instruction_th(
+    hard_hints_th: Sequence[str],
+    soft_findings: Sequence[tuple[str, str]],
+    hint_th: str,
+) -> str:
+    """The one instruction the repair model gets, built from what the code and
+    the majority of judge runs agreed on.
+
+    `soft_findings` is `(code, note_th)` for the criteria a majority failed.
+    A_actor and A_scope are dropped here as well as by the caller: rewording
+    cannot change who does the work or which profession it belongs to, and a
+    repair spent on them is budget taken from the hard failures. Capped at 800
+    characters, cut at the end, so the hint is what is lost first.
     """
-    before = ", ".join(before_failures) or "(ไม่มี)"
-    after = ", ".join(after_failures) or "(ไม่มี)"
-    return (
-        "ผลการแก้ประโยค\n"
-        f"ประโยคเดิม: {before_statement}\n"
-        f"ประโยคใหม่: {after_statement}\n"
-        f"เกณฑ์ที่ตัดสินด้วยโค้ด: {before} -> {after}"
-    )
+    parts: list[str] = []
+    if hard_hints_th:
+        parts.append("เกณฑ์ที่โค้ดตรวจไม่ผ่าน:\n" + "\n".join(f"- {h}" for h in hard_hints_th))
+    fixable = [(code, note) for code, note in soft_findings if code not in _NEED_LEVEL_CODES]
+    if fixable:
+        parts.append(
+            "เกณฑ์ที่ผู้ตรวจส่วนใหญ่เห็นว่าไม่ผ่าน:\n"
+            + "\n".join(f"- {code}: {note}" if note else f"- {code}" for code, note in fixable)
+        )
+    if hint_th:
+        parts.append(f"ข้อเสนอของผู้ตรวจ: {hint_th}")
+    text = "\n".join(parts)
+    if len(text) > _MAX_REPAIR_INSTRUCTION_CHARS:
+        text = text[: _MAX_REPAIR_INSTRUCTION_CHARS - 1] + "…"
+    return text
 
 
 def build_agent_repair_prompt(

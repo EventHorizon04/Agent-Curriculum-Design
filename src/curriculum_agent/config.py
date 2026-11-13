@@ -24,6 +24,11 @@ _PROVIDER_DEFAULT_MODEL: dict[str, str] = {
     "opentyphoon": "typhoon-v2.5-30b-a3b-instruct",
 }
 
+# Branch feat/four-agent-pipeline runs every slot on one model so research runs
+# compare cleanly; PIPELINE_PROVIDER="" restores the per-slot choices below.
+_BRANCH_PIPELINE_PROVIDER = "openrouter"
+_BRANCH_PIPELINE_MODEL = "z-ai/glm-5.3-flash"
+
 # The credentials this file ships so a checkout runs against the compose stack
 # with no .env at all. They are named here rather than written inline on the
 # fields because `_refuse_development_credentials_in_production` has to compare
@@ -232,6 +237,16 @@ class Settings(BaseSettings):
     # here: a class-body branch on a provider field would be frozen at import
     # time and ignore .env.
     need_combination_model: str = ""
+    # This branch runs every slot on one model, so the GLM pair is the default.
+    # Per slot: own *_PROVIDER/*_MODEL, then these, then slot default, then
+    # LLM_PROVIDER. The pair resolves together: the model only reaches slots whose
+    # provider came from PIPELINE_PROVIDER, and the default model belongs to the
+    # default provider only. PIPELINE_PROVIDER="" turns the pair off and every slot
+    # resolves per slot, as on main.
+    pipeline_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = (
+        _BRANCH_PIPELINE_PROVIDER  # type: ignore[assignment]
+    )
+    pipeline_model: str = _BRANCH_PIPELINE_MODEL
     # The Need sentence, and only that: `need_combination` calls this slot once
     # per group to write the Thai statement a PLO is later drafted from. It was
     # the `light` slot, named for a size rather than a job, and its docstring
@@ -256,6 +271,9 @@ class Settings(BaseSettings):
     # to — and the baseline any measurement of this step is taken against.
     need_dedup_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"
     need_dedup_model: str = ""
+    # How many times the duplicate check reads the same Needs, in parallel; only
+    # groups a majority agrees on are merged. 1 restores the single call.
+    need_dedup_runs: int = Field(default=5, ge=1)
     clustering_model: str = ""
     # The clustering slot is LLM clustering, and nothing else. It holds a whole KSEC
     # bucket of skills in one context and reasons over it, which is the work a
@@ -312,12 +330,24 @@ class Settings(BaseSettings):
     # A loop is serial (turn n+1 needs turn n's observation), so N concurrent
     # loops is N in-flight calls, and bounding here keeps that provable. It also
     # keeps a deployment that raises the per-call ceiling for extraction from
-    # silently multiplying the validation bill.
-    validation_max_concurrent_plos: int = 3
-    # Wall clock for one PLO's loop. Bounds the whole stage at roughly
-    # ceil(N / concurrency) x this, and turns a hung provider into one
-    # code-only verdict rather than a stage that never returns.
-    validation_timeout_seconds: int = 240
+    # silently multiplying the validation bill. 8 lets a full core set (ceiling
+    # 10) validate nearly at once; the judge runs inside still share
+    # llm_max_concurrency (15), so this adds queueing room, not calls in flight.
+    validation_max_concurrent_plos: int = 8
+    # Judge runs per round. A soft criterion counts as failed only when a majority
+    # (runs // 2 + 1) of the successful runs failed it; 1 is the single-run agent.
+    validation_runs: int = Field(default=5, ge=1)
+    # Wall clock for one PLO's whole loop: every judge round and every repair.
+    # Bounds the whole stage at roughly ceil(N / concurrency) x this, and turns a
+    # hung provider into the last judged verdict (or code-only when none exists)
+    # rather than a stage that never returns. The clock includes time queued on
+    # the shared judge semaphore (llm_max_concurrency), not only provider calls.
+    validation_timeout_seconds: int = 600
+    # Wall clock for each of the three Agent 1 / Agent 2 job steps (extraction,
+    # grouping, need_combination), one budget apiece. It was 300 until 2026-10-28;
+    # the designer raised it while run time is not a concern on this branch, since
+    # cold GLM runs measured extraction at 240-300 s.
+    need_job_step_timeout_seconds: int = Field(default=900, ge=1)
     # The PLO set review (stages/plo_review.py). Advisory: "" (empty) switches it
     # off and the report says so; None follows LLM_PROVIDER like every slot.
     plo_review_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"
@@ -327,6 +357,19 @@ class Settings(BaseSettings):
     # How many times the QA agent reads the same dossier, in parallel; the stored
     # review keeps what a majority agrees on. 1 restores the single-run review.
     plo_review_runs: int = Field(default=5, ge=1)
+    # Phase 4: after a fresh agent review, send its agreed redundancy / Bloom /
+    # unused-Need findings back as redrafts (stages/plo_feedback.py), each with a
+    # trail row. False restores the advisory-only review.
+    plo_review_send_back: bool = True
+    # Phase 6: the review -> send-back loop (stages/plo_review_loop.py). "off" is the
+    # phase-4 single pass; "shadow" reviews once and records what send-back would do
+    # (dry run, nothing written to the PLOs); "apply" repeats review and send-back
+    # for up to `plo_review_max_rounds` rounds (0 behaves like "off"), all under one
+    # wall-clock budget. "apply" is the default since the designer's decision of
+    # 2026-11-11 (phase 6 spec, decision 29), after the guarded apply run.
+    plo_review_loop_mode: Literal["off", "shadow", "apply"] = "apply"
+    plo_review_max_rounds: int = Field(default=5, ge=0)
+    plo_review_loop_timeout_seconds: int = 5400
     # skill_extraction has its own knob too, kept separate from the heavy one
     # because it is the stage that decides a quota bill: it is the only one that
     # fans out a call per evidence item, and now one per window of each item
@@ -338,6 +381,25 @@ class Settings(BaseSettings):
     # None means "whatever llm_provider is", for one endpoint end to end.
     extraction_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "openrouter"
     extraction_model: str = ""
+    # Output bounds for the extraction call (phase 5). Measured 2026-11-03
+    # (.scratch/reports/2026-11-03-phase5-extraction.md): about 89% of unbounded
+    # extraction output is hidden reasoning, and bounding it took Agent 1 from
+    # ~255 s to ~47 s for -9.1% skills and -1.6% grounding. 0 means "no bound":
+    # nothing is sent and the cache key is the pre-bound one. A positive bound can
+    # change what the model returns, so skill_extraction puts it in the cache key.
+    # Measured on GLM via OpenRouter only. `reasoning_max_tokens` is sent only to
+    # OpenRouter (llm.py) while `max_tokens` goes to any provider, so on another
+    # extraction provider the reasoning bound is a no-op that still keys the cache
+    # and the 4096 cap is unmeasured: re-measure before moving extraction there.
+    extraction_max_tokens: int = Field(default=4096, ge=0)
+    extraction_reasoning_max_tokens: int = Field(default=1024, ge=0)
+    # The extraction and clustering response cache (`llm_cache`). Its key is the
+    # input text, program name and field, model and prompt contract, so repeated
+    # runs on copies of one program replay the first run's answers: measured
+    # 2026-11-13, runs 2 and 3 made 0 extraction and 0 clustering calls, which makes
+    # run-to-run stability look better than the system is. False skips every cache
+    # read and write at both call sites (LLM_CACHE_ENABLED=false for research runs).
+    llm_cache_enabled: bool = True
     # Accepted only to be refused — see _RENAMED_SLOT_SETTINGS and
     # _reject_renamed_slot_settings. They hold no value the program reads, and
     # `exclude=True` keeps them out of any dump of this object.
@@ -354,9 +416,14 @@ class Settings(BaseSettings):
     # value — "ollama" is just a non-empty placeholder the client requires.
     llm_api_key: SecretStr = SecretStr("ollama")
     # Ceiling on in-flight LLM calls when a stage fans out over a corpus. Sized
-    # for hosted providers' rate limits; a local Ollama can take more, but the
-    # gain is small when one model serves the calls anyway.
-    llm_max_concurrency: int = 5
+    # for OpenRouter (every slot runs there on this branch); a local Ollama can
+    # take more, but the gain is small when one model serves the calls anyway.
+    # It is also the shared judge semaphore in `smart_agent._judge_semaphore`,
+    # which wraps a whole multi-turn judge run. Measured 2026-11-11
+    # (`program-run-5`): at 5, synthesis ran 125 validation calls (1,801 s of
+    # call time) in 443 s wall, about 4 in flight. Raising it changes wall time
+    # only, not token cost.
+    llm_max_concurrency: int = 15
     # Serve the built React bundle from this process, making the API and the UI
     # one origin. False in dev, where Vite serves the UI on 5173 and proxies here.
     serve_frontend: bool = False
@@ -408,6 +475,31 @@ class Settings(BaseSettings):
         return self
 
     @model_validator(mode="after")
+    def _resolve_pipeline_pair(self) -> Settings:
+        """Normalise the pipeline pair, then refuse a model with the pair turned off.
+
+        Runs before `_apply_provider_model_defaults` (validators run in definition
+        order), so that sees only a resolved pair. "" means off and becomes None,
+        keeping every later `is None` test. The default model belongs to the
+        default provider: a provider set on its own drops it, so GLM's name never
+        lands on another endpoint. A model set explicitly while the pair is off is
+        an error, since it would silently do nothing.
+        """
+        if self.pipeline_provider == "":
+            self.pipeline_provider = None
+        fields = self.model_fields_set
+        if "pipeline_provider" in fields and "pipeline_model" not in fields:
+            self.pipeline_model = ""
+        if self.pipeline_provider is None:
+            if self.pipeline_model and "pipeline_model" in fields:
+                raise ValueError(
+                    "PIPELINE_MODEL requires PIPELINE_PROVIDER to be non-empty; "
+                    "an empty PIPELINE_PROVIDER turns the pipeline pair off."
+                )
+            self.pipeline_model = ""
+        return self
+
+    @model_validator(mode="after")
     def _refuse_development_credentials_in_production(self) -> Settings:
         """Under APP_ENV=production, refuse the credentials this file ships.
 
@@ -438,7 +530,7 @@ class Settings(BaseSettings):
             unset.append("MINIO_ACCESS_KEY (still 'minioadmin')")
         if self.minio_secret_key.get_secret_value() == _DEV_MINIO_SECRET_KEY:
             unset.append("MINIO_SECRET_KEY (still the checked-in development value)")
-        if self.api_key is None:
+        if self.api_key is None or not self.api_key.get_secret_value().strip():
             unset.append("API_KEY (unset means every write endpoint is unauthenticated)")
 
         if unset:
@@ -469,9 +561,19 @@ class Settings(BaseSettings):
         One loop over one list, because this used to be ten `if` statements and
         the tenth was the one that could be forgotten.
         """
+        # Snapshot first: setattr below adds names to model_fields_set, and a
+        # class-level default (extraction's "openrouter") must not count as set.
+        explicit = set(self.model_fields_set)
         for slot in SLOTS:
             provider = getattr(self, slot.provider_field)
-            if provider is None:
+            from_pipeline = False
+            # PIPELINE_PROVIDER outranks the slot's class default but never the
+            # slot's own env/kwarg setting, "" (the kill switch) included.
+            if self.pipeline_provider is not None and slot.provider_field not in explicit:
+                provider = self.pipeline_provider
+                from_pipeline = True
+                setattr(self, slot.provider_field, provider)
+            elif provider is None:
                 provider = self.llm_provider
                 setattr(self, slot.provider_field, provider)
             # "" is left exactly as it is. It is the kill switch, and resolving
@@ -480,7 +582,12 @@ class Settings(BaseSettings):
             # why this is an `is None` test.
 
             if provider and not getattr(self, slot.model_field):
-                chosen = slot.default_models.get(provider, _PROVIDER_DEFAULT_MODEL[provider])
+                # PIPELINE_MODEL is half of a pair: only a slot that took
+                # PIPELINE_PROVIDER, and named no model of its own, may use it.
+                if from_pipeline and self.pipeline_model and slot.model_field not in explicit:
+                    chosen = self.pipeline_model
+                else:
+                    chosen = slot.default_models.get(provider, _PROVIDER_DEFAULT_MODEL[provider])
                 setattr(self, slot.model_field, chosen)
         return self
 

@@ -79,8 +79,8 @@ async def test_a_reused_message_list_is_not_grown_by_the_call(
         {"role": "user", "content": "plo"},
     ]
 
-    await llm._complete("openrouter", "m", _Answer, messages)
-    await llm._complete("openrouter", "m", _Answer, messages)
+    await llm._complete("openrouter", "m", _Answer, messages, slot="extraction")
+    await llm._complete("openrouter", "m", _Answer, messages, slot="extraction")
 
     assert messages[0]["content"] == "rubric"
     first, second = (b["messages"][0]["content"] for b in bodies)
@@ -98,7 +98,12 @@ async def test_a_reasoning_budget_reaches_an_openrouter_request(
     16,000 it used 5,715. A reasoning budget is what leaves the answer room.
     """
     await llm._complete(
-        "openrouter", "m", _Answer, [{"role": "user", "content": "x"}], reasoning_max_tokens=1024
+        "openrouter",
+        "m",
+        _Answer,
+        [{"role": "user", "content": "x"}],
+        reasoning_max_tokens=1024,
+        slot="extraction",
     )
 
     assert bodies[0]["reasoning"] == {"max_tokens": 1024}
@@ -112,7 +117,12 @@ async def test_the_reasoning_budget_is_not_sent_where_it_means_nothing(
     unknown field or ignore it; either way it is not a knob there, and moving the
     validation slot must not start failing its calls."""
     await llm._complete(
-        provider, "m", _Answer, [{"role": "user", "content": "x"}], reasoning_max_tokens=1024
+        provider,
+        "m",
+        _Answer,
+        [{"role": "user", "content": "x"}],
+        reasoning_max_tokens=1024,
+        slot="extraction",
     )
 
     assert "reasoning" not in bodies[0]
@@ -120,7 +130,9 @@ async def test_the_reasoning_budget_is_not_sent_where_it_means_nothing(
 
 async def test_no_budget_asked_for_sends_no_reasoning_field(bodies: list[dict[str, Any]]) -> None:
     """Every other slot's requests stay byte-for-byte what they were."""
-    await llm._complete("openrouter", "m", _Answer, [{"role": "user", "content": "x"}])
+    await llm._complete(
+        "openrouter", "m", _Answer, [{"role": "user", "content": "x"}], slot="extraction"
+    )
 
     assert "reasoning" not in bodies[0]
 
@@ -128,7 +140,12 @@ async def test_no_budget_asked_for_sends_no_reasoning_field(bodies: list[dict[st
 async def test_ollama_still_gets_its_keep_alive(bodies: list[dict[str, Any]]) -> None:
     """The budget merges into the provider's own extra body rather than replacing it."""
     await llm._complete(
-        "ollama", "m", _Answer, [{"role": "user", "content": "x"}], reasoning_max_tokens=1024
+        "ollama",
+        "m",
+        _Answer,
+        [{"role": "user", "content": "x"}],
+        reasoning_max_tokens=1024,
+        slot="extraction",
     )
 
     assert bodies[0]["keep_alive"] == -1
@@ -182,5 +199,6 @@ async def test_the_step_policy_does_not_retry_a_truncated_completion(
             _Answer,
             [{"role": "user", "content": "x"}],
             max_retries=_step_retrying(),
+            slot="validation",
         )
     assert len(requests) == 1

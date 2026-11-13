@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+from curriculum_agent.models import KSECCategory
+
+_EC_RULE = (
+    "- These skills are attitudes (E) and adaptability or self-development traits (C). "
+    "Do not gather them into one general 'good character' group. Group each trait by "
+    "where the graduate shows it: in the quality of and accountability for their own "
+    "work (accuracy, care, owning errors, professional integrity); toward other people "
+    "and cultures (ethical conduct across cultures, respect for diversity, working "
+    "relationships); or toward change and their own career (adapting to technology and "
+    "society, lifelong learning, leadership, entrepreneurship). A trait that fits none "
+    "of these may form a group of its own.\n"
+)
+
 
 def build_cluster_skills_prompt(
     skill_names: list[str],
     target_clusters: int | None = None,
     program_context: str | None = None,
+    ksec: KSECCategory | None = None,
 ) -> list[dict[str, str]]:
     """Group one KSEC bucket's skill names by meaning.
 
@@ -48,6 +62,21 @@ def build_cluster_skills_prompt(
     splits were 5+1). The lumped tourism Need came from llama's run-to-run
     variance on short Thai names, not from this wording; a fix belongs to the
     clustering model or method, not to the count rule.
+
+    `ksec` is the bucket being clustered, and only EC changes the prompt, for the
+    graduate side only: the rule was measured on graduate-side skills, so
+    `skill_grouping` passes `None` for the institutional population (2026-11-11
+    A/B, `.scratch/reports/2026-11-11-ec-k-grouping-ab.md`). Without a rule the EC
+    bucket came back as two groups of which one was a grab-bag ("development,
+    ethics and adaptation") that split differently on every run. Told to group each
+    trait by where the graduate shows it — own work, other people and cultures,
+    change and career — GLM returned those three dimensions with near-identical
+    labels in 7 of 9 runs (one partition 3 of 3), one group over the target, which
+    `validate_assignments` accepts. A parallel K rule (group knowledge by subject,
+    not by verb) was tried in the same experiment and dropped: the K buckets are 4-6
+    names, too small for it to matter, and it made one input steadier and another
+    noisier. Every other bucket, and a call without `ksec`, gets the prompt as
+    before, byte for byte.
     """
     # The context frames how a name is read; it must not become a filter. Every
     # skill reaching this call was extracted from evidence a stakeholder actually
@@ -74,6 +103,7 @@ def build_cluster_skills_prompt(
         else "- Choose an appropriate number of clusters based on the data "
         "(typically 4–12 groups).\n"
     )
+    ec_rule = _EC_RULE if ksec is KSECCategory.EC else ""
     system = (
         "You are an expert in labor skill analysis.\n"
         "Group the following skills based on their meaning and usage context. "
@@ -91,6 +121,7 @@ def build_cluster_skills_prompt(
         "one of the program's ten outcomes, so splitting 'translating sales "
         "contracts' from 'translating legal contracts' spends two of them on one "
         "professional function.\n"
+        + ec_rule
         + "- label_th MUST be written in Thai, not English — it is shown to Thai users.\n\n"
         "Respond as a JSON object:\n"
         '{ "clusters": [ { "label_th": "ชื่อกลุ่มภาษาไทยสั้นๆ", '

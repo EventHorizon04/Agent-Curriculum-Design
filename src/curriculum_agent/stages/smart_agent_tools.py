@@ -55,7 +55,7 @@ class NeedView(BaseModel):
 
     need_id: str
     statement_th: str
-    ksec_category: str
+    ksec_categories: list[str]
     bloom_level: BloomLevel
     freq: int
     demand_score: float
@@ -206,12 +206,16 @@ class EvidenceIndex:
 
 @dataclass
 class ToolBudget:
-    """Per-PLO counters. Mutable, and deliberately not on the frozen context."""
+    """Counters. Mutable, and deliberately not on the frozen context. Each judge run
+    gets its own copy (repeat calls, evidence reads); only `reasoning_bounded`
+    is shared across a PLO's runs."""
 
     evidence_reads: set[str] = field(default_factory=set)
     seen_calls: set[str] = field(default_factory=set)
-    # Set once a step's hidden reasoning ran to the step cap. Per PLO because the
-    # input that set it off stays in the conversation — see smart_agent._ask_step.
+    # Set once a step's hidden reasoning ran to the step cap. Per PLO, not per judge
+    # run, because the input that set it off stays in every conversation about this
+    # PLO: each run is seeded from the caller's budget and writes the flag back —
+    # see smart_agent._judge_once and _ask_step.
     reasoning_bounded: bool = False
 
 
@@ -310,7 +314,7 @@ def get_need(ctx: ValidationContext, need_id: str) -> NeedView:
     return NeedView(
         need_id=need.need_id,
         statement_th=need.statement_th,
-        ksec_category=str(need.ksec_category.value),
+        ksec_categories=[t.value for t in need.ksec_categories],
         bloom_level=need.bloom_level,
         freq=need.freq,
         demand_score=need.demand_score,

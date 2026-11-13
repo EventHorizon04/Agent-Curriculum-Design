@@ -32,6 +32,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from curriculum_agent.data.repositories import JobRepository, SessionRepository
+from curriculum_agent.llm_context import llm_scope
 from curriculum_agent.models import JobInfo, JobKind
 
 # JobRepository is re-exported on purpose: the routes reach the repository through
@@ -148,15 +149,20 @@ def _dump(value: BaseModel | Sequence[BaseModel]) -> Any:
 
 
 async def _run(
+    program_id: str,
     job_id: str,
     kind: str,
     work: Callable[[], Awaitable[BaseModel | Sequence[BaseModel]]],
+    on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> None:
     repo = JobRepository()
     try:
         # The dump is inside the try: a work() that returns something that is not
         # a model would otherwise escape here and leave the job `running` for ever.
-        outcome: dict[str, Any] = {"status": "succeeded", "result": _dump(await work())}
+        # The scope is entered here, inside the spawned task, so every model call the
+        # body makes is attributed to this program and job (phase 5 usage rows).
+        with llm_scope(program_id=program_id, job_id=job_id):
+            outcome: dict[str, Any] = {"status": "succeeded", "result": _dump(await work())}
         logger.info(f"job {job_id} ({kind}) succeeded")
     except Exception as exc:  # noqa: BLE001 - every failure becomes the job's error
         if isinstance(exc, HTTPException):
@@ -173,6 +179,15 @@ async def _run(
             logger.warning(f"job {job_id}: row gone before its outcome was recorded")
     except Exception as exc:  # noqa: BLE001 - nobody is awaiting this task
         logger.error(f"job {job_id}: could not record its outcome: {exc!r}")
+        return
+    if on_success is None or status != "succeeded":
+        return
+    # After the row says `succeeded`, so the follow-up's busy check sees this job
+    # finished. A failure here is the follow-up's own; the finished job stays as is.
+    try:
+        await on_success()
+    except Exception as exc:  # noqa: BLE001 - nobody is awaiting this task
+        logger.opt(exception=exc).error(f"job {job_id} ({kind}): on_success failed: {exc!r}")
 
 
 async def start_job(
@@ -180,6 +195,8 @@ async def start_job(
     kind: JobKind,
     params: dict[str, Any],
     work: Callable[[], Awaitable[BaseModel | Sequence[BaseModel]]],
+    *,
+    on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> JobInfo:
     async with program_lock(program_id):
         reason = await program_busy(program_id)
@@ -195,7 +212,7 @@ async def start_job(
         )
         await JobRepository().insert(job)
     logger.info(f"job {job.job_id} ({kind}) started for {program_id}")
-    spawn(_run(job.job_id, kind, work))
+    spawn(_run(program_id, job.job_id, kind, work, on_success))
     return with_label(job)
 
 
@@ -204,9 +221,11 @@ async def start_job_or_409(
     kind: JobKind,
     params: dict[str, Any],
     work: Callable[[], Awaitable[BaseModel | Sequence[BaseModel]]],
+    *,
+    on_success: Callable[[], Awaitable[None]] | None = None,
 ) -> JobInfo:
     try:
-        return await start_job(program_id, kind, params, work)
+        return await start_job(program_id, kind, params, work, on_success=on_success)
     except JobConflict as exc:
         raise HTTPException(status_code=409, detail=exc.detail_th) from exc
 

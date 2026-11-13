@@ -15,6 +15,7 @@ from curriculum_agent.data.prune_cache import EXTRACTION
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     LLMCacheRepository,
+    SkillGroupRepository,
     SkillRepository,
 )
 from curriculum_agent.graph import AgentState
@@ -166,7 +167,7 @@ class _ExtractedSkillsResponse(BaseModel):
 # `_SkillItem.ksec_category` is the actual enforcement of the SKILL_KSEC
 # invariant documented in models.py (a skill carries K/S/E/C, never the
 # Need-level EC) — this asserts the two cannot silently drift apart, the same
-# guard shape `prompts/summarize_need.py` uses for `_KSEC_LABEL_TH`.
+# guard shape `prompts/summarize_need.py` uses for `KSEC_LABEL_TH`.
 _skill_ksec_literal = set(get_args(_SkillItem.model_fields["ksec_category"].annotation))
 _expected_skill_ksec = {c.value for c in SKILL_KSEC}
 if _skill_ksec_literal != _expected_skill_ksec:
@@ -174,6 +175,16 @@ if _skill_ksec_literal != _expected_skill_ksec:
         f"_SkillItem.ksec_category {sorted(_skill_ksec_literal)} has drifted from "
         f"models.SKILL_KSEC {sorted(_expected_skill_ksec)}"
     )
+
+
+def _bound_kwargs() -> dict[str, int]:
+    """Output bounds for one extraction call; empty when both are 0 (unbounded)."""
+    bounds: dict[str, int] = {}
+    if settings.extraction_max_tokens > 0:
+        bounds["max_tokens"] = settings.extraction_max_tokens
+    if settings.extraction_reasoning_max_tokens > 0:
+        bounds["reasoning_max_tokens"] = settings.extraction_reasoning_max_tokens
+    return bounds
 
 
 def _extraction_contract_fingerprint() -> str:
@@ -322,6 +333,11 @@ async def run(state: AgentState) -> AgentState:
     dropped_not_found = 0
     collapsed_duplicates = 0
     _cache = LLMCacheRepository()
+    if not settings.llm_cache_enabled:
+        logger.info(
+            "skill_extraction: LLM cache disabled (LLM_CACHE_ENABLED=false), "
+            "every window goes to the model"
+        )
 
     evidences = [StakeholderEvidence.model_validate(d) for d in classified]
     # One call per window of evidence text, all in flight together under a
@@ -360,14 +376,24 @@ async def run(state: AgentState) -> AgentState:
         # key worth preserving — the new schema field moved _EXTRACTION_CONTRACT,
         # so every row written before it is already a miss. A conditional append
         # would buy back nothing and leave a branch to maintain forever.
-        cache_key = hashlib.sha256(
+        #
+        # The output bounds are appended only when above 0: they change what the model
+        # can return, so a cached unbounded answer must not be replayed for a
+        # bounded run (or the reverse), while 0 keeps today's key
+        # and every row already stored.
+        key_text = (
             f"{chunk}\x00{evidence.classification}\x00{settings.extraction_model}"
             f"\x00{_EXTRACTION_CONTRACT}\x00{field_th}\x00{program_name_th}"
-            f"\x00{scope_th}".encode()
-        ).hexdigest()
+            f"\x00{scope_th}"
+        )
+        if settings.extraction_max_tokens > 0:
+            key_text += f"\x00max_tokens={settings.extraction_max_tokens}"
+        if settings.extraction_reasoning_max_tokens > 0:
+            key_text += f"\x00reasoning_max_tokens={settings.extraction_reasoning_max_tokens}"
+        cache_key = hashlib.sha256(key_text.encode()).hexdigest()
 
         result: _ExtractedSkillsResponse | None = None
-        cached = await _cache.get(cache_key)
+        cached = await _cache.get(cache_key) if settings.llm_cache_enabled else None
         if cached is not None and cached[0] == settings.extraction_model:
             try:
                 result = _ExtractedSkillsResponse.model_validate_json(cached[1])
@@ -391,14 +417,17 @@ async def run(state: AgentState) -> AgentState:
             # for a slot it did not need.
             async with _sem:
                 try:
-                    result = await complete_extraction(_ExtractedSkillsResponse, messages)
-                    await _cache.set(
-                        cache_key,
-                        settings.extraction_model,
-                        result.model_dump_json(),
-                        kind=EXTRACTION,
-                        contract=_EXTRACTION_CONTRACT,
+                    result = await complete_extraction(
+                        _ExtractedSkillsResponse, messages, **_bound_kwargs()
                     )
+                    if settings.llm_cache_enabled:
+                        await _cache.set(
+                            cache_key,
+                            settings.extraction_model,
+                            result.model_dump_json(),
+                            kind=EXTRACTION,
+                            contract=_EXTRACTION_CONTRACT,
+                        )
                 except Exception as exc:
                     logger.warning(
                         f"LLM skill extraction failed for {evidence.evidence_id} "
@@ -600,6 +629,15 @@ async def run(state: AgentState) -> AgentState:
                 ),
             )
         )
+
+    # The stored groups point at the skill ids about to be deleted, so they go
+    # first, before any skill row is touched: a failed insert then cannot leave
+    # groups pointing at deleted skills, and a grouping step that fails later
+    # leaves no groups at all, so /needs/combine/run answers its "no groups" 422
+    # instead of writing Needs from groups whose skills no longer exist.
+    dropped_groups = await SkillGroupRepository().delete_by_program(program_id)
+    if dropped_groups:
+        logger.info(f"Dropped {dropped_groups} stale skill group(s) from a previous run")
 
     # Replace, don't accumulate: skill_id is a fresh uuid per run and the
     # repository upserts by it, so without the delete a re-run leaves both sets in

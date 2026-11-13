@@ -59,6 +59,9 @@ Evidence classification (`requirement` vs `general`) is decided entirely in code
 
 `field_th` and `program_name_th` (sourced from `state["metadata"]`) are what make the "no off-field skills" rule answerable — without them the model was told to exclude off-field skills without being told what the field was. A skill judged off-field is kept with `is_field_relevant=false`, never silently dropped — the designer sees it at the checkpoint and can promote it. `classification` (`requirement`/`need`/`want`/`unclassified`) is not part of this prompt's output at all: it is computed afterward, in pure code, by `classify_skills` once every evidence item in the program has been extracted (see `data-schemas.md` for the precedence rules).
 
+**ksec_category rule (head of the name, not its modifier).** The prompt used to offer four labels and "pick exactly one" with no line between S and E/C, so task-plus-attitude names (certifying a legal translation "responsibly") landed in E/C and the EC groups came out as hybrids reading like their S neighbours. The rule makes the head decide: a profession's task or QA work is S whatever attitudinal modifier it carries; E only when the head is an ethical principle itself; C only when the head is a personal trait.
+Measured A/B 2026-11-13 (`.scratch/reports/2026-11-13-ec-fold-measure.md` §3): S names among E/C-tagged rows 18/51 -> 9/49 under blind judgement, skill count and grounding unchanged. Repeat-to-repeat spread is as large as the arm difference, and certification names still sometimes land in E. Adding it changes `_extraction_contract_fingerprint`, which invalidates stored extraction cache once (intended).
+
 `evidence_span_th` is not trusted on the model's word: the caller (`stages/skill_extraction.py`) re-checks every span against the actual evidence text with `is_grounded()` and drops any skill whose quote is too short (< 12 chars) or doesn't literally occur in the source. This is the one place in the pipeline where a prompt instruction ("copy verbatim, don't invent") is backed by a pure-code verification instead of trusted outright.
 
 ---
@@ -73,6 +76,8 @@ Evidence classification (`requirement` vs `general`) is decided entirely in code
 
 - `build_cluster_skills_prompt(skill_names)` — first-pass grouping of a batch of skill names by meaning, returns `{clusters: [{label_th, member_indices}]}`.
 - `build_merge_clusters_prompt(cluster_labels)` — merges same-meaning cluster labels produced across multiple first-pass batches, returns `{groups: [[index, ...]]}`.
+
+**The EC bucket carries one extra rule (2026-11-11).** `build_cluster_skills_prompt(..., ksec=KSECCategory.EC)` adds a line telling the model to group attitudes and adaptability traits by *where the graduate shows them* (own work and accountability / other people and cultures / change and career) rather than into one "good character" group. Without it the EC bucket came back as a grab-bag that split differently every run; with it 7 of 9 A/B runs gave the same three readable dimensions, usually one group over target (accepted: the target is soft). A matching K rule was tried and dropped. The rule applies to the graduate EC population only: `skill_grouping` passes `ksec=None` for the institutional side, because the framing was measured on graduate-side skills. `ksec` is in the clustering cache key and the EC prompt is in the contract fingerprint. Evidence: `.scratch/reports/2026-11-11-ec-k-grouping-ab.md`.
 
 Because clustering and merging both run *inside* one KSEC bucket (bucketing happens before any of this in `stages/need_grouping.py`), no prompt here ever needs to ask the model to keep KSEC tags apart — it structurally cannot see skills from a different bucket.
 
@@ -155,7 +160,7 @@ Every draft this prompt produces goes past the validation agent and then the pur
 
 **Model:** validation (`complete_validation`) — its own slot, and specifically not `heavy` (clustering) or `synthesis` (which writes the Thai).
 
-**File:** `prompts/smart_agent.py` — `build_smart_agent_prompt`, `build_tool_observation`, `build_refusal_observation`, `build_repair_observation`, `build_agent_repair_prompt`.
+**File:** `prompts/smart_agent.py` — `build_smart_agent_prompt`, `build_tool_observation`, `build_refusal_observation`, `build_vote_repair_instruction_th`, `build_agent_repair_prompt`.
 
 **Shape.** A structured action loop, not native tool-calling: Instructor is in `Mode.JSON` for every slot, so reading a `tool_calls` envelope would mean hand-parsing JSON or keying the shared client cache on `(provider, mode)`, and it would tie the loop to providers that implement tool-calling when running the whole pipeline on one endpoint is supported. The model answers one `ValidationStep` per turn — `reasoning_th` first, so it reasons before it commits — carrying a discriminated action: `call_tool`, `request_repair`, or `finish`. The loop executes the action and appends the result as the next user turn. A malformed action is a Pydantic `ValidationError`, which Instructor re-asks with the error attached.
 
@@ -167,7 +172,7 @@ The five soft verdicts in `finish` ask exactly what the old judge asked, and the
 
 The repair prompt carries the instruction, the original statement, the declared Bloom level and verb, and nothing else — no tool results, no sibling PLOs, no rubric recital. The model that wrote the diagnosis is not the model that writes the fix, so the instruction has to stand on its own. It repeats the forbidden-word list, because a repair is the last model call before a statement ships, and it asks for `action_verb_th` to follow the sentence: a rewrite that changes the verb in the text but not the field fails S forever.
 
-**Tool observations** are Thai text built by the same module, so no prompt string is inlined in stage code. `build_repair_observation` reports the rewrite **and** the code's verdict on it, both before and after — handed only the new sentence, the agent would have to trust its own reading of a criterion pure code had just decided, and could not tell a rewrite it likes from one that passes.
+**Tool observations** are Thai text built by the same module, so no prompt string is inlined in stage code. `build_vote_repair_instruction_th` (phase 6) builds the one repair instruction from the code's hard-failure hints, the criteria a majority of judge runs failed (never A_actor/A_scope: rewording cannot fix them) and the representative run's `repair_hint_th`, capped at 800 characters. The old `build_repair_observation` is gone: the repaired sentence is now judged again by a full round rather than reported to a run.
 
 ---
 

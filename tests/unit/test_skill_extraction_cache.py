@@ -3,7 +3,16 @@ from __future__ import annotations
 import hashlib
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from curriculum_agent.config import settings
+
+
+@pytest.fixture(autouse=True)
+def _unbounded_extraction(monkeypatch):  # noqa: ANN001, ANN202
+    """The cache keys these tests hand-build are the unbounded ones."""
+    monkeypatch.setattr(settings, "extraction_max_tokens", 0)
+    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", 0)
 
 
 async def test_cache_hit_skips_extraction_llm_call():
@@ -310,3 +319,104 @@ async def test_editing_a_scope_statement_re_extracts_only_that_program():
 
     assert calls == 2, "the same scope statement failed to hit its own entry"
     assert len(stored) == 2
+
+
+def _extraction_state() -> dict:
+    return {
+        "program_id": "prog-001",
+        "classified_evidence": [
+            {
+                "evidence_id": "ev-001",
+                "program_id": "prog-001",
+                "stakeholder_type": "employer",
+                "source_name": "Test",
+                "raw_text_th": "ต้องการผู้เชี่ยวชาญด้าน Python",
+                "collected_at": "2026-01-01T00:00:00",
+                "classification": "general",
+                "metadata": {},
+            }
+        ],
+        "extracted_skills": [],
+    }
+
+
+async def _run_extraction_miss(monkeypatch) -> tuple[AsyncMock, AsyncMock]:  # noqa: ANN001
+    from curriculum_agent.stages import skill_extraction as se
+
+    cache = AsyncMock()
+    cache.get = AsyncMock(return_value=None)
+    cache.set = AsyncMock()
+    call = AsyncMock(return_value=se._ExtractedSkillsResponse(skills=[]))
+    monkeypatch.setattr(se, "LLMCacheRepository", lambda: cache)
+    monkeypatch.setattr(se, "complete_extraction", call)
+    monkeypatch.setattr(se, "SkillRepository", lambda: AsyncMock(bulk_insert=AsyncMock()))
+    await se.run(_extraction_state())  # type: ignore[arg-type]
+    return cache, call
+
+
+async def test_zero_extraction_bounds_change_neither_request_nor_key(monkeypatch):
+    from curriculum_agent.stages.skill_extraction import _EXTRACTION_CONTRACT
+
+    monkeypatch.setattr(settings, "extraction_max_tokens", 0)
+    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", 0)
+    cache, call = await _run_extraction_miss(monkeypatch)
+
+    text = "ต้องการผู้เชี่ยวชาญด้าน Python"
+    legacy_key = hashlib.sha256(
+        f"{text}\x00general\x00{settings.extraction_model}"
+        f"\x00{_EXTRACTION_CONTRACT}\x00\x00\x00".encode()
+    ).hexdigest()
+    cache.get.assert_called_once_with(legacy_key)
+    assert "max_tokens" not in call.await_args.kwargs
+    assert "reasoning_max_tokens" not in call.await_args.kwargs
+
+
+async def test_set_extraction_bounds_are_sent_and_change_the_key(monkeypatch):
+    monkeypatch.setattr(settings, "extraction_max_tokens", 0)
+    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", 0)
+    unbounded, _ = await _run_extraction_miss(monkeypatch)
+    unbounded_key = unbounded.get.call_args.args[0]
+
+    monkeypatch.setattr(settings, "extraction_max_tokens", 2048)
+    monkeypatch.setattr(settings, "extraction_reasoning_max_tokens", 512)
+    bounded, call = await _run_extraction_miss(monkeypatch)
+
+    assert call.await_args.kwargs["max_tokens"] == 2048
+    assert call.await_args.kwargs["reasoning_max_tokens"] == 512
+    assert bounded.get.call_args.args[0] != unbounded_key
+    assert bounded.set.call_args.args[0] == bounded.get.call_args.args[0]
+
+
+async def test_default_extraction_bounds_are_sent(monkeypatch):
+    fresh = type(settings)()
+    assert fresh.extraction_max_tokens == 4096
+    assert fresh.extraction_reasoning_max_tokens == 1024
+    monkeypatch.setattr(settings, "extraction_max_tokens", fresh.extraction_max_tokens)
+    monkeypatch.setattr(
+        settings, "extraction_reasoning_max_tokens", fresh.extraction_reasoning_max_tokens
+    )
+    _, call = await _run_extraction_miss(monkeypatch)
+    assert call.await_args.kwargs["max_tokens"] == 4096
+    assert call.await_args.kwargs["reasoning_max_tokens"] == 1024
+
+
+async def test_cache_disabled_skips_get_and_set_and_calls_the_model(monkeypatch):
+    from curriculum_agent.stages import skill_extraction as se
+
+    monkeypatch.setattr(settings, "llm_cache_enabled", False)
+    cache = AsyncMock()
+    cache.get = AsyncMock(return_value=(settings.extraction_model, '{"skills": []}'))
+    cache.set = AsyncMock()
+    call = AsyncMock(return_value=se._ExtractedSkillsResponse(skills=[]))
+    monkeypatch.setattr(se, "LLMCacheRepository", lambda: cache)
+    monkeypatch.setattr(se, "complete_extraction", call)
+    monkeypatch.setattr(se, "SkillRepository", lambda: AsyncMock(bulk_insert=AsyncMock()))
+    await se.run(_extraction_state())  # type: ignore[arg-type]
+
+    call.assert_awaited_once()
+    cache.get.assert_not_called()
+    cache.set.assert_not_called()
+
+
+async def test_cache_enabled_is_the_default_and_replays_a_stored_entry():
+    assert type(settings)().llm_cache_enabled is True

@@ -43,7 +43,6 @@ from curriculum_agent.models import (
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
 from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.stages.demand import build_scoring_corpus
-from curriculum_agent.stages.need_combination import _build_groups
 from curriculum_agent.stages.need_grouping import (
     SCOPE_PASS_RATIO,
     normalize_need_name,
@@ -51,10 +50,12 @@ from curriculum_agent.stages.need_grouping import (
 )
 from curriculum_agent.stages.skill_extraction import (
     _compute_skill_importance,
+    _bound_kwargs,
     _ExtractedSkillsResponse,
     chunk_evidence_text,
     classify_skills,
 )
+from curriculum_agent.stages.skill_grouping import build_skill_groups
 from curriculum_agent.stages.stakeholder_needs import classify_evidence_type
 
 # --------------------------------------------------------------------------
@@ -144,7 +145,11 @@ async def _extract_window(
     )
     async with sem:
         try:
-            result = await complete_extraction(_ExtractedSkillsResponse, messages)
+            # The bounds the pipeline sends (settings, > 0 only), so the eval
+            # measures the extraction that runs.
+            result = await complete_extraction(
+                _ExtractedSkillsResponse, messages, **_bound_kwargs()
+            )
         except Exception as exc:  # noqa: BLE001 — one bad call must not lose the pass
             logger.error(f"{variant.key} {item['evidence_id']}: {exc!r}")
             return []
@@ -652,7 +657,9 @@ async def run_case(
         stakeholder_by_evidence = {
             item["evidence_id"]: item["stakeholder_type"] for item in evidence
         }
-        groups = await _build_groups(skills, stakeholder_by_evidence, context)
+        groups = await build_skill_groups(
+            f"eval-{name}-{variant.key}", skills, stakeholder_by_evidence, context
+        )
         out[variant.key] = {
             "note": variant.note,
             "needs": score_needs(groups, injected_ids),

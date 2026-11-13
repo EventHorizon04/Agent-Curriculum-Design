@@ -1,10 +1,9 @@
 /** The pipeline as the designer meets it.
  *
- * Seven stages run in the engine; six of them have a page, because
- * skill_extraction and need_combination run back to back behind one review gate
- * and are therefore reviewed together on one screen. `engineStages` records that
- * — the nav shows it rather than hiding it, since a designer looking for a
- * "Need" page needs to know why there isn't one.
+ * Seven stages, seven pages. Skill extraction (Agent 1) and Need analysis
+ * (Agent 2) each have their own page; the Need gate sits after Need analysis and
+ * the PLO gate on the review page (the designer approves there, then the report
+ * is stored), so `gateNote` is on those two and the skill stage has none.
  */
 export interface StageDef {
   /** Stage key as the API reports it in ProgramSummary.current_stage. */
@@ -15,8 +14,6 @@ export interface StageDef {
   label: string
   /** What this stage does, in the designer's words. */
   summary: string
-  /** Set only where one page covers more than one engine stage. */
-  engineStages?: string[]
   gateNote?: string
 }
 
@@ -39,31 +36,38 @@ export const STAGES: StageDef[] = [
     key: 'skill_extraction',
     route: '/skill-extraction',
     ordinal: 3,
-    label: 'สกัดทักษะและรวมเป็น Need',
-    summary: 'อ่านหลักฐานเป็นทักษะ แล้วรวมทักษะเป็นความต้องการของตลาด',
-    engineStages: ['สกัดทักษะจากหลักฐาน', 'รวมทักษะเป็น Need'],
-    gateNote: 'ตรวจครั้งเดียว หลังรวม Need เสร็จ',
+    label: 'สกัดทักษะ',
+    summary: 'อ่านหลักฐานเป็นทักษะ แล้วจัดกลุ่มตาม KSEC',
+  },
+  {
+    key: 'need_analysis',
+    route: '/need-analysis',
+    ordinal: 4,
+    label: 'วิเคราะห์ Need',
+    summary: 'รวมกลุ่มทักษะเป็น Need และรวม Need ที่ซ้ำกัน',
+    gateNote: 'ตรวจและอนุมัติที่ขั้นนี้',
   },
   {
     key: 'plo_synthesis',
     route: '/plo-synthesis',
-    ordinal: 4,
+    ordinal: 5,
     label: 'สังเคราะห์ PLO',
     summary: 'หนึ่ง Need เป็นหนึ่ง PLO สูงสุด 10 ข้อหลัก',
-  },
-  {
-    key: 'plo_report',
-    route: '/plo-report',
-    ordinal: 5,
-    label: 'รายงาน PLO',
-    summary: 'ทบทวนผลตรวจ ย้อนรอยหลักฐาน และส่งออก',
   },
   {
     key: 'plo_review',
     route: '/plo-review',
     ordinal: 6,
     label: 'ตรวจคุณภาพชุด PLO',
-    summary: 'QA agent อ่าน PLO ทั้งชุด แนะนำเรื่องซ้ำ KSEC Bloom และ Need ที่ตกหล่น',
+    summary: 'ตรวจทั้งชุด ส่งกลับไปแก้ แล้วผู้ออกแบบอนุมัติ',
+    gateNote: 'ตรวจและอนุมัติที่ขั้นนี้',
+  },
+  {
+    key: 'plo_report',
+    route: '/plo-report',
+    ordinal: 7,
+    label: 'รายงาน PLO',
+    summary: 'ชุด PLO สุดท้ายหลังอนุมัติ ย้อนรอยหลักฐาน และส่งออก',
   },
 ]
 

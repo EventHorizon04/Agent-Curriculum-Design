@@ -131,7 +131,7 @@ async def test_list_all_reports_progress_made_without_any_session() -> None:
         return_value=_mock_db(programs, [], evidence=["cs"], skills=["cs"], needs=["cs"]),
     ):
         result = await repo.list_all()
-    assert result[0].current_stage == "skill_extraction"
+    assert result[0].current_stage == "need_analysis"
     assert result[0].session_status is None
 
 
@@ -237,7 +237,7 @@ def _stored(monkeypatch: pytest.MonkeyPatch, review: object) -> None:
     plo_repo = MagicMock()
     plo_repo.return_value.list_by_program = AsyncMock(return_value=[_plo()])
     need_repo = MagicMock()
-    need_repo.return_value.list_by_program = AsyncMock(return_value=[_need()])
+    need_repo.return_value.list_active_by_program = AsyncMock(return_value=[_need()])
     monkeypatch.setattr(repositories, "PLOReviewRepository", review_repo)
     monkeypatch.setattr(repositories, "PLORepository", plo_repo)
     monkeypatch.setattr(repositories, "NeedRepository", need_repo)
@@ -280,7 +280,7 @@ async def test_delete_cascade_deletes_tables_in_fk_safe_order() -> None:
     is a FK into EvidenceTable. Everything else has no cross-dependency."""
     repo = ProgramRepository()
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(9)])
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(14)])
     mock_ctx = MagicMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -290,21 +290,26 @@ async def test_delete_cascade_deletes_tables_in_fk_safe_order() -> None:
 
     assert result is True
     executed_sql = [str(c.args[0]) for c in mock_session.execute.call_args_list]
-    assert executed_sql[0].startswith("DELETE FROM skills")
-    assert executed_sql[1].startswith("DELETE FROM needs")
-    assert executed_sql[2].startswith("DELETE FROM plos")
-    assert executed_sql[3].startswith("DELETE FROM plo_reviews")
-    assert executed_sql[4].startswith("DELETE FROM checkpoints")
-    assert executed_sql[5].startswith("DELETE FROM sessions")
-    assert executed_sql[6].startswith("DELETE FROM jobs")
-    assert executed_sql[7].startswith("DELETE FROM evidence")
-    assert executed_sql[8].startswith("DELETE FROM programs")
+    assert executed_sql[0].startswith("DELETE FROM skill_groups")
+    assert executed_sql[1].startswith("DELETE FROM skills")
+    assert executed_sql[2].startswith("DELETE FROM needs")
+    assert executed_sql[3].startswith("DELETE FROM superseded_plos")
+    assert executed_sql[4].startswith("DELETE FROM plo_feedback_actions")
+    assert executed_sql[5].startswith("DELETE FROM llm_usage")
+    assert executed_sql[6].startswith("DELETE FROM plos")
+    assert executed_sql[7].startswith("DELETE FROM plo_reviews")
+    assert executed_sql[8].startswith("DELETE FROM plo_reports")
+    assert executed_sql[9].startswith("DELETE FROM checkpoints")
+    assert executed_sql[10].startswith("DELETE FROM sessions")
+    assert executed_sql[11].startswith("DELETE FROM jobs")
+    assert executed_sql[12].startswith("DELETE FROM evidence")
+    assert executed_sql[13].startswith("DELETE FROM programs")
 
 
 async def test_delete_cascade_returns_false_when_program_missing() -> None:
     repo = ProgramRepository()
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=0) for _ in range(9)])
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=0) for _ in range(14)])
     mock_ctx = MagicMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)
@@ -318,7 +323,7 @@ async def test_delete_cascade_returns_false_when_program_missing() -> None:
 async def test_delete_cascade_commits_once() -> None:
     repo = ProgramRepository()
     mock_session = AsyncMock()
-    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(9)])
+    mock_session.execute = AsyncMock(side_effect=[MagicMock(rowcount=1) for _ in range(14)])
     mock_ctx = MagicMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
     mock_ctx.__aexit__ = AsyncMock(return_value=False)

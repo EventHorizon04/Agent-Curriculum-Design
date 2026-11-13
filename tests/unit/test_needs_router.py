@@ -17,11 +17,28 @@ from curriculum_agent.models import (
     KSECCategory,
     Need,
     ProgramMetadata,
+    SkillGroup,
     SMARTCheck,
     StakeholderEvidence,
 )
 from curriculum_agent.stages import skill_extraction
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
+
+
+@pytest.fixture(autouse=True)
+def _grouping_passes_state_through(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about the routes, not about clustering: the grouping stage
+    the routes now call after extraction is a pass-through unless a test says
+    otherwise."""
+
+    async def passthrough(state):  # noqa: ANN001, ANN202
+        return state
+
+    monkeypatch.setattr("curriculum_agent.stages.skill_grouping.run", passthrough)
+    # Stored groups exist unless a test says otherwise (combine/run 422s without).
+    monkeypatch.setattr(
+        needs_route.SkillGroupRepository, "list_by_program", AsyncMock(return_value=[object()])
+    )
 
 
 def _need() -> Need:
@@ -100,7 +117,36 @@ async def test_list_needs_returns_repository_rows(
     assert response.status_code == 200
     body = response.json()
     assert [n["need_id"] for n in body] == ["N1"]
-    assert body[0]["ksec_category"] == "S"
+    assert body[0]["ksec_categories"] == ["S"]
+
+
+async def test_list_skill_groups_route(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):
+    group = SkillGroup(
+        group_id="G1",
+        program_id="cs-test",
+        ksec=KSECCategory.S,
+        skill_ids=["S1"],
+        evidence_ids=["E1"],
+        skill_names=["วิเคราะห์ข้อมูล"],
+        skill_frequencies=[2],
+        bloom_level=BloomLevel.ANALYZE,
+        demand_score=0.5,
+        is_optional=False,
+        is_graduate=True,
+        classification_coverage={"need": 1},
+        stakeholder_coverage={},
+        stakeholder_types=[],
+        in_field_skill_count=1,
+        graduate_capability_skill_count=0,
+    )
+    monkeypatch.setattr(
+        needs_route.SkillGroupRepository, "list_by_program", AsyncMock(return_value=[group])
+    )
+    response = await client.get("/programs/cs-test/needs/skill-groups")
+    assert response.status_code == 200
+    body = response.json()
+    assert [g["group_id"] for g in body] == ["G1"]
+    assert body[0]["ksec"] == "S"
 
 
 async def test_list_skills_exposes_span_and_importance(
@@ -278,6 +324,8 @@ async def test_needs_run_carries_the_note_into_the_stage_state(
     with cache_patch, complete_patch, repo_patch, needs_patch:
         response = await client.post("/programs/cs-test/needs/run", json={"note_th": NOTE})
         await _finish(response, jobs_store, spawned)
+        # The chained need_combination job, spawned once the skill job succeeded.
+        await spawned.coros.pop(0)
 
     assert seen["designer_note"] == NOTE
 
@@ -300,6 +348,8 @@ async def test_needs_run_still_works_with_no_body_at_all(
     with cache_patch, complete_patch, repo_patch, needs_patch:
         response = await client.post("/programs/cs-test/needs/run")
         await _finish(response, jobs_store, spawned)
+        # The chained need_combination job, spawned once the skill job succeeded.
+        await spawned.coros.pop(0)
 
     assert "designer_note" not in seen
 
@@ -392,7 +442,7 @@ async def test_plos_run_carries_the_note_into_the_stage_state(
 
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
-        plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
+        plos_route.NeedRepository, "list_active_by_program", AsyncMock(return_value=[_need()])
     )
     with patch("curriculum_agent.stages.plo_synthesis.run", new=fake_run):
         response = await client.post("/programs/cs-test/plos/run", json={"note_th": NOTE})
@@ -415,7 +465,7 @@ async def test_plos_run_still_works_with_no_body_at_all(
 
     monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
     monkeypatch.setattr(
-        plos_route.NeedRepository, "list_by_program", AsyncMock(return_value=[_need()])
+        plos_route.NeedRepository, "list_active_by_program", AsyncMock(return_value=[_need()])
     )
     with patch("curriculum_agent.stages.plo_synthesis.run", new=fake_run):
         response = await client.post("/programs/cs-test/plos/run")
@@ -571,7 +621,9 @@ async def test_combine_run_feeds_stored_skills_into_the_stage(
         job = await _finish(response, jobs_store, spawned)
 
     assert extracted is False
-    assert [s["skill_id"] for s in seen["extracted_skills"]] == ["S1"]
+    # Agent 2 loads the stored groups itself, so the route hands it neither.
+    assert "skill_groups" not in seen
+    assert "extracted_skills" not in seen
     assert "classified_evidence" not in seen
     assert job.result["needs"][0]["need_id"] == "N1"
 

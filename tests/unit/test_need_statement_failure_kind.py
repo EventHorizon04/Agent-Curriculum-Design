@@ -17,7 +17,8 @@ from pydantic import ValidationError as PydanticValidationError
 
 from curriculum_agent.models import BloomLevel, ExtractedSkill, KSECCategory, StakeholderType
 from curriculum_agent.stages import need_combination as nc
-from tests.support.needs import RATIONALE_TH
+from curriculum_agent.stages import skill_grouping as sg
+from tests.support.needs import RATIONALE_TH, run_need_pipeline_from_skills
 
 
 def _skill(name: str, sid: str, eid: str) -> ExtractedSkill:
@@ -49,16 +50,19 @@ async def _run_with(monkeypatch: pytest.MonkeyPatch, error: Exception) -> list[d
         raise error
 
     async def fake_cluster(
-        names: list[str], target: int | None = None, program_context: str | None = None
+        names: list[str],
+        target: int | None = None,
+        program_context: str | None = None,
+        ksec: object = None,
     ) -> list[list[int]]:
         return [[i for i in range(len(names))]]
 
-    monkeypatch.setattr(nc, "cluster_skill_names", fake_cluster)
+    monkeypatch.setattr(sg, "cluster_skill_names", fake_cluster)
     monkeypatch.setattr(nc, "complete_need_combination", failing_summarize)
     monkeypatch.setattr(nc.NeedRepository, "delete_by_program", AsyncMock())
     monkeypatch.setattr(nc.NeedRepository, "bulk_insert", AsyncMock())
 
-    state = await nc.run(
+    state = await run_need_pipeline_from_skills(
         {
             "program_id": "cs-test",
             "extracted_skills": [_skill("ออกแบบฐานข้อมูล", "S1", "E1").model_dump(mode="json")],

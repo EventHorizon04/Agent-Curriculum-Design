@@ -1,12 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
-import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
-import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
-import { PLO_REPORT_PLAN } from '../constants/runPlans'
+import { LoadingLine } from '../components/RunProgress'
 import api from '../api/client'
-import { startJob, type JobKind } from '../api/jobs'
+import type { JobKind } from '../api/jobs'
 import { ksecLabel, stakeholderLabel, classStyle, isRequirementStakeholder } from '../constants/stakeholder'
 import { VALIDATED_BY_TH, findingLabel, needsAttention } from '../constants/smart'
 import { DEMAND_SCORE_TITLE_TH, demandPercent } from '../constants/demand'
@@ -21,7 +19,7 @@ import type { PLO } from '../types/plo'
 interface NeedSummary {
   need_id: string
   statement_th?: string
-  ksec_category: string
+  ksec_categories: string[]
   demand_score?: number
   /** Members that passed each scope axis. Absent on the report's own
    *  needs_by_id payload for older rows; treated as "passed" when missing, the
@@ -40,9 +38,25 @@ interface NeedSummary {
  *  does "in scope and still unused" mean it lost on the ceiling. */
 type ExclusionReason = Exclude<ScopeVerdict, 'in_scope'> | 'lost_on_demand'
 
+// The backend sends naive UTC ISO strings (no offset); without a Z the browser
+// would read them as local time and show the wrong day.
+function utcDate(iso: string): Date {
+  return new Date(/(Z|[+-]\d\d:?\d\d)$/.test(iso) ? iso : `${iso}Z`)
+}
+
 function exclusionReason(n: NeedSummary): ExclusionReason {
   const verdict = scopeVerdict(n)
   return verdict === 'in_scope' ? 'lost_on_demand' : verdict
+}
+
+/** A Need the designer excluded at the Need stage (`report.needs_excluded`). */
+interface ExcludedNeed {
+  need_id: string
+  statement_th: string
+  ksec_categories: string[]
+  demand_score?: number
+  /** ISO string. */
+  excluded_at: string | null
 }
 
 interface ReportCounts {
@@ -56,15 +70,13 @@ interface ReportCounts {
   code_only: number
 }
 
-/** The job kinds whose outcome this page reports: the report run alone. The set
- *  review is stage 06 and has its own page, which shows its runs and failures. */
-const PAGE_KINDS: JobKind[] = ['plo_report']
 /** The jobs that change what this page draws, whichever page started them: the
- *  report is a reading of the PLOs and the Needs, so a synthesis, a re-check, or
- *  a new set of Needs all leave it showing a set that no longer exists. */
+ *  stored report is written by the approval run, and a synthesis, a review's
+ *  send-back, a re-check or a new set of Needs leave it older than the set. */
 const RELOAD_KINDS: JobKind[] = [
   'plo_report',
   'plo_synthesis',
+  'plo_review',
   'plo_revalidate',
   'needs_pipeline',
   'skill_extraction',
@@ -79,7 +91,7 @@ interface TraceNeed {
    *  statement and labelled as such — the evidence count beside it is the trail;
    *  this is not. Optional: rows predating the field carry "". */
   rationale_th?: string
-  ksec_category: string
+  ksec_categories: string[]
   bloom_level: string
   demand_score: number
   source_evidence_ids: string[]
@@ -105,6 +117,19 @@ interface TraceSkill {
  *  also returns are already quoted through each skill's span. */
 interface NeedTraceResponse {
   skills: TraceSkill[]
+}
+
+/** `GET /plos/report`: the report stored when the designer approved the set. */
+interface StoredReportResponse {
+  report: {
+    plos: PLO[]
+    needs_by_id: Record<string, NeedSummary>
+    /** Absent on a report stored before the excluded list existed. */
+    needs_excluded?: ExcludedNeed[]
+  } | null
+  /** The PLOs or Needs changed after the report was stored. */
+  stale: boolean
+  created_at: string | null
 }
 
 interface PLOTrace {
@@ -237,30 +262,26 @@ export default function PloReport() {
     const cited = new Set(plos.flatMap((p) => p.source_need_ids))
     return Object.values(needsById).filter((n) => !cited.has(n.need_id))
   }, [plos, needsById])
+  const [excludedNeeds, setExcludedNeeds] = useState<ExcludedNeed[]>([])
+  const [hasReport, setHasReport] = useState(false)
+  const [stale, setStale] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [loading, setLoading] = useState(false)
-  const [starting, setStarting] = useState(false)
   const [error, setError] = useState('')
-
-  const { running, latestOf, started, refresh } = useJobs()
-  // `running` is any job of this program; `mine` is the report run this page shows.
-  const mine = running?.kind === 'plo_report' ? running : null
-  const last = latestOf(PAGE_KINDS)
-  // Any job of the program blocks the start button: one writer per program.
-  const busy = running !== null || starting
 
   const fetchData = useCallback(async () => {
     if (!programId) return
     setLoading(true)
     setError('')
     try {
-      const [ploRes, needRes] = await Promise.all([
-        api.get<PLO[]>(`/programs/${programId}/plos/`),
-        api.get<NeedSummary[]>(`/programs/${programId}/needs/`),
-      ])
-      setPlos(ploRes.data)
-      setNeedsById(Object.fromEntries(needRes.data.map((n) => [n.need_id, n])))
-      setCounts(countsFrom(ploRes.data))
+      const res = await api.get<StoredReportResponse>(`/programs/${programId}/plos/report`)
+      const { report, stale: isStale } = res.data
+      setHasReport(report !== null)
+      setStale(report !== null && isStale)
+      setPlos(report?.plos ?? [])
+      setNeedsById(report?.needs_by_id ?? {})
+      setExcludedNeeds(report?.needs_excluded ?? [])
+      setCounts(countsFrom(report?.plos ?? []))
     } catch {
       setError('โหลดข้อมูลไม่สำเร็จ ตรวจว่า API ทำงานอยู่ แล้วลองใหม่')
     } finally {
@@ -270,29 +291,7 @@ export default function PloReport() {
 
   // Reload once when a job that changes this page's data ends, whichever page
   // started it and whichever way it ended.
-  const watch = useReloadOnJobs(RELOAD_KINDS, () => void fetchData())
-
-  // The report is a background job: starting it only records it. The page has
-  // its own read of the stored PLOs and Needs, so when the job ends it reloads
-  // them (above) rather than drawing from the job's result.
-  const runReport = useCallback(async () => {
-    if (!programId) return
-    setStarting(true)
-    setError('')
-    try {
-      const job = await startJob(`/programs/${programId}/plos/report/run`)
-      watch(job)
-      started(job)
-    } catch (err: unknown) {
-      const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
-      setError(res?.data?.detail ?? 'สร้างรายงานไม่สำเร็จ')
-      // A 409 means a job this page has not heard of is running: read the list
-      // now so the button says so too.
-      if (res?.status === 409) void refresh()
-    } finally {
-      setStarting(false)
-    }
-  }, [programId, watch, started, refresh])
+  useReloadOnJobs(RELOAD_KINDS, () => void fetchData())
 
   // Fetched as a blob through the api client rather than linked with a plain
   // anchor, so a 422 or 501 surfaces as an error message here instead of
@@ -336,36 +335,34 @@ export default function PloReport() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="eyebrow">ขั้นที่ 5</p>
+        <p className="eyebrow">ขั้นที่ 7</p>
         <h1 className="page-title">รายงาน PLO</h1>
         <p className="mt-1 text-sm text-pencil">
-          ผลลัพธ์การเรียนรู้ทั้งชุด พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
+          ชุด PLO ที่อนุมัติแล้ว พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
         </p>
       </header>
 
       {error && <p className="notice notice-error">{error}</p>}
-      {last?.status === 'failed' && <RunFailure job={last} />}
+      {hasReport && stale && (
+        <p className="notice notice-warn">
+          รายงานนี้จัดทำจากชุด PLO ก่อนหน้า — PLO หรือ Need เปลี่ยนหลังอนุมัติ กลับไปตรวจและอนุมัติใหม่เพื่อให้ตรงกับชุดปัจจุบัน{' '}
+          <Link to="/plo-review" className="link">
+            ไปหน้าตรวจคุณภาพ
+          </Link>
+        </p>
+      )}
 
-      {/* A run in progress comes before the loading line: what a load would
-          show is about to be replaced, and a page opened mid-run should say so
-          at once rather than after its own read finishes. */}
-      {mine ? (
-        <RunProgress key={mine.job_id} plan={PLO_REPORT_PLAN} since={Date.parse(mine.created_at)} />
-      ) : loading ? (
+      {loading && !hasReport ? (
         <LoadingLine />
-      ) : plos.length === 0 ? (
+      ) : !hasReport ? (
         <div className="panel px-6 py-12 text-center">
-          <p className="record text-lg">ยังไม่มี PLO ให้รายงาน</p>
+          <p className="record text-lg">ยังไม่ได้อนุมัติชุด PLO</p>
           <p className="mx-auto mt-2 max-w-md text-sm text-pencil">
-            รายงานประกอบขึ้นจาก PLO ที่สังเคราะห์ไว้แล้ว ถ้ายังไม่ได้สังเคราะห์
-            ให้กลับไปที่ขั้นที่ 4 ก่อน
+            รายงานเก็บเมื่อผู้ออกแบบอนุมัติชุด PLO ที่ขั้นตรวจคุณภาพ
           </p>
-          <div className="mt-5 flex flex-wrap items-center justify-center gap-3">
-            <button onClick={runReport} disabled={busy} className="btn btn-primary">
-              สร้างรายงาน
-            </button>
-            <Link to="/plo-synthesis" className="link text-sm">
-              ไปสังเคราะห์ PLO
+          <div className="mt-5">
+            <Link to="/plo-review" className="link text-sm">
+              ไปตรวจคุณภาพชุด PLO
             </Link>
           </div>
         </div>
@@ -393,9 +390,6 @@ export default function PloReport() {
             )}
 
             <div className="ml-auto flex flex-wrap items-center gap-2">
-              <button onClick={runReport} disabled={busy} className="btn btn-secondary btn-sm">
-                สร้างใหม่
-              </button>
               <button
                 onClick={exportMatrix}
                 disabled={exporting}
@@ -420,10 +414,11 @@ export default function PloReport() {
           </p>
 
           {unusedNeeds.length > 0 && <UnusedNeeds needs={unusedNeeds} programId={programId} />}
+          {excludedNeeds.length > 0 && <ExcludedNeeds needs={excludedNeeds} />}
 
           <p className="border-t border-hair pt-4 text-sm text-pencil">
             <Link to="/plo-review" className="link">
-              ไปตรวจคุณภาพชุด PLO →
+              ← กลับไปหน้าตรวจคุณภาพชุด PLO
             </Link>
           </p>
         </>
@@ -459,6 +454,33 @@ function UnusedNeeds({ needs, programId }: { needs: NeedSummary[]; programId: st
       </ul>
 
       {guarded.length > 0 && <ScopeRerunNote count={guarded.length} />}
+    </section>
+  )
+}
+
+/** Needs the designer cut at the Need stage. Kept apart from the unused ones:
+ *  those lost on demand or to the scope guard, these were removed by a person. */
+function ExcludedNeeds({ needs }: { needs: ExcludedNeed[] }) {
+  return (
+    <section id="excluded-needs" className="border-t border-hair pt-5">
+      <h2 className="section-title">Need ที่ผู้ออกแบบตัดออก</h2>
+      <p className="mt-1 text-sm text-pencil">ตัดออกที่ขั้นวิเคราะห์ Need — กู้คืนได้ที่หน้า Need</p>
+      <ul className="mt-3 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
+        {needs.map((n) => (
+          <li key={n.need_id} className="flex items-baseline gap-3 px-4 py-2.5 text-sm">
+            <span className="data shrink-0 text-xs text-lead">{n.need_id}</span>
+            <span className="min-w-0 flex-1 text-pencil">{n.statement_th}</span>
+            <span className="shrink-0 text-xs text-lead">
+              {n.ksec_categories.map(ksecLabel).join(' + ')}
+            </span>
+            {n.excluded_at && (
+              <span className="data shrink-0 text-xs text-lead">
+                {utcDate(n.excluded_at).toLocaleDateString('th-TH')}
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
     </section>
   )
 }
@@ -598,9 +620,7 @@ function PloRow({
 
   const ksecTags = [
     ...new Set(
-      p.source_need_ids
-        .map((id) => needsById[id]?.ksec_category)
-        .filter((c): c is string => Boolean(c))
+      p.source_need_ids.flatMap((id) => needsById[id]?.ksec_categories ?? [])
     ),
   ]
 
@@ -741,7 +761,7 @@ function TracePanel({ programId, ploId }: { programId: string; ploId: string }) 
             )}
             <p className="mt-1 flex flex-wrap items-center gap-2 text-xs text-lead">
               <span className="data text-graphite">{c.need_id}</span>
-              <span>{ksecLabel(c.ksec_category)}</span>
+              <span>{c.ksec_categories.map(ksecLabel).join(' + ')}</span>
               <span className="data">{c.bloom_level}</span>
               <span>หลักฐาน {c.source_evidence_ids.length} ชิ้น</span>
             </p>

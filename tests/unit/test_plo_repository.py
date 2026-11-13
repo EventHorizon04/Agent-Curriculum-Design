@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from sqlalchemy.dialects import postgresql
+
 from curriculum_agent.data.repositories import PLORepository
 
 
@@ -51,3 +53,36 @@ async def test_the_plo_list_is_ordered_core_first_then_numerically() -> None:
     assert clause.index("is_optional") < clause.index("length(")
     # length before value, or PLO10 sorts between PLO1 and PLO2.
     assert clause.index("length(") < clause.rindex("plo_id")
+
+
+# --------------------------- update_if_version ---------------------------
+
+
+async def test_update_if_version_updates_only_the_expected_version_and_never_inserts() -> None:
+    from tests.unit.test_superseded_plos import (  # noqa: PLC0415
+        _patched,
+        _plo,
+        _plo_row,
+        _Session,
+    )
+
+    session = _Session(select_rows=[_plo_row("PLO1", "x")])  # rowcount 1
+    with _patched(session):
+        ok = await PLORepository().update_if_version(
+            _plo("PLO1").model_copy(update={"version": 4}), expected_version=3
+        )
+    assert ok is True and session.commits == 1 and session.added == []
+    (sql,) = session.sql()
+    assert sql.startswith("update plos")
+    where = sql.split(" where ", 1)[1]
+    assert "plos.program_id" in where and "plos.plo_id" in where and "plos.version" in where
+    assert session.statements[0].compile(dialect=postgresql.dialect()).params["version_1"] == 3
+
+
+async def test_update_if_version_is_false_when_no_row_matches() -> None:
+    from tests.unit.test_superseded_plos import _patched, _plo, _Session  # noqa: PLC0415
+
+    session = _Session(select_rows=[])  # rowcount 0: gone, or the version moved
+    with _patched(session):
+        ok = await PLORepository().update_if_version(_plo("PLO1"), expected_version=1)
+    assert ok is False and session.added == []

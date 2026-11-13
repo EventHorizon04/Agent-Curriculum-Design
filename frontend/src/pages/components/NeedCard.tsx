@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import api from '../../api/client'
-import { stakeholderLabel } from '../../constants/stakeholder'
+import { ksecLabel, stakeholderLabel } from '../../constants/stakeholder'
 import {
   DEMAND_LABEL_TH,
   DEMAND_SCORE_TITLE_TH,
@@ -15,10 +15,11 @@ import {
 } from '../../constants/needPolicy'
 
 /**
- * `ksec_category` and `bloom_level` stay on the row — the pipeline groups and
- * drafts PLOs from them — but they are not rendered. They describe how a Need
- * was derived, not what the designer decides about it; the statement, who asked
- * for it, and how often carry that.
+ * `ksec_categories` and `bloom_level` stay on the row — the pipeline groups and
+ * drafts PLOs from them — and are not rendered on an ordinary Need: they
+ * describe how it was derived, not what the designer decides about it. A merged
+ * Need is the exception, because its tags are the evidence that two buckets
+ * were folded into one.
  */
 export interface NeedRow {
   need_id: string
@@ -31,9 +32,25 @@ export interface NeedRow {
    *  inside the "ดูที่มา" panel, which is the trail. Empty on rows written
    *  before the field existed and on ones the migration backfilled a marker into. */
   rationale_th: string
-  ksec_category: string
+  ksec_categories: string[]
   bloom_level: string
   member_skill_ids: string[]
+  /** The member skills that carry the Need, shown as chips on a merged card. */
+  top_skill_ids: string[]
+  /** Originals Agent 2 folded into this Need; empty unless it is a merge. */
+  merged_from: string[]
+  /** Set on an original that has been folded away; such rows are not listed as
+   *  Needs, only under the merged card that replaced them. */
+  merged_into: string | null
+  /** Who made the merge, so the card can say whether the AI or the designer
+   *  folded these Needs together. Null on a Need that is not a merge. */
+  merged_by: 'agent' | 'designer' | null
+  /** Set while the designer has taken the Need out of the pool; null otherwise.
+   *  An excluded Need is stored and traceable but no stage reads it. */
+  excluded_at: string | null
+  /** Why the model judged the originals duplicates. The model's account, like
+   *  `rationale_th`, and labelled so; the trail is `source_evidence_ids`. */
+  merge_reason_th: string
   source_evidence_ids: string[]
   source_stakeholder_types: string[]
   freq: number
@@ -62,9 +79,112 @@ interface NeedTrace {
   evidence: { evidence_id: string; source_name: string; classification: string }[]
 }
 
-export default function NeedCard({ programId, need }: { programId: string; need: NeedRow }) {
+/** A merged original that is itself a merge nests: its own originals sit under
+ *  its own disclosure, so a designer's merge of an agent's merge reads top-down. */
+function OriginalsList({
+  originals,
+  originalsOf,
+}: {
+  originals: NeedRow[]
+  originalsOf: (needId: string) => NeedRow[]
+}) {
+  return (
+    <ul className="mt-2 list-disc space-y-1 pl-4 text-graphite">
+      {originals.map(o => (
+        <OriginalItem key={o.need_id} need={o} originalsOf={originalsOf} />
+      ))}
+    </ul>
+  )
+}
+
+function OriginalItem({
+  need,
+  originalsOf,
+}: {
+  need: NeedRow
+  originalsOf: (needId: string) => NeedRow[]
+}) {
+  const [open, setOpen] = useState(false)
+  const inner = need.merged_from.length > 0 ? originalsOf(need.need_id) : []
+  return (
+    <li>
+      {withoutMarker(need.statement_th)}
+      <span className="ml-1.5 text-lead">
+        {need.ksec_categories.map(ksecLabel).join(' + ')}
+      </span>
+      {inner.length > 0 && (
+        <>
+          <button
+            onClick={() => setOpen(v => !v)}
+            aria-expanded={open}
+            className="link ml-2"
+          >
+            {open ? 'ซ่อนข้อความเดิม' : `ดูข้อความเดิม (${inner.length})`}
+          </button>
+          {open && <OriginalsList originals={inner} originalsOf={originalsOf} />}
+        </>
+      )}
+    </li>
+  )
+}
+
+const MERGED_BY_LABEL_TH = { agent: 'รวมโดย AI', designer: 'รวมโดยผู้ออกแบบ' } as const
+
+export default function NeedCard({
+  programId,
+  need,
+  originals = [],
+  originalsOf = () => [],
+  skillNames = {},
+  onSplit,
+  onExclude,
+  onRestore,
+  selected,
+  onSelect,
+  actionError = '',
+  disabled = false,
+}: {
+  programId: string
+  need: NeedRow
+  /** The stored originals of a merged Need, matched on `merged_into`. */
+  originals?: NeedRow[]
+  /** The originals of any Need, for a merged original that is itself a merge. */
+  originalsOf?: (needId: string) => NeedRow[]
+  /** skill_id to name, for the top-skill chips. */
+  skillNames?: Record<string, string>
+  /** Split the merge back. The page owns the request and its error notice. */
+  onSplit?: (need: NeedRow) => void
+  /** Take the Need out of the pool, after a second press to confirm. */
+  onExclude?: (need: NeedRow) => void
+  /** Bring an excluded Need back. Given only to cards in the excluded section. */
+  onRestore?: (need: NeedRow) => void
+  /** Present on a selectable card: whether it is ticked, and how to tick it. */
+  selected?: boolean
+  onSelect?: (need: NeedRow, selected: boolean) => void
+  /** Why the last split, exclude or restore of THIS card was refused, shown on
+   *  the card: the page-level notice is off-screen for a designer scrolled down. */
+  actionError?: string
+  disabled?: boolean
+}) {
   const [trace, setTrace] = useState<NeedTrace | null>(null)
   const [open, setOpen] = useState(false)
+  const [showOriginals, setShowOriginals] = useState(false)
+  const isMerged = need.merged_from.length > 0
+  // Same two-step confirm as deleting evidence: the first press arms the button
+  // and it disarms itself after a few seconds.
+  const [confirmingExclude, setConfirmingExclude] = useState(false)
+  const revertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => () => { if (revertTimer.current) clearTimeout(revertTimer.current) }, [])
+  const excludeClick = () => {
+    if (revertTimer.current) clearTimeout(revertTimer.current)
+    if (confirmingExclude) {
+      setConfirmingExclude(false)
+      onExclude?.(need)
+      return
+    }
+    setConfirmingExclude(true)
+    revertTimer.current = setTimeout(() => setConfirmingExclude(false), 3000)
+  }
   const [error, setError] = useState('')
   // The guard runs at plo_synthesis, not here — so the badge says "จะไม่ถูกส่งต่อ",
   // future tense. This checkpoint is the last point at which fixing the scope
@@ -93,6 +213,16 @@ export default function NeedCard({ programId, need }: { programId: string; need:
   return (
     <div className="panel p-4">
       <div className="flex flex-wrap items-start gap-2">
+        {onSelect && (
+          <input
+            type="checkbox"
+            checked={selected ?? false}
+            onChange={e => onSelect(need, e.target.checked)}
+            disabled={disabled}
+            aria-label="เลือก Need นี้เพื่อรวม"
+            className="mt-1 shrink-0"
+          />
+        )}
         <p
           className={`record min-w-0 flex-1 basis-64 ${
             fallback ? 'italic text-pencil' : ''
@@ -121,7 +251,34 @@ export default function NeedCard({ programId, need }: { programId: string; need:
             เสริม
           </span>
         )}
+        {isMerged && (
+          <span className="chip chip-marker shrink-0">รวมจาก {need.merged_from.length} ข้อ</span>
+        )}
+        {isMerged && need.merged_by && (
+          <span className="chip chip-neutral shrink-0">{MERGED_BY_LABEL_TH[need.merged_by]}</span>
+        )}
       </div>
+      {isMerged && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs">
+          {need.ksec_categories.map(k => (
+            <span key={k} className="chip chip-neutral">{ksecLabel(k)}</span>
+          ))}
+          {need.top_skill_ids.map(id =>
+            skillNames[id] ? (
+              <span key={id} className="chip chip-neutral">{skillNames[id]}</span>
+            ) : null,
+          )}
+        </div>
+      )}
+      {isMerged && need.merge_reason_th && (
+        <p className="mt-2 border-l-2 border-hair pl-2.5 text-xs leading-relaxed text-pencil">
+          {/* null is a row merged before merged_by existed — Agent 2's. */}
+          <span className="eyebrow mr-1">
+            {need.merged_by === 'designer' ? 'เหตุผลของผู้ออกแบบ: ' : 'เหตุผลของโมเดล: '}
+          </span>
+          {need.merge_reason_th}
+        </p>
+      )}
       {fallback && (
         <p className="notice notice-warn mt-2 text-xs">
           {FALLBACK_ACTION_TH[fallback]}
@@ -150,7 +307,53 @@ export default function NeedCard({ programId, need }: { programId: string; need:
         >
           {open ? 'ซ่อนที่มา' : 'ดูที่มา'}
         </button>
+        {onExclude && (
+          <button
+            onClick={excludeClick}
+            disabled={disabled}
+            className={`btn btn-sm ${confirmingExclude ? 'btn-danger' : 'btn-danger-quiet'}`}
+          >
+            {confirmingExclude ? 'ยืนยันตัดออก?' : 'ตัดออก'}
+          </button>
+        )}
+        {onRestore && (
+          <button
+            onClick={() => onRestore(need)}
+            disabled={disabled}
+            className="btn btn-sm btn-secondary"
+          >
+            คืน
+          </button>
+        )}
       </div>
+      {actionError && (
+        <p role="alert" className="notice notice-error mt-2 text-xs">
+          {actionError}
+        </p>
+      )}
+      {isMerged && (
+        <div className="mt-3 border-t border-hair pt-3 text-xs">
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={() => setShowOriginals(v => !v)}
+              aria-expanded={showOriginals}
+              className="link"
+            >
+              {showOriginals ? 'ซ่อนข้อความเดิม' : `ดูข้อความเดิม (${originals.length})`}
+            </button>
+            {onSplit && (
+              <button
+                onClick={() => onSplit(need)}
+                disabled={disabled}
+                className="btn btn-sm btn-secondary ml-auto"
+              >
+                แยกกลับ
+              </button>
+            )}
+          </div>
+          {showOriginals && <OriginalsList originals={originals} originalsOf={originalsOf} />}
+        </div>
+      )}
       {open && (
         <div className="mt-3 space-y-2 border-t border-hair pt-3 text-xs">
           {error && <p className="text-mandate">{error}</p>}

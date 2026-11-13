@@ -27,6 +27,10 @@ function programLabel(p: ProgramSummary): string {
   return p.name_th || p.field || p.program_id
 }
 
+/** What a copy carries. `evidence_only` is the way back to an editable evidence
+ *  set once extraction has locked the original's. */
+type CopyMode = 'full' | 'evidence_only'
+
 const DEGREE_LABELS: Record<string, string> = {
   bachelor: 'ปริญญาตรี',
   master: 'ปริญญาโท',
@@ -48,6 +52,10 @@ export default function Programs() {
   const [pendingId, setPendingId] = useState<string | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [copyingId, setCopyingId] = useState<string | null>(null)
+  // The row whose copy action is open on its two choices; a copy needs a mode,
+  // so the button asks before it posts.
+  const [copyChoiceId, setCopyChoiceId] = useState<string | null>(null)
+  const [copiedMode, setCopiedMode] = useState<CopyMode>('full')
   // A failed copy is reported on the row it was asked of, not at the top of a
   // list that may be long; a successful one marks the row it produced.
   const [copyError, setCopyError] = useState<{ id: string; message: string } | null>(null)
@@ -106,13 +114,15 @@ export default function Programs() {
    *  program leaves the other untouched. It is not selected, because the
    *  designer copying a program usually means to keep working on the one they
    *  had — the new row is marked instead, with a way to open it. */
-  const copyProgram = async (p: ProgramSummary) => {
+  const copyProgram = async (p: ProgramSummary, mode: CopyMode) => {
+    setCopyChoiceId(null)
     setCopyingId(p.program_id)
     setCopyError(null)
     setCopiedId(null)
     try {
-      const res = await api.post<{ program_id: string }>(`/programs/${p.program_id}/copy`)
+      const res = await api.post<{ program_id: string }>(`/programs/${p.program_id}/copy`, { mode })
       await load()
+      setCopiedMode(mode)
       setCopiedId(res.data.program_id)
     } catch (err: unknown) {
       // The 409s carry Thai detail meant to be shown as-is (synthesis in
@@ -174,8 +184,10 @@ export default function Programs() {
         <div className="notice notice-info mb-4 flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
           <span>
             คัดลอก <span className="data">{copied.copied_from}</span> เป็น{' '}
-            <span className="data font-semibold">{copied.program_id}</span> แล้ว — หลักฐาน ทักษะ
-            Need และ PLO ไปด้วยทั้งหมด ประวัติการรันไม่ได้คัดลอก
+            <span className="data font-semibold">{copied.program_id}</span> แล้ว —{' '}
+            {copiedMode === 'evidence_only'
+              ? 'คัดลอกเฉพาะข้อมูลนำเข้าและหลักฐาน แก้ไขหลักฐานได้ที่สำเนา ทักษะ Need และ PLO ไม่ได้คัดลอก'
+              : 'หลักฐาน ทักษะ Need และ PLO ไปด้วยทั้งหมด ประวัติการรันไม่ได้คัดลอก'}
           </span>
           <button
             type="button"
@@ -287,13 +299,38 @@ export default function Programs() {
                         ยกเลิก
                       </button>
                     </span>
+                  ) : copyChoiceId === p.program_id ? (
+                    <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => copyProgram(p, 'full')}
+                        className="btn btn-sm btn-secondary"
+                      >
+                        คัดลอกทั้งหมด
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => copyProgram(p, 'evidence_only')}
+                        title="ได้ข้อมูลนำเข้าและหลักฐาน ไม่มีทักษะ Need PLO — หลักฐานของสำเนายังแก้ได้"
+                        className="btn btn-sm btn-secondary"
+                      >
+                        คัดลอกเฉพาะข้อมูลนำเข้า (แก้ evidence ได้)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setCopyChoiceId(null)}
+                        className="btn btn-sm btn-quiet"
+                      >
+                        ยกเลิก
+                      </button>
+                    </span>
                   ) : (
                     <span className="inline-flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => copyProgram(p)}
+                        onClick={() => { setCopyError(null); setCopyChoiceId(p.program_id) }}
                         disabled={copyingId !== null}
-                        title="คัดลอกหลักสูตรนี้พร้อมหลักฐาน ทักษะ Need และ PLO — ใช้เก็บผลรอบนี้ไว้เทียบกับรอบถัดไป"
+                        title="คัดลอกหลักสูตรนี้ — เลือกได้ว่าจะคัดลอกทั้งหมด (หลักฐาน ทักษะ Need PLO เก็บผลรอบนี้ไว้เทียบกับรอบถัดไป) หรือเฉพาะข้อมูลนำเข้าและหลักฐาน (แก้ evidence ได้)"
                         className="btn btn-sm btn-quiet"
                       >
                         {copyingId === p.program_id ? 'กำลังคัดลอก...' : 'คัดลอก'}

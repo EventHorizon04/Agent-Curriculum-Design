@@ -21,7 +21,14 @@ import {
   isScenarioName,
   saveDb,
 } from './db'
-import { buildRouter, classifyStream, latencyFor, pause, tickSessions } from './handlers'
+import {
+  buildRouter,
+  classifyStream,
+  evidenceLockReason,
+  latencyFor,
+  pause,
+  tickSessions,
+} from './handlers'
 import type { MockResponse } from './router'
 import { seedScenario } from './scenarios'
 import MockPanel from './MockPanel'
@@ -159,7 +166,19 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Res
         headers: { 'Content-Type': 'application/json' },
       })
     }
-    return classifyStreamResponse(decodeURIComponent(stream[1]))
+    // Refused before the stream opens, as the route's _refuse_if_locked does:
+    // a locked or busy program answers 409 with the lock reason.
+    const pid = decodeURIComponent(stream[1])
+    tickSessions()
+    const locked = evidenceLockReason(pid)
+    if (locked) {
+      await pause(latencyFor('normal'))
+      return new Response(JSON.stringify({ detail: locked }), {
+        status: 409,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    return classifyStreamResponse(pid)
   }
 
   if (ours && (url.pathname.startsWith('/programs') || url.pathname.startsWith('/health'))) {

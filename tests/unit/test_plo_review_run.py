@@ -73,6 +73,9 @@ class _MemoryRepo:
         self.rows[review.program_id] = review
 
 
+_STORED: list[PLO] = []
+
+
 @pytest.fixture
 def live(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     """Undo the conftest kill switch for this module and fake every boundary."""
@@ -85,7 +88,16 @@ def live(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     monkeypatch.setattr(
         pr,
         "NeedRepository",
-        lambda: AsyncMock(list_by_program=AsyncMock(return_value=[_NEED])),
+        lambda: AsyncMock(list_active_by_program=AsyncMock(return_value=[_NEED])),
+    )
+    monkeypatch.setattr(
+        pr, "EvidenceRepository", lambda: AsyncMock(list_by_program=AsyncMock(return_value=[]))
+    )
+    _STORED[:] = list(_PLOS)
+    monkeypatch.setattr(
+        pr,
+        "PLORepository",
+        lambda: AsyncMock(list_by_program=AsyncMock(side_effect=lambda _pid: list(_STORED))),
     )
     agent_run = AsyncMock(
         return_value=AgentOutcome(_FINISH, None, [ReviewToolCall(tool="check_verbs", arg="PLO1")])
@@ -108,7 +120,8 @@ async def test_a_fresh_review_is_the_agents_answer_judged_and_stored(live: Async
 
 async def test_the_agent_is_handed_the_dossier_and_only_the_unused_needs(live: AsyncMock) -> None:
     await pr.fresh_review("p", _PLOS)
-    dossier, unused = live.await_args.args
+    dossier, unused, voices = live.await_args.args
+    assert dict(voices) == {}
     assert [i.plo_id for i in dossier.items] == ["PLO1", "PLO2"]
     assert dict(unused) == {}  # _NEED is cited by both PLOs
 
@@ -234,7 +247,7 @@ async def test_the_graph_node_keeps_going_when_the_needs_fail_to_load(
     monkeypatch.setattr(
         pr,
         "NeedRepository",
-        lambda: AsyncMock(list_by_program=AsyncMock(side_effect=RuntimeError("db"))),
+        lambda: AsyncMock(list_active_by_program=AsyncMock(side_effect=RuntimeError("db"))),
     )
     state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
     assert state["plo_review"] is None and state["current_stage"] == "plo_review"
@@ -244,6 +257,13 @@ async def test_run_puts_the_review_on_the_state(live: AsyncMock) -> None:
     state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
     assert state["plo_review"]["summary_th"] == "สองข้อซ้ำกัน"
     assert state["current_stage"] == "plo_review"
+
+
+async def test_run_reloads_the_stored_plos_after_the_review(live: AsyncMock) -> None:
+    """Send-back may have redrafted a PLO; the state must carry the stored set."""
+    _STORED[:] = _changed()
+    state = await pr.run({"program_id": "p", "plos": [p.model_dump(mode="json") for p in _PLOS]})
+    assert [p["statement_th"] for p in state["plos"]] == [p.statement_th for p in _changed()]
 
 
 async def test_run_with_no_plos_leaves_no_review(live: AsyncMock) -> None:
@@ -280,27 +300,33 @@ def _finish(*groups: list[str]) -> ReviewFinish:
 
 
 async def test_three_runs_are_asked_for_and_voted_over(live: AsyncMock) -> None:
+    # The first batch of two splits, so the third run is made and all three are voted.
+    live.side_effect = [
+        AgentOutcome(_FINISH, None, []),
+        AgentOutcome(_FINISH_OTHER, None, []),
+        AgentOutcome(_FINISH, None, []),
+    ]
     review = await pr.fresh_review("p", _PLOS)
     assert live.await_count == 3
     assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (3, 3, 2)
-    assert review.redundancies[0].agreed_runs == 3
+    assert review.redundancies[0].agreed_runs == 2
 
 
 async def test_the_runs_are_concurrent(live: AsyncMock) -> None:
     started = 0
     all_started = asyncio.Event()
 
-    async def blocking(dossier, unused):  # type: ignore[no-untyped-def]
+    async def blocking(dossier, unused, voices):  # type: ignore[no-untyped-def]
         nonlocal started
         started += 1
-        if started == 3:
+        if started == 2:
             all_started.set()
         await asyncio.wait_for(all_started.wait(), timeout=1)
         return AgentOutcome(_FINISH, None, [])
 
     live.side_effect = blocking
     review = await pr.fresh_review("p", _PLOS)
-    assert review.runs_succeeded == 3
+    assert review.runs_succeeded == 2  # the first batch of two agrees, so it stops
 
 
 async def test_two_successes_and_one_failure_vote_over_two(live: AsyncMock) -> None:
@@ -355,13 +381,19 @@ async def test_an_unconfirmed_stored_review_is_run_fresh(live: AsyncMock) -> Non
     live.side_effect = None
     live.return_value = AgentOutcome(_FINISH, None, [])
     second = await pr.review_plo_set("p", _PLOS)
-    assert second is not None and second.runs_succeeded == 3 and live.await_count == 6
+    # The first batch of two agrees, so the fresh review stops there.
+    assert second is not None and second.runs_succeeded == 2 and live.await_count == 5
 
 
 @pytest.mark.parametrize("succeeded", [2, 3])
 async def test_a_confirmed_stored_review_is_reused(live: AsyncMock, succeeded: int) -> None:
     ok = AgentOutcome(_FINISH, None, [])
-    live.side_effect = [ok] * succeeded + [AgentOutcome(None, "failed", [])] * (3 - succeeded)
+    # A fail in the first batch forces the third run; two or three usable runs remain.
+    live.side_effect = (
+        [ok, AgentOutcome(None, "failed", []), ok]
+        if succeeded == 2
+        else [ok, AgentOutcome(_FINISH_OTHER, None, []), ok]
+    )
     first = await pr.review_plo_set("p", _PLOS)
     assert first is not None and first.runs_succeeded == succeeded
     second = await pr.review_plo_set("p", _PLOS)
@@ -376,3 +408,253 @@ async def test_one_run_setting_is_todays_single_review(
     assert live.await_count == 1
     assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (1, 1, 1)
     assert review.tool_calls[0].tool == "check_verbs"
+
+
+async def test_a_large_dossier_logs_a_size_warning(live: AsyncMock) -> None:
+    from loguru import logger
+
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        many = [
+            _PLOS[0].model_copy(update={"plo_id": f"PLO{i}"})
+            for i in range(1, pr.MAX_DOSSIER_PLOS_WARN + 1)
+        ]
+        await pr.fresh_review("p", many)
+        assert not any("dossier carries" in m for m in messages)
+        await pr.fresh_review("p", [*many, _PLOS[0].model_copy(update={"plo_id": "PLO99"})])
+    finally:
+        logger.remove(sink)
+    assert sum("dossier carries" in m for m in messages) == 1
+
+
+# --- early stop (spec decision 26) ---
+
+
+def _five(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "plo_review_runs", 5)
+
+
+def test_review_key_equal_for_same_findings_any_order() -> None:
+    from datetime import datetime
+
+    from curriculum_agent.models import RedundancyFinding
+    from curriculum_agent.stages.plo_review_consensus import review_key
+
+    r1 = PLOSetReview(
+        program_id="p",
+        plo_fingerprint="f",
+        model="m",
+        created_at=datetime(2026, 1, 1),
+        redundancies=[
+            RedundancyFinding(plo_ids=["PLO1", "PLO2"], reason_th="ก", suggestion_th="ข"),
+            RedundancyFinding(plo_ids=["PLO3", "PLO4"], reason_th="ค", suggestion_th="ง"),
+        ],
+    )
+    r2 = r1.model_copy(
+        update={"redundancies": list(reversed(r1.redundancies)), "summary_th": "ต่างกัน"}
+    )
+    r3 = r1.model_copy(update={"redundancies": r1.redundancies[:1]})
+    assert review_key(r1) == review_key(r2)
+    assert review_key(r1) != review_key(r3)
+
+
+def _key_review(**kw: object) -> PLOSetReview:
+    from datetime import datetime
+
+    return PLOSetReview(
+        program_id="p",
+        plo_fingerprint="f",
+        model="m",
+        created_at=datetime(2026, 1, 1),
+        **kw,  # type: ignore[arg-type]
+    )
+
+
+def _key_items() -> dict[str, tuple[dict[str, object], dict[str, object]]]:
+    """Per review_key component, two reviews that differ in that component only."""
+    from curriculum_agent.models import (
+        AlignmentFinding,
+        BloomFinding,
+        BloomLevel,
+        KsecFinding,
+        UnusedNeedFinding,
+    )
+
+    def bloom(level: BloomLevel | None, verb: str | None = None) -> dict[str, object]:
+        return {
+            "bloom": [
+                BloomFinding(
+                    plo_id="PLO1",
+                    declared=BloomLevel.APPLY,
+                    suggested_level=level,
+                    suggested_verb_th=verb,
+                )
+            ]
+        }
+
+    def unused(verdict: str) -> dict[str, object]:
+        return {
+            "unused_needs": [
+                UnusedNeedFinding(
+                    need_id="N9",
+                    statement_th="ต้องการ",
+                    demand_score=0.4,
+                    exclusion="lost_on_demand",
+                    verdict=verdict,
+                )
+            ]
+        }
+
+    def ksec(suggested: list[str]) -> dict[str, object]:
+        return {
+            "ksec": [
+                KsecFinding(
+                    plo_id="PLO1", current=["S"], suggested=suggested, agrees=suggested == ["S"]
+                )
+            ]
+        }
+
+    return {
+        "alignment": (
+            {"alignment": [AlignmentFinding(plo_id="PLO1", reason_th="ก")]},
+            {"alignment": [AlignmentFinding(plo_id="PLO2", reason_th="ก")]},
+        ),
+        "bloom_level": (bloom(BloomLevel.ANALYZE), bloom(BloomLevel.CREATE)),
+        "bloom_verb": (bloom(None, "ประเมิน"), bloom(None, "ออกแบบ")),
+        "unused_verdict": (unused("consider"), unused("ok_to_leave")),
+        "ksec": (ksec(["K"]), ksec(["K", "S"])),
+    }
+
+
+@pytest.mark.parametrize("component", list(_key_items()))
+def test_review_key_differs_when_one_component_differs(component: str) -> None:
+    """Final review M7: every component of the key, not only redundancy, must tell
+    two votes apart, or an early stop would count unequal runs as unanimous."""
+    from curriculum_agent.stages.plo_review_consensus import review_key
+
+    a, b = _key_items()[component]
+    assert review_key(_key_review(**a)) != review_key(_key_review(**b))
+    assert review_key(_key_review(**a)) == review_key(_key_review(**a))
+
+
+async def test_unanimous_first_batch_stops_at_three(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _five(monkeypatch)
+    review = await pr.fresh_review("p", _PLOS)
+    assert live.await_count == 3
+    assert (review.runs_requested, review.runs_succeeded) == (5, 3)
+    f = review.redundancies[0]
+    assert f.agreed_runs == 3
+    assert f.agreed_runs >= max(review.agreement_threshold, 5 // 2 + 1)
+
+
+async def test_split_first_batch_runs_all_five(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _five(monkeypatch)
+    live.side_effect = [
+        AgentOutcome(_finish(["PLO1", "PLO2"]), None, []),
+        AgentOutcome(_finish(["PLO1", "PLO2"]), None, []),
+        AgentOutcome(_FINISH_OTHER, None, []),
+        AgentOutcome(_finish(["PLO1", "PLO2"]), None, []),
+        AgentOutcome(_finish(["PLO1", "PLO2"]), None, []),
+    ]
+    review = await pr.fresh_review("p", _PLOS)
+    assert live.await_count == 5
+    assert (review.runs_requested, review.runs_succeeded) == (5, 5)
+
+
+async def test_one_unusable_run_in_first_batch_runs_the_rest(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _five(monkeypatch)
+    live.side_effect = [
+        AgentOutcome(_FINISH, None, []),
+        AgentOutcome(None, "failed", []),
+        AgentOutcome(_FINISH, None, []),
+        AgentOutcome(_FINISH, None, []),
+        AgentOutcome(_FINISH, None, []),
+    ]
+    review = await pr.fresh_review("p", _PLOS)
+    assert live.await_count == 5
+    assert (review.runs_requested, review.runs_succeeded) == (5, 4)
+
+
+async def test_early_stopped_review_is_reused(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _five(monkeypatch)
+    first = await pr.review_plo_set("p", _PLOS)
+    assert first is not None and first.runs_succeeded == 3
+    second = await pr.review_plo_set("p", _PLOS)
+    assert second == first and live.await_count == 3
+
+
+async def test_single_run_unchanged(live: AsyncMock, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(settings, "plo_review_runs", 1)
+    review = await pr.fresh_review("p", _PLOS)
+    assert live.await_count == 1
+    assert (review.runs_requested, review.runs_succeeded, review.agreement_threshold) == (1, 1, 1)
+
+
+_FINISH_OTHER = ReviewFinish(kind="finish", summary_th="ไม่พบข้อซ้ำ")  # a different vote
+
+
+async def test_split_is_detected_before_the_slow_first_batch_run_finishes(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run 2 of the first batch disagrees with run 1 while run 3 is held: the rest
+    must start without waiting for run 3, and the order stays launch order."""
+    _five(monkeypatch)
+    release = asyncio.Event()
+    started: list[int] = []
+    scripts = [_FINISH, _FINISH_OTHER, _FINISH, _FINISH, _FINISH]
+
+    async def run(dossier, unused, voices):  # type: ignore[no-untyped-def]
+        n = len(started)
+        started.append(n)
+        if n == 2:  # the slow one
+            await asyncio.wait_for(release.wait(), timeout=2)
+        elif n == 4:
+            release.set()  # last of the second wave started: let run 3 go
+        return AgentOutcome(scripts[n], None, [])
+
+    live.side_effect = run
+    review = await pr.fresh_review("p", _PLOS)
+    assert len(started) == 5
+    assert (review.runs_requested, review.runs_succeeded) == (5, 5)
+
+
+async def test_unanimous_first_batch_never_starts_the_rest_even_when_slow(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _five(monkeypatch)
+
+    async def run(dossier, unused, voices):  # type: ignore[no-untyped-def]
+        await asyncio.sleep(0.01)
+        return AgentOutcome(_FINISH, None, [])
+
+    live.side_effect = run
+    review = await pr.fresh_review("p", _PLOS)
+    assert live.await_count == 3
+    assert review.runs_succeeded == 3
+
+
+async def test_run_numbers_in_the_log_follow_launch_index(
+    live: AsyncMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from loguru import logger
+
+    _five(monkeypatch)
+    live.side_effect = [AgentOutcome(None, "failed", [])] * 5
+    messages: list[str] = []
+    sink = logger.add(lambda m: messages.append(str(m)), level="WARNING")
+    try:
+        await pr.fresh_review("p", _PLOS)
+    finally:
+        logger.remove(sink)
+    text = "".join(messages)
+    for i in range(1, 6):
+        assert f"run {i}/5 ended failed" in text

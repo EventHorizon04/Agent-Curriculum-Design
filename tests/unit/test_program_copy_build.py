@@ -15,10 +15,13 @@ from datetime import datetime
 from curriculum_agent.data.orm import (
     EvidenceTable,
     NeedTable,
+    PLOFeedbackActionTable,
+    PLOReportTable,
     PLOReviewTable,
     PLOTable,
     ProgramTable,
     SkillTable,
+    SupersededPLOTable,
 )
 from curriculum_agent.data.program_copy import ProgramRows, build_copy, remap_ids
 from curriculum_agent.data.repositories import _row_to_dict
@@ -105,7 +108,7 @@ def _source() -> ProgramRows:
             program_id="program-2",
             statement_th="ต้องการบัณฑิตที่สื่อสารภาษาอังกฤษกับนักท่องเที่ยวได้",
             rationale_th="ทุกทักษะในกลุ่มเป็นการสื่อสารกับลูกค้า",
-            ksec_category="S",
+            ksec_categories=["S"],
             bloom_level="apply",
             member_skill_ids=["sk-1"],
             source_evidence_ids=["ev-1"],
@@ -237,6 +240,31 @@ def test_a_current_review_stays_current_in_the_copy() -> None:
     assert copy.review.plo_fingerprint == _fingerprint(copy.plos, copy.needs)
 
 
+def _active_fingerprint(rows: list[PLOTable], need_rows: list[NeedTable]) -> str:
+    """What plo_review hashes: the PLOs and the *active* Needs only."""
+    active = [n for n in need_rows if n.merged_into is None and n.excluded_at is None]
+    return _fingerprint(rows, active)
+
+
+def test_a_current_review_stays_current_with_inactive_needs() -> None:
+    """The review is fingerprinted over active Needs, so the copy has to be too:
+    counting a merged-away or excluded Need made every such review read stale."""
+    from dataclasses import replace
+
+    src = _source()
+    base = _row_to_dict(src.needs[0])
+    merged_away = NeedTable(**{**base, "need_id": "nd-2", "merged_into": "nd-1"})
+    excluded = NeedTable(**{**base, "need_id": "nd-3", "excluded_at": datetime(2026, 10, 1)})
+    src = replace(src, needs=[*src.needs, merged_away, excluded])
+    src = _with_review(src, fingerprint=_active_fingerprint(src.plos, src.needs))
+
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+
+    assert copy.review is not None
+    assert len(copy.needs) == 3
+    assert copy.review.plo_fingerprint == _active_fingerprint(copy.plos, copy.needs)
+
+
 def test_a_stale_review_stays_stale_in_the_copy() -> None:
     src = _with_review(_source(), fingerprint="0" * 64)
     copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
@@ -313,3 +341,204 @@ def test_plain_columns_are_not_remapped_by_a_coincidental_id_match() -> None:
     assert copy.skills[0].source_stakeholder_type == "employer"
     # The reference column: rewritten to the new evidence id.
     assert copy.skills[0].source_evidence_id == new_evidence_id
+
+
+def _need_row(need_id: str, statement: str, **extra: object) -> NeedTable:
+    return NeedTable(
+        need_id=need_id,
+        program_id="program-2",
+        statement_th=statement,
+        rationale_th="ทุกทักษะในกลุ่มเป็นการสื่อสารกับลูกค้า",
+        ksec_categories=["S"],
+        bloom_level="apply",
+        member_skill_ids=["sk-1"],
+        source_evidence_ids=["ev-1"],
+        stakeholder_coverage={"employer": 1},
+        source_stakeholder_types=["employer"],
+        freq=1,
+        demand_score=0.5,
+        is_optional=False,
+        classification_coverage={"want": 1},
+        in_field_skill_count=1,
+        graduate_capability_skill_count=1,
+        **extra,
+    )
+
+
+def test_a_copied_merge_points_at_the_copys_own_merged_need() -> None:
+    from dataclasses import replace
+
+    src = replace(
+        _source(),
+        needs=[
+            _need_row("o-1", "ต้องการบัณฑิตที่สื่อสารภาษาอังกฤษได้ ข้อ v1", merged_into="m-1"),
+            _need_row("o-2", "ต้องการบัณฑิตที่สื่อสารภาษาอังกฤษได้ ข้อ v2", merged_into="m-1"),
+            _need_row("m-1", "ต้องการบัณฑิตที่สื่อสารภาษาอังกฤษได้ ข้อ vM", merged_from=["o-1", "o-2"]),
+        ],
+        plos=[],
+    )
+
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+
+    by_statement = {n.statement_th.rsplit(" ", 1)[-1]: n for n in copy.needs}
+    first, second, merged = by_statement["v1"], by_statement["v2"], by_statement["vM"]
+    assert {first.need_id, second.need_id, merged.need_id}.isdisjoint({"o-1", "o-2", "m-1"})
+    assert first.merged_into == merged.need_id
+    assert second.merged_into == merged.need_id
+    assert merged.merged_into is None
+    assert merged.merged_from == [first.need_id, second.need_id]
+
+
+def _with_history(src: ProgramRows) -> ProgramRows:
+    from dataclasses import replace
+
+    snapshot = _row_to_dict(src.plos[0])
+    snapshot["plo_id"] = "PLO2"
+    history = SupersededPLOTable(
+        id="h-1",
+        program_id="program-2",
+        plo_id="PLO2",
+        snapshot=snapshot,
+        superseded_by="PLO1",
+        superseded_at=datetime(2026, 10, 5),
+    )
+    return replace(src, superseded=[history])
+
+
+def test_full_copy_clones_superseded_history() -> None:
+    src = _with_history(_source())
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+
+    assert len(copy.superseded) == 1
+    row = copy.superseded[0]
+    assert row.id != "h-1"
+    assert row.id.startswith("new-")
+    assert row.program_id == "program-2-run-1"
+    assert row.snapshot["program_id"] == "program-2-run-1"
+    assert row.plo_id == "PLO2"
+    assert row.superseded_by == "PLO1"
+    assert row.superseded_at == datetime(2026, 10, 5)
+
+    need_ids = {n.need_id for n in copy.needs}
+    evidence_ids = {e.evidence_id for e in copy.evidence}
+    assert set(row.snapshot["source_need_ids"]) <= need_ids
+    assert set(row.snapshot["source_evidence_ids"]) <= evidence_ids
+    # It still reads back as a PLO.
+    assert PLO.model_validate(row.snapshot).program_id == "program-2-run-1"
+    # The source row is untouched.
+    assert src.superseded[0].snapshot["program_id"] == "program-2"
+    assert src.superseded[0].snapshot["source_need_ids"] == ["nd-1"]
+
+
+def test_evidence_only_copy_has_no_superseded_history() -> None:
+    src = _with_history(_source())
+    copy = build_copy(
+        src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
+    )
+    assert copy.superseded == []
+
+
+def test_build_copy_evidence_only() -> None:
+    src = _with_review(_source(), fingerprint="0" * 64)
+    copy = build_copy(
+        src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
+    )
+    assert copy.program.program_id == "program-2-run-1"
+    assert copy.program.copied_from == "program-2"
+    assert len(copy.evidence) == len(src.evidence) == 1
+    assert {e.evidence_id for e in copy.evidence}.isdisjoint({e.evidence_id for e in src.evidence})
+    assert all(e.program_id == "program-2-run-1" for e in copy.evidence)
+    assert copy.skills == []
+    assert copy.needs == []
+    assert copy.plos == []
+    assert copy.skill_groups == []
+    assert copy.review is None
+
+
+def _with_feedback(src: ProgramRows) -> ProgramRows:
+    from dataclasses import replace
+
+    row = PLOFeedbackActionTable(
+        id="f-1",
+        program_id="program-2",
+        review_created_at=datetime(2026, 10, 5),
+        kind="unused_need",
+        plo_ids=["PLO2"],
+        need_ids=["nd-1"],
+        finding_reason_th="เหตุผล",
+        instruction_th="",
+        outcome="applied",
+        outcome_reason_th="",
+        result_plo_id="PLO2",
+        result_statement_th="ออกแบบระบบได้",
+        result_bloom_level="create",
+        created_at=datetime(2026, 10, 5),
+    )
+    return replace(src, feedback=[row])
+
+
+def test_full_copy_clones_feedback_trail() -> None:
+    src = _with_feedback(_source())
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+    assert len(copy.feedback) == 1
+    row = copy.feedback[0]
+    assert row.id != "f-1" and row.id.startswith("new-")
+    assert row.program_id == "program-2-run-1"
+    assert row.plo_ids == ["PLO2"]
+    assert set(row.need_ids) <= {n.need_id for n in copy.needs}
+    assert row.need_ids != ["nd-1"]
+    assert row.outcome == "applied" and row.result_plo_id == "PLO2"
+    assert src.feedback[0].need_ids == ["nd-1"]
+
+
+def test_evidence_only_copy_has_no_feedback_trail() -> None:
+    src = _with_feedback(_source())
+    copy = build_copy(
+        src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
+    )
+    assert copy.feedback == []
+
+
+def _with_report(src: ProgramRows, *, fingerprint: str) -> ProgramRows:
+    from dataclasses import replace
+
+    report = PLOReportTable(
+        program_id="program-2",
+        plo_fingerprint=fingerprint,
+        created_at=datetime(2026, 11, 5),
+        report={"summary_th": "ภาพรวม", "plos": [{"plo_id": "PLO1", "need_ids": ["nd-1"]}]},
+    )
+    return replace(src, report=report)
+
+
+def test_full_copies_report_refingerprinted() -> None:
+    src = _source()
+    src = _with_report(src, fingerprint=_fingerprint(src.plos, src.needs))
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+    assert copy.report is not None
+    assert copy.report.program_id == "program-2-run-1"
+    # Current for the source stays current for the copy, whose Need ids changed.
+    assert copy.report.plo_fingerprint == _fingerprint(copy.plos, copy.needs)
+    assert copy.report.plo_fingerprint != src.report.plo_fingerprint  # type: ignore[union-attr]
+    # The body is JSONB, so its Need ids follow the re-keying.
+    assert "nd-1" not in json.dumps(copy.report.report)
+    assert src.report.report["plos"][0]["need_ids"] == ["nd-1"]  # type: ignore[union-attr]
+
+
+def test_a_stale_report_stays_stale_in_the_copy() -> None:
+    src = _with_report(_source(), fingerprint="0" * 64)
+    copy = build_copy(src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory())
+    assert copy.report is not None
+    assert copy.report.plo_fingerprint == "0" * 64
+
+
+def test_evidence_only_copies_no_report() -> None:
+    src = _with_report(_source(), fingerprint="0" * 64)
+    copy = build_copy(
+        src, "program-2-run-1", now=NOW, new_uuid=_new_uuid_factory(), mode="evidence_only"
+    )
+    assert copy.report is None
+
+
+def test_no_report_means_no_report() -> None:
+    assert build_copy(_source(), "x", now=NOW, new_uuid=_new_uuid_factory()).report is None

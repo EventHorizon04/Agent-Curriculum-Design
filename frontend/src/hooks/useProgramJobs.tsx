@@ -116,7 +116,7 @@ function useProgramJobs(programId: string): JobsValue {
       // line every two seconds would bury whatever else is in the console.
       if (!warned.current) {
         warned.current = true
-        console.warn('[jobs] could not read the job list; keeping the last one and retrying', err)
+        console.warn('[jobs] could not read the job list; keeping the last one and retrying', err instanceof Error ? err.message : String(err))
       }
       setStore((prev) =>
         prev.programId === pid ? { ...prev, failed: true } : { programId: pid, jobs: NO_JOBS, failed: true },

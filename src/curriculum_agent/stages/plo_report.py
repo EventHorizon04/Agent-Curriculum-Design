@@ -1,37 +1,65 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
 
-from curriculum_agent.data.repositories import NeedRepository, PLORepository
+from curriculum_agent.data.repositories import (
+    NeedRepository,
+    PLOReportRepository,
+    PLORepository,
+)
 from curriculum_agent.graph import AgentState
-from curriculum_agent.models import PLO
+from curriculum_agent.models import PLOReport
+from curriculum_agent.stages.plo_review_facts import need_demands, plo_fingerprint
 from curriculum_agent.stages.plo_synthesis import cited_need_ids
 
 
 async def run(state: AgentState) -> AgentState:
-    """PLO Report stage: assemble the reviewable report and persist the PLOs.
+    """PLO Report stage: assemble the report from the stored PLOs and store it.
 
     This stage used to classify each PLO generic vs specific. That split came from
     the SS/GS KSEC tags, which no longer exist — a PLO's competency domain is the
     KSEC tag of the Needs behind it, and the report shows that directly instead of
     reducing it to a binary. No LLM call remains here.
 
-    No checkpoint follows it: the set was approved at the PLO checkpoint, and the
-    QA review (stage 06, `plo_review`) runs after this stage and is not part of
-    the report.
+    It reads the PLOs from the database, never from `state["plos"]`: the designer
+    may have edited the set while the session was suspended, and writing the
+    checkpoint's copy back would undo that. It writes no PLO; the report is one
+    row in `plo_reports`, stamped with the fingerprint of the set it was built from.
+
+    No checkpoint follows it: it is the last stage, built from the set the designer
+    approved at the PLO checkpoint after the QA review (stage 06, `plo_review`).
     """
     program_id = state.get("program_id", "unknown")
-    plo_dicts = state.get("plos", [])
-    if not plo_dicts:
+    plos = await PLORepository().list_by_program(program_id)
+    if not plos:
         raise ValueError(
             f"PLO report: no PLOs for program '{program_id}' — run PLO synthesis first"
         )
 
-    plos = [PLO.model_validate(d) for d in plo_dicts]
-    needs = await NeedRepository().list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
     needs_by_id = {n.need_id: n for n in needs}
+
+    # Needs the designer excluded at the Need stage. A merged-away original is a
+    # fold (`merged_into`), not an exclusion, so it is left out. The active read
+    # drops both kinds, so these never also appear in `needs_not_synthesized`.
+    every = await NeedRepository().list_by_program(program_id)
+    excluded = sorted(
+        (n for n in every if n.excluded_at is not None and n.merged_into is None),
+        key=lambda n: (n.excluded_at, n.need_id),
+    )
+    needs_excluded = [
+        {
+            "need_id": n.need_id,
+            "statement_th": n.statement_th,
+            "ksec_categories": list(n.ksec_categories),
+            "demand_score": n.demand_score,
+            "excluded_at": n.excluded_at.isoformat() if n.excluded_at else None,
+        }
+        for n in excluded
+    ]
 
     # Every PLO must trace to evidence (project rule); a source_need_id that
     # resolves to nothing here would ship a checkpoint the designer cannot
@@ -80,6 +108,9 @@ async def run(state: AgentState) -> AgentState:
         # any whose synthesis failed. Listed, not just counted, so the review page
         # can name them.
         "needs_not_synthesized": not_synthesized,
+        # Needs the designer excluded: listed so the approved report says what
+        # was left out on purpose, apart from what simply lost the cut.
+        "needs_excluded": needs_excluded,
         "counts": {
             "total": len(plos),
             "core": core,
@@ -88,10 +119,18 @@ async def run(state: AgentState) -> AgentState:
             "stale": stale,
             "code_only": code_only,
             "needs_not_synthesized": len(not_synthesized),
+            "needs_excluded": len(needs_excluded),
         },
     }
 
-    await PLORepository().bulk_insert(plos)
+    await PLOReportRepository().upsert(
+        PLOReport(
+            program_id=program_id,
+            plo_fingerprint=plo_fingerprint(plos, need_demands(needs)),
+            created_at=datetime.now(UTC).replace(tzinfo=None),
+            report=report,
+        )
+    )
 
     state["plos"] = report["plos"]
     state["report"] = report

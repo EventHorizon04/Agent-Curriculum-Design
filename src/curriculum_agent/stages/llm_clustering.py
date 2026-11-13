@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import CACHE_KIND_CLUSTERING, LLMCacheRepository
 from curriculum_agent.llm import complete_clustering
+from curriculum_agent.models import KSECCategory
 from curriculum_agent.prompts.cluster_skills import (
     build_cluster_skills_prompt,
     build_merge_clusters_prompt,
@@ -132,6 +133,7 @@ def _clustering_contract_fingerprint() -> str:
         [
             build_cluster_skills_prompt([])[0]["content"],
             build_cluster_skills_prompt([], None, "context sample")[0]["content"],
+            build_cluster_skills_prompt([], None, None, KSECCategory.EC)[0]["content"],
             build_merge_clusters_prompt([])[0]["content"],
         ]
     )
@@ -160,20 +162,36 @@ def is_valid_partition(groups: list[list[int]], n: int) -> bool:
     return len(seen) == n
 
 
+# Bounds the model's hidden reasoning on both clustering calls. Unbounded, GLM's
+# reasoning took 234s on one 45-name S-bucket call on 2026-10-28 (375s on an
+# earlier probe), against the 300s Agent 1 grouping budget. The bound is sent
+# only to OpenRouter. `.claude/rules/llm-slots.md` notes this endpoint may treat
+# any bound as reasoning off, so the grouping quality under the bound is still
+# being measured.
+_MAX_REASONING_TOKENS = 1024
+
+
 async def _cluster_pass(
-    names: list[str], target_clusters: int | None = None, program_context: str | None = None
+    names: list[str],
+    target_clusters: int | None = None,
+    program_context: str | None = None,
+    ksec: KSECCategory | None = None,
 ) -> list[tuple[str, list[int]]]:
     """One call on the clustering slot over `names`, validated."""
     result = await complete_clustering(
         ClusterAssignmentsResponse,
-        build_cluster_skills_prompt(names, target_clusters, program_context),
+        build_cluster_skills_prompt(names, target_clusters, program_context, ksec),
         temperature=0,
+        reasoning_max_tokens=_MAX_REASONING_TOKENS,
     )
     return validate_assignments([(c.label_th, c.member_indices) for c in result.clusters], names)
 
 
 async def _cluster_map_reduce(
-    names: list[str], target_clusters: int | None = None, program_context: str | None = None
+    names: list[str],
+    target_clusters: int | None = None,
+    program_context: str | None = None,
+    ksec: KSECCategory | None = None,
 ) -> list[list[int]]:
     """Cluster per batch, then merge equivalent cluster labels across batches.
 
@@ -184,7 +202,7 @@ async def _cluster_map_reduce(
     labelled: list[tuple[str, list[int]]] = []
     offset = 0
     for batch in split_batches(names):
-        for label, indices in await _cluster_pass(batch, None, program_context):
+        for label, indices in await _cluster_pass(batch, None, program_context, ksec):
             labelled.append((label, [offset + i for i in indices]))
         offset += len(batch)
 
@@ -193,13 +211,17 @@ async def _cluster_map_reduce(
         MergeGroupsResponse,
         build_merge_clusters_prompt(labels, target_clusters),
         temperature=0,
+        reasoning_max_tokens=_MAX_REASONING_TOKENS,
     )
     merged = validate_assignments([("", g) for g in merge.groups], labels)
     return [sorted(i for ci in group for i in labelled[ci][1]) for _, group in merged]
 
 
 async def cluster_skill_names(
-    names: list[str], target_clusters: int | None = None, program_context: str | None = None
+    names: list[str],
+    target_clusters: int | None = None,
+    program_context: str | None = None,
+    ksec: KSECCategory | None = None,
 ) -> list[list[int]]:
     """Group skill names by meaning on the clustering slot.
 
@@ -212,7 +234,8 @@ async def cluster_skill_names(
 
     `program_context` names the program these skills belong to, so the same names
     read against a different field group differently. It is in the key for the
-    same reason `target_clusters` is.
+    same reason `target_clusters` is. `ksec` is the bucket: the EC prompt differs
+    from the others, so it is in the key too.
     """
     if not names:
         return []
@@ -236,10 +259,11 @@ async def cluster_skill_names(
                 _CLUSTERING_CONTRACT,
                 str(target_clusters),
                 str(program_context),
+                str(ksec),
             ]
         ).encode()
     ).hexdigest()
-    cached = await cache.get(cache_key)
+    cached = await cache.get(cache_key) if settings.llm_cache_enabled else None
     if cached is not None and cached[0] == settings.clustering_model:
         try:
             groups = [[int(i) for i in g] for g in json.loads(cached[1])]
@@ -255,16 +279,18 @@ async def cluster_skill_names(
 
     if len(names) <= SINGLE_PASS_MAX:
         groups = [
-            indices for _, indices in await _cluster_pass(names, target_clusters, program_context)
+            indices
+            for _, indices in await _cluster_pass(names, target_clusters, program_context, ksec)
         ]
     else:
-        groups = await _cluster_map_reduce(names, target_clusters, program_context)
+        groups = await _cluster_map_reduce(names, target_clusters, program_context, ksec)
 
-    await cache.set(
-        cache_key,
-        settings.clustering_model,
-        json.dumps(groups),
-        kind=CACHE_KIND_CLUSTERING,
-        contract=_CLUSTERING_CONTRACT,
-    )
+    if settings.llm_cache_enabled:
+        await cache.set(
+            cache_key,
+            settings.clustering_model,
+            json.dumps(groups),
+            kind=CACHE_KIND_CLUSTERING,
+            contract=_CLUSTERING_CONTRACT,
+        )
     return groups

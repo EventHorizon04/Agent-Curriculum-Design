@@ -26,19 +26,20 @@ function Write-Fail { param([string]$msg) Write-Host "   FAIL: $msg" -Foreground
 Write-Step "Checking LLM configuration..."
 if (-not (Test-Path ".env")) { Write-Fail ".env not found. Copy .env.example and fill it in." }
 $envText = Get-Content ".env" -Raw
-if ($envText -notmatch '(?m)^\s*OPENROUTER_API_KEY\s*=\s*\S') {
+if ($envText -notmatch '(?m)^[ \t]*OPENROUTER_API_KEY[ \t]*=[ \t]*\S') {
     Write-Fail "OPENROUTER_API_KEY is not set in .env. The demo runs on OpenRouter."
 }
 Write-Ok "OpenRouter key present"
 
-# API_KEY must stay unset: the frontend never sends X-API-Key, so a set value
-# 401s every write (save, classify, checkpoint approve/reject) mid-demo. Never
-# print the value itself, only whether the line is present.
-if ($envText -match '(?m)^\s*API_KEY\s*=\s*\S') {
-    Write-Fail ("API_KEY is set in .env. The UI sends no X-API-Key header, so this " +
-        "401s every write. Comment it out. See docs/demo-runbook.md.")
+# Every write route requires X-API-Key when API_KEY is set, and the UI asks the
+# designer to type it (kept per tab). Unset means writes are open to anyone who
+# gets past Access, so warn. Never print the value, only whether it is present.
+if ($envText -match '(?m)^[ \t]*API_KEY[ \t]*=[ \t]*\S') {
+    Write-Ok "API_KEY set: the designer types it in the UI when asked"
+} else {
+    Write-Host ("   WARN: API_KEY is not set in .env: writes are open to anyone past Access. " +
+        "Set it and hand the key to the designer. See docs/demo-runbook.md.") -ForegroundColor Yellow
 }
-Write-Ok "API_KEY left unset"
 
 # --- 2. Make sure port 8000 is ours to take ---
 # Before Docker and the build, not after: an already-bound port used to surface

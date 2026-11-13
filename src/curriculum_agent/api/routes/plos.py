@@ -1,35 +1,43 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 
 from curriculum_agent.api.deps import require_api_key
-from curriculum_agent.api.jobs import start_job_or_409, sync_writer
+from curriculum_agent.api.jobs import JobConflict, start_job, start_job_or_409, sync_writer
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
     EvidenceRepository,
     NeedRepository,
+    PLOFeedbackRepository,
+    PLOReportRepository,
     PLORepository,
     PLOReviewRepository,
     ProgramRepository,
+    SupersededPLORepository,
 )
 from curriculum_agent.exporters.excel_matrix import export_matrix_xlsx
 from curriculum_agent.graph import AgentState
+from curriculum_agent.llm_context import llm_scope
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
     DesignerNoteRequest,
+    FeedbackAction,
     JobInfo,
     Need,
     PLOSetReview,
-    ProgramMetadata,
     SMARTCheck,
     StakeholderEvidence,
+    SupersededPLO,
 )
-from curriculum_agent.stages.plo_review_facts import is_stale, need_demands
+from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
+from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused, redraft_from_needs
+from curriculum_agent.stages.plo_review_facts import is_stale, need_demands, plo_fingerprint
 
 router = APIRouter()
 _repo = PLORepository()
@@ -62,6 +70,10 @@ class PLOReportResponse(BaseModel):
     # synthesis failed. Carried through for the same reason as `counts` — computing
     # it in the stage and dropping it at the route would hide the cap.
     needs_not_synthesized: list[str] = []
+    # Needs the designer excluded at the Need stage. Defaulted so a report stored
+    # before this key existed still validates, and carried through so the GET and
+    # the job result both show it rather than the model dropping it.
+    needs_excluded: list[dict[str, Any]] = []
 
 
 @router.get("/", response_model=list[PLO])
@@ -85,7 +97,7 @@ async def export_plo_matrix(program_id: str) -> Response:
             detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน",
         )
 
-    needs = await NeedRepository().list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
     payload = export_matrix_xlsx(plos, {n.need_id: n for n in needs})
 
     return Response(
@@ -140,6 +152,61 @@ async def get_validation_status(program_id: str) -> ValidationStatusResponse:
     )
 
 
+@router.get("/superseded", response_model=list[SupersededPLO])
+async def list_superseded_plos(program_id: str) -> list[SupersededPLO]:
+    """PLOs a designer's merge replaced, newest first — read-only history."""
+    if await ProgramRepository().get(program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return await SupersededPLORepository().list_by_program(program_id)
+
+
+@router.get("/feedback", response_model=list[FeedbackAction])
+async def list_feedback_actions(program_id: str) -> list[FeedbackAction]:
+    """What the PLO set review sent back, newest first — the trail of its changes."""
+    if await ProgramRepository().get(program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return await PLOFeedbackRepository().list_by_program(program_id)
+
+
+class PLOReportStored(BaseModel):
+    """The stored report, and whether the PLO set has moved since it was built."""
+
+    report: PLOReportResponse | None
+    stale: bool
+    created_at: datetime | None = None
+
+    # Stored naive UTC; sent with its offset, as the model's own serializer does.
+    @field_serializer("created_at", when_used="json")
+    def _utc(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=UTC)
+        return value.isoformat()
+
+
+@router.get("/report", response_model=PLOReportStored)
+async def get_plo_report(program_id: str) -> PLOReportStored:
+    """The latest stored report (built last in the session or by `/report/run`).
+
+    `report` is None when none has been built; `stale` is True when the PLOs or the
+    Needs changed after it was built, judged by the same fingerprint as the review.
+    """
+    if await ProgramRepository().get(program_id) is None:
+        raise HTTPException(status_code=404, detail="Program not found")
+    stored = await PLOReportRepository().get(program_id)
+    if stored is None:
+        return PLOReportStored(report=None, stale=False)
+    plos = await _repo.list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
+    stale = stored.plo_fingerprint != plo_fingerprint(plos, need_demands(needs))
+    return PLOReportStored(
+        report=PLOReportResponse.model_validate(stored.report),
+        stale=stale,
+        created_at=stored.created_at,
+    )
+
+
 @router.get("/{plo_id}/trace", response_model=PLOTrace)
 async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     plos = await _repo.list_by_program(program_id)
@@ -150,7 +217,7 @@ async def get_plo_trace(program_id: str, plo_id: str) -> PLOTrace:
     need_ids = set(plo.source_need_ids)
     evidence_ids = set(plo.source_evidence_ids)
 
-    all_needs = await NeedRepository().list_by_program(program_id)
+    all_needs = await NeedRepository().list_active_by_program(program_id)
     all_evidence = await EvidenceRepository().list_by_program(program_id)
 
     clusters = [n for n in all_needs if n.need_id in need_ids]
@@ -181,7 +248,9 @@ class PLOSynthesisRunRequest(DesignerNoteRequest):
     run_validation: bool = True
 
 
-@router.post("/run", response_model=JobInfo, status_code=202)
+@router.post(
+    "/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
 async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None = None) -> JobInfo:
     """Synthesize the program's PLOs from its stored Needs. Answers 202; the
     result (a `list[PLO]`) arrives through `GET /jobs`.
@@ -195,7 +264,7 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
     if metadata is None:
         raise HTTPException(status_code=404, detail="Program not found")
 
-    needs = await NeedRepository().list_by_program(program_id)
+    needs = await NeedRepository().list_active_by_program(program_id)
     if not needs:
         raise HTTPException(
             status_code=422,
@@ -216,6 +285,17 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
         result_state = await run(state)
         return [PLO.model_validate(p) for p in result_state.get("plos", [])]
 
+    async def chain() -> None:
+        # The review reads the set this job just stored, so it starts afterwards as
+        # its own job, the way /needs/run starts Agent 2 after Agent 1.
+        try:
+            await _start_review_job(program_id, or_409=False)
+        except JobConflict as exc:
+            logger.warning(f"plo_review not chained for {program_id}: {exc.detail_th}")
+        except HTTPException as exc:
+            # Synthesis stored no PLO: nothing to review, and the job stays succeeded.
+            logger.warning(f"plo_review not chained for {program_id}: {exc.detail}")
+
     return await start_job_or_409(
         program_id,
         "plo_synthesis",
@@ -224,10 +304,13 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
             "run_validation": body.run_validation if body else True,
         },
         work,
+        on_success=chain,
     )
 
 
-@router.post("/report/run", response_model=JobInfo, status_code=202)
+@router.post(
+    "/report/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
 async def run_plo_report(program_id: str) -> JobInfo:
     """Assemble the report. Answers 202; the result (a `PLOReportResponse`)
     arrives through `GET /jobs`. The QA review is stage 06 and runs on its own
@@ -253,6 +336,7 @@ async def run_plo_report(program_id: str) -> JobInfo:
             counts=report["counts"],
             needs_by_id={k: Need.model_validate(v) for k, v in report["needs_by_id"].items()},
             needs_not_synthesized=report["needs_not_synthesized"],
+            needs_excluded=report.get("needs_excluded", []),
         )
 
     return await start_job_or_409(program_id, "plo_report", {}, work)
@@ -264,6 +348,15 @@ class PLOReviewResponse(BaseModel):
     # Whether the agent half of the slot can run right now. "" (off) still
     # stores the code facts, so this tells "facts only" apart from "judged".
     review_enabled: bool = False
+
+
+class PLOReviewRunResponse(PLOReviewResponse):
+    """The result of the review job: the review plus what it sent back this round
+    (phase 4). Empty when send-back is off, the review is code-only, or nothing
+    agreed was actionable. `GET /review` stays a `PLOReviewResponse`;
+    `GET /feedback` has the whole trail."""
+
+    feedback: list[FeedbackAction] = Field(default_factory=list)
 
 
 @router.get("/review", response_model=PLOReviewResponse)
@@ -283,7 +376,7 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
         # staleness of a review that does not exist.
         return PLOReviewResponse(review=None, stale=False, review_enabled=enabled)
     try:
-        needs = await NeedRepository().list_by_program(program_id)
+        needs = await NeedRepository().list_active_by_program(program_id)
     except Exception as exc:
         # The review is real and worth showing; it just cannot be confirmed current.
         logger.warning(
@@ -298,15 +391,10 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
     )
 
 
-@router.post("/review/run", response_model=JobInfo, status_code=202)
-async def run_plo_review(program_id: str) -> JobInfo:
-    """Run the closing-stage QA review afresh. Answers 202; the result (a
-    `PLOReviewResponse`) arrives through `GET /jobs`.
-
-    It runs with the slot switched off too: the code facts are stored without the
-    agent, so there is no disabled-feature 503 — `review_enabled` in the result
-    says whether the agent judged it.
-    """
+async def _start_review_job(program_id: str, *, or_409: bool) -> JobInfo:
+    """The QA review as a job. Its input is read from storage when the job starts,
+    so the same job serves `POST /review/run` and the one chained after synthesis.
+    `or_409=False` raises `JobConflict` instead of an HTTP 409, for the chain."""
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
 
     plos = await _repo.list_by_program(program_id)
@@ -315,22 +403,38 @@ async def run_plo_review(program_id: str) -> JobInfo:
             status_code=422, detail="ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"
         )
 
-    async def work() -> PLOReviewResponse:
+    async def work() -> PLOReviewRunResponse:
         try:
-            review = await plo_review.fresh_review(program_id, plos)
+            review, feedback = await plo_review.fresh_review_with_feedback(program_id, plos)
         except plo_review.ReviewAlreadyRunning as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         # The agent can run for up to plo_review_timeout_seconds (300s); judge
         # staleness against whatever landed on this program meanwhile.
         plos_now = await _repo.list_by_program(program_id)
-        needs_now = await NeedRepository().list_by_program(program_id)
-        return PLOReviewResponse(
+        needs_now = await NeedRepository().list_active_by_program(program_id)
+        return PLOReviewRunResponse(
             review=review,
             stale=is_stale(review, plos_now, need_demands(needs_now)),
             review_enabled=bool(settings.plo_review_provider),
+            feedback=feedback,
         )
 
-    return await start_job_or_409(program_id, "plo_review", {}, work)
+    starter = start_job_or_409 if or_409 else start_job
+    return await starter(program_id, "plo_review", {}, work)
+
+
+@router.post(
+    "/review/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
+)
+async def run_plo_review(program_id: str) -> JobInfo:
+    """Run the closing-stage QA review afresh. Answers 202; the result (a
+    `PLOReviewRunResponse`) arrives through `GET /jobs`.
+
+    It runs with the slot switched off too: the code facts are stored without the
+    agent, so there is no disabled-feature 503 — `review_enabled` in the result
+    says whether the agent judged it.
+    """
+    return await _start_review_job(program_id, or_409=True)
 
 
 class MergeNeedsRequest(DesignerNoteRequest):
@@ -344,12 +448,14 @@ class MergeNeedsRequest(DesignerNoteRequest):
     need_ids: list[str] = Field(min_length=2)
 
 
-@router.post("/from-needs", response_model=PLO)
+@router.post("/from-needs", response_model=PLO, dependencies=[Depends(require_api_key)])
 async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO:
     """Synthesize one PLO covering several designer-selected Needs.
 
-    Program is looked up first: a missing program is a 404, not a 422 blaming
-    the Needs. Need ids are validated only after the program exists.
+    The size check runs first (more than `MAX_GROUP_SIZE` ids is a 422 before
+    any lock, read or LLM call). Then the program is looked up: a missing program
+    is a 404, not a 422 blaming the Needs. Need ids are validated only after the
+    program exists.
 
     Everything after that runs as a registered writer (`sync_writer`): the LLM call
     below takes minutes, and a synthesis job that started and finished inside it
@@ -357,153 +463,29 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
     behind two PLOs. The registration makes every other writer answer 409 for the
     length of the call without this route holding `program_lock` across it.
     """
+    # First, so an oversized request costs no lock, no read and no LLM call. The
+    # lower bound is the model's `min_length`; the upper one is the dedup group cap.
+    if len(body.need_ids) > MAX_GROUP_SIZE:
+        raise HTTPException(status_code=422, detail=f"เลือก Need 2-{MAX_GROUP_SIZE} ข้อเพื่อรวมเป็น PLO")
+
     program = await ProgramRepository().get(program_id)
     if program is None:
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
 
     async with sync_writer(program_id, "หลักสูตรนี้กำลังรวม Need เป็น PLO อยู่ — รอให้เสร็จก่อน"):
-        return await _merge_needs(program, program_id, body)
+        try:
+            with llm_scope(program_id=program_id):
+                plo, _replaced = await redraft_from_needs(
+                    program, program_id, body.need_ids, note_th=body.note_th, cause="designer"
+                )
+        except RedraftRefused as exc:
+            raise HTTPException(status_code=exc.status, detail=exc.detail_th) from exc
+        except RedraftFailed as exc:
+            raise HTTPException(status_code=502, detail="สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่") from exc
+        return plo
 
 
-async def _merge_needs(program: ProgramMetadata, program_id: str, body: MergeNeedsRequest) -> PLO:
-    from curriculum_agent.stages.need_grouping import (  # noqa: PLC0415
-        MAX_CORE_PLOS,
-        MIN_CORE_AFTER_MERGE,
-        is_in_scope,
-        is_unwritten_need,
-    )
-    from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
-        SiblingSummary,
-        cited_need_ids,
-        next_plo_id,
-        plos_citing,
-        synthesize_from_needs,
-    )
-
-    all_needs = await NeedRepository().list_by_program(program_id)
-    by_id = {n.need_id: n for n in all_needs}
-    missing = [nid for nid in body.need_ids if nid not in by_id]
-    if missing:
-        raise HTTPException(status_code=422, detail=f"ไม่พบ Need: {', '.join(missing)}")
-
-    selected = [by_id[nid] for nid in body.need_ids]
-
-    # A fallback Need's statement is a marker plus a comma-joined skill list, not
-    # a requirement — there is no PLO to draft it into, merged or otherwise. The
-    # scope guard below is a designer override (selecting an out-of-scope Need is
-    # a decision, logged but allowed); this is not, because rewording cannot
-    # supply a requirement nobody wrote, and a human has to write the sentence
-    # (or re-run need_combination) before this Need can become anyone's PLO.
-    # Checked before any LLM call and before anything is written.
-    unwritten = [n for n in selected if is_unwritten_need(n)]
-    if unwritten:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "ยังไม่ได้เขียนประโยคสำหรับ Need: "
-                f"{', '.join(n.need_id for n in unwritten)} — ผู้ออกแบบหลักสูตรต้องเขียนประโยคเอง "
-                "หรือรันขั้นรวมทักษะเป็น Need ใหม่ ก่อนนำมารวมเป็น PLO"
-            ),
-        )
-
-    # A merged outcome is supplementary only when every Need feeding it is, and it
-    # takes the next free number in that series — a PLO's identity is
-    # (program_id, plo_id) and the repository upserts on it, so reusing a plo_id
-    # within this program would overwrite an existing outcome.
-    is_optional = all(n.is_optional for n in selected)
-    existing = await _repo.list_by_program(program_id)
-
-    # One outcome per Need. Every PLO citing any selected Need is replaced by this
-    # merge rather than left standing beside it: this endpoint used to append, so a
-    # Need ended up behind both its own outcome and the merged one, and two PLOs
-    # claiming the same evidence read as two independent market demands in the
-    # มคอ.2 matrix when they are one. Replacing is also what a designer means by
-    # "merge" — the outcomes the merge supersedes are exactly the ones it covers.
-    superseded = plos_citing(existing, body.need_ids)
-    superseded_ids = {p.plo_id for p in superseded}
-    surviving = [p for p in existing if p.plo_id not in superseded_ids]
-
-    current_core = sum(1 for p in existing if not p.is_optional)
-    projected_core = sum(1 for p in surviving if not p.is_optional) + (0 if is_optional else 1)
-
-    # The 6-10 policy is a property of the stored set, not of one stage's output,
-    # and a replacing merge moves the count in both directions: folding several
-    # outcomes into one lowers it, merging Needs nothing cites yet raises it.
-    # Both bounds are therefore checked here — the ceiling at MAX_CORE_PLOS, the
-    # floor at MIN_CORE_AFTER_MERGE below. Optional PLOs are outside the count,
-    # for the same reason they are in synthesis.
-    if projected_core > MAX_CORE_PLOS:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"การรวมนี้จะทำให้มี PLO หลัก {projected_core} ข้อ เกินเพดาน "
-                f"{MAX_CORE_PLOS} ข้อ เลือก Need ที่มี PLO อยู่แล้วเข้ามารวมด้วย "
-                "เพื่อให้การรวมนี้แทนที่ PLO เดิมแทนที่จะเพิ่มข้อใหม่"
-            ),
-        )
-    # The merge floor, not the policy floor: a merge may leave the set under the
-    # 6-10 band — two PLOs that say one thing are not two outcomes, and the band's
-    # own warning still tells the designer — but not under MIN_CORE_AFTER_MERGE.
-    # plo_synthesis folds duplicates down to the same number, so nothing the stage
-    # does on its own is refused here by hand. Only when this merge causes the
-    # shortfall: a program that is already short must not have every further
-    # merge refused for a shortfall it did not cause.
-    if projected_core < MIN_CORE_AFTER_MERGE and projected_core < current_core:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"การรวมนี้จะเหลือ PLO หลัก {projected_core} ข้อ ต่ำกว่าขั้นต่ำของการรวม "
-                f"{MIN_CORE_AFTER_MERGE} ข้อ รวม Need ที่ยังไม่มี PLO ขึ้นมาเป็นข้อใหม่ก่อน "
-                "แล้วจึงรวมข้อที่ซ้ำซ้อนกัน"
-            ),
-        )
-
-    # A Need cited only by an outcome this merge supersedes loses its PLO and
-    # returns to the pool. That is the correct outcome — it is no longer behind
-    # anything — but it is not something the designer asked for, so it is named
-    # rather than left to be noticed on the report page.
-    # Deliberately not filtered here, and deliberately not a 422 either: picking
-    # these Needs is a person's decision, and this endpoint is the only way to
-    # override the guard — which is why no separate override control exists. The
-    # line is here so an out-of-scope PLO can be traced back to the moment someone
-    # asked for it.
-    out_of_scope = [n for n in selected if not is_in_scope(n)]
-    if out_of_scope:
-        logger.warning(
-            f"Merge includes {len(out_of_scope)} out-of-scope Need(s): "
-            f"{', '.join(n.need_id for n in out_of_scope)} — designer's choice, not filtered"
-        )
-
-    released = sorted(cited_need_ids(superseded) - set(body.need_ids))
-    if released:
-        logger.warning(
-            f"Merging {len(selected)} Need(s) supersedes {sorted(superseded_ids)}, which "
-            f"leaves Need(s) {released} without an outcome — they return to the pool"
-        )
-
-    plo = await synthesize_from_needs(
-        program,
-        selected,
-        program_id,
-        {n.need_id for n in all_needs},
-        # Numbered from what survives, so the merge reuses the lowest slot it is
-        # about to empty instead of counting past ids that are being deleted.
-        next_plo_id([p.plo_id for p in surviving], is_optional=is_optional),
-        note_th=body.note_th,
-        # The superseded outcomes are about to be deleted, so they are not
-        # siblings: warning "this duplicates PLO3" when PLO3 is being replaced
-        # by this very call is a false finding.
-        siblings=[SiblingSummary.from_plo(p) for p in surviving],
-    )
-    if plo is None:
-        # Nothing has been deleted yet: the supersede and the insert happen
-        # together below, so a failed synthesis leaves the set exactly as it was.
-        raise HTTPException(status_code=502, detail="สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่")
-
-    removed = await PLORepository().replace(program_id, sorted(superseded_ids), [plo])
-    if removed:
-        logger.info(f"Merge into {plo.plo_id} replaced {removed} PLO row(s)")
-    return plo
+_PLO_CHANGED_DURING_EDIT_TH = "PLO นี้ถูกเปลี่ยนระหว่างแก้ไข — โหลดใหม่แล้วลองอีกครั้ง"
 
 
 class PLOStatementUpdate(BaseModel):
@@ -518,6 +500,10 @@ class PLOStatementUpdate(BaseModel):
     `extra="ignore"` (the default) is what keeps the frontend working unchanged:
     it PUTs the whole object, and the verdict fields in it are now dropped
     rather than trusted.
+
+    `version` is the version the client's edit started from. The route refuses a
+    body built from an older one (409); `None` is an older client, compared
+    against the row read now, as before.
     """
 
     statement_th: str
@@ -526,6 +512,7 @@ class PLOStatementUpdate(BaseModel):
     action_verb_th: str
     rationale_th: str
     distinctive_feature_th: str | None = None
+    version: int | None = None
 
 
 @router.put("/{plo_id}", response_model=PLO, dependencies=[Depends(require_api_key)])
@@ -560,16 +547,21 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
     match = next((p for p in existing if p.plo_id == plo_id), None)
     if match is None:
         raise HTTPException(status_code=404, detail="PLO not found")
+    if body.version is not None and body.version != match.version:
+        raise HTTPException(status_code=409, detail=_PLO_CHANGED_DURING_EDIT_TH)
 
+    # `version` is the client's starting point, not a column to write: the explicit
+    # bump below is the only version this route stores.
+    fields = body.model_dump(exclude={"version"})
     edited = body.statement_th.strip() != match.statement_th.strip()
     if not edited:
         updated = match.model_copy(
-            update={**body.model_dump(), "version": match.version + 1, "program_id": program_id}
+            update={**fields, "version": match.version + 1, "program_id": program_id}
         )
-        await _repo.bulk_insert([updated])
+        await _write_edit(updated, expected_version=match.version)
         return updated
 
-    known_need_ids = {n.need_id for n in await NeedRepository().list_by_program(program_id)}
+    known_need_ids = {n.need_id for n in await NeedRepository().list_active_by_program(program_id)}
     fails = hard_failures(
         body.statement_th,
         body.action_verb_th,
@@ -594,20 +586,30 @@ async def update_plo(program_id: str, plo_id: str, body: PLOStatementUpdate) -> 
     )
     updated = match.model_copy(
         update={
-            **body.model_dump(),
+            **fields,
             "version": match.version + 1,
             "program_id": program_id,
             "smart_check": smart_check,
             "soft_flags": [],
             "smart_escalated": bool(fails),
             "smart_validated_by": "stale",
+            # The marker Agent 4's send-back reads to leave this outcome alone.
+            "designer_edited_at": datetime.now(UTC).replace(tzinfo=None),
             "smart_diagnosis_th": (
                 'แก้ข้อความแล้ว ตรวจด้วยกฎพื้นฐานเท่านั้น — กด "ตรวจ SMART ซ้ำ" เพื่อให้ผู้ตรวจอ่านประโยคใหม่'
             ),
         }
     )
-    await _repo.bulk_insert([updated])
+    await _write_edit(updated, expected_version=match.version)
     return updated
+
+
+async def _write_edit(updated: PLO, *, expected_version: int) -> None:
+    """Store a PUT's row only if nobody moved it since it was read, else 409.
+
+    Update-only: a PLO a redraft merged away in the meantime stays gone."""
+    if not await _repo.update_if_version(updated, expected_version=expected_version):
+        raise HTTPException(status_code=409, detail=_PLO_CHANGED_DURING_EDIT_TH)
 
 
 @router.post(
@@ -643,7 +645,7 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
     if match is None:
         raise HTTPException(status_code=404, detail="PLO not found")
 
-    all_needs = await NeedRepository().list_by_program(program_id)
+    all_needs = await NeedRepository().list_active_by_program(program_id)
     cited = [n for n in all_needs if n.need_id in set(match.source_need_ids)]
     if not cited:
         # Its Needs are gone, so there is nothing to judge it against. The
@@ -672,12 +674,25 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
             plo_id=plo_id,
             known_need_ids={n.need_id for n in all_needs},
             siblings=[SiblingSummary.from_plo(p) for p in stored if p.plo_id != plo_id],
+            # A designer's own sentence is judged, never rewritten.
+            allow_repair=match.designer_edited_at is None,
         )
         if revalidated is None:
             raise HTTPException(status_code=502, detail="ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่")
 
-        updated = revalidated.model_copy(update={"version": match.version + 1})
-        await _repo.bulk_insert([updated])
+        # validate_and_build builds a fresh PLO; the hand-edit marker is the
+        # stored row's, and nothing but a replacement of the outcome clears it.
+        updated = revalidated.model_copy(
+            update={
+                "version": match.version + 1,
+                "designer_edited_at": match.designer_edited_at,
+            }
+        )
+        # Update-only and version-conditional, like the PUT: the judging takes
+        # minutes, and a PLO edited or merged away meanwhile must not be
+        # overwritten or re-inserted with a verdict for the old sentence.
+        if not await _repo.update_if_version(updated, expected_version=match.version):
+            raise HTTPException(status_code=409, detail="PLO นี้ถูกแก้ระหว่างตรวจ SMART — ตรวจใหม่อีกครั้ง")
         logger.info(
             f"Revalidated {plo_id}: escalated={updated.smart_escalated} "
             f"by={updated.smart_validated_by}"

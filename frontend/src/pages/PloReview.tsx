@@ -1,15 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
-import { PLO_REVIEW_PLAN } from '../constants/runPlans'
+import { PLO_REPORT_PLAN, PLO_REVIEW_PLAN } from '../constants/runPlans'
 import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import { BLOOM_ORDER, bloomLabel } from '../constants/bloom'
 import { ksecLabel, stakeholderLabel } from '../constants/stakeholder'
+import FeedbackTrail from './components/FeedbackTrail'
+import { KIND_TH, OUTCOME_TH, isLoopEnd, jobIsFor, jobsOf, ms } from './components/feedbackJobs'
+import type { SupersededPLO } from '../types/plo'
 import type {
+  FeedbackAction,
   KsecFinding,
   PLOReviewResponse,
   PLOSetReview,
@@ -18,8 +22,9 @@ import type {
 /** The job kinds whose runs this page shows. */
 const PAGE_KINDS: JobKind[] = ['plo_review']
 /** The jobs that change what this page draws, whichever page started them: the
- *  review is a reading of the PLOs and the Needs, so a synthesis, a re-check, a
- *  new report or a new set of Needs all leave it describing a set that moved. */
+ *  review is a reading of the PLOs and the Needs, so a synthesis, a re-check or
+ *  a new set of Needs all leave it describing a set that moved. `plo_report` is
+ *  here for the approval this page starts: its success sends the designer on. */
 const RELOAD_KINDS: JobKind[] = [
   'plo_review',
   'plo_report',
@@ -83,13 +88,22 @@ export default function PloReview() {
   const [read, setRead] = useState<{ programId: string; response: PLOReviewResponse } | null>(null)
   const data = read?.programId === programId ? read.response : null
   const [loadError, setLoadError] = useState('')
+  // The send-back trail and the history it points into. Secondary: a failed read leaves them empty.
+  const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[]; failed: boolean } | null>(null)
   const [starting, setStarting] = useState(false)
   const [runError, setRunError] = useState<RunError | null>(null)
+  const navigate = useNavigate()
+  // The approval job this page started; its success is what navigates on, and
+  // a report run some other page started must not pull the designer away.
+  const approvalJob = useRef<string | null>(null)
 
   const { running, latestOf, started, refresh } = useJobs()
   // `running` is any job of this program; `mine` is the review this page shows.
   const mine = running?.kind === 'plo_review' ? running : null
   const last = latestOf(PAGE_KINDS)
+  // The approval's own failure; the report is stored by it, so it is this page's.
+  const lastReport = latestOf(['plo_report'])
+  const approving = running?.kind === 'plo_report' ? running : null
   // Any job of the program blocks the button: one writer per program.
   const busy = running !== null || starting
 
@@ -101,8 +115,22 @@ export default function PloReview() {
     const mineRead = ++latestRead.current
     setLoadError('')
     try {
-      const res = await api.get<PLOReviewResponse>(`/programs/${programId}/plos/review`)
-      if (mineRead === latestRead.current) setRead({ programId, response: res.data })
+      let trailFailed = false
+      const [res, fb, sup] = await Promise.all([
+        api.get<PLOReviewResponse>(`/programs/${programId}/plos/review`),
+        api.get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`).catch(() => {
+          trailFailed = true
+          return { data: [] as FeedbackAction[] }
+        }),
+        api.get<SupersededPLO[]>(`/programs/${programId}/plos/superseded`).catch(() => {
+          trailFailed = true
+          return { data: [] as SupersededPLO[] }
+        }),
+      ])
+      if (mineRead === latestRead.current) {
+        setRead({ programId, response: res.data })
+        setTrail({ programId, feedback: fb.data, superseded: sup.data, failed: trailFailed })
+      }
     } catch {
       if (mineRead === latestRead.current) {
         setLoadError('โหลดผลตรวจไม่สำเร็จ ตรวจว่า API ทำงานอยู่ แล้วลองใหม่')
@@ -110,7 +138,13 @@ export default function PloReview() {
     }
   }, [programId])
 
-  const watch = useReloadOnJobs(RELOAD_KINDS, () => void fetchData())
+  const watch = useReloadOnJobs(RELOAD_KINDS, (job) => {
+    void fetchData()
+    if (job.kind === 'plo_report' && job.job_id === approvalJob.current) {
+      approvalJob.current = null
+      if (job.status === 'succeeded') navigate('/plo-report')
+    }
+  })
 
   const runReview = useCallback(async () => {
     if (!programId) return
@@ -125,6 +159,26 @@ export default function PloReview() {
       setRunError({ text: res?.data?.detail ?? 'ตรวจชุด PLO ไม่สำเร็จ', status: res?.status })
       // A 409 means a job this page has not heard of is running: read the list
       // now so the button says so too.
+      if (res?.status === 409) void refresh()
+    } finally {
+      setStarting(false)
+    }
+  }, [programId, watch, started, refresh])
+
+  // Approving stores the report (POST /plos/report/run) and then the report page
+  // reads it; graph-session approval stays on the Pipeline page.
+  const approve = useCallback(async () => {
+    if (!programId) return
+    setStarting(true)
+    setRunError(null)
+    try {
+      const job = await startJob(`/programs/${programId}/plos/report/run`)
+      approvalJob.current = job.job_id
+      watch(job)
+      started(job)
+    } catch (err: unknown) {
+      const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
+      setRunError({ text: res?.data?.detail ?? 'อนุมัติชุด PLO ไม่สำเร็จ', status: res?.status })
       if (res?.status === 409) void refresh()
     } finally {
       setStarting(false)
@@ -149,6 +203,7 @@ export default function PloReview() {
   const review = data?.review ?? null
   const dropped = droppedNotice(review?.dropped_findings)
   const agentOff = data?.review_enabled === false
+  const trailNow = trail?.programId === programId ? trail : null
 
   return (
     <div className="space-y-6">
@@ -156,7 +211,7 @@ export default function PloReview() {
         <p className="eyebrow">ขั้นที่ 6</p>
         <h1 className="page-title">ตรวจคุณภาพชุด PLO</h1>
         <p className="mt-1 text-sm text-pencil">
-          QA agent อ่าน PLO ทั้งชุดที่ทำเสร็จแล้ว แล้วให้คำแนะนำ — ไม่ได้แก้ PLO ให้
+          QA agent อ่าน PLO ทั้งชุดที่ทำเสร็จแล้ว แล้วให้คำแนะนำ — ข้อที่ตรงกันและแก้ได้จะถูกส่งกลับไปแก้ให้ พร้อมบันทึกว่าแก้อะไร
         </p>
       </header>
 
@@ -175,8 +230,11 @@ export default function PloReview() {
         </p>
       )}
       {last?.status === 'failed' && <RunFailure job={last} />}
+      {lastReport?.status === 'failed' && <RunFailure job={lastReport} />}
 
-      {mine ? (
+      {approving ? (
+        <RunProgress key={approving.job_id} plan={PLO_REPORT_PLAN} since={Date.parse(approving.created_at)} />
+      ) : mine ? (
         <RunProgress key={mine.job_id} plan={PLO_REVIEW_PLAN} since={Date.parse(mine.created_at)} />
       ) : data === null && !loadError ? (
         <LoadingLine />
@@ -193,9 +251,7 @@ export default function PloReview() {
           )}
 
           {data?.stale && (
-            <p className="notice notice-warn">
-              ผลนี้ตรวจจาก PLO ชุดก่อน — PLO หรือ Need เปลี่ยนหลังการตรวจ กดตรวจใหม่ให้ตรงกับชุดปัจจุบัน
-            </p>
+            <p className="notice notice-warn">ชุด PLO เปลี่ยนหลังการตรวจ — ตรวจใหม่ก่อนอนุมัติ</p>
           )}
 
           {(review.runs_requested ?? 1) > 1 && runsOf(review) === 1 && (
@@ -209,8 +265,38 @@ export default function PloReview() {
             <p className="text-sm text-pencil">สรุปจากรอบที่ตรงกับผลรวมมากที่สุด</p>
           )}
 
+          {trailNow && (
+            <FeedbackTrail
+              feedback={trailNow.feedback}
+              superseded={trailNow.superseded}
+              review={review}
+            />
+          )}
+
+          <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
+            <p className="min-w-0 flex-1 text-sm text-pencil">
+              อ่านผลตรวจและตรวจ PLO ให้พอใจแล้วอนุมัติ — ระบบจะเก็บรายงานชุดนี้ไว้เป็นฉบับสุดท้าย
+            </p>
+            <button
+              onClick={approve}
+              disabled={busy || data?.stale === true}
+              className="btn btn-primary"
+            >
+              อนุมัติชุด PLO และออกรายงาน
+            </button>
+          </div>
+
+          {trailNow && !trailNow.failed ? (
+            <OpenComments review={review} feedback={trailNow.feedback} />
+          ) : trailNow ? (
+            <p className="notice notice-warn">โหลดประวัติการส่งกลับไม่สำเร็จ</p>
+          ) : (
+            <LoadingLine />
+          )}
+
           <Overview review={review} />
           <Redundancies review={review} />
+          <AlignmentSection review={review} />
           <KsecSection review={review} />
           <BloomSection review={review} />
           <UnusedNeeds review={review} />
@@ -269,8 +355,9 @@ function droppedNotice(dropped: Record<string, number> | undefined): string | nu
 const runsOf = (r: PLOSetReview): number => r.runs_succeeded ?? 1
 const isVoted = (r: PLOSetReview): boolean => runsOf(r) >= 2
 /** Does a finding meet the review's agreement threshold? Old rows: always. */
-const isMain = (agreed: number | undefined, r: PLOSetReview): boolean =>
-  (agreed ?? 1) >= (r.agreement_threshold ?? 1)
+const effectiveThreshold = (r: PLOSetReview): number =>
+  Math.max(r.agreement_threshold ?? 1, Math.floor((r.runs_requested ?? 1) / 2) + 1)
+const isMain = (agreed: number | undefined, r: PLOSetReview): boolean => (agreed ?? 1) >= effectiveThreshold(r)
 
 /** "ตรงกัน 2/3" — only on a review voted over several runs. */
 function AgreementChip({ agreed, review }: { agreed: number | undefined; review: PLOSetReview }) {
@@ -292,7 +379,7 @@ function StatusLine({ review }: { review: PLOSetReview }) {
       <p className="text-sm text-pencil">
         ตรวจโดย agent · {review.model} · {when}
         {isVoted(review) &&
-          ` · ตรวจ ${runsOf(review)} รอบ แสดงเฉพาะข้อที่ตรงกันอย่างน้อย ${review.agreement_threshold ?? 1} รอบ`}
+          ` · ตรวจ ${runsOf(review)} รอบ แสดงเฉพาะข้อที่ตรงกันอย่างน้อย ${effectiveThreshold(review)} รอบ`}
       </p>
     )
   }
@@ -425,6 +512,129 @@ function Redundancies({ review }: { review: PLOSetReview }) {
   )
 }
 
+function AlignmentSection({ review }: { review: PLOSetReview }) {
+  const rows = (review.alignment ?? []).filter((f) => isMain(f.agreed_runs, review))
+  return (
+    <section className="border-t border-hair pt-5" aria-labelledby="alignment-heading">
+      <h2 id="alignment-heading" className="section-title">
+        ความสอดคล้องกับ Need
+      </h2>
+      {rows.length === 0 ? (
+        <p className="mt-2 text-sm text-pencil">PLO ทุกข้อตอบสิ่งที่ Need ของตนต้องการ</p>
+      ) : (
+        <ul className="mt-3 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
+          {rows.map((f) => (
+            <li key={f.plo_id} className="px-4 py-3">
+              <p className="data text-sm font-semibold text-graphite">
+                {f.plo_id}
+                <AgreementChip agreed={f.agreed_runs} review={review} />
+              </p>
+              <p className="mt-1 text-sm text-pencil">{f.reason_th}</p>
+              {f.suggestion_th && <p className="mt-1 text-sm text-graphite">ข้อเสนอ: {f.suggestion_th}</p>}
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+interface OpenComment {
+  key: string
+  kind: string
+  target: string
+  reason: string
+  /** Why the loop did not fix it, when a skipped or failed row says so. */
+  note: string
+}
+
+/** The last review's agreed findings that the job did not fix, and the rows the
+ *  loop gave up on. What the designer reads before approving. */
+function OpenComments({ review, feedback }: { review: PLOSetReview; feedback: FeedbackAction[] }) {
+  const latest = jobsOf(feedback)[0]
+  // The box is about the stored (final) review: only rows written for that very
+  // review may mark a finding handled or explain a skip. An earlier round's
+  // `applied` row must not hide a finding the final review raises again.
+  const rows =
+    latest && jobIsFor(latest, review.created_at)
+      ? latest.rounds.flatMap((r) => r.rows).filter((r) => ms(r.review_created_at) === ms(review.created_at))
+      : []
+  const targets = (row: FeedbackAction): string[] => [...row.plo_ids, ...row.need_ids]
+  const fixed = (kind: string, ids: string[]): boolean =>
+    rows.some((r) => r.outcome === 'applied' && r.kind === kind && targets(r).some((t) => ids.includes(t)))
+  const stuck = (kind: string, ids: string[]): FeedbackAction | undefined =>
+    [...rows].reverse().find((r) => (r.outcome === 'skipped' || r.outcome === 'failed') && r.kind === kind && targets(r).some((t) => ids.includes(t)))
+
+  const found: { kind: string; ids: string[]; reason: string }[] = [
+    ...review.redundancies
+      .filter((f) => isMain(f.agreed_runs, review))
+      .map((f) => ({ kind: 'redundancy', ids: f.plo_ids, reason: f.reason_th })),
+    ...(review.alignment ?? [])
+      .filter((f) => isMain(f.agreed_runs, review))
+      .map((f) => ({ kind: 'alignment', ids: [f.plo_id], reason: f.reason_th })),
+    ...review.bloom
+      .filter((f) => isMain(f.agreed_runs, review))
+      .map((f) => ({ kind: 'bloom', ids: [f.plo_id], reason: f.reason_th })),
+    ...review.unused_needs
+      .filter((f) => f.verdict === 'consider' && isMain(f.agreed_runs, review))
+      .map((f) => ({ kind: 'unused_need', ids: [f.need_id], reason: f.reason_th })),
+  ]
+  const comments: OpenComment[] = found
+    .filter((f) => !fixed(f.kind, f.ids))
+    .map((f) => {
+      const row = stuck(f.kind, f.ids)
+      return {
+        key: `${f.kind}:${f.ids.join(',')}`,
+        kind: f.kind,
+        target: f.ids.map((id) => (f.kind === 'unused_need' ? id.slice(0, 8) : id)).join(' · '),
+        reason: f.reason,
+        note: row ? `${OUTCOME_TH[row.outcome] ?? row.outcome}: ${row.outcome_reason_th}` : '',
+      }
+    })
+  // Rows the loop skipped that no finding above already explains (an earlier
+  // round's), unless a later round fixed the same thing.
+  const shown = new Set(found.map((f) => `${f.kind}:${f.ids.join(',')}`))
+  for (const row of rows) {
+    if (isLoopEnd(row) || (row.outcome !== 'skipped' && row.outcome !== 'failed')) continue
+    if (fixed(row.kind, targets(row)) || stuck(row.kind, targets(row)) !== row) continue
+    if ([...shown].some((k) => k.startsWith(`${row.kind}:`) && targets(row).some((t) => k.includes(t)))) continue
+    comments.push({
+      key: row.id,
+      kind: row.kind,
+      target: (row.plo_ids.length ? row.plo_ids : row.need_ids.map((n) => n.slice(0, 8))).join(' · '),
+      reason: row.finding_reason_th,
+      note: `${OUTCOME_TH[row.outcome] ?? row.outcome}: ${row.outcome_reason_th}`,
+    })
+  }
+
+  return (
+    <section className="panel px-5 py-4" aria-labelledby="open-comments-heading">
+      <h2 id="open-comments-heading" className="section-title">
+        ข้อสังเกตที่ยังค้าง
+      </h2>
+      {comments.length === 0 ? (
+        <p className="mt-2 text-sm text-pencil">ไม่มีข้อสังเกตที่ค้างอยู่</p>
+      ) : (
+        <>
+          <p className="mt-1 text-xs text-lead">ข้อที่ผลตรวจตรงกันแต่ยังไม่ได้แก้ — อ่านก่อนอนุมัติ</p>
+          <ul className="mt-3 divide-y divide-hair">
+            {comments.map((c) => (
+              <li key={c.key} className="py-2.5">
+                <p className="flex flex-wrap items-baseline gap-x-2 text-sm">
+                  <span className="chip chip-marker">{KIND_TH[c.kind] ?? c.kind}</span>
+                  <span className="data font-semibold text-graphite">{c.target}</span>
+                </p>
+                {c.reason && <p className="mt-1 text-sm text-pencil">{c.reason}</p>}
+                {c.note && <p className="mt-1 text-sm text-graphite">{c.note}</p>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </section>
+  )
+}
+
 function KsecTable({ rows, review }: { rows: KsecFinding[]; review: PLOSetReview }) {
   return (
     <div className="overflow-x-auto">
@@ -515,7 +725,11 @@ function BloomSection({ review }: { review: PLOSetReview }) {
                 )}
                 <AgreementChip agreed={b.agreed_runs} review={review} />
               </p>
+              {b.suggested_verb_th && (
+                <p className="mt-1 text-sm text-graphite">แนะนำกริยา: {b.suggested_verb_th}</p>
+              )}
               {b.reason_th && <p className="mt-1 text-sm text-pencil">{b.reason_th}</p>}
+              {b.suggestion_th && <p className="mt-1 text-sm text-graphite">ข้อเสนอ: {b.suggestion_th}</p>}
             </li>
           ))}
         </ul>
@@ -540,7 +754,7 @@ function UnusedNeeds({ review }: { review: PLOSetReview }) {
               <p className="record text-base">{n.statement_th}</p>
               <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs text-pencil">
                 <span className="data">demand {n.demand_score.toFixed(2)}</span>
-                <span>{ksecLabel(n.ksec_category)}</span>
+                <span>{n.ksec_categories.map(ksecLabel).join(' + ')}</span>
                 {n.stakeholder_types.length > 0 && (
                   <span>{n.stakeholder_types.map(stakeholderLabel).join(' · ')}</span>
                 )}
@@ -581,13 +795,14 @@ function BelowThreshold({ review }: { review: PLOSetReview }) {
   const ksec = review.ksec.filter((k) => !k.agrees && below(k.agreed_runs))
   const bloom = review.bloom.filter((b) => below(b.agreed_runs))
   const unused = review.unused_needs.filter((u) => u.verdict && below(u.agreed_runs))
-  const total = red.length + ksec.length + bloom.length + unused.length
+  const align = (review.alignment ?? []).filter((f) => below(f.agreed_runs))
+  const total = red.length + ksec.length + bloom.length + unused.length + align.length
   if (total === 0) return null
   return (
     <details className="border-t border-hair pt-4">
       <summary className="eyebrow cursor-pointer">พบไม่ถึงเกณฑ์ ({total})</summary>
       <p className="mt-2 text-sm text-pencil">
-        ข้อเหล่านี้มีบางรอบพูดถึงแต่ไม่ถึงเกณฑ์ {review.agreement_threshold ?? 1} รอบ — ยังไม่ควรถือเป็นข้อค้นพบ
+        ข้อเหล่านี้มีบางรอบพูดถึงแต่ไม่ถึงเกณฑ์ {effectiveThreshold(review)} รอบ — ยังไม่ควรถือเป็นข้อค้นพบ
       </p>
       <div className="mt-3 space-y-3">
         {red.length > 0 && (
@@ -601,6 +816,22 @@ function BelowThreshold({ review }: { review: PLOSetReview }) {
                     <AgreementChip agreed={g.agreed_runs} review={review} />
                   </p>
                   <p className="mt-1 text-sm text-pencil">{g.reason_th}</p>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        {align.length > 0 && (
+          <div>
+            <p className="text-sm font-medium text-graphite">ความสอดคล้องกับ Need</p>
+            <ul className="mt-1 space-y-2">
+              {align.map((f) => (
+                <li key={f.plo_id}>
+                  <p className="data text-sm font-semibold text-graphite">
+                    {f.plo_id}
+                    <AgreementChip agreed={f.agreed_runs} review={review} />
+                  </p>
+                  <p className="mt-1 text-sm text-pencil">{f.reason_th}</p>
                 </li>
               ))}
             </ul>

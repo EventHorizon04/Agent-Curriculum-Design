@@ -12,33 +12,33 @@ import SkillsByStakeholder, {
   type EvidenceMeta,
   type SkillRow,
 } from './components/SkillsByStakeholder'
-import NeedCard, { type NeedRow } from './components/NeedCard'
-import { scopeVerdict } from '../constants/scope'
-import { MAX_CORE_PLOS, MIN_CORE_PLOS, fallbackKind } from '../constants/needPolicy'
+import { ksecLabel, stakeholderLabel } from '../constants/stakeholder'
+import { demandPercent } from '../constants/demand'
 import DesignerNote from './components/DesignerNote'
 
-/** Which stage a run covers. 'all' is the first run, where there is nothing to
- * combine yet; the other two are the split re-runs. */
-type RunKind = 'all' | 'skills' | 'needs'
+/** Which run a click starts. 'all' is the first run: Agent 1, then Agent 2 as a
+ *  second job (the job it starts is a skill_extraction one, so its progress plan
+ *  is 'skills'; the 'all' plan only describes old `needs_pipeline` rows).
+ *  'skills' re-extracts and stops at the skill groups. */
+type RunKind = 'all' | 'skills'
 
 const RUN_PATH: Record<RunKind, string> = {
   all: 'run',
   skills: 'skills/run',
-  needs: 'combine/run',
 }
 
-/** The jobs this page owns, and which run each one is. Which run is on screen
- *  is read off the job, not remembered by the page that clicked: a page opened
- *  mid-run, or after a reload, never clicked anything. */
+/** The jobs this page shows. `needs_pipeline` is old rows only; new runs are a
+ *  skill_extraction job. A need_combination job is Agent 2's: it is not shown
+ *  here, only announced. */
 const RUN_OF_KIND: Partial<Record<JobKind, RunKind>> = {
   needs_pipeline: 'all',
   skill_extraction: 'skills',
-  need_combination: 'needs',
 }
-const PAGE_KINDS: JobKind[] = ['needs_pipeline', 'skill_extraction', 'need_combination']
-/** Only an extraction pass can drop a skill for being ungrounded, so a
- *  combine-only run must not reset the count the last extraction reported. */
-const EXTRACTION_KINDS: JobKind[] = ['needs_pipeline', 'skill_extraction']
+const PAGE_KINDS: JobKind[] = ['needs_pipeline', 'skill_extraction']
+/** What makes this page reload. Wider than PAGE_KINDS: the page also loads the
+ *  Needs (stale banner, Need-count link), and the need_combination job Agent 1
+ *  chains into rewrites them without ever being shown here. */
+const RELOAD_KINDS: JobKind[] = [...PAGE_KINDS, 'need_combination']
 
 /** `dropped_ungrounded_count` off a finished extraction job's result; 0 when
  *  there is no such job or its run did not finish. */
@@ -48,11 +48,35 @@ function droppedCountOf(job: JobInfo | null): number {
   return typeof n === 'number' ? n : 0
 }
 
+/** SkillGroup, the fields this page draws. `ksec` is the bucket: E and C share
+ *  `EC`, and clustering never crosses a bucket. */
+interface SkillGroupRow {
+  group_id: string
+  ksec: string
+  skill_names: string[]
+  skill_frequencies: number[]
+  skill_ids: string[]
+  evidence_ids: string[]
+  demand_score: number
+  is_optional: boolean
+  stakeholder_types: string[]
+}
+
+const BUCKETS = ['K', 'S', 'EC'] as const
+
+/** Only the ids matter here: a Need naming a skill id that is gone is stale. */
+interface NeedIds {
+  need_id: string
+  merged_into: string | null
+  member_skill_ids: string[]
+}
+
 export default function SkillExtraction() {
   const { programId } = useProgram()
-  const [tab, setTab] = useState<'skills' | 'needs'>('skills')
+  const [tab, setTab] = useState<'skills' | 'groups'>('skills')
   const [skills, setSkills] = useState<SkillRow[]>([])
-  const [needs, setNeeds] = useState<NeedRow[]>([])
+  const [groups, setGroups] = useState<SkillGroupRow[]>([])
+  const [needs, setNeeds] = useState<NeedIds[]>([])
   const [evidenceById, setEvidenceById] = useState<Record<string, EvidenceMeta>>({})
   const [loading, setLoading] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -63,12 +87,14 @@ export default function SkillExtraction() {
   // `running` is any job of this program; `mine` is one this page shows.
   const mine = running && PAGE_KINDS.includes(running.kind) ? running : null
   const runKind = mine ? (RUN_OF_KIND[mine.kind] ?? null) : null
+  // Agent 2 starts the moment Agent 1's job succeeds, so this notice is what a
+  // designer who stayed on this page sees next.
+  const agent2Running = running?.kind === 'need_combination'
   const last = latestOf(PAGE_KINDS)
-  const droppedCount = droppedCountOf(latestOf(EXTRACTION_KINDS))
+  const droppedCount = droppedCountOf(last)
   // Any job of the program blocks every start button here, not just this page's
   // kinds: the backend allows one writer per program. `starting` covers the gap
-  // between the click and the job being known, so a second click cannot be
-  // refused with a 409 about the run it has just started.
+  // between the click and the job being known.
   const busy = running !== null || starting
 
   const fetchAll = useCallback(async () => {
@@ -76,12 +102,14 @@ export default function SkillExtraction() {
     setLoading(true)
     setError('')
     try {
-      const [skillRes, needRes, evidenceRes] = await Promise.all([
+      const [skillRes, groupRes, needRes, evidenceRes] = await Promise.all([
         api.get<SkillRow[]>(`/programs/${programId}/needs/skills`),
-        api.get<NeedRow[]>(`/programs/${programId}/needs/`),
+        api.get<SkillGroupRow[]>(`/programs/${programId}/needs/skill-groups`),
+        api.get<NeedIds[]>(`/programs/${programId}/needs/?active_only=true`),
         api.get<(EvidenceMeta & { evidence_id: string })[]>(`/programs/${programId}/evidence/`),
       ])
       setSkills(skillRes.data)
+      setGroups(groupRes.data)
       setNeeds(needRes.data)
       setEvidenceById(
         Object.fromEntries(
@@ -96,16 +124,15 @@ export default function SkillExtraction() {
         ),
       )
     } catch {
-      setError('โหลดข้อมูล Stage 3 ไม่สำเร็จ')
+      setError('โหลดข้อมูลขั้นสกัดทักษะไม่สำเร็จ')
     } finally {
       setLoading(false)
     }
   }, [programId])
 
-  // Reload once when a job of this page ends, whichever way: `/needs/run`
-  // commits the new skills before need_combination can fail, so a failed run has
-  // already changed what this page lists.
-  const watch = useReloadOnJobs(PAGE_KINDS, () => void fetchAll())
+  // Reload once when an extraction or the chained need_combination job ends,
+  // whichever way: a failed run may already have replaced the skills.
+  const watch = useReloadOnJobs(RELOAD_KINDS, () => void fetchAll())
 
   // The run is a background job: starting it only records it. Its result lands
   // in the tables, and the reload above picks it up when the job ends.
@@ -122,7 +149,7 @@ export default function SkillExtraction() {
         started(job)
       } catch (err: unknown) {
         const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
-        setError(res?.data?.detail ?? 'รัน Stage 3 ไม่สำเร็จ')
+        setError(res?.data?.detail ?? 'รันขั้นสกัดทักษะไม่สำเร็จ')
         // A 409 means a job this page has not heard of is running (another tab,
         // or a session): read the list now so the buttons say so too.
         if (res?.status === 409) void refresh()
@@ -140,54 +167,24 @@ export default function SkillExtraction() {
    *
    * skill_extraction deletes every skill row and mints new ids, so a Need that
    * still names an id no longer on record was built from a previous extraction.
-   * Its trace would come back empty, which reads as a bug rather than as stale
-   * data — hence the banner.
+   * The Need page is where the fix is, but the cause is here, so both say so.
    */
-  /**
-   * Needs the scope guard will hold back at plo_synthesis.
-   *
-   * Derived here rather than read off a response, the same way the report
-   * derives it: the guard runs at synthesis, so nothing has judged these rows
-   * yet and no endpoint returns a verdict. Saying it at this checkpoint is the
-   * point of saying it at all — the fix is to edit the scope statement and
-   * re-extract, and the button for that is on this page. Discovered at the
-   * report instead, the same fix costs every synthesis call already paid for.
-   */
-  const guardedNeedCount = useMemo(
-    () => needs.filter(n => scopeVerdict(n) !== 'in_scope').length,
-    [needs],
-  )
-
-  /**
-   * How many core PLOs this Need set will actually yield, against the 6-10 band.
-   *
-   * plo_synthesis drops out-of-scope Needs *before* it applies the ceiling, so
-   * the number that lands in the curriculum is the in-scope core count capped at
-   * MAX_CORE_PLOS — not the core count on its own, which is what the list above
-   * shows and what a designer would otherwise count by eye.
-   *
-   * The pipeline already knows this and says so twice, both times only to the
-   * server log: need_combination warns when the core count is short, and
-   * plo_synthesis warns again after the guard has run, naming the guard as the
-   * cause. Its own comment says "the designer must add more at the review
-   * checkpoint" — this is that checkpoint, and until now it said nothing.
-   */
-  const coreOutlook = useMemo(() => {
-    const core = needs.filter(n => !n.is_optional)
-    const surviving = core.filter(n => scopeVerdict(n) === 'in_scope').length
-    return {
-      core: core.length,
-      guarded: core.length - surviving,
-      projected: Math.min(surviving, MAX_CORE_PLOS),
-      unwritten: needs.filter(n => fallbackKind(n.statement_th)).length,
-    }
-  }, [needs])
-
   const staleNeedCount = useMemo(() => {
     if (skills.length === 0 || needs.length === 0) return 0
     const live = new Set(skills.map(s => s.skill_id))
     return needs.filter(n => n.member_skill_ids.some(id => !live.has(id))).length
   }, [skills, needs])
+
+  const groupsByBucket = useMemo(
+    () =>
+      BUCKETS.map(b => ({
+        bucket: b,
+        rows: groups
+          .filter(g => g.ksec === b)
+          .sort((x, y) => y.demand_score - x.demand_score),
+      })),
+    [groups],
+  )
 
   if (!programId) {
     return (
@@ -198,15 +195,15 @@ export default function SkillExtraction() {
     )
   }
 
-  const hasData = skills.length > 0 || needs.length > 0
+  const hasData = skills.length > 0
 
   return (
     <div className="max-w-4xl">
       <div className="mb-6">
         <p className="eyebrow">ขั้นที่ 3</p>
-        <h1 className="page-title mb-1">สกัดทักษะและรวมเป็น Need</h1>
+        <h1 className="page-title mb-1">สกัดทักษะ</h1>
         <p className="text-sm text-pencil">
-          ทักษะดิบที่สกัดจาก evidence และ Need ที่กลั่นจากทักษะเหล่านั้น
+          ทักษะดิบที่สกัดจาก evidence และกลุ่มทักษะในแต่ละหมวด KSEC — ส่งต่อให้ขั้นวิเคราะห์ Need
         </p>
         <p className="data mt-1 text-xs text-lead">{programId}</p>
       </div>
@@ -217,6 +214,12 @@ export default function SkillExtraction() {
       {last?.status === 'failed' && (
         <div className="mb-6">
           <RunFailure job={last} />
+        </div>
+      )}
+      {agent2Running && (
+        <div className="notice notice-info mb-6">
+          สกัดทักษะเสร็จแล้ว — Agent 2 เริ่มวิเคราะห์ Need แล้ว ดูผลที่หน้า{' '}
+          <Link to="/need-analysis" className="underline underline-offset-2">วิเคราะห์ Need</Link>
         </div>
       )}
 
@@ -239,41 +242,37 @@ export default function SkillExtraction() {
             disabled={busy}
             className="btn btn-primary"
           >
-            สกัดทักษะและรวม Need
+            สกัดทักษะและวิเคราะห์ Need
           </button>
         </div>
       ) : (
         <>
           <DesignerNote value={note} onChange={setNote} disabled={busy} />
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-1">
-              {/* Two entry points, not one: re-extracting is the expensive
-                  per-evidence LLM pass, while re-combining only re-clusters
-                  what is already on record. */}
-              <button
-                onClick={() => runStage('skills')}
-                disabled={busy}
-                title="สกัดทักษะจาก evidence ใหม่ (ไม่แตะ Need ที่มีอยู่)"
-                className="btn btn-sm btn-secondary"
-              >
-                สกัดทักษะใหม่
-              </button>
-              <span className="text-xs text-lead" aria-hidden="true">·</span>
-              <button
-                onClick={() => runStage('needs')}
-                disabled={busy}
-                title="รวมทักษะที่มีอยู่เป็น Need ใหม่ (ไม่สกัดทักษะซ้ำ)"
-                className="btn btn-sm btn-secondary"
-              >
-                รวม Need ใหม่
-              </button>
-            </div>
+            <button
+              onClick={() => runStage('skills')}
+              disabled={busy}
+              title="สกัดทักษะจาก evidence ใหม่ (ไม่แตะ Need ที่มีอยู่)"
+              className="btn btn-sm btn-secondary"
+            >
+              สกัดทักษะใหม่
+            </button>
+            <Link to="/need-analysis" className="link text-sm">
+              ไปหน้าวิเคราะห์ Need ({needs.length})
+            </Link>
           </div>
+
+          {staleNeedCount > 0 && (
+            <div className="notice notice-warn mb-4">
+              Need {staleNeedCount} รายการมาจากทักษะชุดก่อน — รวม Need ใหม่ที่หน้า{' '}
+              <Link to="/need-analysis" className="underline underline-offset-2">วิเคราะห์ Need</Link>
+            </div>
+          )}
 
           <div className="mb-4 flex flex-wrap gap-1 border-b border-hair-strong">
             {([
               ['skills', `Skill ดิบ (${skills.length})`],
-              ['needs', `Need (${needs.length})`],
+              ['groups', `กลุ่มทักษะ (${groups.length})`],
             ] as const).map(([key, label]) => (
               <button
                 key={key}
@@ -295,87 +294,54 @@ export default function SkillExtraction() {
               evidenceById={evidenceById}
               droppedCount={droppedCount}
             />
-          ) : needs.length === 0 ? (
-            <p className="py-8 text-center text-sm text-lead">ยังไม่มี Need — รัน Skill Extraction ก่อน</p>
+          ) : groups.length === 0 ? (
+            <p className="py-8 text-center text-sm text-lead">ยังไม่มีกลุ่มทักษะ — สกัดทักษะใหม่เพื่อจัดกลุ่ม</p>
           ) : (
-            <div className="space-y-3">
-              {staleNeedCount > 0 && (
-                <div className="notice notice-warn flex flex-wrap items-center gap-3">
-                  <span className="min-w-0 flex-1">
-                    Need {staleNeedCount} รายการมาจากทักษะชุดก่อน — กด “รวม Need ใหม่”
-                    เพื่อรวมใหม่จากทักษะปัจจุบัน
-                  </span>
-                  <button
-                    onClick={() => runStage('needs')}
-                    disabled={busy}
-                    className="btn btn-sm btn-secondary"
-                  >
-                    รวม Need ใหม่
-                  </button>
-                </div>
-              )}
-              {/* Placed above the guard notice, which explains what to do about
-                  the Needs this count is missing. */}
-              <div
-                className={`notice ${
-                  coreOutlook.projected < MIN_CORE_PLOS
-                    ? 'notice-warn'
-                    : 'border-hair-strong bg-sunk text-graphite'
-                }`}
-              >
-                <p>
-                  จะได้ PLO หลัก <span className="data font-semibold">{coreOutlook.projected}</span> ข้อ
-                  {' '}· เกณฑ์ {MIN_CORE_PLOS}-{MAX_CORE_PLOS} ข้อ
-                  {coreOutlook.projected < MIN_CORE_PLOS && ' — ต่ำกว่าเกณฑ์'}
-                </p>
-                <p className="mt-1 text-xs opacity-85">
-                  Need หลัก {coreOutlook.core} ข้อ
-                  {coreOutlook.guarded > 0 && ` · ตัวกรองขอบเขตกันออก ${coreOutlook.guarded} ข้อ`}
-                  {coreOutlook.core - coreOutlook.guarded > MAX_CORE_PLOS &&
-                    ` · เกิน ${MAX_CORE_PLOS} ข้อ ระบบใช้เฉพาะ ${MAX_CORE_PLOS} ข้อที่ demand สูงสุด`}
-                  {coreOutlook.unwritten > 0 &&
-                    ` · เขียนไม่สำเร็จ ${coreOutlook.unwritten} ข้อ (นับรวมอยู่ด้วย)`}
-                </p>
-              </div>
-              {guardedNeedCount > 0 && (
-                <div className="notice notice-error">
-                  <p>
-                    <span className="data font-semibold">{guardedNeedCount}</span> จาก {needs.length}{' '}
-                    ข้อจะไม่ถูกส่งต่อไป PLO synthesis เพราะอยู่นอกขอบเขตของหลักสูตร — ป้ายบนการ์ด
-                    บอกเหตุผลรายใบ กด “ดูที่มา” เพื่อดูว่าทักษะตัวไหนทำให้ถูกกัน
-                  </p>
-                  <p className="mt-1.5">
-                    <span className="font-semibold">ถ้าตัดสินผิด:</span> แก้ “ขอบเขตของหลักสูตร” ที่หน้า{' '}
-                    <Link to="/intake" className="underline underline-offset-2">
-                      Intake
-                    </Link>{' '}
-                    แล้วกด <span className="font-semibold">สกัดทักษะใหม่</span> ด้านบน — ทั้งโปรแกรมถูกสกัดใหม่
-                    (ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ)
-                  </p>
-                  <p className="mt-1.5">
-                    <span className="font-semibold">ถ้าตัดสินถูกแต่ยังอยากได้:</span> เลือกมันที่หน้า
-                    PLO Synthesis แล้วกด “รวมเป็น PLO เดียว” — ตรงนั้นไม่กัน
-                  </p>
-                </div>
-              )}
-              {needs.map(n => (
-                <NeedCard key={n.need_id} programId={programId} need={n} />
+            <div className="space-y-6">
+              {groupsByBucket.map(({ bucket, rows }) => (
+                <section key={bucket}>
+                  <h2 className="section-title">
+                    {ksecLabel(bucket)} <span className="data text-xs text-lead">({rows.length})</span>
+                  </h2>
+                  {rows.length === 0 ? (
+                    <p className="mt-2 text-sm text-lead">ไม่มีกลุ่มในหมวดนี้</p>
+                  ) : (
+                    <ul className="mt-2 space-y-2">
+                      {rows.map(g => (
+                        <li key={g.group_id} className="panel p-3">
+                          <div className="flex flex-wrap items-start gap-2">
+                            <p className="record min-w-0 flex-1 basis-64">
+                              {g.skill_names.slice(0, 4).join(' · ')}
+                              {g.skill_names.length > 4 && ` +${g.skill_names.length - 4}`}
+                            </p>
+                            {g.is_optional && <span className="chip chip-neutral shrink-0">เสริม</span>}
+                          </div>
+                          <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-pencil">
+                            <span className="data">ทักษะ {g.skill_ids.length}</span>
+                            <span className="data">หลักฐาน {g.evidence_ids.length}</span>
+                            <span className="data">demand {demandPercent(g.demand_score)}</span>
+                            {g.stakeholder_types.length > 0 && (
+                              <span>{g.stakeholder_types.map(stakeholderLabel).join(' · ')}</span>
+                            )}
+                          </p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
               ))}
             </div>
           )}
         </>
       )}
 
-      {/* Needs, not skills: plo_synthesis drafts one PLO per Need and never
-          reads the skill rows. A run that extracted skills and combined nothing
-          has not produced what the next stage needs. */}
       <NextStageLink
         from="skill_extraction"
-        ready={Boolean(programId) && needs.length > 0 && mine === null}
+        ready={groups.length > 0 && mine === null}
         blockedReason={
           mine !== null
-            ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ PLO ต้องอ่านจาก Need ชุดนี้'
-            : 'ยังไม่มี Need — รันสกัดทักษะและรวม Need ให้เสร็จก่อน'
+            ? 'รอให้รันเสร็จก่อน — ขั้นวิเคราะห์ Need ต้องอ่านจากกลุ่มทักษะชุดนี้'
+            : 'ยังไม่มีกลุ่มทักษะ — สกัดทักษะให้เสร็จก่อน'
         }
       />
     </div>

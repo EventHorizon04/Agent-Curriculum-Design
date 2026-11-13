@@ -7,7 +7,7 @@ _SYSTEM_TH = """คุณคือผู้เชี่ยวชาญการ�
 กติกา:
 1. Need สองข้อซ้ำกันเมื่องานหลักและวัตถุหลักเหมือนกัน แม้ถ้อยคำหรือบริบทต่างกัน เช่น "แปลเอกสารธุรกิจโดยใช้เทคโนโลยี" กับ "ประยุกต์ใช้เทคโนโลยีในการแปลเอกสารธุรกิจ" การพูดถึงหัวข้อเดียวกัน ใช้เครื่องมือเดียวกัน (เช่น AI หรือเทคโนโลยีดิจิทัล) หรือมาจากกลุ่มผู้มีส่วนได้ส่วนเสียเดียวกัน ยังไม่พอ
 2. Need หนึ่งข้ออยู่ได้ไม่เกินหนึ่งกลุ่ม
-3. หนึ่งกลุ่มมี 2-3 ข้อ และทุกข้อในกลุ่มต้องอยู่ในหมวด KSEC เดียวกัน
+3. หนึ่งกลุ่มมี 2-5 ข้อ ข้อในกลุ่มอยู่คนละหมวด KSEC ได้ ถ้าถามหาสมรรถนะเดียวกัน
 4. ข้อที่ไม่ซ้ำกับข้อใดเลยไม่ต้องใส่ในกลุ่มใด ถ้าไม่มีข้อใดซ้ำกันเลย ให้ตอบ groups เป็นรายการว่าง ซึ่งเป็นคำตอบที่ถูกต้องสำหรับชุดที่แยกกันชัดเจน
 5. บางข้ออาจเป็นรายชื่อทักษะที่ยังไม่ได้เรียบเรียงเป็นประโยค ให้ตัดสินจากงานที่รายชื่อนั้นบอก
 6. อ้างถึง Need ด้วยป้ายกำกับ (N1, N2, ...) เท่านั้น
@@ -29,7 +29,7 @@ def build_need_dedup_prompt(
     miscopied one is a group the code cannot map back. `supporting_indices` in
     summarize_need showed short indices are what a model returns reliably.
 
-    Every structural rule here (2-3 members, one KSEC tag, one group per Need)
+    Every structural rule here (2-5 members, one group per Need)
     is enforced again by `stages.need_dedup.accept_groups`, which drops a group
     that breaks one. The prompt states them anyway, because a group dropped for
     a rule the model never saw is a duplicate that ships as two PLOs.

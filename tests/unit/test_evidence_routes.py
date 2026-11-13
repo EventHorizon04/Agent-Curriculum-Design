@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +12,13 @@ from curriculum_agent.api.main import app
 from curriculum_agent.api.routes import evidence as evidence_module
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def _unlocked_program(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about the routes' own behaviour; the lock has its own file."""
+    monkeypatch.setattr(evidence_module, "evidence_lock_reason", AsyncMock(return_value=None))
+    monkeypatch.setattr(evidence_module._repo, "program_of", AsyncMock(return_value=None))
 
 
 def test_delete_evidence_success() -> None:

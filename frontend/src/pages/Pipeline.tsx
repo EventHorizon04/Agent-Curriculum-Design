@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import api from '../api/client'
 import { SESSION_STATUS_LABELS, STAGES } from '../constants/stages'
+import UsagePanel from './components/UsagePanel'
 
 type SessionStatus = 'running' | 'suspended' | 'completed' | 'rejected' | 'failed'
 
@@ -23,7 +24,8 @@ interface Session {
  *  not recognise. */
 const CHECKPOINT_TH: Record<string, string> = {
   stakeholder_needs: 'รวบรวมหลักฐานเสร็จแล้ว — ตรวจการจำแนกหลักฐานก่อนสกัดทักษะ',
-  skill_extraction: 'สกัดทักษะและรวม Need เสร็จแล้ว — ตรวจทักษะและ Need ก่อนสังเคราะห์ PLO',
+  skill_extraction: 'สกัดทักษะเสร็จแล้ว — ตรวจทักษะก่อนวิเคราะห์ Need',
+  need_analysis: 'วิเคราะห์ Need เสร็จแล้ว — ตรวจ Need ที่รวมกันก่อนสังเคราะห์ PLO',
   plo_synthesis: 'สังเคราะห์ PLO เสร็จแล้ว — ตรวจและแก้ PLO ก่อนสร้างรายงานและตรวจคุณภาพ',
 }
 
@@ -288,6 +290,9 @@ export default function Pipeline() {
   // Null until the count is known, so the button is not disabled while loading.
   const [evidenceCount, setEvidenceCount] = useState<number | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Changes when a session appears or moves status, which is when its model calls
+  // have changed: the usage panel reloads on it instead of polling on its own.
+  const sessionsKey = sessions.map((s) => `${s.session_id}:${s.status}`).join(',')
 
   async function fetchSessions() {
     if (!programId) return
@@ -430,6 +435,8 @@ export default function Pipeline() {
           </p>
         </div>
       )}
+
+      {programId && <UsagePanel programId={programId} refreshKey={sessionsKey} />}
 
       {sessions.map((s) => (
         <SessionCard

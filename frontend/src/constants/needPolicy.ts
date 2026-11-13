@@ -22,6 +22,9 @@
 export const MIN_CORE_PLOS = 6
 /** Mirrors MAX_CORE_PLOS in need_grouping.py. */
 export const MAX_CORE_PLOS = 10
+/** Mirrors MAX_GROUP_SIZE in stages/need_dedup.py: the most Needs one merge
+ *  (Need-stage merge or PLO merge) may take, and so the most one PLO may cite. */
+export const MAX_MERGE_NEEDS = 5
 
 /** What a designer has to do about a Need the pipeline could not write. */
 export type NeedFallback = 'rewrite' | 'retry'

@@ -180,14 +180,23 @@ def test_the_dossier_carries_no_evidence_skill_names_or_old_verdicts() -> None:
     Need sentences, and code facts — nothing a reviewer could anchor on."""
     needs = [_need("n1"), _need("n2", KSECCategory.EC), _need("u1", demand=0.9)]
     plos = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2", "gone"])]
+    voices = {eid: "employer" for n in needs for eid in n.source_evidence_ids}
     d = build_dossier(
-        plos, needs, program_context="หลักสูตรปริญญาตรี สาขาการแปล", degree_level="bachelor"
+        plos,
+        needs,
+        program_context="หลักสูตรปริญญาตรี สาขาการแปล",
+        degree_level="bachelor",
+        stakeholder_by_evidence=voices,
     )
     text = repr(d)
+    prompt = "\n".join(m["content"] for m in build_plo_review_prompt(d))
+    assert "(ผู้ขอ: ผู้ประกอบการ 1)" in prompt  # voices are rendered, not vacuous
+    for forbidden in ("E-n1", "S-n1-1", "rationale", "เหตุผลของ", "smart_check", "diagnosis"):
+        assert forbidden not in prompt, forbidden
     for forbidden in ("E-n1", "S-n1-1", "rationale", "เหตุผลของ", "smart_check", "diagnosis"):
         assert forbidden not in text, forbidden
     assert [i.plo_id for i in d.items] == ["PLO1", "PLO2"]
-    assert d.items[1].need_statements_th == (needs[1].statement_th,)
+    assert [c.statement_th for c in d.items[1].cited_needs] == [needs[1].statement_th]
     assert d.core_count == 2
     assert [u.need_id for u in d.unused_needs] == ["u1"]
 
@@ -207,14 +216,20 @@ def test_the_rendered_prompt_carries_no_skill_names_ids_or_rationale() -> None:
     cited_fallback = _need("w3", demand=0.1, statement="[ต้องทบทวน] การตรวจสอบบัญชี, การวางแผนภาษี")
     needs = [_need("n1"), _need("n2", KSECCategory.EC), unwritten, unwritten_oos, cited_fallback]
     plos = [_plo("PLO1", ["n1"]), _plo("PLO2", ["n2"]), _plo("PLO3", ["w3"])]
+    voices = {eid: "employer" for n in needs for eid in n.source_evidence_ids}
     d = build_dossier(
-        plos, needs, program_context="หลักสูตรปริญญาตรี สาขาการแปล", degree_level="bachelor"
+        plos,
+        needs,
+        program_context="หลักสูตรปริญญาตรี สาขาการแปล",
+        degree_level="bachelor",
+        stakeholder_by_evidence=voices,
     )
     by_id = {u.need_id: u for u in d.unused_needs}
     assert by_id["w1"].exclusion == "unwritten" and by_id["w1"].unwritten
     assert by_id["w2"].exclusion == "out_of_scope" and by_id["w2"].unwritten
     text = "\n".join(m["content"] for m in build_plo_review_prompt(d))
     assert "[w1]" in text and "[w2]" in text  # offered to the reviewer, by id
+    assert "(ผู้ขอ: ผู้ประกอบการ 1)" in text  # voices are rendered, not vacuous
     forbidden = [
         skill_a,
         skill_b,
@@ -261,3 +276,45 @@ def test_an_old_review_row_reads_and_is_stale_under_the_new_fingerprint() -> Non
     assert old.reviewed_by == "agent"
     assert old.code_only_reason is None and old.unused_needs == [] and old.tool_calls == []
     assert is_stale(old, [_plo("PLO1", ["n1"])], {"n1": 0.5})
+
+
+def test_coverage_counts_each_tag_of_a_multi_tag_need() -> None:
+    multi = _need("m", KSECCategory.K)
+    multi = multi.model_copy(update={"ksec_categories": [KSECCategory.K, KSECCategory.S]})
+    cov = ksec_coverage([_plo("PLO1", ["m"])], {"m": multi})
+    assert cov.counts == {"K": 1, "S": 1, "E": 0, "C": 0}
+
+
+# ------------------------------ voices ------------------------------
+
+
+def test_need_voices_counts_distinct_evidence_per_type() -> None:
+    from curriculum_agent.stages.plo_review_facts import need_voices
+
+    one_doc = _need("n1").model_copy(
+        update={"source_evidence_ids": ["e1"], "member_skill_ids": ["s1", "s2", "s3"]}
+    )
+    assert need_voices(one_doc, {"e1": "employer"}) == {"employer": 1}
+    need = _need("n2").model_copy(
+        update={"source_evidence_ids": ["e1", "e1", "e2", "e3", "e4", "gone"]}
+    )
+    by_ev = {"e1": "employer", "e2": "alumni", "e3": "alumni", "e4": "employer"}
+    assert need_voices(need, by_ev) == {"employer": 2, "alumni": 2}
+    assert need_voices(need, {}) == {}
+
+
+def test_dossier_cited_needs_carry_sorted_voices_and_the_prompt_prints_them_in_thai() -> None:
+    needs = [_need("n1").model_copy(update={"source_evidence_ids": ["e1", "e2", "e3", "e4", "e5"]})]
+    by_ev = {"e1": "alumni", "e2": "employer", "e3": "employer", "e4": "employer", "e5": "alumni"}
+    d = build_dossier(
+        [_plo("PLO1", ["n1"])],
+        needs,
+        program_context=None,
+        degree_level="bachelor",
+        stakeholder_by_evidence=by_ev,
+    )
+    assert d.items[0].cited_needs[0].voices == (("employer", 3), ("alumni", 2))
+    user = build_plo_review_prompt(d)[1]["content"]
+    assert f"- {needs[0].statement_th} (ผู้ขอ: ผู้ประกอบการ 3, ศิษย์เก่า 2)" in user
+    for eid in by_ev:
+        assert eid not in user

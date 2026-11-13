@@ -40,13 +40,14 @@ class AgentState(TypedDict, total=False):
 
     # Stage 2
     extracted_skills: list[dict[str, Any]]
+    skill_groups: list[dict[str, Any]]
     needs: list[dict[str, Any]]
     dropped_ungrounded_count: int
 
     # Stage 3
     plos: list[dict[str, Any]]
 
-    # Advisory PLO set review, written by the stage-06 node after the report. Nothing
+    # Advisory PLO set review, written by the stage-06 node before the PLO checkpoint. Nothing
     # in the graph reads it back; the page reads the stored row. None when no
     # review could be produced or kept (no PLOs, or a read or store failed).
     plo_review: dict[str, Any] | None
@@ -91,6 +92,12 @@ async def stage_2_skill_extraction(state: AgentState) -> AgentState:
     return await run(state)
 
 
+async def stage_2a_skill_grouping(state: AgentState) -> AgentState:
+    from curriculum_agent.stages.skill_grouping import run  # noqa: PLC0415
+
+    return await run(state)
+
+
 async def stage_2b_need_combination(state: AgentState) -> AgentState:
     from curriculum_agent.stages.need_combination import run  # noqa: PLC0415
 
@@ -118,41 +125,70 @@ async def stage_5_plo_report(state: AgentState) -> AgentState:
 # -------------------- Human-in-the-loop nodes --------------------
 
 
-def review_stakeholder_needs(state: AgentState) -> AgentState:
+async def review_stakeholder_needs(state: AgentState) -> AgentState:
     payload = interrupt("Stage 1 complete — review classified evidence before clustering")
     if isinstance(payload, dict):
-        return {**state, **payload}
-    return state
+        state = {**state, **payload}
+    # Evidence is not locked while a session is paused here (no skills exist yet,
+    # and a suspended session is not a running writer), so the designer may have
+    # edited, added or deleted items; the checkpoint still holds the old corpus,
+    # and skill_extraction would cite rows that now say something else. Reload
+    # what is stored and classify it the way stage 1 does.
+    # Lazy: data.repositories imports stage_reached from this module, and
+    # stakeholder_needs imports AgentState from it (cycles).
+    from curriculum_agent.data.repositories import EvidenceRepository  # noqa: PLC0415
+    from curriculum_agent.stages.stakeholder_needs import classify_single  # noqa: PLC0415
+
+    stored = await EvidenceRepository().list_by_program(state["program_id"])
+    classified = [await classify_single(e) for e in stored]
+    return {**state, "classified_evidence": [e.model_dump(mode="json") for e in classified]}
 
 
-def review_needs(state: AgentState) -> AgentState:
+async def review_needs(state: AgentState) -> AgentState:
     payload = interrupt("Stage 2 complete — review raw skills and distilled Needs")
     if isinstance(payload, dict):
-        return {**state, **payload}
-    return state
+        state = {**state, **payload}
+    # The designer may have split a merged Need while suspended; the checkpoint
+    # still holds the pre-split set, so reload what is stored now.
+    # Lazy: data.repositories imports stage_reached from this module (a cycle).
+    from curriculum_agent.data.repositories import NeedRepository  # noqa: PLC0415
+
+    active = await NeedRepository().list_active_by_program(state["program_id"])
+    return {**state, "needs": [n.model_dump(mode="json") for n in active]}
 
 
-def review_plos(state: AgentState) -> AgentState:
-    payload = interrupt("Stage 3 complete — review/edit PLOs before PLO report")
+async def review_plos(state: AgentState) -> AgentState:
+    payload = interrupt("PLO review complete — approve the PLO set before the report")
     if isinstance(payload, dict):
-        return {**state, **payload}
-    return state
+        state = {**state, **payload}
+    # The designer may have edited, merged or deleted PLOs while suspended, and
+    # the review's send-back may have changed them before that; the checkpoint
+    # still holds the set as it was. Reload what is stored so the report is built
+    # from it, never from the checkpoint's copy.
+    # Lazy: data.repositories imports stage_reached from this module (a cycle).
+    from curriculum_agent.data.repositories import PLORepository  # noqa: PLC0415
+
+    stored = await PLORepository().list_by_program(state["program_id"])
+    return {**state, "plos": [p.model_dump(mode="json") for p in stored]}
 
 
 # ----------------------- Stages as reported ----------------------
 
 # The stages a designer works through, in order. Fewer than the graph has nodes:
-# skill_extraction and need_combination run back to back behind one review gate,
-# so the pair is reported under the stage whose page the designer opens it at.
+# skill_extraction and skill_grouping (Agent 1) report as skill_extraction, with
+# no checkpoint of their own; need_combination (Agent 2) is need_analysis, and
+# the review gate sits after it. Each is its own page and rail stage.
+# `skill_grouping` is a graph node, not a designer stage: it never reaches the API.
 # This is the same list the UI keys its rail off — a value outside it reaches the
 # frontend as "unknown stage" and the program looks like it never started.
 DESIGNER_STAGES: tuple[str, ...] = (
     "intake",
     "stakeholder_needs",
     "skill_extraction",
+    "need_analysis",
     "plo_synthesis",
-    "plo_report",
     "plo_review",
+    "plo_report",
 )
 
 # Which stage a suspended run is waiting at, by the node it is suspended on.
@@ -165,8 +201,8 @@ DESIGNER_STAGES: tuple[str, ...] = (
 # both directions against the compiled graph so a rename cannot do that again.
 REVIEW_NODE_STAGE: dict[str, str] = {
     "review_evidence": "stakeholder_needs",
-    "review_needs_node": "skill_extraction",
-    "review_plos_node": "plo_synthesis",
+    "review_needs_node": "need_analysis",
+    "review_plos_node": "plo_review",
 }
 
 
@@ -177,6 +213,7 @@ def stage_reached(
     has_needs: bool,
     has_plos: bool,
     has_current_review: bool = False,
+    has_current_report: bool = False,
 ) -> str:
     """The furthest stage a program has produced output for.
 
@@ -192,20 +229,31 @@ def stage_reached(
     extraction, moves this answer back on its own; a stored column would keep
     claiming the furthest point the program ever got to.
 
-    Skills and Needs both answer `skill_extraction`: they are two engine stages
-    behind one review gate, reviewed together on one page.
+    Skills alone answer `skill_extraction`; once Needs exist the answer is
+    `need_analysis`. They are two pages: skills (Agent 1, no checkpoint) and
+    Needs (Agent 2, where the review gate is).
 
-    The report leaves no artifact of its own — it re-persists the PLOs synthesis
-    already wrote — so a program that has been through it looks exactly like one
-    that has not. The QA agent's review does leave one, and only a review current
-    for the stored set counts: a stale one means the set changed after it was
-    made, and the next thing to do is the report.
+    The report is stored (`plo_reports`, with the fingerprint of the set it was
+    built from) and so is the QA review; each counts only while current for the
+    stored set, because a stale one means the set changed after it was made. The
+    report is last in the order, so a current report wins over a current review.
+    In the review loop's `shadow` mode (the default) send-back only plans, so the
+    review stays current. In `apply` mode the loop ends on a fresh review of the
+    set it changed, so that review is current too — except when the loop stops
+    without one (an error before its last review, or a failed final review), or
+    in `off` mode, where the single send-back changes the set right after the
+    review is stored: then the rail shows the PLO stage until the designer re-runs
+    the review — the set changed and has not been reviewed.
     """
+    if has_current_report:
+        return "plo_report"
     if has_current_review:
         return "plo_review"
     if has_plos:
         return "plo_synthesis"
-    if has_skills or has_needs:
+    if has_needs:
+        return "need_analysis"
+    if has_skills:
         return "skill_extraction"
     if has_evidence:
         return "stakeholder_needs"
@@ -226,6 +274,7 @@ def build_graph(
     g.add_node("stakeholder_needs", stage_1_stakeholder_needs)
     g.add_node("review_evidence", review_stakeholder_needs)
     g.add_node("skill_extraction", stage_2_skill_extraction)
+    g.add_node("skill_grouping", stage_2a_skill_grouping)
     g.add_node("need_combination", stage_2b_need_combination)
     g.add_node("review_needs_node", review_needs)
     g.add_node("plo_synthesis", stage_3_plo_synthesis)
@@ -237,16 +286,17 @@ def build_graph(
     g.add_edge("intake", "stakeholder_needs")
     g.add_edge("stakeholder_needs", "review_evidence")
     g.add_edge("review_evidence", "skill_extraction")
-    g.add_edge("skill_extraction", "need_combination")
+    g.add_edge("skill_extraction", "skill_grouping")
+    g.add_edge("skill_grouping", "need_combination")
     g.add_edge("need_combination", "review_needs_node")
     g.add_edge("review_needs_node", "plo_synthesis")
-    g.add_edge("plo_synthesis", "review_plos_node")
-    # No checkpoint after the PLOs (immutable rule 7, waived for this segment by
-    # the designer, 2026-10-12): the report re-persists the approved set and the
-    # QA agent only advises, so a checkpoint between or after them gates nothing.
+    # The review runs on the synthesized set, then the designer approves it at
+    # review_plos_node, and the report is built last from what is stored. No
+    # checkpoint follows the report: it is a view of the set just approved.
+    g.add_edge("plo_synthesis", "plo_review")
+    g.add_edge("plo_review", "review_plos_node")
     g.add_edge("review_plos_node", "plo_report")
-    g.add_edge("plo_report", "plo_review")
-    g.add_edge("plo_review", END)
+    g.add_edge("plo_report", END)
 
     return g.compile(checkpointer=checkpointer)
 

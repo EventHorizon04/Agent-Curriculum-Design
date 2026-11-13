@@ -14,7 +14,7 @@ from curriculum_agent.models import (
     Need,
     UnusedNeedFinding,
 )
-from curriculum_agent.prompts.plo_review import ReviewItem
+from curriculum_agent.prompts.plo_review import CitedNeed, ReviewItem
 from curriculum_agent.stages import plo_review_agent as agent
 from curriculum_agent.stages.plo_review_facts import ReviewDossier
 
@@ -25,7 +25,7 @@ _ITEM = ReviewItem(
     action_verb_th="วิเคราะห์",
     bloom_level="analyze",
     current_ksec=("S",),
-    need_statements_th=("ต้องการบัณฑิตที่วิเคราะห์ระบบงานได้",),
+    cited_needs=(CitedNeed("ต้องการบัณฑิตที่วิเคราะห์ระบบงานได้", (("employer", 1),)),),
 )
 _UNUSED = UnusedNeedFinding(
     need_id="u1",
@@ -130,11 +130,16 @@ async def test_a_refused_argument_still_counts_toward_the_budget(script) -> None
 
 async def test_need_detail_gives_counts_only(script) -> None:
     ok, payload = agent.run_review_tool(
-        _DOSSIER, {"u1": _U1}, agent.ReviewToolName.NEED_DETAIL, "u1"
+        _DOSSIER,
+        {"u1": _U1},
+        agent.ReviewToolName.NEED_DETAIL,
+        "u1",
+        {"e1": "employer"},
     )
-    assert ok and set(payload) == {"need_id", "member_count", "stakeholder_coverage"}
+    assert ok and set(payload) == {"need_id", "member_count", "voices"}
+    assert payload["voices"] == {"employer": 1}  # one document behind two skills
     fake = script([_tool("need_detail", "u1"), _finish()])
-    await agent.run_review_agent(_DOSSIER, {"u1": _U1})
+    await agent.run_review_agent(_DOSSIER, {"u1": _U1}, {"e1": "employer"})
     content = fake.sent[1][-1]["content"]
     assert '"member_count": 2' in content
     assert "ทักษะล่ามสามข้อเป็นงานเดียวกัน" not in content

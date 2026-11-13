@@ -18,8 +18,40 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from curriculum_agent.stages.need_grouping import join_ksec_tags
+
 if TYPE_CHECKING:
     from curriculum_agent.stages.plo_review_facts import ReviewDossier
+
+
+# Thai names for the stakeholder types, taken from the comments on the enum. An
+# unknown type prints raw, so a vocabulary that moves never breaks the prompt.
+STAKEHOLDER_LABEL_TH: dict[str, str] = {
+    "professional_council": "สภาวิชาชีพ",
+    "employer": "ผู้ประกอบการ",
+    "industry": "ภาคอุตสาหกรรม",
+    "alumni": "ศิษย์เก่า",
+    "expert": "ผู้ทรงคุณวุฒิ",
+    "community": "ชุมชนและสังคม",
+    "partner_institution": "สถาบันคู่ความร่วมมือ",
+    "applicant": "ผู้สมัครเรียน",
+    "parent": "ผู้ปกครอง",
+    "institutional_direction": "ทิศทางสถาบัน",
+    "administrator": "ผู้บริหาร",
+    "program_committee": "คณะกรรมการหลักสูตร",
+    "faculty": "อาจารย์",
+    "student": "ผู้เรียน",
+    "support_staff": "บุคลากรสายสนับสนุน",
+}
+
+
+@dataclass(frozen=True)
+class CitedNeed:
+    """A Need a PLO cites: its sentence, and how many distinct evidence items each
+    stakeholder type contributed (count desc, then type)."""
+
+    statement_th: str
+    voices: tuple[tuple[str, int], ...] = ()
 
 
 @dataclass(frozen=True)
@@ -30,7 +62,7 @@ class ReviewItem:
     action_verb_th: str
     bloom_level: str
     current_ksec: tuple[str, ...]
-    need_statements_th: tuple[str, ...]
+    cited_needs: tuple[CitedNeed, ...]
 
 
 _SYSTEM_TH = """คุณเป็นกรรมการตรวจคุณภาพหลักสูตรอุดมศึกษาไทยตามแนว OBE และมาตรฐาน อว.
@@ -38,7 +70,7 @@ _SYSTEM_TH = """คุณเป็นกรรมการตรวจคุณ�
 คุณไม่ได้แก้ PLO ห้ามเขียนประโยค PLO ใหม่ ให้บอกเพียงว่าควรปรับอะไรและเพราะอะไร
 ตัวเลขในหัวข้อ "ข้อเท็จจริงที่ระบบนับให้" ถูกต้องแล้ว ไม่ต้องนับใหม่ ให้ตีความ
 
-ตรวจ 6 เรื่อง
+ตรวจ 7 เรื่อง
 1) redundancies (ความซ้ำซ้อน): กลุ่ม PLO 2-3 ข้อที่กรรมการหลักสูตรจะอ่านว่าเป็นผลลัพธ์เดียวกัน
    คือมีงานหลักเดียวกันกับวัตถุประเภทเดียวกัน ต่างกันแค่บริบท เครื่องมือ หรือถ้อยคำ
    การอยู่ในสาขาเดียวกันหรือใช้เครื่องมือเดียวกันไม่ถือว่าซ้ำ เช่น ทุกข้อของหลักสูตรการแปลมีการแปลอยู่แล้ว
@@ -49,12 +81,17 @@ _SYSTEM_TH = """คุณเป็นกรรมการตรวจคุณ�
    C = คุณลักษณะบุคคล เช่น การปรับตัว ภาวะผู้นำ การพัฒนาตนเอง
    ตัดสินจากสิ่งที่บัณฑิตทำในประโยค ไม่ใช่จากหมวดเดิม
    แต่ละรายการ: plo_id, suggested (list เช่น ["S","E"]), reason_th
-3) bloom (ระดับ Bloom รายข้อ): ใส่เฉพาะ PLO ที่ระดับที่ประกาศไม่เหมาะกับกริยา กรรม และระดับปริญญา
-   แต่ละรายการ: plo_id, suggested_level (remember understand apply analyze evaluate create), reason_th
-4) coverage_th (KSEC ทั้งชุด): หนึ่งถึงสามประโยค ตีความจำนวน PLO ต่อหมวดที่ระบบนับให้
+3) alignment (ความสอดคล้องกับ Need): PLO ตอบสิ่งที่ Need ที่อ้างถึงขอไว้หรือไม่
+   ดูจากประโยคของ Need และเสียงที่ขอ (จำนวนเอกสารต่อกลุ่มผู้มีส่วนได้ส่วนเสียในวงเล็บ "ผู้ขอ")
+   ใส่เฉพาะ PLO ที่ไม่สอดคล้อง เช่น งานหรือวัตถุของ PLO ต่างจากที่ Need ขอ หรือตอบเพียงบางส่วนของสิ่งที่เสียงส่วนใหญ่ขอ
+   แต่ละรายการ: plo_id, reason_th, suggestion_th (ควรปรับอะไร ไม่ต้องเขียนประโยคใหม่)
+4) bloom (ระดับ Bloom และกริยารายข้อ): ใส่เฉพาะ PLO ที่ระดับหรือกริยาที่ประกาศไม่เหมาะกับงาน กรรม และระดับปริญญา
+   แต่ละรายการ: plo_id, suggested_level (remember understand apply analyze evaluate create ไม่ต้องใส่ถ้าระดับเหมาะแล้ว),
+   suggested_verb_th (กริยาไทยที่เหมาะกว่า ไม่ต้องใส่ถ้ากริยาเหมาะแล้ว), reason_th, suggestion_th (ควรปรับอย่างไร)
+5) coverage_th (KSEC ทั้งชุด): หนึ่งถึงสามประโยค ตีความจำนวน PLO ต่อหมวดที่ระบบนับให้
    หมวดไหนขาดหรือหนาแน่นเกิน และสำคัญอย่างไรกับหลักสูตรนี้
-5) bloom_distribution_th (การกระจาย Bloom): หนึ่งถึงสามประโยค ตีความจำนวน PLO ต่อระดับเทียบระดับปริญญา
-6) unused_needs (Need สำคัญที่ไม่ได้เป็น PLO): สำหรับแต่ละ Need ในรายการที่ให้มา
+6) bloom_distribution_th (การกระจาย Bloom): หนึ่งถึงสามประโยค ตีความจำนวน PLO ต่อระดับเทียบระดับปริญญา
+7) unused_needs (Need สำคัญที่ไม่ได้เป็น PLO): สำหรับแต่ละ Need ในรายการที่ให้มา
    need_id, verdict ("consider" = ควรพิจารณาใส่เป็น PLO, "ok_to_leave" = ปล่อยไว้ได้), reason_th
    Need ที่ยังไม่มีประโยค (ในรายการแสดงว่า "(ยังไม่มีประโยค Need ...)") ตัดสินว่า "consider" ไม่ได้จนกว่าผู้ออกแบบจะเขียนประโยคก่อน
    ให้ตอบ "ok_to_leave" หรือไม่ต้องใส่ในรายการ
@@ -66,11 +103,11 @@ summary_th: สรุป 2-5 ประโยคให้ผู้ออกแบ
 - check_verbs: arg = plo_id ได้ผลตรวจกริยาของ PLO ข้อนั้นด้วยโค้ด
   (ประโยคขึ้นต้นด้วยกริยาที่ประกาศไหม กริยาที่ประกาศมีกี่คำ และอยู่ระดับใดได้บ้าง)
 - need_detail: arg = need_id ของ Need ในรายการ Need ที่ไม่ได้เป็น PLO เท่านั้น
-  ได้จำนวนทักษะสมาชิก และจำนวนเสียงต่อกลุ่มผู้มีส่วนได้ส่วนเสียที่ขอ Need นั้น
+  ได้จำนวนทักษะสมาชิก และจำนวนเสียง (เอกสารหลักฐาน) ต่อกลุ่มผู้มีส่วนได้ส่วนเสียที่ขอ Need นั้น
 
 ทุกรอบตอบเป็น JSON object เดียว: {"reasoning_th": "...", "action": {...}}
 เรียกเครื่องมือ: "action": {"kind": "call_tool", "tool": "check_verbs", "arg": "PLO3"}
-สรุปผล: "action": {"kind": "finish", "redundancies": [...], "ksec": [...], "bloom": [...],
+สรุปผล: "action": {"kind": "finish", "redundancies": [...], "ksec": [...], "alignment": [...], "bloom": [...],
   "bloom_distribution_th": "...", "coverage_th": "...", "unused_needs": [...], "summary_th": "..."}
 ถ้าชุด PLO ไม่มีปัญหาในเรื่องใด ให้ส่งรายการของเรื่องนั้นว่าง แต่ ksec ต้องมีครบทุก PLO และต้องมี summary_th เสมอ
 ใช้ plo_id และ need_id ตามที่ให้มาเท่านั้น"""  # noqa: E501
@@ -92,11 +129,18 @@ def _counts_line(counts: Mapping[str, int], sep: str = " · ") -> str:
     return sep.join(f"{k} {v}" for k, v in counts.items())
 
 
+def _cited_line(need: CitedNeed) -> str:
+    if not need.voices:
+        return f"- {need.statement_th}"
+    voices = ", ".join(f"{STAKEHOLDER_LABEL_TH.get(t, t)} {n}" for t, n in need.voices)
+    return f"- {need.statement_th} (ผู้ขอ: {voices})"
+
+
 def build_plo_review_prompt(dossier: ReviewDossier) -> list[dict[str, str]]:
     """The rubric, then the whole dossier in one user turn."""
     blocks: list[str] = []
     for item in dossier.items:
-        needs = "\n".join(f"- {s}" for s in item.need_statements_th) or "- (ไม่พบ Need)"
+        needs = "\n".join(_cited_line(c) for c in item.cited_needs) or "- (ไม่พบ Need)"
         blocks.append(
             f"[{item.plo_id}] ({'เสริม' if item.is_optional else 'หลัก'})\n"
             f"ประโยค: {item.statement_th}\n"
@@ -116,7 +160,8 @@ def build_plo_review_prompt(dossier: ReviewDossier) -> list[dict[str, str]]:
     )
     if dossier.unused_needs:
         unused = "\n".join(
-            f"[{u.need_id}] demand {u.demand_score:.2f} | KSEC {u.ksec_category} | "
+            f"[{u.need_id}] demand {u.demand_score:.2f} | "
+            f"KSEC {join_ksec_tags(u.ksec_categories)} | "
             f"ผู้ขอ: {', '.join(u.stakeholder_types) or '-'} | เหตุที่ไม่ได้ใช้: {u.exclusion}\n"
             f"  {_UNWRITTEN_PLACEHOLDER_TH if u.unwritten else u.statement_th}"
             for u in dossier.unused_needs

@@ -46,6 +46,46 @@ async def test_success_records_the_result_body(
     assert done.finished_at is not None
 
 
+async def test_on_success_runs_after_the_job_is_recorded_succeeded(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    seen: list[str] = []
+
+    async def after() -> None:
+        seen.append(next(iter(jobs_store.rows.values())).status)
+
+    await jobs.start_job("p", "plo_report", {}, _ok, on_success=after)
+    await spawned.coros.pop(0)
+    assert seen == ["succeeded"]
+
+
+async def test_on_success_not_called_on_failure(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    after = AsyncMock()
+
+    async def boom() -> _Out:
+        raise RuntimeError("x")
+
+    job = await jobs.start_job("p", "plo_report", {}, boom, on_success=after)
+    await spawned.coros.pop(0)
+    after.assert_not_awaited()
+    assert jobs_store.rows[job.job_id].status == "failed"
+
+
+async def test_on_success_exception_does_not_flip_job_status(
+    jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    async def after() -> None:
+        raise RuntimeError("chain broke")
+
+    job = await jobs.start_job("p", "plo_report", {}, _ok, on_success=after)
+    await spawned.coros.pop(0)
+    done = jobs_store.rows[job.job_id]
+    assert done.status == "succeeded"
+    assert done.result == {"n": 3}
+
+
 async def test_a_list_result_is_dumped_item_by_item(
     jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:

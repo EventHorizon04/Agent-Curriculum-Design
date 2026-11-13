@@ -9,8 +9,8 @@
  * reading another field finds it here the way it would on the real API.
  */
 import type { JobInfo } from '../api/jobs'
-import type { PLO } from '../types/plo'
-import type { PLOSetReview } from '../types/ploReview'
+import type { PLO, SupersededPLO } from '../types/plo'
+import type { FeedbackAction, PLOSetReview } from '../types/ploReview'
 
 export type ScenarioName = 'empty' | 'checkpoint' | 'complete' | 'many'
 
@@ -91,9 +91,22 @@ export interface NeedRow {
   statement_th: string
   statement_en: string | null
   rationale_th: string
-  ksec_category: 'K' | 'S' | 'EC' | 'E' | 'C'
+  /** Every tag the Need carries: one for a single-bucket Need, several for one
+   *  Agent 2 merged from Needs of different buckets. */
+  ksec_categories: ('K' | 'S' | 'EC' | 'E' | 'C')[]
   bloom_level: string
   member_skill_ids: string[]
+  /** The few member skills that carry the Need, for the card's chips. */
+  top_skill_ids: string[]
+  /** Originals folded into this Need; empty unless it is a merge. */
+  merged_from: string[]
+  /** The merged Need this one was folded into, or null while it is active. */
+  merged_into: string | null
+  /** Who made the merge: Agent 2, or the designer at the Need checkpoint. */
+  merged_by: 'agent' | 'designer' | null
+  /** Set while the designer has taken this Need out of the pool; restoring clears it. */
+  excluded_at: string | null
+  merge_reason_th: string
   source_evidence_ids: string[]
   stakeholder_coverage: Record<string, number>
   source_stakeholder_types: string[]
@@ -106,6 +119,9 @@ export interface NeedRow {
 }
 
 export type PloRow = PLO
+
+/** A PLO a merge replaced, newest first once listed. */
+export type SupersededRow = SupersededPLO
 
 export type SessionStatus = 'running' | 'suspended' | 'completed' | 'rejected' | 'failed'
 
@@ -142,6 +158,13 @@ export interface MockDb {
    *  stored by an earlier build has none; every read treats a missing list as
    *  empty. */
   reviews?: PLOSetReview[]
+  /** PLOs replaced by a merge. Optional for the same reason as `reviews`. */
+  superseded?: SupersededRow[]
+  /** What each review sent back, newest first once listed. Optional for the same reason. */
+  feedback?: FeedbackAction[]
+  /** The report stored at approval, one per program at most, with the time it was stored.
+   *  Optional for the same reason as `reviews`. */
+  reports?: Array<{ program_id: string; created_at: string; report: unknown }>
 }
 
 export function emptyDb(): MockDb {

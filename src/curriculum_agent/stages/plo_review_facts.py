@@ -24,7 +24,11 @@ from curriculum_agent.models import (
     StakeholderType,
     UnusedNeedFinding,
 )
-from curriculum_agent.prompts.plo_review import UNWRITTEN_CITED_PLACEHOLDER_TH, ReviewItem
+from curriculum_agent.prompts.plo_review import (
+    UNWRITTEN_CITED_PLACEHOLDER_TH,
+    CitedNeed,
+    ReviewItem,
+)
 from curriculum_agent.stages.need_grouping import is_in_scope, is_unwritten_need
 
 KSEC_ORDER: tuple[str, ...] = ("K", "S", "E", "C")
@@ -47,7 +51,12 @@ def normalize_ksec(values: Sequence[str]) -> list[str]:
 def current_ksec(plo: PLO, needs_by_id: Mapping[str, Need]) -> list[str]:
     """The KSEC tags of the Needs behind a PLO, EC expanded, unknown Needs ignored."""
     return normalize_ksec(
-        [needs_by_id[nid].ksec_category.value for nid in plo.source_need_ids if nid in needs_by_id]
+        [
+            tag.value
+            for nid in plo.source_need_ids
+            if nid in needs_by_id
+            for tag in needs_by_id[nid].ksec_categories
+        ]
     )
 
 
@@ -79,6 +88,20 @@ def bloom_histogram(plos: Sequence[PLO], degree_level: str) -> BloomHistogram:
     below = sum(1 for p in plos if p.bloom_level in _BELOW_APPLY)
     flags = ["below_apply_majority"] if plos and below * 2 > len(plos) else []
     return BloomHistogram(counts=counts, degree_level=degree_level, flags=flags)
+
+
+def need_voices(need: Need, stakeholder_by_evidence: Mapping[str, str]) -> dict[str, int]:
+    """Distinct evidence items behind a Need, per stakeholder type (decision 21).
+
+    Counts documents, not skills: one employer document yielding three skills is
+    one employer voice. An evidence id the map does not know is ignored.
+    """
+    counts: dict[str, int] = {}
+    for eid in dict.fromkeys(need.source_evidence_ids):
+        kind = stakeholder_by_evidence.get(eid)
+        if kind is not None:
+            counts[kind] = counts.get(kind, 0) + 1
+    return counts
 
 
 def exclusion_reason(need: Need) -> str:
@@ -114,7 +137,7 @@ def select_unused_needs(
             need_id=n.need_id,
             statement_th=n.statement_th,
             demand_score=n.demand_score,
-            ksec_category=n.ksec_category.value,
+            ksec_categories=[t.value for t in n.ksec_categories],
             stakeholder_types=[t.value for t in n.source_stakeholder_types],
             exclusion=exclusion_reason(n),
             unwritten=is_unwritten_need(n),
@@ -142,6 +165,7 @@ def build_dossier(
     *,
     program_context: str | None,
     degree_level: str,
+    stakeholder_by_evidence: Mapping[str, str] = {},  # noqa: B006 - read-only
 ) -> ReviewDossier:
     needs_by_id = {n.need_id: n for n in needs}
     items = tuple(
@@ -152,10 +176,18 @@ def build_dossier(
             action_verb_th=p.action_verb_th,
             bloom_level=p.bloom_level.value,
             current_ksec=tuple(current_ksec(p, needs_by_id)),
-            need_statements_th=tuple(
-                UNWRITTEN_CITED_PLACEHOLDER_TH
-                if is_unwritten_need(needs_by_id[nid])
-                else needs_by_id[nid].statement_th
+            cited_needs=tuple(
+                CitedNeed(
+                    statement_th=UNWRITTEN_CITED_PLACEHOLDER_TH
+                    if is_unwritten_need(needs_by_id[nid])
+                    else needs_by_id[nid].statement_th,
+                    voices=tuple(
+                        sorted(
+                            need_voices(needs_by_id[nid], stakeholder_by_evidence).items(),
+                            key=lambda kv: (-kv[1], kv[0]),
+                        )
+                    ),
+                )
                 for nid in p.source_need_ids
                 if nid in needs_by_id
             ),

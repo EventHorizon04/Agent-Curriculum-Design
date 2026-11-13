@@ -1,0 +1,63 @@
+import { useState } from 'react'
+import { withoutMarker } from '../../constants/needPolicy'
+import { unwrittenReason, type PickerNeed } from './pickerNeed'
+
+/** The "เพิ่ม Need" button, for the card's button column. The panel it opens is
+ *  `AttachPanel`, rendered by the card below its header row. */
+export function AttachButton({
+  blocked,
+  busy,
+  onOpen,
+}: {
+  blocked: string | null
+  busy: boolean
+  onOpen: () => void
+}) {
+  return (
+    <button onClick={onOpen} disabled={busy || blocked !== null} title={blocked ?? undefined} className="btn btn-sm btn-secondary">
+      เพิ่ม Need
+    </button>
+  )
+}
+
+/** Pick one unused Need and have the PLO redrafted from its current Needs plus
+ *  that one, through the page's merge path. */
+export function AttachPanel({
+  unused,
+  busy,
+  onAttach,
+  onClose,
+}: {
+  unused: PickerNeed[]
+  busy: boolean
+  onAttach: (needId: string) => void
+  onClose: () => void
+}) {
+  const [picked, setPicked] = useState('')
+  const usable = unused.filter((n) => !unwrittenReason(n))
+  // The list can change under an open panel (a reload); a choice that left it
+  // is not a choice.
+  const choice = usable.some((n) => n.need_id === picked) ? picked : ''
+  return (
+    <div className="mt-3 space-y-2 rounded-[3px] border border-hair bg-sunk p-3">
+      <label className="field-label" htmlFor="attach-need">เลือก Need ที่ยังไม่มี PLO</label>
+      <select id="attach-need" className="input" value={choice} onChange={(e) => setPicked(e.target.value)} disabled={busy}>
+        <option value="">— เลือก —</option>
+        {usable.map((n) => (
+          <option key={n.need_id} value={n.need_id}>{withoutMarker(n.statement_th)}</option>
+        ))}
+      </select>
+      <p className="field-hint">PLO นี้จะถูกร่างใหม่จาก Need เดิมรวมกับข้อที่เลือก และข้อเดิมจะไปอยู่ในส่วนที่ถูกแทนที่</p>
+      <div className="flex flex-wrap gap-2">
+        <button
+          onClick={() => { onAttach(choice); onClose() }}
+          disabled={!choice || busy}
+          className="btn btn-sm btn-primary"
+        >
+          ยืนยัน
+        </button>
+        <button onClick={onClose} className="btn btn-sm btn-secondary">ยกเลิก</button>
+      </div>
+    </div>
+  )
+}

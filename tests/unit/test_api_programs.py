@@ -501,3 +501,20 @@ def test_update_program_requires_api_key_when_configured(monkeypatch) -> None:
     monkeypatch.setattr(cfg.settings, "api_key", SecretStr("secret-key"))
     resp = client.put("/programs/computer-science", json=VALID_PROGRAM)
     assert resp.status_code == 401, f"got {resp.status_code}"
+
+
+def test_delete_program_refuses_while_the_program_is_busy() -> None:
+    """Every model call of a running job writes a usage row pointing at the program;
+    one landing between the cascade's deletes would fail it. A busy program is 409."""
+    from curriculum_agent.api import jobs as jobs_module
+
+    jobs_module._SYNC_WRITERS["computer-science"] = "หลักสูตรนี้กำลังรวม Need เป็น PLO อยู่"
+    try:
+        with _delete_program_env() as graph:
+            resp = client.delete("/programs/computer-science")
+    finally:
+        jobs_module._SYNC_WRITERS.pop("computer-science", None)
+
+    assert resp.status_code == 409, resp.text
+    assert "กำลังรวม Need" in resp.json()["detail"]
+    graph.checkpointer.adelete_thread.assert_not_awaited()

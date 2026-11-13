@@ -65,11 +65,19 @@ def test_report_run_returns_the_full_report_payload(jobs_store, spawned):
     with (
         patch("curriculum_agent.api.routes.plos._repo") as mock_repo,
         patch(
+            "curriculum_agent.stages.plo_report.NeedRepository.list_active_by_program",
+            new=AsyncMock(return_value=[need]),
+        ),
+        patch(
             "curriculum_agent.stages.plo_report.NeedRepository.list_by_program",
             new=AsyncMock(return_value=[need]),
         ),
         patch(
-            "curriculum_agent.stages.plo_report.PLORepository.bulk_insert",
+            "curriculum_agent.stages.plo_report.PLORepository.list_by_program",
+            new=AsyncMock(return_value=[plo]),
+        ),
+        patch(
+            "curriculum_agent.stages.plo_report.PLOReportRepository.upsert",
             new=AsyncMock(),
         ),
     ):
@@ -87,6 +95,7 @@ def test_report_run_returns_the_full_report_payload(jobs_store, spawned):
         "counts",
         "needs_by_id",
         "needs_not_synthesized",
+        "needs_excluded",
     }
 
     assert len(body["plos"]) == 1
@@ -103,7 +112,21 @@ def test_report_run_returns_the_full_report_payload(jobs_store, spawned):
         "stale": 0,
         "code_only": 0,
         "needs_not_synthesized": 0,
+        "needs_excluded": 0,
     }
 
     assert body["needs_by_id"]["c1"]["need_id"] == "c1"
-    assert body["needs_by_id"]["c1"]["ksec_category"] == "S"
+    assert body["needs_by_id"]["c1"]["ksec_categories"] == ["S"]
+
+
+def test_report_response_keeps_needs_excluded_and_defaults_old_reports():
+    from curriculum_agent.api.routes.plos import PLOReportResponse
+
+    old = PLOReportResponse.model_validate({"plos": [], "counts": {}, "needs_by_id": {}})
+    assert old.needs_excluded == []
+
+    row = {"need_id": "N9", "statement_th": "x", "excluded_at": "2026-11-01T08:00:00"}
+    new = PLOReportResponse.model_validate(
+        {"plos": [], "counts": {}, "needs_by_id": {}, "needs_excluded": [row]}
+    )
+    assert new.model_dump(mode="json")["needs_excluded"] == [row]

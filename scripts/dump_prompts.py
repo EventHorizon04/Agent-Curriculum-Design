@@ -32,8 +32,17 @@ from curriculum_agent.prompts.cluster_skills import (
 )
 from curriculum_agent.prompts.designer_note import NOTE_HEADER_TH, NOTE_POLICY_TH
 from curriculum_agent.prompts.extract_skills import build_extract_skills_prompt
+from curriculum_agent.prompts.merged_need import build_merged_need_prompt
 from curriculum_agent.prompts.need_dedup import build_need_dedup_prompt
+from curriculum_agent.prompts.plo_feedback import (
+    build_alignment_redraft_note_th,
+    build_bloom_redraft_note_th,
+    build_ksec_gap_note_th,
+    build_redundancy_redraft_note_th,
+    build_unused_redraft_note_th,
+)
 from curriculum_agent.prompts.plo_review import (
+    CitedNeed,
     ReviewItem,
     build_plo_review_prompt,
     build_review_observation,
@@ -43,8 +52,8 @@ from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
     build_refusal_observation,
-    build_repair_observation,
     build_smart_agent_prompt,
+    build_vote_repair_instruction_th,
 )
 from curriculum_agent.prompts.stage_3_plo import build_plo_from_need_prompt
 from curriculum_agent.prompts.summarize_need import (
@@ -100,6 +109,17 @@ def _build() -> str:
     cluster = _render(
         build_cluster_skills_prompt(["<skill 0>", "<skill 1>"], 4, "<program context>")
     )
+    # The EC bucket's system message differs from the others by one rule line; show
+    # that line, taken from the real builder, rather than a second full copy.
+    _plain = build_cluster_skills_prompt(["<skill 0>"], 4, "<program context>")[0]["content"]
+    _ec = build_cluster_skills_prompt(["<skill 0>"], 4, "<program context>", KSECCategory.EC)[0][
+        "content"
+    ]
+    ec_rule = "".join(line for line in _ec.splitlines(keepends=True) if line not in _plain)
+    cluster += (
+        "\n\n**บรรทัดที่เพิ่มเมื่อ bucket = `EC`** (ก่อนบรรทัด `label_th MUST...`)\n\n"
+        f"```text\n{ec_rule.rstrip()}\n```"
+    )
     merge = _render(build_merge_clusters_prompt(["<label 0>", "<label 1>"], 4))
     summarize = _render(
         build_summarize_need_prompt(
@@ -119,6 +139,16 @@ def _build() -> str:
             program_context="<program context>",
         )
     )
+    merged_need = _render(
+        build_merged_need_prompt(
+            ["<skill a>", "<skill b>"],
+            ["K", "S"],
+            "apply",
+            "<เหตุผลที่ตรวจพบว่าซ้ำกัน>",
+            program_context="<program context>",
+            skill_frequencies=[3, 1],
+        )
+    )
     review = _render(
         build_plo_review_prompt(
             ReviewDossier(
@@ -132,7 +162,9 @@ def _build() -> str:
                         action_verb_th="<กริยา>",
                         bloom_level="apply",
                         current_ksec=("S",),
-                        need_statements_th=("<ประโยคความต้องการ>",),
+                        cited_needs=(
+                            CitedNeed("<ประโยคความต้องการ>", (("employer", 3), ("alumni", 2))),
+                        ),
                     ),
                     ReviewItem(
                         plo_id="<OPT1>",
@@ -141,7 +173,9 @@ def _build() -> str:
                         action_verb_th="<กริยา>",
                         bloom_level="analyze",
                         current_ksec=("E", "C"),
-                        need_statements_th=("<ประโยคความต้องการ>",),
+                        cited_needs=(
+                            CitedNeed("<ประโยคความต้องการ>", (("employer", 3), ("alumni", 2))),
+                        ),
                     ),
                 ),
                 ksec_coverage=KsecCoverage(
@@ -184,23 +218,38 @@ def _build() -> str:
             sibling_count=5,
         )
     )
+    bloom_note = build_bloom_redraft_note_th(
+        BloomLevel.ANALYZE,
+        "<เหตุผลของผู้ตรวจ>",
+        suggested_verb_th="<กริยาที่เสนอ>",
+        suggestion_th="<ข้อเสนอของผู้ตรวจ>",
+        old_statement_th="<ร่างเดิม>",
+    )
+    redundancy_note = build_redundancy_redraft_note_th(
+        "<เหตุผลของผู้ตรวจ>", "<ข้อเสนอของผู้ตรวจ>", ["<ร่างเดิมข้อ 1>", "<ร่างเดิมข้อ 2>"]
+    )
+    alignment_note = build_alignment_redraft_note_th(
+        "<เหตุผลของผู้ตรวจ>", "<ข้อเสนอของผู้ตรวจ>", "<ร่างเดิม>"
+    )
+    unused_note = build_unused_redraft_note_th("<เหตุผลของผู้ตรวจ>")
+    ksec_gap_note = build_ksec_gap_note_th("<K/S/E/C>")
+    context_line = build_program_context_th({"field": "<สาขาวิชา>", "degree_level": "bachelor"})
+    repair_instruction = build_vote_repair_instruction_th(
+        ["<คำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน>"],
+        [("M_assessable", "<หมายเหตุของผู้ตรวจที่เป็นตัวแทนเสียงข้างมาก>")],
+        "<repair_hint_th ของผู้ตรวจที่เป็นตัวแทน>",
+    )
+    # As production calls it: `_repair` always passes keep_th=None.
     repair = _render(
         build_agent_repair_prompt(
             statement_th="<ประโยค PLO เดิม>",
             bloom_level="apply",
             action_verb_th="<กริยา>",
             degree_level="bachelor",
-            instruction_th="<คำสั่งแก้จาก validation agent>",
-            criteria=["M_forbidden"],
-            keep_th="<สาระที่ต้องคงไว้>",
+            instruction_th=repair_instruction,
+            criteria=["M_forbidden", "M_assessable"],
+            keep_th=None,
         )
-    )
-    context_line = build_program_context_th({"field": "<สาขาวิชา>", "degree_level": "bachelor"})
-    repair_observation = build_repair_observation(
-        before_statement="<ประโยคเดิม>",
-        after_statement="<ประโยคใหม่>",
-        before_failures=["M_forbidden"],
-        after_failures=[],
     )
     refusal_observation = build_refusal_observation("<เหตุผลที่ระบบปฏิเสธ>")
 
@@ -211,6 +260,12 @@ def _build() -> str:
         summarize=summarize,
         plo=plo,
         dedup=dedup,
+        merged_need=merged_need,
+        bloom_note=bloom_note,
+        redundancy_note=redundancy_note,
+        alignment_note=alignment_note,
+        unused_note=unused_note,
+        ksec_gap_note=ksec_gap_note,
         review=review,
         review_observation=review_observation,
         review_refusal=review_refusal,
@@ -219,7 +274,7 @@ def _build() -> str:
         note_policy=NOTE_POLICY_TH,
         note_header=NOTE_HEADER_TH,
         context_line=context_line,
-        repair_observation=repair_observation,
+        repair_instruction=repair_instruction,
         refusal_observation=refusal_observation,
         min_statement=MIN_STATEMENT_CHARS,
         min_rationale=MIN_RATIONALE_CHARS,
@@ -251,10 +306,12 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 3 | ยุบกลุ่มที่ซ้ำความหมาย | `build_merge_clusters_prompt` | `stages/llm_clustering.py` → `_cluster_map_reduce` | `clustering` | `MergeGroupsResponse` | ✅ ผ่าน key เดียวกับข้อ 2 |
 | 4 | เขียนประโยค Need | `build_summarize_need_prompt` | `stages/need_combination.py` → `run` | `need_combination` | `_NeedStatement` | ❌ ไม่มี cache |
 | 5 | แปลง Need เป็น PLO | `build_plo_from_need_prompt` | `stages/plo_synthesis.py` → `draft_from_needs` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
-| 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_loop` | `validation` | `ValidationStep` | ❌ |
+| 6 | SMART validation agent | `build_smart_agent_prompt` | `stages/smart_agent.py` → `_judge_once` (รัน `VALIDATION_RUNS` ครั้งต่อรอบ) | `validation` | `JudgeStep` | ❌ |
 | 7 | สั่งแก้ประโยค PLO | `build_agent_repair_prompt` | `stages/smart_agent.py` → `_repair` | `plo_synthesis` | `_SingleDraftResponse` | ❌ |
 | 8 | หา Need ที่ซ้ำกันก่อนร่าง PLO | `build_need_dedup_prompt` | `stages/need_dedup.py` → `find_duplicate_groups` | `need_dedup` | `DedupAnswer` | ❌ |
 | 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
+| 10 | เขียนประโยค Need ที่รวมจากหลายข้อ | `build_merged_need_prompt` | `stages/need_merge.py` → `_write_merged` | `need_combination` | `NeedStatement` | ❌ |
+| 11 | โน้ตสั่งเขียน PLO ใหม่จากข้อค้นพบของผู้ตรวจ (ซ้ำซ้อน, ความสอดคล้อง, Bloom/กริยา, Need ที่ไม่ได้ใช้, หมวด KSEC ขาด) | `build_redundancy_redraft_note_th` ฯลฯ | `stages/plo_feedback.py` → `_send_*` | `plo_synthesis` (ผ่าน `note_th` ของข้อ 5) | `_SingleDraftResponse` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -297,11 +354,11 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 
 | | |
 |---|---|
-| **builder** | `prompts/cluster_skills.py` → `build_cluster_skills_prompt(skill_names, target_clusters=None, program_context=None)` |
+| **builder** | `prompts/cluster_skills.py` → `build_cluster_skills_prompt(skill_names, target_clusters=None, program_context=None, ksec=None)` |
 | **ผู้เรียก** | `stages/llm_clustering.py` → `_cluster_pass` |
 | **slot / wrapper** | `clustering` → `complete_clustering` (`temperature=0`) |
 | **response model** | `ClusterAssignmentsResponse` |
-| **cache** | ที่ `cluster_skill_names`: ชื่อทักษะทั้งชุด + `clustering_model` + `_CLUSTERING_CONTRACT` + `target_clusters` + `program_context` |
+| **cache** | ที่ `cluster_skill_names`: ชื่อทักษะทั้งชุด + `clustering_model` + `_CLUSTERING_CONTRACT` + `target_clusters` + `program_context` + `ksec` |
 
 ทำงานด้วย **index** ไม่ใช่ชื่อ — โมเดลตอบเป็นเลขลำดับ `validate_assignments` จึงบังคับ
 "ทุก index ปรากฏครั้งเดียว" ได้ด้วยโค้ดหลังจากนั้น
@@ -394,12 +451,12 @@ prompt สลับประโยคสั่งและเพิ่มกฎ 
 | | |
 |---|---|
 | **builder** | `prompts/smart_agent.py` → `build_smart_agent_prompt(...)` (system คงที่ `_SYSTEM_TH` + user หนึ่งก้อน) |
-| **ผู้เรียก** | `stages/smart_agent.py` → `_loop` |
+| **ผู้เรียก** | `stages/smart_agent.py` → `_judge_once` (หนึ่ง judge run) ภายใต้ `_voted_loop` |
 | **slot / wrapper** | `validation` → `complete_validation` (`temperature=0`, `max_tokens=_MAX_STEP_TOKENS`) |
-| **response model** | `ValidationStep` = `CallTool` \\| `RequestRepair` \\| `Finish` |
-| **งบ** | `VALIDATION_MAX_TURNS` รอบ · `VALIDATION_MAX_REPAIRS` ครั้งซ่อมต่อ PLO |
+| **response model** | `JudgeStep` = `CallTool` \\| `Finish` (ไม่มี action สั่งซ่อมแล้ว) |
+| **งบ** | `VALIDATION_RUNS` judge run ต่อรอบ (ค่าเริ่มต้น 5, โหวตเสียงข้างมาก) · `VALIDATION_MAX_TURNS` รอบต่อ run · `VALIDATION_MAX_REPAIRS` ครั้งซ่อมต่อ PLO · `VALIDATION_TIMEOUT_SECONDS` ครอบทั้ง loop |
 
-slot เดียวที่รัน multi-turn loop แบบมีเครื่องมือ · เครื่องมือที่เรียกได้: `check_hard`,
+slot เดียวที่รัน multi-turn loop แบบมีเครื่องมือ · PLO หนึ่งข้อถูกตรวจหลายรอบพร้อมกัน (judge run) แล้ว `smart_vote` นับเสียงข้างมากต่อเกณฑ์ soft · run ไม่สั่งซ่อมเอง: มันรายงานผลตรวจ คำวินิจฉัย และ `repair_hint_th` สั้น ๆ แล้ว `_voted_loop` เป็นผู้ตัดสินใจซ่อมจากเสียงข้างมากกับ `hard_failures` · เครื่องมือที่เรียกได้: `check_hard`,
 `bloom_lookup`, `get_need`, `get_evidence` (ไม่เกิน 3 รายการ), `list_sibling_plos`
 
 **agent ประกาศว่าเกณฑ์ที่ตัดสินด้วยโค้ดผ่านเองไม่ได้** — `Finish` ไม่มี field ที่ล้างข้อผิดพลาดชนิดนั้น
@@ -417,24 +474,19 @@ monotone: หดรายการที่ไม่ผ่านได้ ปร
 
 ### ข้อความที่ต่อเข้า loop ระหว่างทาง
 
-ไม่ใช่ prompt เต็ม แต่เป็น user turn ที่ `_loop` ต่อท้ายหลังทุก action:
+ไม่ใช่ prompt เต็ม แต่เป็น user turn ที่ `_judge_once` ต่อท้ายหลังทุก action:
 
 | builder | ใช้เมื่อ |
 |---|---|
 | `build_tool_observation(observation)` | ผลของเครื่องมือหนึ่งตัว — สำเร็จส่ง JSON, ล้มเหลวส่ง `ผลของ <tool>: ปฏิเสธ — <เหตุผล>` |
-| `build_refusal_observation(reason_th)` | ระบบปฏิเสธคำสั่งล่าสุด เช่น รูปแบบคำตอบผิด หรือซ่อมไม่สำเร็จ |
-| `build_repair_observation(...)` | ผลการซ่อม พร้อม **คำตัดสินของโค้ด** ก่อน/หลัง |
-
-```text
-{repair_observation}
-```
+| `build_refusal_observation(reason_th)` | ระบบปฏิเสธคำสั่งล่าสุด เช่น รูปแบบคำตอบผิด หรือเรียกเครื่องมือด้วยอาร์กิวเมนต์เดิมซ้ำ |
 
 ```text
 {refusal_observation}
 ```
 
-`build_repair_observation` ส่งทั้งประโยคใหม่และผลตรวจของโค้ดเสมอ — ถ้าส่งแค่ประโยค agent ต้องเชื่อการอ่าน
-ของตัวเองกับเกณฑ์ที่โค้ดเพิ่งตัดสินไป และแยกไม่ออกระหว่างประโยคที่มัน *ชอบ* กับประโยคที่ *ผ่าน*
+หลังซ่อม ประโยคใหม่ถูกตรวจรอบใหม่ทั้งรอบ และโค้ดเทียบ `hard_failures` ของประโยคก่อน/หลัง — ถ้าประโยคใหม่มีข้อผิดพลาดชนิด
+ที่ประโยคเดิมไม่มี (decision 20) จะทิ้งประโยคใหม่ ใช้ประโยคเดิมต่อ และนับว่าใช้สิทธิ์ซ่อมไปแล้ว
 
 ---
 
@@ -447,9 +499,16 @@ monotone: หดรายการที่ไม่ผ่านได้ ปร
 | **slot / wrapper** | `plo_synthesis` → `complete_plo_synthesis` (`max_retries=2`) |
 | **response model** | `_SingleDraftResponse` (โครงเดียวกับร่างแรก) |
 
-**นี่คือ invariant กลางของ SMART loop:** agent ตัดสินใจ *ว่าจะซ่อมไหม* และออกคำสั่ง ส่วนภาษาไทยที่
-ผู้ออกแบบจะยื่นต่อ อว. เขียนโดย slot `plo_synthesis` เสมอ · `RequestRepair` จึงไม่มี field
-`statement_th` เลย — ถ้ามี "การซ่อมไม่เคยถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่าง" จะห่างจากเท็จอยู่ field เดียว
+**นี่คือ invariant กลางของ SMART loop:** เสียงข้างมากของ judge run กับ `hard_failures` ตัดสินใจ *ว่าจะซ่อมไหม* และออกคำสั่ง ส่วนภาษาไทยที่
+ผู้ออกแบบจะยื่นต่อ อว. เขียนโดย slot `plo_synthesis` เสมอ · `Finish` จึงไม่มี field
+`statement_th` เลย (มีแค่ `repair_hint_th` สั้น ๆ) — ถ้ามี "การซ่อมไม่เคยถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่าง" จะห่างจากเท็จอยู่ field เดียว
+
+`instruction_th` สร้างโดย `build_vote_repair_instruction_th(...)` จากคำแนะนำของเกณฑ์ที่โค้ดตรวจไม่ผ่าน + ข้อที่ผู้ตรวจ
+เสียงข้างมากไม่ผ่าน (ไม่รวม A_actor/A_scope) + `repair_hint_th` ของผู้ตรวจตัวแทน ยาวไม่เกิน 800 ตัวอักษร · ตัวอย่าง:
+
+```text
+{repair_instruction}
+```
 
 prompt ซ่อมพกแค่คำสั่ง + ประโยคเดิม ไม่มีผลเครื่องมือ ไม่มี PLO พี่น้อง ไม่มีการท่องเกณฑ์ซ้ำ เพราะโมเดลที่
 เขียนคำวินิจฉัยไม่ใช่โมเดลที่เขียนคำแก้ `instruction_th` จึงต้องอยู่ได้ด้วยตัวเอง
@@ -463,13 +522,13 @@ prompt ซ่อมพกแค่คำสั่ง + ประโยคเด�
 | | |
 |---|---|
 | **builder** | `prompts/need_dedup.py` → `build_need_dedup_prompt(rows, *, program_context=None)` |
-| **ผู้เรียก** | `stages/need_dedup.py` → `find_duplicate_groups` (ครั้งเดียวต่อการรัน `plo_synthesis`) |
+| **ผู้เรียก** | `stages/need_dedup.py` → `find_duplicate_groups` (ครั้งเดียวต่อการรัน `need_combination` โดย `stages/need_merge.py`) |
 | **slot / wrapper** | `need_dedup` → `complete_need_dedup` · ปิดได้ด้วย `NEED_DEDUP_PROVIDER=` |
 | **response model** | `DedupAnswer` (`groups: [{{labels, reason_th}}]`) |
 | **cache** | ไม่มี |
 
 ส่งป้าย `N1`, `N2`, ... แทน `need_id` เพราะ UUID ยาว 36 ตัวที่โมเดลต้องคัดลอกให้ตรง · กฎโครงสร้างทุกข้อ
-(2-3 ข้อต่อกลุ่ม · KSEC เดียวกัน · หนึ่ง Need หนึ่งกลุ่ม) โค้ดตรวจซ้ำใน `accept_groups` และทิ้งทั้งกลุ่มที่ผิด
+(2-5 ข้อต่อกลุ่ม · หมวด KSEC ต่างกันได้ · หนึ่ง Need หนึ่งกลุ่ม) โค้ดตรวจซ้ำใน `accept_groups` และทิ้งทั้งกลุ่มที่ผิด
 ไม่ตัดสมาชิกออก · กฎข้อ 1 นิยาม "ซ้ำ" ว่างานหลักและวัตถุหลักเหมือนกัน และบอกชัดว่าหัวข้อ เครื่องมือ หรือแหล่งที่มาเดียวกันยังไม่พอ เพราะ Need ที่มาจาก
 เอกสารชุดเดียวกันใช้ evidence ร่วมกันสูงถึง 55% ทั้งที่ขอคนละเรื่อง
 
@@ -526,6 +585,73 @@ tag หรือระดับ Bloom ที่เก็บไว้จริง
 
 ```text
 {review_refusal}
+```
+
+---
+
+## 10. เขียนประโยค Need ที่รวมจากหลายข้อ
+
+| | |
+|---|---|
+| **builder** | `prompts/merged_need.py` → `build_merged_need_prompt(top_skill_names, ksec_tags, bloom_level, reason_th, *, program_context, skill_frequencies)` |
+| **ผู้เรียก** | `stages/need_merge.py` → `_write_merged` (หนึ่งครั้งต่อกลุ่มที่ขั้น dedup รับ) |
+| **slot / wrapper** | `need_combination` → `complete_need_combination` (`max_retries=3`) |
+| **response model** | `NeedStatement` (เดียวกับข้อ 4) |
+| **cache** | ไม่มี |
+
+กฎการเขียนประโยคใช้ชุดเดียวกับข้อ 4 (`NEED_SENTENCE_RULES_HEAD_TH` / `NEED_SENTENCE_RULES_TAIL_TH` /
+`NEED_SENTENCE_CONTEXT_RULE_TH` / `NEED_SPECIFICITY_CHECK_TH` / `NEED_SUPPORTING_INDICES_RULE_TH` ใน
+`prompts/summarize_need.py`) เพราะคำตอบถูกตรวจด้วย `NeedStatement` ตัวเดียวกัน · ที่ต่างคือ input: ไม่ใช่ชื่อสมาชิกทั้งกลุ่ม
+แต่เป็น**ทักษะเด่น** (คะแนน importance สูงสุด ไม่เกิน 7) พร้อมความถี่ของแต่ละทักษะ (จำนวนแถวสมาชิกที่รวมเป็นชื่อนั้น) และเหตุผลที่ขั้น dedup ให้ไว้ · หมวด KSEC ส่งเป็นรายการ
+เพราะความต้องการเดิมอยู่คนละหมวดได้ · ถ้าเขียนประโยคไม่สำเร็จ กลุ่มนั้นไม่ถูกรวม ความต้องการเดิมยังใช้งานอยู่
+
+{merged_need}
+
+---
+
+## 11. โน้ตส่งกลับ (ซ้ำซ้อน, ความสอดคล้อง, Bloom/กริยา, Need ที่ไม่ได้ใช้, หมวด KSEC ขาด)
+
+| | |
+|---|---|
+| **builder** | `prompts/plo_feedback.py` → `build_redundancy_redraft_note_th` / `build_alignment_redraft_note_th` / `build_bloom_redraft_note_th` / `build_unused_redraft_note_th` / `build_ksec_gap_note_th` |
+| **ผู้เรียก** | `stages/plo_feedback.py` → `_send_redundancy` / `_send_alignment` / `_send_bloom` / `_send_ksec_gap` / `_send_unused` |
+| **slot / wrapper** | ไม่เรียก LLM เอง — เป็นข้อความที่ไปต่อท้าย user message ของข้อ 5 ผ่าน `note_th` (slot `plo_synthesis`) |
+| **response model** | `_SingleDraftResponse` (เดียวกับข้อ 5) |
+| **cache** | ไม่มี |
+
+คืน string ไม่ใช่ messages: ระบุระดับ Bloom ที่ผู้ตรวจเสนอและยกเหตุผลของผู้ตรวจมาตรง ๆ · ถูกอ่านเป็นแนวทางเลือกถ้อยคำ
+ตาม `NOTE_POLICY_TH` ด่าน SMART ยังมีคำสุดท้าย จึงบันทึกทั้งระดับที่ขอและระดับที่ได้ไว้ใน `plo_feedback_actions`
+
+ทุกโน้ตไม่เกิน 900 ตัวอักษร ร่างเดิมอยู่ใต้ป้าย `ร่างเดิมที่ผู้ตรวจติ:` และทุกข้อความที่ยกมาผ่าน `mask_forbidden_words` (คำต้องห้ามเป็น `…`)
+
+Bloom / กริยา:
+
+```text
+{bloom_note}
+```
+
+ซ้ำซ้อน:
+
+```text
+{redundancy_note}
+```
+
+ความสอดคล้องกับ Need:
+
+```text
+{alignment_note}
+```
+
+Need ที่ยังไม่มี PLO:
+
+```text
+{unused_note}
+```
+
+หมวด KSEC ที่ชุดไม่มี PLO:
+
+```text
+{ksec_gap_note}
 ```
 
 ---

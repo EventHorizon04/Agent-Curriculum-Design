@@ -49,6 +49,7 @@ def _stub_repos(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(se.LLMCacheRepository, "get", AsyncMock(return_value=None))
     monkeypatch.setattr(se.LLMCacheRepository, "set", AsyncMock())
     monkeypatch.setattr(se.SkillRepository, "delete_by_program", AsyncMock(return_value=0))
+    monkeypatch.setattr(se.SkillGroupRepository, "delete_by_program", AsyncMock(return_value=0))
     monkeypatch.setattr(se.SkillRepository, "bulk_insert", AsyncMock())
 
 
@@ -60,7 +61,9 @@ class _ConcurrencyTracker:
         self.peak = 0
         self.calls = 0
 
-    async def __call__(self, response_model: Any, messages: list[dict[str, Any]]) -> Any:
+    async def __call__(
+        self, response_model: Any, messages: list[dict[str, Any]], **_kwargs: Any
+    ) -> Any:
         self.calls += 1
         self.live += 1
         self.peak = max(self.peak, self.live)
@@ -140,7 +143,7 @@ async def test_one_failing_item_does_not_sink_the_others(
     """gather(return_exceptions=False) would abort the whole stage on the first
     provider hiccup. Each item's failure has to stay its own."""
 
-    async def flaky(response_model: Any, messages: list[dict[str, Any]]) -> Any:
+    async def flaky(response_model: Any, messages: list[dict[str, Any]], **_kwargs: Any) -> Any:
         n = int(messages[-1]["content"].split("ลำดับที่ ")[1].split(" ")[0])
         if n == 2:
             raise RuntimeError("provider said no")
@@ -157,3 +160,36 @@ async def test_one_failing_item_does_not_sink_the_others(
     )
 
     assert [s["source_evidence_id"] for s in state["extracted_skills"]] == ["E1", "E3", "E4"]
+
+
+async def test_run_drops_stale_skill_groups(
+    monkeypatch: pytest.MonkeyPatch, _stub_repos: None
+) -> None:
+    """Groups point at skill ids that run() deletes. They go first, before any
+    skill row is touched, so a failed insert cannot leave groups pointing at
+    deleted skills and a failed grouping leaves Agent 2 refusing."""
+    monkeypatch.setattr(se, "complete_extraction", _ConcurrencyTracker())
+    order: list[str] = []
+
+    def recording(name: str, result: int) -> AsyncMock:
+        async def call(*_: Any) -> int:
+            order.append(name)
+            return result
+
+        return AsyncMock(side_effect=call)
+
+    drop = recording("drop_groups", 3)
+    monkeypatch.setattr(se.SkillGroupRepository, "delete_by_program", drop)
+    monkeypatch.setattr(se.SkillRepository, "delete_by_program", recording("delete_skills", 0))
+    monkeypatch.setattr(se.SkillRepository, "bulk_insert", recording("insert_skills", 0))
+
+    await se.run(
+        {
+            "program_id": "cs-test",
+            "classified_evidence": [_evidence(1)],
+            "metadata": {"field": "วิทยาการคอมพิวเตอร์"},
+        }
+    )
+
+    drop.assert_awaited_once_with("cs-test")
+    assert order == ["drop_groups", "delete_skills", "insert_skills"]

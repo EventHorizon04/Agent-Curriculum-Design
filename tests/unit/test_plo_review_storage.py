@@ -11,6 +11,7 @@ import pytest
 from curriculum_agent.data.orm import PLOReviewTable
 from curriculum_agent.data.repositories import PLOReviewRepository
 from curriculum_agent.models import (
+    AlignmentFinding,
     BloomFinding,
     BloomHistogram,
     BloomLevel,
@@ -85,8 +86,15 @@ _FULL_REVIEW = _REVIEW.model_copy(
                 plo_id="PLO5",
                 declared=BloomLevel.CREATE,
                 suggested_level=BloomLevel.APPLY,
+                suggested_verb_th="ประยุกต์ใช้",
                 reason_th="ปริญญาตรี",
+                suggestion_th="ใช้กริยาระดับประยุกต์",
                 agreed_runs=2,
+            )
+        ],
+        "alignment": [
+            AlignmentFinding(
+                plo_id="PLO2", reason_th="ไม่ตรง Need", suggestion_th="ปรับให้ตรง", agreed_runs=2
             )
         ],
         "coverage_th": "ครบ K S",
