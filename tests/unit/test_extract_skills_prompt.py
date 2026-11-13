@@ -13,6 +13,15 @@ def test_ksec_instruction_offers_four_tags_not_the_old_five():
     assert "SS" not in system
 
 
+def test_ksec_rule_decides_from_the_head_of_the_name_and_precedes_the_scope_rule():
+    """Without a line between S and E/C, task-plus-attitude names landed in E/C."""
+    system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
+
+    rule = "ให้ตัดสินจาก 'แก่น' ของชื่อทักษะ"
+    assert rule in system
+    assert system.index(rule) < system.index("ไม่เข้าข่ายสาขาวิชา")
+
+
 def test_schema_asks_for_is_field_relevant():
     system = build_extract_skills_prompt("ข้อความ", "general")[0]["content"]
 

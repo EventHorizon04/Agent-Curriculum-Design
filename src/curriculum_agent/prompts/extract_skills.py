@@ -48,6 +48,16 @@ def build_extract_skills_prompt(
       in the user header. The rule is back; what the episode actually measured is
       that single runs of this eval cannot resolve a difference this small.
 
+    The `ksec_category` rule (decide from the head of the skill name, not its
+    modifier) exists because the prompt used to give four labels and "pick
+    exactly one" with no line between S and E/C, so task-plus-attitude names
+    (e.g. certifying a legal translation "responsibly") landed in E/C and the EC
+    groups came out as hybrids that read like their S neighbours. Measured A/B
+    2026-11-13 (`.scratch/reports/2026-11-13-ec-fold-measure.md` §3): S names
+    sitting among E/C-tagged rows went 18 of 51 to 9 of 49 under blind judgement,
+    skill count and grounding unchanged. Spread between repeats is as large as
+    the arm difference, and certification names still sometimes land in E.
+
     `field_th` and `program_name_th` are what make the "no off-field skills" rule
     answerable — before they existed the model was told to exclude skills outside
     the program's field without being told what the field was. They default to
@@ -95,6 +105,14 @@ def build_extract_skills_prompt(
         "ห้ามเรียบเรียงใหม่ ห้ามแต่งเพิ่ม ถ้าไม่มีข้อความรองรับ ห้ามเสนอทักษะนั้น\n"
         "- evidence_span_th ต้องเป็นวลีที่สมบูรณ์ ยาวอย่างน้อยประมาณ 12 ตัวอักษร "
         "คัดลอกตรงตัวจาก evidence ห้ามตัดมาเป็นเศษคำหรืออักขระเดี่ยว ๆ\n"
+        "- ksec_category ให้ตัดสินจาก 'แก่น' ของชื่อทักษะ ไม่ใช่จากคำขยาย: "
+        "ถ้าแก่นเป็นงานของวิชาชีพที่ลงมือทำหรือผลิตผลงานได้ ให้เป็น S "
+        "แม้จะมีคำขยายเชิงเจตคติหรือคุณภาพกำกับ เช่น 'อย่างมีจริยธรรม' "
+        "'ด้วยความรับผิดชอบ' 'อย่างแม่นยำ' งานประเมิน ตรวจสอบ "
+        "หรือรับรองคุณภาพของผลงานก็เป็น S; ให้เป็น E "
+        "เฉพาะเมื่อแก่นเป็นหลักคุณธรรมจริยธรรมหรือจรรยาบรรณเอง; ให้เป็น C "
+        "เฉพาะเมื่อแก่นเป็นคุณลักษณะของตัวบุคคล เช่น การปรับตัว ภาวะผู้นำ "
+        "การเรียนรู้ตลอดชีวิต\n"
         "- ทักษะที่อ่านแล้วไม่เข้าข่ายสาขาวิชาของหลักสูตรเลย ให้คงไว้แต่ตั้ง "
         "is_field_relevant = false ห้ามตัดทิ้งเอง ผู้ออกแบบหลักสูตรจะเป็นผู้ตัดสิน\n"
         # Wording verbatim from the prototype that measured 56% recall at 3% false
