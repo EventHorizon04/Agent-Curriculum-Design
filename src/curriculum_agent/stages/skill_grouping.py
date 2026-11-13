@@ -139,6 +139,11 @@ async def build_skill_groups(
     it twice.
     """
     groups: list[SkillGroup] = []
+    if not settings.llm_cache_enabled:
+        logger.info(
+            "skill_grouping: LLM cache disabled (LLM_CACHE_ENABLED=false), "
+            "every clustering call goes to the model"
+        )
     buckets = bucket_by_ksec(skills)
 
     graduate_names = {

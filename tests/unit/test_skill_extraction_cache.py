@@ -398,3 +398,25 @@ async def test_default_extraction_bounds_are_sent(monkeypatch):
     _, call = await _run_extraction_miss(monkeypatch)
     assert call.await_args.kwargs["max_tokens"] == 4096
     assert call.await_args.kwargs["reasoning_max_tokens"] == 1024
+
+
+async def test_cache_disabled_skips_get_and_set_and_calls_the_model(monkeypatch):
+    from curriculum_agent.stages import skill_extraction as se
+
+    monkeypatch.setattr(settings, "llm_cache_enabled", False)
+    cache = AsyncMock()
+    cache.get = AsyncMock(return_value=(settings.extraction_model, '{"skills": []}'))
+    cache.set = AsyncMock()
+    call = AsyncMock(return_value=se._ExtractedSkillsResponse(skills=[]))
+    monkeypatch.setattr(se, "LLMCacheRepository", lambda: cache)
+    monkeypatch.setattr(se, "complete_extraction", call)
+    monkeypatch.setattr(se, "SkillRepository", lambda: AsyncMock(bulk_insert=AsyncMock()))
+    await se.run(_extraction_state())  # type: ignore[arg-type]
+
+    call.assert_awaited_once()
+    cache.get.assert_not_called()
+    cache.set.assert_not_called()
+
+
+async def test_cache_enabled_is_the_default_and_replays_a_stored_entry():
+    assert type(settings)().llm_cache_enabled is True

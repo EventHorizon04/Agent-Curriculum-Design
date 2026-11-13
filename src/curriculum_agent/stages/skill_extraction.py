@@ -333,6 +333,11 @@ async def run(state: AgentState) -> AgentState:
     dropped_not_found = 0
     collapsed_duplicates = 0
     _cache = LLMCacheRepository()
+    if not settings.llm_cache_enabled:
+        logger.info(
+            "skill_extraction: LLM cache disabled (LLM_CACHE_ENABLED=false), "
+            "every window goes to the model"
+        )
 
     evidences = [StakeholderEvidence.model_validate(d) for d in classified]
     # One call per window of evidence text, all in flight together under a
@@ -388,7 +393,7 @@ async def run(state: AgentState) -> AgentState:
         cache_key = hashlib.sha256(key_text.encode()).hexdigest()
 
         result: _ExtractedSkillsResponse | None = None
-        cached = await _cache.get(cache_key)
+        cached = await _cache.get(cache_key) if settings.llm_cache_enabled else None
         if cached is not None and cached[0] == settings.extraction_model:
             try:
                 result = _ExtractedSkillsResponse.model_validate_json(cached[1])
@@ -415,13 +420,14 @@ async def run(state: AgentState) -> AgentState:
                     result = await complete_extraction(
                         _ExtractedSkillsResponse, messages, **_bound_kwargs()
                     )
-                    await _cache.set(
-                        cache_key,
-                        settings.extraction_model,
-                        result.model_dump_json(),
-                        kind=EXTRACTION,
-                        contract=_EXTRACTION_CONTRACT,
-                    )
+                    if settings.llm_cache_enabled:
+                        await _cache.set(
+                            cache_key,
+                            settings.extraction_model,
+                            result.model_dump_json(),
+                            kind=EXTRACTION,
+                            contract=_EXTRACTION_CONTRACT,
+                        )
                 except Exception as exc:
                     logger.warning(
                         f"LLM skill extraction failed for {evidence.evidence_id} "

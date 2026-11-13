@@ -77,6 +77,13 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   `created_at` is never touched on overwrite, and that is deliberate: everything
   deciding the payload is in the key, so a second write stores the value already
   there and the first computation is the row's real age.
+- **`LLM_CACHE_ENABLED=false` turns the response cache off, for research runs.**
+  Default `true` (`settings.llm_cache_enabled`). The key covers the input text,
+  program name and field, model and contract, so repeated runs on copies of one
+  program replay the first run's answers (2026-11-13: runs 2 and 3 made 0
+  extraction and 0 clustering calls), which flatters run-to-run stability. Off, both
+  call sites (`skill_extraction`, `llm_clustering`) skip the read **and** the write;
+  one INFO line per stage run says so. Keys, fingerprint and `prune_cache` are untouched.
 - **Every provider response is recorded, through instructor's hooks, and the recorder
   never fails a call** (phase 5). `_ensure_usage_hooks` registers `completion:kwargs`,
   `completion:response`, `completion:error` and `parse:error` once per cached client;

@@ -263,7 +263,7 @@ async def cluster_skill_names(
             ]
         ).encode()
     ).hexdigest()
-    cached = await cache.get(cache_key)
+    cached = await cache.get(cache_key) if settings.llm_cache_enabled else None
     if cached is not None and cached[0] == settings.clustering_model:
         try:
             groups = [[int(i) for i in g] for g in json.loads(cached[1])]
@@ -285,11 +285,12 @@ async def cluster_skill_names(
     else:
         groups = await _cluster_map_reduce(names, target_clusters, program_context, ksec)
 
-    await cache.set(
-        cache_key,
-        settings.clustering_model,
-        json.dumps(groups),
-        kind=CACHE_KIND_CLUSTERING,
-        contract=_CLUSTERING_CONTRACT,
-    )
+    if settings.llm_cache_enabled:
+        await cache.set(
+            cache_key,
+            settings.clustering_model,
+            json.dumps(groups),
+            kind=CACHE_KIND_CLUSTERING,
+            contract=_CLUSTERING_CONTRACT,
+        )
     return groups

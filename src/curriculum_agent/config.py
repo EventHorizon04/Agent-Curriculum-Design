@@ -393,6 +393,13 @@ class Settings(BaseSettings):
     # and the 4096 cap is unmeasured: re-measure before moving extraction there.
     extraction_max_tokens: int = Field(default=4096, ge=0)
     extraction_reasoning_max_tokens: int = Field(default=1024, ge=0)
+    # The extraction and clustering response cache (`llm_cache`). Its key is the
+    # input text, program name and field, model and prompt contract, so repeated
+    # runs on copies of one program replay the first run's answers: measured
+    # 2026-11-13, runs 2 and 3 made 0 extraction and 0 clustering calls, which makes
+    # run-to-run stability look better than the system is. False skips every cache
+    # read and write at both call sites (LLM_CACHE_ENABLED=false for research runs).
+    llm_cache_enabled: bool = True
     # Accepted only to be refused — see _RENAMED_SLOT_SETTINGS and
     # _reject_renamed_slot_settings. They hold no value the program reads, and
     # `exclude=True` keeps them out of any dump of this object.
