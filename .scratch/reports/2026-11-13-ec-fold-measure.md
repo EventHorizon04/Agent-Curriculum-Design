@@ -40,3 +40,32 @@ The fold sits on the threshold. F1 was one of the roughly three in ten runs wher
 ## Next step, if the designer wants it
 
 An extraction-prompt rule for the S vs E/C line (the head of the name decides: a piece of the profession's work is S, a trait or value is E/C; an attitude adverb does not move a task), measured A/B the way the EC rule was: tags on the same evidence, then groups, then whether the EC Needs still fold. The institutional slogans in C are a separate question for the graduate-capability flag.
+
+## 3. Extraction A/B: an S vs E/C rule (same day)
+
+- **Setup:** the 14 evidence windows of `program` (copy DB), shipped prompt against the shipped prompt plus one rule, 3 repeats per arm, direct calls (no cache), default bounds. No call failed. No project code changed.
+- **Rule (candidate):** judge `ksec_category` by the head of the name, not its modifier. Professional work, including evaluating, checking or certifying work, is S even with an attitude or quality modifier; E only when the head is an ethical principle or code; C only when the head is a personal trait.
+- **Counts, grounded graduate-side rows over 3 repeats:**
+
+| arm | K | S | E | C | total |
+|---|---|---|---|---|---|
+| control | 16 | 134 | 18 | 33 | 201 |
+| candidate | 13 | 148 | 14 | 35 | 210 |
+
+- **Blind judgement** of the 89 distinct names tagged E or C in either arm (Fable 5.2 subagent, shuffled, arm hidden, given the rule's line as the standard):
+
+| E/C-tagged rows judged as | control (51) | candidate (49) |
+|---|---|---|
+| really E or C | 18 | 27 |
+| S | 18 (35%) | 9 (18%) |
+| mixed | 1 | 0 |
+| not a graduate capability | 14 | 13 |
+
+- Per repeat, S among E/C rows: control 10, 4, 4; candidate 1, 2, 6.
+- 55 of 89 names were marked grey.
+
+**Reading:**
+- The rule about halves the S names sitting in E/C and costs nothing visible: same skill count, same grounding.
+- It is not a clean fix. The certification names still land in E in the candidate arm, and the repeat-to-repeat spread (1 to 6) is as large as the difference between arms. Three repeats and one assessor.
+- It does nothing for the institutional slogans in C (14 against 13). That is the graduate-capability flag's job.
+- Not measured: whether the EC Needs fold less often downstream. That needs full Agent 1+2 runs with the rule in code.
