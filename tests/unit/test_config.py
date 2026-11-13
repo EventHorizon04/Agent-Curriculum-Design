@@ -188,7 +188,7 @@ def test_the_validation_budgets_are_bounded_by_default():
     assert s.validation_timeout_seconds == 600
     assert s.validation_runs == 5
     # Loops, not calls: a loop is serial, so N loops is N in-flight calls.
-    assert s.validation_max_concurrent_plos == 3
+    assert s.validation_max_concurrent_plos == 8
 
 
 def test_an_empty_validation_provider_is_the_kill_switch():

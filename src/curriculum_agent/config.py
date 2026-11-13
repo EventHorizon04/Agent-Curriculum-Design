@@ -330,8 +330,10 @@ class Settings(BaseSettings):
     # A loop is serial (turn n+1 needs turn n's observation), so N concurrent
     # loops is N in-flight calls, and bounding here keeps that provable. It also
     # keeps a deployment that raises the per-call ceiling for extraction from
-    # silently multiplying the validation bill.
-    validation_max_concurrent_plos: int = 3
+    # silently multiplying the validation bill. 8 lets a full core set (ceiling
+    # 10) validate nearly at once; the judge runs inside still share
+    # llm_max_concurrency (15), so this adds queueing room, not calls in flight.
+    validation_max_concurrent_plos: int = 8
     # Judge runs per round. A soft criterion counts as failed only when a majority
     # (runs // 2 + 1) of the successful runs failed it; 1 is the single-run agent.
     validation_runs: int = Field(default=5, ge=1)
@@ -407,9 +409,14 @@ class Settings(BaseSettings):
     # value — "ollama" is just a non-empty placeholder the client requires.
     llm_api_key: SecretStr = SecretStr("ollama")
     # Ceiling on in-flight LLM calls when a stage fans out over a corpus. Sized
-    # for hosted providers' rate limits; a local Ollama can take more, but the
-    # gain is small when one model serves the calls anyway.
-    llm_max_concurrency: int = 5
+    # for OpenRouter (every slot runs there on this branch); a local Ollama can
+    # take more, but the gain is small when one model serves the calls anyway.
+    # It is also the shared judge semaphore in `smart_agent._judge_semaphore`,
+    # which wraps a whole multi-turn judge run. Measured 2026-11-11
+    # (`program-run-5`): at 5, synthesis ran 125 validation calls (1,801 s of
+    # call time) in 443 s wall, about 4 in flight. Raising it changes wall time
+    # only, not token cost.
+    llm_max_concurrency: int = 15
     # Serve the built React bundle from this process, making the API and the UI
     # one origin. False in dev, where Vite serves the UI on 5173 and proxies here.
     serve_frontend: bool = False
