@@ -481,6 +481,19 @@ class NeedRepository:
             await session.commit()
             return result.rowcount
 
+    async def replace_by_program(self, program_id: str, needs: list[Need]) -> None:
+        """Delete this program's Needs and insert `needs`, in one session and one commit.
+
+        `delete_by_program` + `bulk_insert` are two commits: a failure between them
+        leaves the program with no Needs. Here a failed insert rolls the delete back.
+        """
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(NeedTable).where(NeedTable.program_id == program_id))
+            for need in needs:
+                data = _fix_datetimes(need.model_dump(mode="json"), NeedTable)
+                session.add(NeedTable(**data))
+            await session.commit()
+
     async def has_any(self, program_id: str) -> bool:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
