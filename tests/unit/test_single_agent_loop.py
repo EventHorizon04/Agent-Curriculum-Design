@@ -403,3 +403,66 @@ def test_history_add_user_note_folds_into_a_user_message() -> None:
     history.add_assistant("{}")
     history.add_user_note("m")
     assert history.messages()[-1] == {"role": "user", "content": "m"}
+
+
+def _outage() -> InstructorRetryException:
+    import httpx
+    import openai
+
+    request = httpx.Request("POST", "http://x/v1/chat/completions")
+    cause = openai.RateLimitError(
+        "slow down", response=httpx.Response(429, request=request), body=None
+    )
+    return InstructorRetryException(
+        cause, n_attempts=2, total_usage=0, messages=[], create_kwargs={}
+    )
+
+
+async def test_provider_outage_is_not_a_malformed_step(
+    fake: FakeLLM, handler: FakeHandler
+) -> None:
+    fake.script(_outage(), _outage(), _finish())
+    with pytest.raises(InstructorRetryException):
+        await run_single_agent(handler)
+    assert fake.calls == 1  # no re-ask, no closing call
+
+
+async def test_schema_failures_still_count_as_malformed(
+    fake: FakeLLM, handler: FakeHandler
+) -> None:
+    fake.script(_malformed(), _malformed())
+    assert (await run_single_agent(handler)).stop_reason == "malformed"
+
+
+def test_one_shot_overrides_replace_the_half_budgets(
+    fake: FakeLLM, handler: FakeHandler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def go() -> Any:
+        fake.script(*[_tool("bloom_lookup", verb_th=f"กริยา{i}") for i in range(6)])
+        fake.closing(_finish())
+        return await run_single_agent(handler, max_turns=3, timeout_seconds=50)
+
+    out = asyncio.run(go())
+    assert (out.stop_reason, out.turns) == ("turn_cap", 3)
+
+
+async def test_every_part_of_dropped_evidence_can_be_reread(handler: FakeHandler) -> None:
+    handler.tool_ctx.part_chars = 100
+    history = History([{"role": "system", "content": "s"}])
+    state = loop._State(history, 10)
+    seen: set[str] = set()
+
+    def read(part: int) -> str:
+        text, eid = loop._tool_observation(
+            handler, state, seen, _tool("get_evidence", evidence_id="e1", part=part)
+        )
+        history.add_observation(text, evidence_id=eid, part=part)
+        return text
+
+    read(1)
+    read(2)
+    history.drop_oldest_evidence(lambda eid: f"[{eid}]")
+    history.drop_oldest_evidence(lambda eid: f"[{eid}]")
+    assert "ระบบปฏิเสธ" not in read(1)
+    assert "ระบบปฏิเสธ" not in read(2)
+    assert "ระบบปฏิเสธ" in read(1)

@@ -20,8 +20,9 @@ from typing import Annotated, Any, Literal, Protocol
 
 from instructor.core.exceptions import IncompleteOutputException, InstructorRetryException
 from loguru import logger
+from openai import APIError
 from pydantic import BaseModel, Field, ValidationError
-from tenacity import AsyncRetrying, retry_if_not_exception_type, stop_after_attempt
+from tenacity import AsyncRetrying, RetryError, retry_if_not_exception_type, stop_after_attempt
 
 from curriculum_agent.config import settings
 from curriculum_agent.llm import complete_single_agent
@@ -167,10 +168,11 @@ class History:
 
     def __init__(self, initial: list[dict[str, str]]) -> None:
         self._messages: list[dict[str, str]] = [dict(m) for m in initial]
-        self._evidence_at: dict[int, str] = {}
+        self._evidence_at: dict[int, tuple[str, int]] = {}
         self._dropped: set[str] = set()
-        # Ids whose text is out of history right now; a re-read puts it back.
-        self._absent: set[str] = set()
+        # (id, part) pairs whose text is out of history right now; a re-read puts
+        # that part back. Per part because a repeat is judged per part too.
+        self._absent: set[tuple[str, int]] = set()
 
     def messages(self) -> list[dict[str, str]]:
         return self._messages
@@ -181,10 +183,12 @@ class History:
     def add_assistant(self, step_json: str) -> None:
         self._messages.append({"role": "assistant", "content": step_json})
 
-    def add_observation(self, text: str, *, evidence_id: str | None = None) -> None:
+    def add_observation(
+        self, text: str, *, evidence_id: str | None = None, part: int = 1
+    ) -> None:
         if evidence_id is not None:
-            self._evidence_at[len(self._messages)] = evidence_id
-            self._absent.discard(evidence_id)
+            self._evidence_at[len(self._messages)] = (evidence_id, part)
+            self._absent.discard((evidence_id, part))
         self._messages.append({"role": "user", "content": text})
 
     def drop_oldest_evidence(self, marker_for: Callable[[str], str]) -> int | None:
@@ -192,11 +196,11 @@ class History:
         if not self._evidence_at:
             return None
         index = min(self._evidence_at)
-        evidence_id = self._evidence_at.pop(index)
+        evidence_id, part = self._evidence_at.pop(index)
         before = len(self._messages[index]["content"])
         self._messages[index]["content"] = marker_for(evidence_id)
         self._dropped.add(evidence_id)
-        self._absent.add(evidence_id)
+        self._absent.add((evidence_id, part))
         return before - len(self._messages[index]["content"])
 
     def add_user_note(self, text: str) -> None:
@@ -219,8 +223,8 @@ class History:
         return self._dropped
 
     @property
-    def absent_evidence_ids(self) -> set[str]:
-        """Items whose text is out of history now, so a read of them is not a repeat."""
+    def absent_evidence_parts(self) -> set[tuple[str, int]]:
+        """(item, part) pairs whose text is out of history now, so a read of them is not a repeat."""
         return self._absent
 
 
@@ -235,8 +239,9 @@ def _step_retrying() -> AsyncRetrying:
 class _State:
     """What the loop knows, outside the timeout scope so a timeout can still report it."""
 
-    def __init__(self, history: History) -> None:
+    def __init__(self, history: History, max_turns: int) -> None:
         self.history = history
+        self.max_turns = max_turns
         self.turns = 0
         self.opened: list[str] = []
         self.reasoning_bounded = False
@@ -268,11 +273,40 @@ async def _ask(response_model: type[Any], state: _State, sink: list[int]) -> Any
     return await ask(_MAX_REASONING_TOKENS)
 
 
-def _with_turns_left(text: str, turn: int) -> str:
-    left = settings.single_agent_max_turns - turn
+def _with_turns_left(text: str, turn: int, max_turns: int) -> str:
+    left = max_turns - turn
     if 1 <= left <= _TURNS_LEFT_WARNING:
         return f"{text}\n{build_turns_left_note(left)}"
     return text
+
+
+def _provider_error(exc: BaseException) -> BaseException | None:
+    """The `openai.APIError` an InstructorRetryException wrapped, if any.
+
+    Instructor raises the same exception for a schema miss and for a 429, a 5xx,
+    a timeout or a context-length refusal, wrapping the last error rather than
+    telling them apart; the wrapped chain is the only place to read which it was.
+    Walks args, chaining, the failed attempts and tenacity's last attempt.
+    """
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if isinstance(current, APIError):
+            return current
+        stack.extend(a for a in current.args if isinstance(a, BaseException))
+        stack.extend(nxt for nxt in (current.__cause__, current.__context__) if nxt is not None)
+        for attempt in getattr(current, "failed_attempts", None) or ():
+            if isinstance(attempt.exception, BaseException):
+                stack.append(attempt.exception)
+        if isinstance(current, RetryError):
+            last = current.last_attempt.exception()
+            if last is not None:
+                stack.append(last)
+    return None
 
 
 def _fingerprint(call: CallTool) -> str:
@@ -321,12 +355,21 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
     history = state.history
     seen_calls: set[str] = set()
     malformed = 0
-    for turn in range(1, settings.single_agent_max_turns + 1):
+    for turn in range(1, state.max_turns + 1):
         state.turns = turn
         sink: list[int] = []
         try:
             step: SingleStep = await _ask(SingleStep, state, sink)
         except (InstructorRetryException, ValidationError, IncompleteOutputException) as exc:
+            provider_error = _provider_error(exc)
+            if provider_error is not None:
+                # An outage is not a malformed step: ending the loop as "malformed"
+                # would let a partial set replace good rows. Fail the job instead.
+                logger.error(
+                    f"  single agent turn {turn}: provider error "
+                    f"({type(provider_error).__name__}), not a malformed step"
+                )
+                raise
             malformed += 1
             logger.warning(
                 f"  single agent turn {turn}: malformed step ({malformed}/{_MAX_MALFORMED}): "
@@ -335,7 +378,7 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
             if malformed >= _MAX_MALFORMED:
                 await _closing(state)
                 return "malformed"
-            history.add_user_note(_with_turns_left(build_refusal("รูปแบบคำตอบไม่ถูกต้อง"), turn))
+            history.add_user_note(_with_turns_left(build_refusal("รูปแบบคำตอบไม่ถูกต้อง"), turn, state.max_turns))
             continue
         malformed = 0
 
@@ -348,9 +391,13 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
             return "finished"
         if isinstance(action, CallTool):
             text, evidence_id = _tool_observation(handler, state, seen_calls, action)
-            history.add_observation(_with_turns_left(text, turn), evidence_id=evidence_id)
+            history.add_observation(
+                _with_turns_left(text, turn, state.max_turns),
+                evidence_id=evidence_id,
+                part=action.part,
+            )
         else:
-            history.add_observation(_with_turns_left(handler.handle(action), turn))
+            history.add_observation(_with_turns_left(handler.handle(action), turn, state.max_turns))
             # What these tools answer depends on what the handler holds, which
             # this action may have changed: asking again is not a repeat.
             seen_calls.difference_update(
@@ -360,7 +407,7 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
             logger.warning(f"  single agent turn {turn}: context full, nothing left to drop")
             return "context_full"
 
-    state.turns = settings.single_agent_max_turns
+    state.turns = state.max_turns
     await _closing(state)
     return "turn_cap"
 
@@ -371,7 +418,8 @@ def _tool_observation(
     """(observation text, evidence id when the text is raw evidence)."""
     fingerprint = _fingerprint(call)
     rereading_dropped = (
-        call.tool == "get_evidence" and call.evidence_id in state.history.absent_evidence_ids
+        call.tool == "get_evidence"
+        and (call.evidence_id or "", call.part) in state.history.absent_evidence_parts
     )
     if fingerprint in seen_calls and not rereading_dropped:
         return (
@@ -387,18 +435,30 @@ def _tool_observation(
     return build_observation(call.tool, result.payload_json), result.evidence_id
 
 
-async def run_single_agent(handler: TaskHandler) -> LoopOutcome:
-    """Run one task to a stop reason. LLM errors other than a malformed step propagate."""
+async def run_single_agent(
+    handler: TaskHandler,
+    *,
+    max_turns: int | None = None,
+    timeout_seconds: float | None = None,
+) -> LoopOutcome:
+    """Run one task to a stop reason. LLM errors other than a malformed step propagate.
+
+    `max_turns` / `timeout_seconds` override the half budgets for the one-shot
+    designer actions, which run inside an HTTP request.
+    """
     state = _State(
         History(
             [
                 {"role": "system", "content": build_single_agent_system()},
                 {"role": "user", "content": handler.opening_message()},
             ]
-        )
+        ),
+        max_turns if max_turns is not None else settings.single_agent_max_turns,
     )
     reason: StopReason
-    scope = asyncio.timeout(settings.single_agent_timeout_seconds)
+    scope = asyncio.timeout(
+        timeout_seconds if timeout_seconds is not None else settings.single_agent_timeout_seconds
+    )
     try:
         async with scope:
             reason = await _run(handler, state)
