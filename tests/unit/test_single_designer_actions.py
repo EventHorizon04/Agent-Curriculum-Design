@@ -16,6 +16,7 @@ from fastapi.testclient import TestClient
 from curriculum_agent.api.main import app
 from curriculum_agent.api.routes import needs as needs_route
 from curriculum_agent.api.routes import plos as plos_route
+from curriculum_agent.config import settings
 from curriculum_agent.models import (
     PLO,
     BloomLevel,
@@ -33,7 +34,6 @@ from curriculum_agent.stages.single_agent_loop import (
     SavePLO,
     StopReason,
 )
-from curriculum_agent.config import settings
 from curriculum_agent.stages.single_needs import MergeNeedHandler, merge_single_needs
 from curriculum_agent.stages.single_plos import OnePloHandler, draft_single_plo
 from tests.support.jobs import InMemoryJobs

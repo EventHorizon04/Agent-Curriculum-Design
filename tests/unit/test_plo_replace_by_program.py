@@ -47,7 +47,9 @@ async def test_replace_by_program_is_one_session_and_one_commit(
         return session
 
     monkeypatch.setattr(repositories, "AsyncSessionLocal", factory)
-    monkeypatch.setattr(repositories, "_plo_row_data", lambda plo: {"program_id": "p", "plo_id": plo})
+    monkeypatch.setattr(
+        repositories, "_plo_row_data", lambda plo: {"program_id": "p", "plo_id": plo}
+    )
     removed = await PLORepository().replace_by_program("p", ["a", "b"])  # type: ignore[list-item]
     assert removed == 3 and len(sessions) == 1 and session.commits == 1
     # superseded, feedback actions, report, PLOs — deleted before the inserts

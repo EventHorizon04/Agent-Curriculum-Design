@@ -224,7 +224,7 @@ class History:
 
     @property
     def absent_evidence_parts(self) -> set[tuple[str, int]]:
-        """(item, part) pairs whose text is out of history now, so a read of them is not a repeat."""
+        """(item, part) pairs out of history now, so reading one again is not a repeat."""
         return self._absent
 
 
@@ -378,7 +378,8 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
             if malformed >= _MAX_MALFORMED:
                 await _closing(state)
                 return "malformed"
-            history.add_user_note(_with_turns_left(build_refusal("รูปแบบคำตอบไม่ถูกต้อง"), turn, state.max_turns))
+            refusal = build_refusal("รูปแบบคำตอบไม่ถูกต้อง")
+            history.add_user_note(_with_turns_left(refusal, turn, state.max_turns))
             continue
         malformed = 0
 
