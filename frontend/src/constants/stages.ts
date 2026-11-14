@@ -71,6 +71,36 @@ export const STAGES: StageDef[] = [
   },
 ]
 
+/** How a program is run: the four-agent pipeline, or one agent doing every stage. */
+export type AgentMode = 'multi' | 'single'
+
+export const AGENT_MODE_LABEL_TH: Record<AgentMode, string> = {
+  multi: 'หลายตัวแทน',
+  single: 'ตัวแทนเดียว',
+}
+
+/** The rail for one mode. A single-agent program has no skill stage and no
+ *  separate review stage: its PLO step is the checkpoint, and carries the gate
+ *  note the review stage carries in the multi-agent rail. Ordinals are renumbered
+ *  so the rail still counts 1..n. */
+export function stagesFor(mode: AgentMode): StageDef[] {
+  if (mode === 'multi') return STAGES
+  const review = STAGES.find((s) => s.key === 'plo_review')
+  return STAGES.filter((s) => s.key !== 'skill_extraction' && s.key !== 'plo_review').map(
+    (s, i) => ({
+      ...s,
+      ordinal: i + 1,
+      ...(s.key === 'plo_synthesis'
+        ? {
+            label: 'ตรวจ PLO',
+            summary: 'ตัวแทนเขียน PLO จาก Need ที่อนุมัติ แล้วผู้ออกแบบตรวจและอนุมัติ',
+            gateNote: review?.gateNote,
+          }
+        : {}),
+    }),
+  )
+}
+
 export const STAGE_LABELS: Record<string, string> = Object.fromEntries(
   STAGES.map((s) => [s.key, `ขั้นที่ ${s.ordinal}: ${s.label}`])
 )
@@ -80,9 +110,9 @@ export const STAGE_ROUTES: Record<string, string> = Object.fromEntries(
 )
 
 /** How far a program has reached. -1 means it has not started a stage yet. */
-export function stageIndex(stageKey: string | null): number {
+export function stageIndex(stageKey: string | null, stages: StageDef[] = STAGES): number {
   if (!stageKey) return -1
-  return STAGES.findIndex((s) => s.key === stageKey)
+  return stages.findIndex((s) => s.key === stageKey)
 }
 
 export const SESSION_STATUS_LABELS: Record<string, string> = {
@@ -91,4 +121,14 @@ export const SESSION_STATUS_LABELS: Record<string, string> = {
   completed: 'เสร็จสิ้น',
   rejected: 'ถูกปฏิเสธ',
   failed: 'ล้มเหลว',
+}
+
+/** Why a single-agent run ended, for every reason except finishing. The agent
+ *  stopped on its own limit rather than on its own judgement, so what it wrote
+ *  may be partial. */
+export const SINGLE_STOP_REASON_TH: Record<string, string> = {
+  turn_cap: 'ตัวแทนใช้รอบครบกำหนดก่อนจบงาน',
+  timeout: 'หมดเวลา',
+  context_full: 'ข้อมูลเกินความจุของโมเดล',
+  malformed: 'โมเดลตอบผิดรูปแบบซ้ำ',
 }

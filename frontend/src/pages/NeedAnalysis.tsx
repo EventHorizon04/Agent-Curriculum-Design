@@ -2,7 +2,9 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
-import { SKILL_RUN_PLANS } from '../constants/runPlans'
+import { SINGLE_NEEDS_PLAN, SKILL_RUN_PLANS } from '../constants/runPlans'
+import { SINGLE_STOP_REASON_TH } from '../constants/stages'
+import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
@@ -13,17 +15,41 @@ import { scopeVerdict } from '../constants/scope'
 import { MAX_CORE_PLOS, MAX_MERGE_NEEDS, MIN_CORE_PLOS, fallbackKind } from '../constants/needPolicy'
 import DesignerNote from './components/DesignerNote'
 
-/** Agent 2 only. Extraction jobs are not this page's: a need_combination job is
- *  the one run that changes what it lists. */
-const PAGE_KINDS: JobKind[] = ['need_combination']
+/** Agent 2 (or the single agent's Need job). Extraction jobs are not this page's:
+ *  these are the runs that change what it lists. */
+const PAGE_KINDS: JobKind[] = ['need_combination', 'single_needs']
 
 interface SkillName {
   skill_id: string
   skill_name_th: string
 }
 
+/** What a finished single-agent Need run reports about its own reading. */
+interface SingleNeedsResult {
+  stop_reason?: string
+  unread_evidence_ids?: string[]
+  uncited_evidence_ids?: string[]
+}
+
+function SingleRunNotes({ result }: { result: SingleNeedsResult | null }) {
+  if (!result) return null
+  const stop = result.stop_reason && result.stop_reason !== 'finished' ? result.stop_reason : null
+  const unread = result.unread_evidence_ids?.length ?? 0
+  const uncited = result.uncited_evidence_ids?.length ?? 0
+  if (!stop && unread === 0 && uncited === 0) return null
+  return (
+    <div className="notice notice-warn mb-6 space-y-1">
+      {stop && <p>{SINGLE_STOP_REASON_TH[stop] ?? stop} — Need ที่ได้อาจไม่ครบ</p>}
+      {unread > 0 && <p>หลักฐานที่ตัวแทนยังไม่ได้อ่าน {unread} รายการ</p>}
+      {uncited > 0 && <p>หลักฐานที่ไม่มี Need ใดอ้างถึง {uncited} รายการ</p>}
+    </div>
+  )
+}
+
 export default function NeedAnalysis() {
   const { programId } = useProgram()
+  const mode = useAgentMode(programId)
+  const single = mode === 'single'
   // Every stored Need, merged-away originals included: the merged card shows
   // its originals, and only rows with no `merged_into` are listed as Needs.
   const [allNeeds, setAllNeeds] = useState<NeedRow[]>([])
@@ -52,13 +78,17 @@ export default function NeedAnalysis() {
   const busy = running !== null || starting || acting || merging
 
   const fetchAll = useCallback(async () => {
-    if (!programId) return
+    // The mode decides which routes exist: a single-agent program has no skill
+    // list (the route answers 409), so nothing is fetched until it is known.
+    if (!programId || mode === null) return
     setLoading(true)
     setError('')
     try {
       const [needRes, skillRes] = await Promise.all([
         api.get<NeedRow[]>(`/programs/${programId}/needs/?active_only=false`),
-        api.get<SkillName[]>(`/programs/${programId}/needs/skills`),
+        mode === 'single'
+          ? Promise.resolve({ data: [] as SkillName[] })
+          : api.get<SkillName[]>(`/programs/${programId}/needs/skills`),
       ])
       setAllNeeds(needRes.data)
       // A Need that left the active list (restored ones come back unticked) is
@@ -73,7 +103,7 @@ export default function NeedAnalysis() {
     } finally {
       setLoading(false)
     }
-  }, [programId])
+  }, [programId, mode])
 
   // Reload once when an Agent 2 job ends, whichever way it ends.
   const watch = useReloadOnJobs(PAGE_KINDS, () => void fetchAll())
@@ -85,9 +115,11 @@ export default function NeedAnalysis() {
     setActionError(null)
     setMergeError('')
     try {
-      const job = await startJob(`/programs/${programId}/needs/combine/run`, {
-        note_th: note.trim() || null,
-      })
+      const job = single
+        ? await startJob(`/programs/${programId}/needs/run`)
+        : await startJob(`/programs/${programId}/needs/combine/run`, {
+            note_th: note.trim() || null,
+          })
       watch(job)
       started(job)
     } catch (err: unknown) {
@@ -97,7 +129,7 @@ export default function NeedAnalysis() {
     } finally {
       setStarting(false)
     }
-  }, [programId, note, watch, started, refresh])
+  }, [programId, single, note, watch, started, refresh])
 
   /** One card action. 404 / 422 / 409 all carry a Thai `detail` that says what
    *  to do next; a 409 means another writer is running, so the job list is stale. */
@@ -251,15 +283,21 @@ export default function NeedAnalysis() {
     )
   }
 
+  const lastSingle =
+    single && last?.kind === 'single_needs' && last.status === 'succeeded'
+      ? (last.result as SingleNeedsResult | null)
+      : null
   const mergedCount = needs.filter(n => n.merged_from.length > 0).length
 
   return (
     <div className="max-w-4xl">
       <div className="mb-6">
-        <p className="eyebrow">ขั้นที่ 4</p>
+        <p className="eyebrow">ขั้นที่ {single ? 3 : 4}</p>
         <h1 className="page-title mb-1">วิเคราะห์ Need</h1>
         <p className="text-sm text-pencil">
-          Need ที่กลั่นจากกลุ่มทักษะ และ Need ที่ซ้ำกันซึ่งรวมเป็นข้อเดียว — ตรวจและอนุมัติที่ขั้นนี้
+          {single
+            ? 'Need ที่ตัวแทนเขียนจากหลักฐานโดยตรง — ตรวจและอนุมัติที่ขั้นนี้'
+            : 'Need ที่กลั่นจากกลุ่มทักษะ และ Need ที่ซ้ำกันซึ่งรวมเป็นข้อเดียว — ตรวจและอนุมัติที่ขั้นนี้'}
         </p>
         <p className="data mt-1 text-xs text-lead">{programId}</p>
       </div>
@@ -271,14 +309,23 @@ export default function NeedAnalysis() {
         </div>
       )}
 
+      <SingleRunNotes result={lastSingle} />
+
       {mine ? (
-        <RunProgress key={mine.job_id} plan={SKILL_RUN_PLANS.needs} since={Date.parse(mine.created_at)} />
-      ) : loading ? (
+        <RunProgress key={mine.job_id} plan={single ? SINGLE_NEEDS_PLAN : SKILL_RUN_PLANS.needs} since={Date.parse(mine.created_at)} />
+      ) : loading || mode === null ? (
         <LoadingLine />
       ) : needs.length === 0 && excludedNeeds.length === 0 ? (
         <div className="panel border-dashed px-6 py-12 text-center">
           <p className="font-display mb-1 text-lg text-graphite">ยังไม่มี Need</p>
-          {skills.length === 0 ? (
+          {single ? (
+            <>
+              <p className="mb-6 text-sm text-pencil">ยังไม่มี Need — ให้ตัวแทนอ่านหลักฐานแล้วเขียน Need</p>
+              <button onClick={rerun} disabled={busy} className="btn btn-primary">
+                ให้ตัวแทนเขียน Need
+              </button>
+            </>
+          ) : skills.length === 0 ? (
             <p className="mb-2 text-sm text-pencil">
               ต้องสกัดทักษะก่อนที่หน้า{' '}
               <Link to="/skill-extraction" className="link">สกัดทักษะ</Link>
@@ -297,18 +344,24 @@ export default function NeedAnalysis() {
         </div>
       ) : (
         <>
-          <DesignerNote value={note} onChange={setNote} disabled={busy} />
+          {!single && <DesignerNote value={note} onChange={setNote} disabled={busy} />}
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
             <button
               onClick={rerun}
               disabled={busy}
-              title="รวมกลุ่มทักษะที่มีอยู่เป็น Need ใหม่ (ไม่สกัดทักษะซ้ำ)"
+              title={
+                single
+                  ? 'ให้ตัวแทนอ่านหลักฐานแล้วเขียน Need ใหม่'
+                  : 'รวมกลุ่มทักษะที่มีอยู่เป็น Need ใหม่ (ไม่สกัดทักษะซ้ำ)'
+              }
               className="btn btn-sm btn-secondary"
             >
-              รวม Need ใหม่
+              {single ? 'ให้ตัวแทนเขียน Need ใหม่' : 'รวม Need ใหม่'}
             </button>
             <p className="max-w-sm text-xs text-pencil">
-              รัน Agent 2 ใหม่จะล้างการรวมและการตัดออกที่ทำด้วยมือ
+              {single
+                ? 'รันใหม่จะล้างการรวมและการตัดออกที่ทำด้วยมือ'
+                : 'รัน Agent 2 ใหม่จะล้างการรวมและการตัดออกที่ทำด้วยมือ'}
             </p>
             <p className="w-full text-xs text-pencil">
               Need {needs.length} ข้อ
@@ -450,6 +503,7 @@ export default function NeedAnalysis() {
           PLO per Need and never reads the skill rows. */}
       <NextStageLink
         from="need_analysis"
+        mode={mode ?? 'multi'}
         ready={needs.length > 0 && mine === null}
         blockedReason={
           mine !== null

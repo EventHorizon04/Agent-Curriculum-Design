@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { fetchWithKey } from '../api/apiKey'
 import NextStageLink from '../components/NextStageLink'
+import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
 import { STAKEHOLDER_GROUPS, classStyle, stakeholderLabel } from '../constants/stakeholder'
 
@@ -32,6 +33,7 @@ interface EvidencePayload {
 export default function StakeholderNeeds() {
   const navigate = useNavigate()
   const { programId, setProgramId } = useProgram()
+  const mode = useAgentMode(programId)
   const [pidInput, setPidInput] = useState('')
   const [stakeholderType, setStakeholderType] = useState('employer')
   const [sourceName, setSourceName] = useState('')
@@ -561,8 +563,9 @@ export default function StakeholderNeeds() {
           the classify pass is pure code. */}
       <NextStageLink
         from="stakeholder_needs"
+        mode={mode ?? 'multi'}
         ready={Boolean(programId) && items.length > 0}
-        blockedReason="เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นสกัดทักษะอ่านจากหลักฐานเหล่านี้"
+        blockedReason="เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นถัดไปอ่านจากหลักฐานเหล่านี้"
       />
     </div>
   )

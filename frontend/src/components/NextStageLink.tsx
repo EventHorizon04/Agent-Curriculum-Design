@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import { STAGES } from '../constants/stages'
+import { stagesFor, type AgentMode } from '../constants/stages'
 
 /**
  * The step from one stage page to the next, in the one shape every page uses.
@@ -23,6 +23,7 @@ export default function NextStageLink({
   from,
   ready,
   blockedReason,
+  mode = 'multi',
 }: {
   /** Stage key of the page this is rendered on, as `STAGES` spells it. */
   from: string
@@ -30,9 +31,12 @@ export default function NextStageLink({
   ready: boolean
   /** Why not, in the designer's words. Shown in place of the button. */
   blockedReason?: string
+  /** The program's agent mode: a single-agent rail skips two stages. */
+  mode?: AgentMode
 }) {
-  const here = STAGES.findIndex((s) => s.key === from)
-  const next = here < 0 ? undefined : STAGES[here + 1]
+  const stages = stagesFor(mode)
+  const here = stages.findIndex((s) => s.key === from)
+  const next = here < 0 ? undefined : stages[here + 1]
   // The last stage has nowhere to go, and an unknown key is a caller bug that
   // must not render a button pointing at stage 1.
   if (!next) return null

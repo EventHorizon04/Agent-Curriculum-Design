@@ -1,3 +1,4 @@
+import SingleRedirect from './components/SingleRedirect'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import ApiKeyDialog from './components/ApiKeyDialog'
 import StageLayout from './components/StageLayout'
@@ -20,11 +21,25 @@ export default function App() {
           <Route index element={<Programs />} />
           <Route path="intake" element={<Intake />} />
           <Route path="stakeholder-needs" element={<StakeholderNeeds />} />
-          <Route path="skill-extraction" element={<SkillExtraction />} />
+          <Route
+            path="skill-extraction"
+            element={
+              <SingleRedirect to="/need-analysis">
+                <SkillExtraction />
+              </SingleRedirect>
+            }
+          />
           <Route path="need-analysis" element={<NeedAnalysis />} />
           <Route path="plo-synthesis" element={<PloSynthesis />} />
           <Route path="plo-report" element={<PloReport />} />
-          <Route path="plo-review" element={<PloReview />} />
+          <Route
+            path="plo-review"
+            element={
+              <SingleRedirect to="/plo-synthesis">
+                <PloReview />
+              </SingleRedirect>
+            }
+          />
           <Route path="pipeline" element={<Pipeline />} />
         </Route>
       </Routes>

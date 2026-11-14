@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import api from '../../api/client'
+import type { AgentMode } from '../../constants/stages'
 import { ksecLabel, stakeholderLabel } from '../../constants/stakeholder'
 import {
   DEMAND_LABEL_TH,
@@ -56,6 +57,10 @@ export interface NeedRow {
   freq: number
   demand_score: number
   is_optional: boolean
+  /** Which mode wrote it. A single-agent Need has no member skills, so its card
+   *  shows no skill section and `freq` counts the evidence items it cites.
+   *  Absent on rows from before the field: multi. */
+  origin?: AgentMode
   /** Members that cleared each scope axis. `scopeVerdict` reads them, and a
    *  missing one counts as passed — see constants/scope.ts for why absent and
    *  zero cannot mean the same thing here. */
@@ -170,6 +175,7 @@ export default function NeedCard({
   const [open, setOpen] = useState(false)
   const [showOriginals, setShowOriginals] = useState(false)
   const isMerged = need.merged_from.length > 0
+  const isSingle = need.origin === 'single'
   // Same two-step confirm as deleting evidence: the first press arms the button
   // and it disarms itself after a few seconds.
   const [confirmingExclude, setConfirmingExclude] = useState(false)
@@ -263,7 +269,7 @@ export default function NeedCard({
           {need.ksec_categories.map(k => (
             <span key={k} className="chip chip-neutral">{ksecLabel(k)}</span>
           ))}
-          {need.top_skill_ids.map(id =>
+          {!isSingle && need.top_skill_ids.map(id =>
             skillNames[id] ? (
               <span key={id} className="chip chip-neutral">{skillNames[id]}</span>
             ) : null,
@@ -296,7 +302,13 @@ export default function NeedCard({
             {stakeholderLabel(t)}
           </span>
         ))}
-        <span title="จำนวนครั้งที่ถูกกล่าวถึง" className="data">Freq {need.freq}</span>
+        {isSingle ? (
+          <span title="จำนวนหลักฐานที่ Need นี้อ้างถึง" className="data">
+            จำนวนหลักฐานที่อ้าง {need.freq}
+          </span>
+        ) : (
+          <span title="จำนวนครั้งที่ถูกกล่าวถึง" className="data">Freq {need.freq}</span>
+        )}
         <span title={DEMAND_SCORE_TITLE_TH} className="data">
           {DEMAND_LABEL_TH} {demandPercent(need.demand_score)}
         </span>
@@ -360,6 +372,7 @@ export default function NeedCard({
           {!trace && !error && <p className="text-lead">กำลังโหลด...</p>}
           {trace && (
             <>
+              {!isSingle && (
               <div>
                 <p className="eyebrow">ทักษะในกลุ่ม ({trace.skills.length})</p>
                 <ul className="mt-1 list-disc pl-4 text-graphite">
@@ -376,6 +389,7 @@ export default function NeedCard({
                   ))}
                 </ul>
               </div>
+              )}
               <div>
                 <p className="eyebrow">
                   Evidence ({trace.evidence.length})

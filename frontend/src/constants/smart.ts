@@ -58,6 +58,7 @@ export const VALIDATED_BY_TH: Record<ValidatedBy, string> = {
   code_only: 'ตรวจด้วยกฎพื้นฐานเท่านั้น — ไม่ได้ผ่านผู้ตรวจ SMART',
   stale: 'แก้ข้อความแล้ว ยังไม่ได้ตรวจซ้ำ',
   legacy: 'ตรวจก่อนมีผู้ตรวจ SMART',
+  single_agent: 'ตัวแทนตรวจเอง (ไม่มีการโหวต)',
 }
 
 /** Rows that need the designer's attention before the set is submitted. */

@@ -3,7 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { CREATING_INTAKE } from '../constants/intakeMode'
 import { useProgram } from '../hooks/useProgram'
-import { SESSION_STATUS_LABELS, STAGE_LABELS, STAGE_ROUTES } from '../constants/stages'
+import {
+  AGENT_MODE_LABEL_TH,
+  SESSION_STATUS_LABELS,
+  STAGE_LABELS,
+  STAGE_ROUTES,
+  type AgentMode,
+} from '../constants/stages'
 
 interface ProgramSummary {
   program_id: string
@@ -15,6 +21,7 @@ interface ProgramSummary {
   created_at: string
   current_stage: string | null
   session_status: string | null
+  agent_mode?: AgentMode
   /** The program this one was copied from — set only by POST /{id}/copy. Not a
    *  foreign key: the source may since have been deleted, so it is shown as
    *  the id it is, never looked up. */
@@ -56,6 +63,10 @@ export default function Programs() {
   // so the button asks before it posts.
   const [copyChoiceId, setCopyChoiceId] = useState<string | null>(null)
   const [copiedMode, setCopiedMode] = useState<CopyMode>('full')
+  // The mode the copy will have; opens on the source's own. A full copy cannot
+  // change it (the stored Needs and PLOs were written by the source's mode), so
+  // choosing another one leaves only the evidence-only copy.
+  const [copyAgentMode, setCopyAgentMode] = useState<AgentMode>('multi')
   // A failed copy is reported on the row it was asked of, not at the top of a
   // list that may be long; a successful one marks the row it produced.
   const [copyError, setCopyError] = useState<{ id: string; message: string } | null>(null)
@@ -114,13 +125,16 @@ export default function Programs() {
    *  program leaves the other untouched. It is not selected, because the
    *  designer copying a program usually means to keep working on the one they
    *  had — the new row is marked instead, with a way to open it. */
-  const copyProgram = async (p: ProgramSummary, mode: CopyMode) => {
+  const copyProgram = async (p: ProgramSummary, mode: CopyMode, agentMode: AgentMode) => {
     setCopyChoiceId(null)
     setCopyingId(p.program_id)
     setCopyError(null)
     setCopiedId(null)
     try {
-      const res = await api.post<{ program_id: string }>(`/programs/${p.program_id}/copy`, { mode })
+      const res = await api.post<{ program_id: string }>(`/programs/${p.program_id}/copy`, {
+        mode,
+        agent_mode: agentMode,
+      })
       await load()
       setCopiedMode(mode)
       setCopiedId(res.data.program_id)
@@ -239,6 +253,9 @@ export default function Programs() {
                   >
                     <span className="flex flex-wrap items-center gap-2 font-medium text-graphite hover:text-stamp hover:underline hover:underline-offset-2">
                       {programLabel(p)}
+                      <span className="chip chip-neutral">
+                        {AGENT_MODE_LABEL_TH[p.agent_mode ?? 'multi']}
+                      </span>
                       {p.program_id === programId && (
                         <span className="chip chip-stamp">เลือกอยู่</span>
                       )}
@@ -301,16 +318,31 @@ export default function Programs() {
                     </span>
                   ) : copyChoiceId === p.program_id ? (
                     <span className="inline-flex flex-wrap items-center justify-end gap-2">
+                      <select
+                        aria-label="วิธีทำงานของสำเนา"
+                        value={copyAgentMode}
+                        onChange={(e) => setCopyAgentMode(e.target.value as AgentMode)}
+                        className="input w-auto py-1 text-xs"
+                      >
+                        <option value="multi">{AGENT_MODE_LABEL_TH.multi}</option>
+                        <option value="single">{AGENT_MODE_LABEL_TH.single}</option>
+                      </select>
                       <button
                         type="button"
-                        onClick={() => copyProgram(p, 'full')}
+                        onClick={() => copyProgram(p, 'full', copyAgentMode)}
+                        disabled={copyAgentMode !== (p.agent_mode ?? 'multi')}
+                        title={
+                          copyAgentMode !== (p.agent_mode ?? 'multi')
+                            ? 'เปลี่ยนวิธีทำงานได้เฉพาะการคัดลอกข้อมูลนำเข้า — Need และ PLO เดิมเขียนด้วยวิธีเดิม'
+                            : undefined
+                        }
                         className="btn btn-sm btn-secondary"
                       >
                         คัดลอกทั้งหมด
                       </button>
                       <button
                         type="button"
-                        onClick={() => copyProgram(p, 'evidence_only')}
+                        onClick={() => copyProgram(p, 'evidence_only', copyAgentMode)}
                         title="ได้ข้อมูลนำเข้าและหลักฐาน ไม่มีทักษะ Need PLO — หลักฐานของสำเนายังแก้ได้"
                         className="btn btn-sm btn-secondary"
                       >
@@ -328,7 +360,11 @@ export default function Programs() {
                     <span className="inline-flex items-center gap-1">
                       <button
                         type="button"
-                        onClick={() => { setCopyError(null); setCopyChoiceId(p.program_id) }}
+                        onClick={() => {
+                          setCopyError(null)
+                          setCopyAgentMode(p.agent_mode ?? 'multi')
+                          setCopyChoiceId(p.program_id)
+                        }}
                         disabled={copyingId !== null}
                         title="คัดลอกหลักสูตรนี้ — เลือกได้ว่าจะคัดลอกทั้งหมด (หลักฐาน ทักษะ Need PLO เก็บผลรอบนี้ไว้เทียบกับรอบถัดไป) หรือเฉพาะข้อมูลนำเข้าและหลักฐาน (แก้ evidence ได้)"
                         className="btn btn-sm btn-quiet"

@@ -43,6 +43,7 @@ import {
   makePlo,
   mergedPloSeed,
   passingCheck,
+  singleAgentNeeds,
   skillGroupsOf,
   sortNeeds,
   sortPlos,
@@ -122,6 +123,12 @@ function stageReached(pid: string): string {
   if (of(db.skills, pid).length) return 'skill_extraction'
   if (of(db.evidence, pid).length) return 'stakeholder_needs'
   return 'intake'
+}
+
+const SINGLE_NO_SKILLS = 'หลักสูตรแบบตัวแทนเดียวไม่มีขั้นสกัดทักษะ'
+
+function isSingle(pid: string): boolean {
+  return getDb().programs.find((p) => p.program_id === pid)?.agent_mode === 'single'
 }
 
 function latestSession(pid: string): SessionRow | undefined {
@@ -579,6 +586,8 @@ const JOB_LABEL_TH: Record<JobKind, string> = {
   plo_review: 'ตรวจคุณภาพชุด PLO',
   plo_report: 'ออกรายงาน PLO',
   plo_revalidate: 'ตรวจ SMART ซ้ำ',
+  single_needs: 'วิเคราะห์ Need (single agent)',
+  single_plos: 'สังเคราะห์ PLO (single agent)',
 }
 
 /** Which slots a job of each kind calls (config.py SLOTS), with a rough call
@@ -591,6 +600,9 @@ const JOB_SLOTS: Record<JobKind, Array<[string, number]>> = {
   plo_review: [['plo_review', 5]],
   plo_report: [],
   plo_revalidate: [['validation', 1]],
+  // One agent, so one slot: its turns are model calls.
+  single_needs: [['extraction', 30]],
+  single_plos: [['plo_synthesis', 20]],
 }
 
 function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
@@ -872,6 +884,7 @@ export function buildRouter(): Router {
         current_stage: stageReached(p.program_id),
         session_status: latestSession(p.program_id)?.status ?? null,
         copied_from: p.copied_from ?? null,
+        agent_mode: p.agent_mode ?? 'multi',
       }))
     return ok(rows)
   })
@@ -883,14 +896,24 @@ export function buildRouter(): Router {
     const base = slugify(parsed.field)
     let candidate = base
     for (let n = 2; db.programs.some((p) => p.program_id === candidate); n++) candidate = `${base}-${n}`
-    const row: ProgramRow = { ...parsed, program_id: candidate, created_at: nowIso(), copied_from: null }
+    // The mode is chosen here and never edited: PUT does not read it.
+    const agentMode = body<{ agent_mode: string }>(req).agent_mode === 'single' ? 'single' : 'multi'
+    const row: ProgramRow = {
+      ...parsed,
+      program_id: candidate,
+      created_at: nowIso(),
+      copied_from: null,
+      agent_mode: agentMode,
+    }
     db.programs.push(row)
     return ok(row)
   })
 
   r.get('/programs/:pid', (req) => {
     const p = findProgram(req.params.pid)
-    return p ? ok({ ...p, copied_from: p.copied_from ?? null }) : detail(404, 'Program not found')
+    return p
+      ? ok({ ...p, copied_from: p.copied_from ?? null, agent_mode: p.agent_mode ?? 'multi' })
+      : detail(404, 'Program not found')
   })
 
   /** GET /programs/{id}/usage — what the program's model calls cost. */
@@ -911,7 +934,15 @@ export function buildRouter(): Router {
     const busy = busyReason(src)
     if (busy) return detail(409, busy)
     // No body means a full copy, as the route reads it.
-    const evidenceOnly = body<{ mode: string }>(req).mode === 'evidence_only'
+    const copyBody = body<{ mode: string; agent_mode: string }>(req)
+    const evidenceOnly = copyBody.mode === 'evidence_only'
+    const sourceMode = source.agent_mode ?? 'multi'
+    const copyMode = copyBody.agent_mode === 'single' || copyBody.agent_mode === 'multi' ? copyBody.agent_mode : sourceMode
+    // The stored Needs and PLOs were written by the source's mode, so a full
+    // copy cannot change it; the evidence-only copy is the way across.
+    if (!evidenceOnly && copyMode !== sourceMode) {
+      return detail(422, 'คัดลอกทั้งหมดแล้วเปลี่ยนวิธีทำงานไม่ได้ — ใช้การคัดลอกเฉพาะข้อมูลนำเข้าแทน')
+    }
     let n = 1
     while (db.programs.some((p) => p.program_id === `${src}-run-${n}`)) n++
     const newPid = `${src}-run-${n}`
@@ -932,7 +963,13 @@ export function buildRouter(): Router {
       }
       return { ...(walk(row) as T), program_id: newPid }
     }
-    db.programs.push({ ...source, program_id: newPid, created_at: nowIso(), copied_from: src })
+    db.programs.push({
+      ...source,
+      program_id: newPid,
+      created_at: nowIso(),
+      copied_from: src,
+      agent_mode: copyMode,
+    })
     db.evidence.push(...of(db.evidence, src).map(remap))
     // evidence_only stops at the inputs: metadata and evidence, nothing derived.
     if (!evidenceOnly) {
@@ -1194,7 +1231,10 @@ export function buildRouter(): Router {
     return ok(need)
   })
 
-  r.get('/programs/:pid/needs/skills', (req) => ok(of(getDb().skills, req.params.pid)))
+  r.get('/programs/:pid/needs/skills', (req) => {
+    if (isSingle(req.params.pid)) return detail(409, SINGLE_NO_SKILLS)
+    return ok(of(getDb().skills, req.params.pid))
+  })
 
   r.get('/programs/:pid/needs/:nid/trace', (req) => {
     const db = getDb()
@@ -1221,10 +1261,35 @@ export function buildRouter(): Router {
   // the job's `result`, written when it finishes. Each does its synchronous
   // checks (404/422) first, as the real routes do before any job row exists.
 
+  /** `single_needs`: one agent reads the evidence and writes the Needs. Stores no
+   *  skills; the result says how the run ended and what it left unread. */
+  const singleNeedsJob = (pid: string): MockResponse =>
+    startJob({
+      pid,
+      kind: 'single_needs',
+      params: {},
+      failure: runFailureText('need_combination'),
+      work: () => {
+        const needs = singleAgentNeeds(pid, of(getDb().evidence, pid))
+        replaceRows('needs', pid, needs)
+        replaceRows('skills', pid, [])
+        return ok({
+          needs,
+          stop_reason: 'finished',
+          turns: 18,
+          dropped_evidence_count: 0,
+          unread_evidence_ids: [],
+          uncited_evidence_ids: [],
+          unnoted_evidence_ids: [],
+        })
+      },
+    })
+
   r.post('/programs/:pid/needs/run', (req) => {
     const pid = req.params.pid
     const refused = extractionPrecondition(pid)
     if (refused) return refused
+    if (isSingle(pid)) return singleNeedsJob(pid)
     return startJob({
       pid,
       kind: 'skill_extraction',
@@ -1253,6 +1318,7 @@ export function buildRouter(): Router {
     const pid = req.params.pid
     const refused = extractionPrecondition(pid)
     if (refused) return refused
+    if (isSingle(pid)) return detail(409, SINGLE_NO_SKILLS)
     return startJob({
       pid,
       kind: 'skill_extraction',
@@ -1270,6 +1336,10 @@ export function buildRouter(): Router {
   r.post('/programs/:pid/needs/combine/run', (req) => {
     const pid = req.params.pid
     if (!findProgram(pid)) return detail(404, 'Program not found')
+    if (isSingle(pid)) {
+      const refused = extractionPrecondition(pid)
+      return refused ?? singleNeedsJob(pid)
+    }
     if (!of(getDb().skills, pid).length) {
       return detail(422, 'ยังไม่มีทักษะที่สกัดไว้ กรุณารัน Skill Extraction ก่อน')
     }
@@ -1361,6 +1431,23 @@ export function buildRouter(): Router {
       return detail(422, 'ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน')
     }
     const { note_th, run_validation } = body<{ note_th: string; run_validation: boolean }>(req)
+    if (isSingle(pid)) {
+      // One agent writes and judges; no vote, no chained review, and
+      // `run_validation` is ignored.
+      return startJob({
+        pid,
+        kind: 'single_plos',
+        params: { note_th: note_th ?? null },
+        failure: runFailureText('plo_synthesis'),
+        work: () => {
+          const plos = synthesizePlos(pid, of(getDb().needs, pid), [])
+          for (const plo of plos) plo.smart_validated_by = 'single_agent'
+          replaceRows('plos', pid, plos)
+          getDb().superseded = (getDb().superseded ?? []).filter((x) => x.program_id !== pid)
+          return ok({ plos, stop_reason: 'finished', turns: 14, uncited_core_need_ids: [] })
+        },
+      })
+    }
     return startJob({
       pid,
       kind: 'plo_synthesis',
@@ -1637,6 +1724,8 @@ export function buildRouter(): Router {
         'ยังไม่มี evidence สำหรับหลักสูตรนี้ — เพิ่มหลักฐานที่ขั้น Stakeholder Needs ก่อนเริ่มรัน',
       )
     }
+    // A single-agent program has no checkpoints to suspend at.
+    if (isSingle(pid)) return detail(409, 'หลักสูตรแบบตัวแทนเดียวไม่รองรับการรันทั้งชุด — รันทีละขั้นที่หน้าแต่ละขั้น')
     const busy = busyReason(pid)
     if (busy) return detail(409, busy)
     const sessionId = newId()

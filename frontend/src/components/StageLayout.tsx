@@ -5,7 +5,14 @@ import { JOB_PAGE } from '../api/jobs'
 import { isCreatingIntake } from '../constants/intakeMode'
 import { JobsProvider, useJobs } from '../hooks/useProgramJobs'
 import { useProgram } from '../hooks/useProgram'
-import { SESSION_STATUS_LABELS, STAGES, stageIndex, type StageDef } from '../constants/stages'
+import {
+  AGENT_MODE_LABEL_TH,
+  SESSION_STATUS_LABELS,
+  stageIndex,
+  stagesFor,
+  type AgentMode,
+  type StageDef,
+} from '../constants/stages'
 
 interface ProgramRow {
   program_id: string
@@ -14,6 +21,7 @@ interface ProgramRow {
   faculty: string
   current_stage: string | null
   session_status: string | null
+  agent_mode?: AgentMode
 }
 
 type GateState = 'passed' | 'current' | 'ahead'
@@ -30,8 +38,8 @@ type GateState = 'passed' | 'current' | 'ahead'
  * Reached-ness comes from the program's own `current_stage`, not from which
  * page happens to be open: a designer can open any stage at any time, and a nav
  * that marked whatever they clicked as "reached" would tell them nothing. */
-function gateStateFor(stage: StageDef, reached: number): GateState {
-  const here = STAGES.indexOf(stage)
+function gateStateFor(stages: StageDef[], stage: StageDef, reached: number): GateState {
+  const here = stages.indexOf(stage)
   if (reached < 0) return here === 0 ? 'current' : 'ahead'
   if (here <= reached) return 'passed'
   if (here === reached + 1) return 'current'
@@ -82,7 +90,7 @@ function GateNote({ stage }: { stage: StageDef }) {
   )
 }
 
-function StageRail({ reached }: { reached: number }) {
+function StageRail({ stages, reached }: { stages: StageDef[]; reached: number }) {
   return (
     <ol className="relative flex gap-1 overflow-x-auto px-3 [scrollbar-width:none] lg:block lg:space-y-1 lg:overflow-visible lg:px-3">
       {/* The rail itself: one continuous line every gate sits on. Hidden on
@@ -92,8 +100,8 @@ function StageRail({ reached }: { reached: number }) {
         className="absolute left-[1.5rem] top-4 bottom-4 hidden w-px bg-hair-strong lg:block"
         aria-hidden="true"
       />
-      {STAGES.map((stage) => {
-        const state = gateStateFor(stage, reached)
+      {stages.map((stage) => {
+        const state = gateStateFor(stages, stage, reached)
         return (
           <li key={stage.key} className="shrink-0 lg:shrink">
             <NavLink
@@ -229,6 +237,9 @@ function ProgramBar({
           </p>
           {program?.faculty && <span className="text-xs text-pencil">{program.faculty}</span>}
           <span className="data text-xs text-lead">{programId}</span>
+          {program?.agent_mode === 'single' && (
+            <span className="chip chip-neutral">{AGENT_MODE_LABEL_TH.single}</span>
+          )}
         </div>
       </div>
       {status && (
@@ -333,7 +344,8 @@ export default function StageLayout() {
   // The rail answers "how far has the program being worked on got", and while
   // one is being typed the answer is nowhere — not however far the curriculum
   // still sitting in storage happens to have reached.
-  const reached = creating ? -1 : stageIndex(program?.current_stage ?? null)
+  const stages = stagesFor(program?.agent_mode ?? 'multi')
+  const reached = creating ? -1 : stageIndex(program?.current_stage ?? null, stages)
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
@@ -347,7 +359,7 @@ export default function StageLayout() {
           </p>
         </div>
 
-        <StageRail reached={reached} />
+        <StageRail stages={stages} reached={reached} />
 
         <div className="mt-3">
           <GateLegend />

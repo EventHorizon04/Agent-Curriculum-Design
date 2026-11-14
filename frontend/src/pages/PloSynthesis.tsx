@@ -1,8 +1,10 @@
-import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
-import { PLO_SYNTHESIS_PLAN, PLO_SYNTHESIS_CODE_ONLY_PLAN } from '../constants/runPlans'
+import { PLO_SYNTHESIS_PLAN, PLO_SYNTHESIS_CODE_ONLY_PLAN, SINGLE_PLOS_PLAN } from '../constants/runPlans'
+import { SINGLE_STOP_REASON_TH } from '../constants/stages'
+import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
@@ -54,12 +56,28 @@ type NeedListItem = PickerNeed
 /** The jobs this page owns: the synthesis run, and the SMART re-check of one
  *  outcome. They are what it shows as running and what its failure notice is
  *  about. */
-const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate']
+const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_revalidate', 'single_plos']
 /** The jobs that change what this page lists, whichever page started them: the
  *  PLOs it shows are written by the first two, the Needs it offers for merging
  *  by the last two. */
 /* plo_review is chained after synthesis and may change PLOs (send-back). */
-const RELOAD_KINDS: JobKind[] = ['plo_synthesis', 'plo_review', 'plo_revalidate', 'needs_pipeline', 'skill_extraction', 'need_combination']
+const RELOAD_KINDS: JobKind[] = [
+  'plo_synthesis',
+  'plo_review',
+  'plo_revalidate',
+  'needs_pipeline',
+  'skill_extraction',
+  'need_combination',
+  'single_needs',
+  'single_plos',
+  'plo_report',
+]
+
+/** What a finished single-agent PLO run says about itself. */
+interface SinglePlosResult {
+  stop_reason?: string
+  uncited_core_need_ids?: string[]
+}
 
 /** Wall clock, read from an event handler: kept out of the component body so
  *  the purity lint does not mistake the handler for render. */
@@ -67,6 +85,12 @@ const clockMs = (): number => Date.now()
 
 export default function PloSynthesis() {
   const { programId } = useProgram()
+  const mode = useAgentMode(programId)
+  const single = mode === 'single'
+  const navigate = useNavigate()
+  // The approval job this page started; its success is what navigates on, and a
+  // report run some other page started must not pull the designer away.
+  const approvalJob = useRef<string | null>(null)
   const [plos, setPlos] = useState<PLO[]>([])
   const [superseded, setSuperseded] = useState<SupersededPLO[]>([])
   const [needs, setNeeds] = useState<NeedListItem[]>([])
@@ -88,10 +112,19 @@ export default function PloSynthesis() {
   const { running, latestOf, started, refresh } = useJobs()
   // `running` is any job of this program; `mine` is one this page shows.
   const mine = running && PAGE_KINDS.includes(running.kind) ? running : null
-  const synthesis = mine?.kind === 'plo_synthesis' ? mine : null
+  const synthesis = mine?.kind === 'plo_synthesis' || mine?.kind === 'single_plos' ? mine : null
   const revalidatingId =
     mine?.kind === 'plo_revalidate' && typeof mine.params.plo_id === 'string' ? mine.params.plo_id : null
   const last = latestOf(PAGE_KINDS)
+  // The approval's own failure; the report is stored by it, so it is this page's.
+  const lastReport = latestOf(['plo_report'])
+  const lastSingle =
+    single && last?.kind === 'single_plos' && last.status === 'succeeded'
+      ? (last.result as SinglePlosResult | null)
+      : null
+  const singleStop =
+    lastSingle?.stop_reason && lastSingle.stop_reason !== 'finished' ? lastSingle.stop_reason : null
+  const singleUncited = lastSingle?.uncited_core_need_ids?.length ?? 0
   // Any job of the program blocks every start button, not just this page's
   // kinds: the backend allows one writer per program, merging included.
   const busy = running !== null || starting || merging
@@ -100,7 +133,8 @@ export default function PloSynthesis() {
   // "off": the box stays usable, and the backend still refuses to run an agent
   // its own settings disable.
   useEffect(() => {
-    if (!programId) return
+    // A single-agent program has no validation agent to switch.
+    if (!programId || mode !== 'multi') return
     let cancelled = false
     api
       .get<ValidationStatus>(`/programs/${programId}/plos/validation`)
@@ -113,14 +147,14 @@ export default function PloSynthesis() {
     return () => {
       cancelled = true
     }
-  }, [programId])
+  }, [programId, mode])
 
   /** `quiet` reloads behind the list that is showing instead of replacing it
    *  with the loading line: a re-check changes one outcome, and swapping the
    *  whole list out would close every open trace and drop an edit in progress. */
   const fetchPlos = useCallback(
     async (quiet = false) => {
-      if (!programId) return
+      if (!programId || mode === null) return
       if (!quiet) setLoading(true)
       setError('')
       try {
@@ -132,9 +166,12 @@ export default function PloSynthesis() {
             .catch(() => ({ data: [] as SupersededPLO[] })),
           api.get<NeedListItem[]>(`/programs/${programId}/needs/?active_only=true`),
           // The chip is secondary too: no trail, no chip, the PLOs still show.
-          api
-            .get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`)
-            .catch(() => ({ data: [] as FeedbackAction[] })),
+          // A single-agent program has no review, so there is no trail to read.
+          mode === 'single'
+            ? Promise.resolve({ data: [] as FeedbackAction[] })
+            : api
+                .get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`)
+                .catch(() => ({ data: [] as FeedbackAction[] })),
         ])
         setPlos(ploRes.data)
         setSuperseded(supersededRes.data)
@@ -146,14 +183,20 @@ export default function PloSynthesis() {
         if (!quiet) setLoading(false)
       }
     },
-    [programId],
+    [programId, mode],
   )
 
   // Reload once when a job that changes this page's data ends, whichever page
   // started it and whichever way it ended: a run that fails part-way has already
   // written rows. A re-check changes one outcome, so it reloads behind the list
   // on screen.
-  const watch = useReloadOnJobs(RELOAD_KINDS, (job) => void fetchPlos(job.kind === 'plo_revalidate'))
+  const watch = useReloadOnJobs(RELOAD_KINDS, (job) => {
+    void fetchPlos(job.kind === 'plo_revalidate')
+    if (job.kind === 'plo_report' && job.job_id === approvalJob.current) {
+      approvalJob.current = null
+      if (job.status === 'succeeded') navigate('/plo-report')
+    }
+  })
 
   // Starting a run only records the job; the PLOs arrive in the table and are
   // read by the reload above when it ends.
@@ -162,10 +205,12 @@ export default function PloSynthesis() {
     setStarting(true)
     setError('')
     try {
-      const job = await startJob(`/programs/${programId}/plos/run`, {
-        note_th: note.trim() || null,
-        run_validation: agentWillRun,
-      })
+      const job = await startJob(
+        `/programs/${programId}/plos/run`,
+        single
+          ? { note_th: note.trim() || null }
+          : { note_th: note.trim() || null, run_validation: agentWillRun },
+      )
       watch(job)
       started(job)
     } catch (err: unknown) {
@@ -177,7 +222,27 @@ export default function PloSynthesis() {
     } finally {
       setStarting(false)
     }
-  }, [programId, note, agentWillRun, watch, started, refresh])
+  }, [programId, single, note, agentWillRun, watch, started, refresh])
+
+  // Single-agent checkpoint: approving stores the report (POST /plos/report/run)
+  // and the report page then reads it.
+  const approve = useCallback(async () => {
+    if (!programId) return
+    setStarting(true)
+    setError('')
+    try {
+      const job = await startJob(`/programs/${programId}/plos/report/run`)
+      approvalJob.current = job.job_id
+      watch(job)
+      started(job)
+    } catch (err: unknown) {
+      const res = (err as { response?: { status?: number; data?: { detail?: string } } })?.response
+      setError(res?.data?.detail ?? 'อนุมัติชุด PLO ไม่สำเร็จ')
+      if (res?.status === 409) void refresh()
+    } finally {
+      setStarting(false)
+    }
+  }, [programId, watch, started, refresh])
 
   const revalidate = useCallback(
     async (ploId: string) => {
@@ -276,12 +341,18 @@ export default function PloSynthesis() {
   return (
     <div>
       <div className="mb-6">
-        <p className="eyebrow">ขั้นที่ 5</p>
-        <h1 className="page-title">สังเคราะห์ PLO</h1>
-        <p className="mt-1 text-sm text-pencil">ตรวจสอบและแก้ไข Program Learning Outcomes ที่ AI สังเคราะห์</p>
-        <p className="mt-1 text-xs text-lead">
-          เมื่อสังเคราะห์เสร็จ ระบบตรวจคุณภาพทั้งชุดต่อทันที และอาจส่งบาง PLO กลับไปแก้ — ดูผลที่ขั้นตรวจคุณภาพ
+        <p className="eyebrow">ขั้นที่ {single ? 4 : 5}</p>
+        <h1 className="page-title">{single ? 'ตรวจ PLO' : 'สังเคราะห์ PLO'}</h1>
+        <p className="mt-1 text-sm text-pencil">
+          {single
+            ? 'ตัวแทนเขียน PLO จาก Need ที่อนุมัติและตรวจงานตัวเอง — ตรวจ แก้ไข แล้วอนุมัติที่ขั้นนี้'
+            : 'ตรวจสอบและแก้ไข Program Learning Outcomes ที่ AI สังเคราะห์'}
         </p>
+        {!single && (
+          <p className="mt-1 text-xs text-lead">
+            เมื่อสังเคราะห์เสร็จ ระบบตรวจคุณภาพทั้งชุดต่อทันที และอาจส่งบาง PLO กลับไปแก้ — ดูผลที่ขั้นตรวจคุณภาพ
+          </p>
+        )}
         <p className="data mt-1 text-xs text-lead">{programId}</p>
       </div>
 
@@ -290,6 +361,21 @@ export default function PloSynthesis() {
       )}
       {running?.kind === 'plo_review' && (
         <p className="notice notice-warn mb-6">กำลังตรวจคุณภาพชุด PLO ต่อจากการสังเคราะห์ — PLO อาจเปลี่ยนเมื่อตรวจเสร็จ</p>
+      )}
+      {singleStop && (
+        <div className="notice notice-warn mb-6">
+          {SINGLE_STOP_REASON_TH[singleStop] ?? singleStop} — PLO ที่ได้อาจไม่ครบ
+        </div>
+      )}
+      {singleUncited > 0 && (
+        <div className="notice notice-warn mb-6">
+          Need หลักที่ยังไม่มี PLO อ้างถึง {singleUncited} รายการ
+        </div>
+      )}
+      {single && lastReport?.status === 'failed' && (
+        <div className="mb-6">
+          <RunFailure job={lastReport} />
+        </div>
       )}
       {last?.status === 'failed' && (
         <div className="mb-6">
@@ -308,18 +394,30 @@ export default function PloSynthesis() {
         // now: a page opened mid-run has a checkbox nobody touched.
         <RunProgress
           key={synthesis.job_id}
-          plan={synthesis.params.run_validation !== false ? PLO_SYNTHESIS_PLAN : PLO_SYNTHESIS_CODE_ONLY_PLAN}
+          plan={
+            synthesis.kind === 'single_plos'
+              ? SINGLE_PLOS_PLAN
+              : synthesis.params.run_validation !== false
+                ? PLO_SYNTHESIS_PLAN
+                : PLO_SYNTHESIS_CODE_ONLY_PLAN
+          }
           since={Date.parse(synthesis.created_at)}
         />
-      ) : loading ? (
+      ) : loading || mode === null ? (
         <LoadingLine />
       ) : plos.length === 0 ? (
         <div className="panel border-dashed px-6 py-12 text-center">
           <p className="font-display mb-1 text-lg text-graphite">ยังไม่มี PLO</p>
-          <p className="mb-6 text-sm text-pencil">กดปุ่มด้านล่างเพื่อให้ AI สังเคราะห์ PLO จาก skill clusters</p>
+          <p className="mb-6 text-sm text-pencil">
+            {single
+              ? 'กดปุ่มด้านล่างเพื่อให้ตัวแทนเขียน PLO จาก Need ที่อนุมัติแล้ว'
+              : 'กดปุ่มด้านล่างเพื่อให้ AI สังเคราะห์ PLO จาก skill clusters'}
+          </p>
           <div className="mx-auto mb-2 max-w-md">
             <DesignerNote value={note} onChange={setNote} />
-            <ValidationToggle checked={runValidation} onChange={setRunValidation} status={validation} />
+            {!single && (
+              <ValidationToggle checked={runValidation} onChange={setRunValidation} status={validation} />
+            )}
           </div>
           <button
             onClick={runSynthesis}
@@ -332,14 +430,16 @@ export default function PloSynthesis() {
       ) : (
         <>
           <DesignerNote value={note} onChange={setNote} disabled={busy} />
-          <div className="mb-4">
-            <ValidationToggle
-              checked={runValidation}
-              onChange={setRunValidation}
-              status={validation}
-              disabled={busy}
-            />
-          </div>
+          {!single && (
+            <div className="mb-4">
+              <ValidationToggle
+                checked={runValidation}
+                onChange={setRunValidation}
+                status={validation}
+                disabled={busy}
+              />
+            </div>
+          )}
           <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-2 text-sm text-pencil">
               <span className="data">{plos.length} PLOs</span>
@@ -365,6 +465,7 @@ export default function PloSynthesis() {
               <PLOCard
                 key={p.plo_id}
                 plo={p}
+                single={single}
                 programId={programId}
                 onUpdate={handleUpdate}
                 busy={busy}
@@ -383,7 +484,10 @@ export default function PloSynthesis() {
             ))}
           </div>
 
-          <SupersededPlos items={superseded} needs={needs} />
+          <SupersededPlos
+            items={single ? superseded.filter(s => s.cause !== 'review') : superseded}
+            needs={needs}
+          />
 
           {needs.length >= 2 && (
             <MergeNeedPicker
@@ -406,18 +510,36 @@ export default function PloSynthesis() {
         </>
       )}
 
-      {/* The review reads the stored PLOs, so anything drafted is enough to go
-          on — including a set carrying escalations, which is exactly what the
-          review page is there to show. */}
-      <NextStageLink
-        from="plo_synthesis"
-        ready={Boolean(programId) && plos.length > 0 && mine === null && !merging}
-        blockedReason={
-          mine !== null || merging
-            ? 'รอให้งานที่กำลังทำเสร็จก่อน — การตรวจคุณภาพต้องอ่านจาก PLO ชุดนี้'
-            : 'ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน'
-        }
-      />
+      {single ? (
+        // The checkpoint of a single-agent program: approving builds the report.
+        // Escalated outcomes stay on the page above and do not block it — the
+        // designer decides, as at the multi-agent review checkpoint.
+        <div className="panel mt-10 flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
+          <p className="min-w-0 flex-1 text-sm text-pencil">
+            ตรวจ PLO ให้พอใจแล้วอนุมัติ — ระบบจะเก็บรายงานชุดนี้ไว้เป็นฉบับสุดท้าย
+          </p>
+          <button
+            onClick={() => void approve()}
+            disabled={busy || plos.length === 0}
+            className="btn btn-primary"
+          >
+            อนุมัติและออกรายงาน
+          </button>
+        </div>
+      ) : (
+        /* The review reads the stored PLOs, so anything drafted is enough to go
+           on — including a set carrying escalations, which is exactly what the
+           review page is there to show. */
+        <NextStageLink
+          from="plo_synthesis"
+          ready={Boolean(programId) && plos.length > 0 && mine === null && !merging}
+          blockedReason={
+            mine !== null || merging
+              ? 'รอให้งานที่กำลังทำเสร็จก่อน — การตรวจคุณภาพต้องอ่านจาก PLO ชุดนี้'
+              : 'ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน'
+          }
+        />
+      )}
     </div>
   )
 }
@@ -554,7 +676,10 @@ function PLOCard({
   needs,
   onAttach,
   reviewFixed,
+  single,
 }: {
+  /** The program's PLOs were written and judged by one agent, with no vote. */
+  single: boolean
   /** The current text is what the review's send-back wrote (same id and statement). */
   reviewFixed: boolean
   unusedNeeds: PickerNeed[]
@@ -662,7 +787,11 @@ function PLOCard({
             {/* code_only covers three different causes — this run skipped the
                 agent, .env disables it, the endpoint failed — and only the
                 diagnosis says which, so the badge quotes it instead of guessing. */}
-            {p.smart_validated_by === 'code_only' ? (
+            {p.smart_validated_by === 'single_agent' ? (
+              <span className="chip chip-neutral whitespace-normal">
+                {VALIDATED_BY_TH.single_agent}
+              </span>
+            ) : p.smart_validated_by === 'code_only' ? (
               <span
                 className="chip chip-marker cursor-help"
                 title={p.smart_diagnosis_th ?? VALIDATED_BY_TH.code_only}
@@ -681,6 +810,7 @@ function PLOCard({
               fallback for rows written before findings existed. */}
           {softFindings.length > 0 ? (
             <div className="mt-1 mb-2 space-y-1">
+              {single && <p className="eyebrow">ตัวแทนประเมินเอง</p>}
               {softFindings.map(f => (
                 <p key={f.criterion} className="notice notice-warn py-1.5 text-xs">
                   <span className="font-medium">{findingLabel(f.criterion)}</span>
@@ -689,7 +819,8 @@ function PLOCard({
               ))}
             </div>
           ) : p.soft_flags?.length > 0 ? (
-            <div className="mt-1 mb-2 flex flex-wrap gap-1">
+            <div className="mt-1 mb-2 flex flex-wrap items-center gap-1">
+              {single && <span className="eyebrow mr-1">ตัวแทนประเมินเอง</span>}
               {p.soft_flags.map(f => (
                 <span key={f} className="chip chip-marker">
                   {findingLabel(f)}
