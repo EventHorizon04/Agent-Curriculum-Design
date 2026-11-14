@@ -49,6 +49,19 @@ from curriculum_agent.prompts.plo_review import (
     build_review_refusal,
 )
 from curriculum_agent.prompts.program_context import build_program_context_th
+from curriculum_agent.prompts.single_agent import (
+    EvidenceIndexRow,
+    NeedBrief,
+    build_closing_instruction,
+    build_dropped_marker,
+    build_merge_need_task,
+    build_needs_task,
+    build_one_plo_task,
+    build_plos_task,
+    build_refusal,
+    build_single_agent_system,
+    build_turns_left_note,
+)
 from curriculum_agent.prompts.smart_agent import (
     build_agent_repair_prompt,
     build_refusal_observation,
@@ -253,6 +266,89 @@ def _build() -> str:
     )
     refusal_observation = build_refusal_observation("<เหตุผลที่ระบบปฏิเสธ>")
 
+    single_core = NeedBrief(
+        need_id="<need_id หลัก>",
+        statement_th="<ประโยคความต้องการหลัก>",
+        ksec_categories=("S",),
+        bloom_level="apply",
+        demand_score=0.72,
+        stakeholder_types=("employer", "alumni"),
+        evidence_ids=("<evidence_id 1>", "<evidence_id 2>"),
+    )
+    single_optional = NeedBrief(
+        need_id="<need_id เสริม>",
+        statement_th="<ประโยคความต้องการเสริม>",
+        ksec_categories=("E", "C"),
+        bloom_level="apply",
+        demand_score=0.18,
+        stakeholder_types=("community",),
+        evidence_ids=("<evidence_id 3>",),
+    )
+    single_unused = NeedBrief(
+        need_id="<need_id ที่ตกรอบ>",
+        statement_th="<ประโยคความต้องการที่ตกรอบ>",
+        ksec_categories=("K",),
+        bloom_level="understand",
+        demand_score=0.11,
+        stakeholder_types=("faculty",),
+        evidence_ids=("<evidence_id 4>",),
+    )
+    single = _render(
+        [
+            {"role": "system", "content": build_single_agent_system()},
+            {
+                "role": "user",
+                "content": build_needs_task(
+                    program_context="<program context>",
+                    scope_th="<ขอบเขตหลักสูตรที่ผู้ออกแบบเขียน>",
+                    evidence_index=[
+                        EvidenceIndexRow(
+                            evidence_id="<evidence_id 1>",
+                            stakeholder_type="employer",
+                            source_name="<แหล่งที่มา>",
+                            classification="general",
+                            total_chars=978,
+                            parts=1,
+                        ),
+                        EvidenceIndexRow(
+                            evidence_id="<evidence_id 2>",
+                            stakeholder_type="professional_council",
+                            source_name="<แหล่งที่มา>",
+                            classification="requirement",
+                            total_chars=13000,
+                            parts=3,
+                        ),
+                    ],
+                ),
+            },
+        ]
+    )
+    single_plos = build_plos_task(
+        program_context="<program context>",
+        scope_th=None,
+        core_needs=[single_core],
+        optional_needs=[single_optional],
+        unused_needs=[single_unused],
+        note_th="<ข้อความจากผู้ออกแบบหลักสูตร>",
+    )
+    single_one_plo = build_one_plo_task(
+        program_context="<program context>",
+        scope_th=None,
+        needs=[single_core],
+        current_statement_th="<ประโยค PLO ปัจจุบัน>",
+        note_th=None,
+    )
+    single_merge = build_merge_need_task(
+        program_context="<program context>",
+        needs=[single_core, single_optional],
+        reason_th="<เหตุผลที่ผู้ออกแบบรวม>",
+    )
+    single_marker = build_dropped_marker("<evidence_id 1>", "<โน้ตของตัวแทนสำหรับรายการนี้>")
+    single_marker_unnoted = build_dropped_marker("<evidence_id 2>", None)
+    single_refusal = build_refusal("<เหตุผลที่ระบบปฏิเสธ>")
+    single_turns_left = build_turns_left_note(3)
+    single_closing = build_closing_instruction()
+
     return TEMPLATE.format(
         extract=extract,
         cluster=cluster,
@@ -276,6 +372,15 @@ def _build() -> str:
         context_line=context_line,
         repair_instruction=repair_instruction,
         refusal_observation=refusal_observation,
+        single=single,
+        single_plos=single_plos,
+        single_one_plo=single_one_plo,
+        single_merge=single_merge,
+        single_marker=single_marker,
+        single_marker_unnoted=single_marker_unnoted,
+        single_refusal=single_refusal,
+        single_turns_left=single_turns_left,
+        single_closing=single_closing,
         min_statement=MIN_STATEMENT_CHARS,
         min_rationale=MIN_RATIONALE_CHARS,
         max_rationale=MAX_RATIONALE_CHARS,
@@ -312,6 +417,7 @@ TEMPLATE = """# คลัง prompt ทั้งหมดในระบบ
 | 9 | ตรวจคุณภาพชุด PLO (QA agent ขั้นที่ 06) | `build_plo_review_prompt` | `stages/plo_review_agent.py` → `run_review_agent` | `plo_review` | `ReviewStep` | ❌ |
 | 10 | เขียนประโยค Need ที่รวมจากหลายข้อ | `build_merged_need_prompt` | `stages/need_merge.py` → `_write_merged` | `need_combination` | `NeedStatement` | ❌ |
 | 11 | โน้ตสั่งเขียน PLO ใหม่จากข้อค้นพบของผู้ตรวจ (ซ้ำซ้อน, ความสอดคล้อง, Bloom/กริยา, Need ที่ไม่ได้ใช้, หมวด KSEC ขาด) | `build_redundancy_redraft_note_th` ฯลฯ | `stages/plo_feedback.py` → `_send_*` | `plo_synthesis` (ผ่าน `note_th` ของข้อ 5) | `_SingleDraftResponse` | ❌ |
+| 12 | ตัวแทนเดี่ยว (โหมด single): system prompt เดียว + ข้อความเปิดงานสี่แบบ | `build_single_agent_system` + `build_needs_task` / `build_plos_task` / `build_one_plo_task` / `build_merge_need_task` | `stages/single_agent_loop.py` → `run_single_agent` | `single_agent` | `SingleStep` | ❌ |
 
 **หนึ่ง slot ต่อหนึ่ง stage** — ยกเว้น `plo_synthesis` ที่มีผู้เรียกสองราย (ข้อ 5 และ 7) โดยตั้งใจ:
 การซ่อมประโยคต้องไม่ถูกตอบด้วยโมเดลคนละตัวกับที่เขียนร่างแรก
@@ -656,11 +762,94 @@ Need ที่ยังไม่มี PLO:
 
 ---
 
+## 12. ตัวแทนเดี่ยว (โหมด single) — system prompt เดียวสำหรับทุกงาน
+
+| | |
+|---|---|
+| **builder** | `prompts/single_agent.py` → `build_single_agent_system()` (ไม่มี argument) + ข้อความเปิดงาน `build_needs_task` / `build_plos_task` / `build_one_plo_task` / `build_merge_need_task` |
+| **ผู้เรียก** | `stages/single_agent_loop.py` → `run_single_agent` (งาน Need, งานชุด PLO, revalidate/ร่างจาก Need หนึ่งข้อ, รวม Need ของผู้ออกแบบ) |
+| **slot / wrapper** | `single_agent` → `complete_single_agent` (`temperature=0`) |
+| **response model** | `SingleStep` (`reasoning_th` + `action` แบบ `call_tool` / `note` / `save_need` / `drop_need` / `save_plo` / `drop_plo` / `finish`) |
+| **cache** | ไม่มี — ทุกการรันเรียกโมเดลจริง |
+
+โหมด single คือ LLM ตัวเดียวที่พฤติกรรมทั้งหมดกำหนดด้วย prompt เดียว ใช้เทียบกับ pipeline หลายตัวแทน
+(spec `docs/superpowers/specs/2026-11-13-single-agent-mode-design.md`) · system prompt **ไม่รับ argument**
+งานสี่แบบต่างกันที่ข้อความเปิดงาน (user message แรก) เท่านั้น ตัวแปรที่เทียบจึงมีแค่โครงสร้างของงาน
+
+system prompt ต้องพกกติกาโดเมนทุกข้อที่ prompt ข้อ 1-11 กระจายกันถือ (KSEC และกฎ 'แก่นของวลี', ตาราง Bloom
+และ `bloom_lookup`, คำต้องห้าม, กริยาที่ประกาศตัวเดียวและขึ้นต้นประโยค, เกณฑ์ soft เจ็ดข้อ, กติกาเขียน Need,
+อยู่ในสาขา, ผู้ลงมือทำคือบัณฑิต) เขียนใหม่เป็นคำสั่งชุดเดียวสำหรับตัวแทนเดียว ไม่ได้คัดลอก prompt เดิมทั้งก้อน
+
+จุดที่ตั้งใจไว้:
+
+- **ไม่ให้โมเดลจัดประเภทหลักฐานหรือให้คะแนน** — requirement/general, กลุ่มผู้มีส่วนได้ส่วนเสีย, `demand_score`
+  และ Need หลัก/เสริม โค้ดคำนวณจากหลักฐานที่ Need อ้าง prompt บอกตรง ๆ ว่าไม่ต้องทำ
+- **ไม่เอ่ยชื่อ stage ของ pipeline หลายตัวแทน และไม่มี `vision_th`** — ทิศทางสถาบันเป็นหลักฐานรายการหนึ่ง
+- **ประกาศว่าเกณฑ์ hard ผ่านเองไม่ได้** — โค้ดตรวจทุกครั้งที่ `save_plo` และตรวจซ้ำตอนจบงาน
+- **ผล soft เป็นของตัวแทนเอง ไม่มีโหวตและไม่มีผู้ตรวจคนที่สอง** prompt จึงเน้นความตรงไปตรงมา และผล soft ต้องเป็นของ
+  ประโยคที่บันทึกในครั้งนั้น
+- **`note` บังคับหลังอ่านหลักฐานครบทุกรายการ ทุกการรัน** — เมื่อบริบทเกินงบ โค้ดนำข้อความหลักฐานเก่าออกแล้วแทนด้วย
+  โน้ตของตัวแทนเอง ไม่มี call สรุปแยก
+
+**`system`** และข้อความเปิดงานแบบ ก (เขียน Need) — รายการหลักฐานไม่มีข้อความหลักฐานเลย ข้อความมาทาง `get_evidence` เท่านั้น
+
+{single}
+
+ข้อความเปิดงานแบบ ข (ชุด PLO) — Need หลัก, Need เสริม และ Need ที่ตกรอบเพดาน 10 ข้อ (แสดงไว้ให้ทราบ อ้างไม่ได้):
+
+```text
+{single_plos}
+```
+
+ข้อความเปิดงานแบบ ค (PLO หนึ่งข้อ — ตัวอย่างนี้คือ revalidate ที่มีประโยคปัจจุบัน):
+
+```text
+{single_one_plo}
+```
+
+ข้อความเปิดงานแบบ ง (รวม Need ตามที่ผู้ออกแบบเลือก):
+
+```text
+{single_merge}
+```
+
+### ข้อความที่ต่อเข้า loop ระหว่างทาง
+
+| builder | ใช้เมื่อ |
+|---|---|
+| `build_observation(tool, payload_json)` | ผลของเครื่องมือหนึ่งตัว `ผลของ <tool>:` ตามด้วย JSON |
+| `build_refusal(reason_th)` | ระบบปฏิเสธ action ล่าสุด เช่น รหัสที่ไม่รู้จัก หรือเรียกเครื่องมือซ้ำ |
+| `build_dropped_marker(evidence_id, note_th)` | แทนข้อความหลักฐานที่ถูกนำออกจากบริบท |
+| `build_turns_left_note(turns_left)` | ต่อท้ายผลเมื่อเหลือรอบน้อย |
+| `build_closing_instruction()` | call สุดท้ายหลังใช้รอบครบ — รับแค่ `finish` |
+
+```text
+{single_refusal}
+```
+
+```text
+{single_marker}
+```
+
+```text
+{single_marker_unnoted}
+```
+
+```text
+{single_turns_left}
+```
+
+```text
+{single_closing}
+```
+
+---
+
 ## ชิ้นส่วนที่ prompt หลายก้อนใช้ร่วมกัน
 
 ### `prompts/designer_note.py` — ข้อความเพิ่มเติมจากผู้ออกแบบ
 
-ไปถึง prompt ข้อ 4 และ 5 เท่านั้น
+ไปถึง prompt ข้อ 4, 5 และ 12 เท่านั้น (ข้อ 12 มีบรรทัดนโยบายใน system prompt เสมอ)
 
 `append_note(user_content, note_th)` ต่อ note เข้า **user message** เสมอ ไม่ใช่ system — ข้อความที่ผู้ใช้
 พิมพ์เองถ้าไปอยู่ใน system จะถูกเสนอในฐานะนโยบาย · ส่วน `NOTE_POLICY_TH` อยู่ใน system เพื่อบอกว่าให้อ่าน
@@ -686,7 +875,7 @@ note นั้นอย่างไร และเติมแบบไม่�
 {context_line}
 ```
 
-ไปถึง prompt ข้อ 2 และ 4 · เป็น **metadata ไม่ใช่ evidence** จึงใช้กำกับการอ่านเท่านั้น
+ไปถึง prompt ข้อ 2 และ 4 และทุกข้อความเปิดงานของข้อ 12 · เป็น **metadata ไม่ใช่ evidence** จึงใช้กำกับการอ่านเท่านั้น
 ชื่อทักษะลอย ๆ อย่าง "การดูแล" จับกลุ่มกับงานคลินิกในหลักสูตรพยาบาล และกับงานอาคารสถานที่ในหลักสูตร
 วิศวกรรม และไม่มีอะไรอื่นใน prompt ทั้งสองบอกว่านี่คือหลักสูตรอะไร · หลักสูตรที่ไม่มี `field` ได้ `None`
 และ prompt กลับไปเหมือนก่อนมีฟีเจอร์นี้ทุกตัวอักษร
