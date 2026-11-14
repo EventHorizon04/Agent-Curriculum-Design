@@ -38,6 +38,7 @@ from curriculum_agent.models import (
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused, redraft_from_needs
 from curriculum_agent.stages.plo_review_facts import is_stale, need_demands, plo_fingerprint
+from curriculum_agent.stages.single_plos import SinglePlosResult
 
 router = APIRouter()
 _repo = PLORepository()
@@ -270,6 +271,17 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
             status_code=422,
             detail="ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน",
         )
+
+    if metadata.agent_mode == "single":
+        from curriculum_agent.stages.single_plos import run_single_plos  # noqa: PLC0415
+
+        note_th = body.note_th if body else None
+
+        async def single_work() -> SinglePlosResult:
+            return await run_single_plos(program_id, note_th=note_th)
+
+        # No review chained and `run_validation` ignored: the single half has neither.
+        return await start_job_or_409(program_id, "single_plos", {"note_th": note_th}, single_work)
 
     state: AgentState = {
         "program_id": program_id,
