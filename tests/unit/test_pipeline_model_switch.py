@@ -116,6 +116,8 @@ _MAIN_RESOLUTION: dict[str, tuple[str, str]] = {
     "plo_synthesis": ("opentyphoon", "typhoon-v2.5-30b-a3b-instruct"),
     "validation": ("openrouter", "z-ai/glm-5.3-flash"),
     "plo_review": ("openrouter", "z-ai/glm-5.3-flash"),
+    # Not on main: the single-agent slot shares plo_synthesis's defaults.
+    "single_agent": ("opentyphoon", "typhoon-v2.5-30b-a3b-instruct"),
 }
 
 
