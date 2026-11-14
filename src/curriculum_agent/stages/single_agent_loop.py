@@ -59,6 +59,7 @@ _STEP_ATTEMPTS = 2
 _TURNS_LEFT_WARNING = 5
 # Past this share of the window with nothing left to drop, the next call would not fit.
 _CONTEXT_CEILING = 0.95
+_STATE_DEPENDENT_TOOLS = frozenset({"list_sibling_plos", "get_need", "need_detail"})
 
 
 class Note(BaseModel):
@@ -137,7 +138,9 @@ class ClosingStep(BaseModel):
 
 
 OutputAction = Note | SaveNeed | DropNeed | SavePLO | DropPLO
-StopReason = Literal["finished", "turn_cap", "timeout", "context_full"]
+# "malformed": the loop ended through the closing call after _MAX_MALFORMED malformed
+# steps in a row, not because the agent finished.
+StopReason = Literal["finished", "turn_cap", "timeout", "context_full", "malformed"]
 
 
 class TaskHandler(Protocol):
@@ -166,6 +169,8 @@ class History:
         self._messages: list[dict[str, str]] = [dict(m) for m in initial]
         self._evidence_at: dict[int, str] = {}
         self._dropped: set[str] = set()
+        # Ids whose text is out of history right now; a re-read puts it back.
+        self._absent: set[str] = set()
 
     def messages(self) -> list[dict[str, str]]:
         return self._messages
@@ -179,6 +184,7 @@ class History:
     def add_observation(self, text: str, *, evidence_id: str | None = None) -> None:
         if evidence_id is not None:
             self._evidence_at[len(self._messages)] = evidence_id
+            self._absent.discard(evidence_id)
         self._messages.append({"role": "user", "content": text})
 
     def drop_oldest_evidence(self, marker_for: Callable[[str], str]) -> int | None:
@@ -190,11 +196,32 @@ class History:
         before = len(self._messages[index]["content"])
         self._messages[index]["content"] = marker_for(evidence_id)
         self._dropped.add(evidence_id)
+        self._absent.add(evidence_id)
         return before - len(self._messages[index]["content"])
+
+    def add_user_note(self, text: str) -> None:
+        """Say something to the agent without two user messages in a row.
+
+        A refusal after a malformed step, and the closing instruction, have no
+        assistant turn of their own to answer; some OpenAI-compatible providers
+        reject consecutive user messages, so the text is folded into the last user
+        message. If that message is evidence text, a later drop takes the note
+        with it, which is harmless: it only mattered for the next call.
+        """
+        if self._messages and self._messages[-1]["role"] == "user":
+            self._messages[-1]["content"] += "\n" + text
+        else:
+            self._messages.append({"role": "user", "content": text})
 
     @property
     def dropped_evidence_ids(self) -> set[str]:
+        """Every item whose text was ever dropped (the count the outcome reports)."""
         return self._dropped
+
+    @property
+    def absent_evidence_ids(self) -> set[str]:
+        """Items whose text is out of history now, so a read of them is not a repeat."""
+        return self._absent
 
 
 def _step_retrying() -> AsyncRetrying:
@@ -283,7 +310,7 @@ def _shrink_context(state: _State, handler: TaskHandler, prompt_tokens: int) -> 
 
 async def _closing(state: _State) -> None:
     """The one extra Finish-only call. Its answer carries nothing to store."""
-    state.history.add_observation(build_closing_instruction())
+    state.history.add_user_note(build_closing_instruction())
     try:
         await _ask(ClosingStep, state, [])
     except Exception as exc:
@@ -307,25 +334,28 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
             )
             if malformed >= _MAX_MALFORMED:
                 await _closing(state)
-                return "finished"
-            history.add_observation(_with_turns_left(build_refusal("รูปแบบคำตอบไม่ถูกต้อง"), turn))
+                return "malformed"
+            history.add_user_note(_with_turns_left(build_refusal("รูปแบบคำตอบไม่ถูกต้อง"), turn))
             continue
         malformed = 0
 
         # The call just made saw the history as it was; shrink before adding to it.
         context_full = bool(sink) and _shrink_context(state, handler, sink[-1])
-        history.add_assistant(step.model_dump_json())
+        history.add_assistant(step.model_dump_json(exclude_none=True))
         action = step.action
 
         if isinstance(action, Finish):
             return "finished"
         if isinstance(action, CallTool):
-            observation = _tool_observation(handler, state, seen_calls, action)
-            history.add_observation(
-                _with_turns_left(observation[0], turn), evidence_id=observation[1]
-            )
+            text, evidence_id = _tool_observation(handler, state, seen_calls, action)
+            history.add_observation(_with_turns_left(text, turn), evidence_id=evidence_id)
         else:
             history.add_observation(_with_turns_left(handler.handle(action), turn))
+            # What these tools answer depends on what the handler holds, which
+            # this action may have changed: asking again is not a repeat.
+            seen_calls.difference_update(
+                {c for c in seen_calls if c.split("\x00", 1)[0] in _STATE_DEPENDENT_TOOLS}
+            )
         if context_full:
             logger.warning(f"  single agent turn {turn}: context full, nothing left to drop")
             return "context_full"
@@ -341,7 +371,7 @@ def _tool_observation(
     """(observation text, evidence id when the text is raw evidence)."""
     fingerprint = _fingerprint(call)
     rereading_dropped = (
-        call.tool == "get_evidence" and call.evidence_id in state.history.dropped_evidence_ids
+        call.tool == "get_evidence" and call.evidence_id in state.history.absent_evidence_ids
     )
     if fingerprint in seen_calls and not rereading_dropped:
         return (

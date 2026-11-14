@@ -176,10 +176,13 @@ async def test_two_malformed_steps_then_closing(fake: FakeLLM, handler: FakeHand
     fake.script(_malformed(), _malformed())
     fake.closing(_finish())
     out = await run_single_agent(handler)
-    assert out.stop_reason == "finished"
+    assert out.stop_reason == "malformed"
     assert out.turns == 2
     assert "รูปแบบคำตอบไม่ถูกต้อง" in fake.messages_seen[1][-1]["content"]
     assert len(fake.messages_seen) == 3
+    for seen in fake.messages_seen:
+        roles = [m["role"] for m in seen]
+        assert all(a != b for a, b in zip(roles, roles[1:], strict=False)), roles
 
 
 async def test_one_malformed_step_is_tolerated(fake: FakeLLM, handler: FakeHandler) -> None:
@@ -310,3 +313,93 @@ async def test_a_provider_timeout_is_an_error_not_the_loop_budget(
     fake.script(TimeoutError("provider"))
     with pytest.raises(TimeoutError):
         await run_single_agent(handler)
+
+
+async def test_state_dependent_tool_may_be_asked_again_after_a_save(
+    fake: FakeLLM, handler: FakeHandler
+) -> None:
+    fake.script(
+        _tool("list_sibling_plos"),
+        DropNeed(kind="drop_need", need_id="N1"),
+        _tool("list_sibling_plos"),
+        _finish(),
+    )
+    await run_single_agent(handler)
+    assert "ระบบปฏิเสธ" not in _user_text(fake.messages_seen[-1])
+
+
+async def test_state_dependent_tool_twice_with_no_save_between_is_refused(
+    fake: FakeLLM, handler: FakeHandler
+) -> None:
+    fake.script(_tool("list_sibling_plos"), _tool("list_sibling_plos"), _finish())
+    await run_single_agent(handler)
+    assert "ระบบปฏิเสธ" in fake.messages_seen[-1][-1]["content"]
+
+
+async def test_a_pure_tool_stays_refused_after_a_save(fake: FakeLLM, handler: FakeHandler) -> None:
+    fake.script(
+        _tool("bloom_lookup", verb_th="สร้าง"),
+        DropNeed(kind="drop_need", need_id="N1"),
+        _tool("bloom_lookup", verb_th="สร้าง"),
+        _finish(),
+    )
+    await run_single_agent(handler)
+    assert "ระบบปฏิเสธ" in fake.messages_seen[-1][-1]["content"]
+
+
+async def test_a_reread_after_a_drop_is_allowed_once_then_refused(
+    fake: FakeLLM, handler: FakeHandler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loop.settings, "single_agent_context_window_tokens", 1000)
+    fake.script(
+        _tool("get_evidence", evidence_id="e1"),
+        _note("e1", "โน้ต e1"),
+        _tool("bloom_lookup", verb_th="สร้าง"),
+        _tool("get_evidence", evidence_id="e1"),
+        _tool("get_evidence", evidence_id="e1"),
+        _finish(),
+        tokens=[100, 200, 900, 300, 300, 300],
+    )
+    await run_single_agent(handler)
+    assert "ระบบปฏิเสธ" in fake.messages_seen[-1][-1]["content"]
+
+
+async def test_a_step_on_the_context_full_turn_is_still_handled(
+    fake: FakeLLM, handler: FakeHandler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loop.settings, "single_agent_context_window_tokens", 1000)
+    fake.script(DropNeed(kind="drop_need", need_id="N1"), _finish(), tokens=[990])
+    out = await run_single_agent(handler)
+    assert out.stop_reason == "context_full"
+    assert handler.handled == [DropNeed(kind="drop_need", need_id="N1")]
+
+
+async def test_dropping_continues_across_items_until_under_budget(
+    fake: FakeLLM, handler: FakeHandler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loop.settings, "single_agent_context_window_tokens", 1000)
+    big = {f"e{i}": "ก" * 3000 for i in (1, 2, 3)}
+    handler.tool_ctx.evidence_by_id = {k: _evidence(k, v) for k, v in big.items()}
+    fake.script(
+        _tool("get_evidence", evidence_id="e1"),
+        _tool("get_evidence", evidence_id="e2"),
+        _tool("get_evidence", evidence_id="e3"),
+        _tool("bloom_lookup", verb_th="สร้าง"),
+        _finish(),
+        tokens=[100, 100, 100, 850, 100],
+    )
+    out = await run_single_agent(handler)
+    sent = _user_text(fake.messages_seen[-1])
+    assert out.dropped_evidence_count == 2
+    assert big["e3"] in sent and "ถูกนำออกจากบริบท" in sent
+    assert sent.count("ข้อความหลักฐาน e") == 2
+
+
+def test_history_add_user_note_folds_into_a_user_message() -> None:
+    history = History([{"role": "system", "content": "s"}, {"role": "user", "content": "u"}])
+    history.add_user_note("n")
+    assert [m["role"] for m in history.messages()] == ["system", "user"]
+    assert history.messages()[1]["content"] == "u\nn"
+    history.add_assistant("{}")
+    history.add_user_note("m")
+    assert history.messages()[-1] == {"role": "user", "content": "m"}
