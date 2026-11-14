@@ -97,7 +97,20 @@ The opening message of the first half lists every evidence item (id, stakeholder
 
 *Builder's call:* part size (default 6000 characters, a setting), whether one `get_evidence` call may name several items, and whether `get_need` and `need_detail` share an implementation.
 
-**Corpus size this is designed for.** The phase-1 test program has 14 evidence items, 9,537 characters in total, the longest 978 (measured on the copy DB, 2026-11-13). Every item fits in one part, so a first half is roughly 14 reads, about ten saves and a finish. The whole history stays in context; nothing is trimmed or summarised. A corpus too large for that is out of scope here: the job refuses to start when the program's evidence exceeds `single_agent_max_evidence_chars` (default 150,000) and says so in Thai, rather than running and silently skipping most of it.
+**Corpus size this is designed for.** The phase-1 test program has 14 evidence items, 9,537 characters in total, the longest 978 (measured on the copy DB, 2026-11-13). Every item fits in one part, so a first half is roughly 14 reads, about ten saves and a finish. At that size the whole history stays in context and nothing below applies.
+
+**When the evidence does not fit the context** (designer's decision, 2026-11-14: handle it, do not refuse the run). The agent keeps its own notes and code drops the raw text:
+
+- After reading an evidence item the agent must hand in a `Note` action: `evidence_id` and the points it found there, in its own words. This is an output action of the same loop, not another LLM call, and it is required on every run, large corpus or small, so the prompt and the behaviour are the same in both.
+- Code tracks the prompt tokens each turn actually used. When they pass `single_agent_context_budget_ratio` (default 0.7) of the model's context window, code replaces the oldest raw `get_evidence` results in the history with a short marker pointing at the agent's note for that item, oldest first, until the history is back under budget. Only evidence text is dropped; notes, saved Needs and the agent's own steps stay.
+- The agent may call `get_evidence` again on a dropped item. The repeated-call refusal does not apply to an item whose text was dropped.
+- The trail is unaffected: notes carry the `evidence_id`, and `SaveNeed` still checks every cited id against the program.
+- If the history cannot be brought under the window even with all evidence text dropped, the half ends with `stop_reason = context_full` and stores what was saved, by the partial-result rule below.
+- The job result records how many evidence items had their text dropped, so a run that worked from full text can be told from one that worked from notes. Coarser Needs on a large corpus are a real property of the single structure and should show in the results, not be hidden.
+
+No separate summarising call and no switch to a larger-context model: the first would be multi under another name, the second changes the model, which is held equal.
+
+*Builder's call:* how the context window of the slot's model is known (a setting `single_agent_context_window_tokens` is enough; it need not be discovered), the marker text, and the note's length limit.
 
 Besides tools, the step's action can be one of the output actions below. These are how the agent hands in work, not tools.
 
@@ -117,7 +130,7 @@ Code, at `Finish` (one transaction, replacing the program's Needs as multi's sta
 - evidence items the agent never opened, and evidence no Need cites, are logged and returned in the job result so the Need page can show them;
 - fewer than 6 non-optional Needs logs the same policy warning multi logs. No cap on the number of Needs.
 
-A run that ends (finish, turn cap or timeout) with at least one saved Need stores what it has and succeeds, with the stop reason in the job result. With none, the job fails and nothing is replaced. The job result carries `stop_reason` (`finished` | `turn_cap` | `timeout`), turns used, and the unread and uncited evidence ids. *Builder's call:* for the research lock runs, only `finished` with no unread evidence counts as a pass; a capped run is usable in the UI but is not a passing run.
+A run that ends (finish, turn cap or timeout) with at least one saved Need stores what it has and succeeds, with the stop reason in the job result. With none, the job fails and nothing is replaced. The job result carries `stop_reason` (`finished` | `turn_cap` | `timeout` | `context_full`), turns used, the number of evidence items whose text was dropped, and the unread and uncited evidence ids. *Builder's call:* for the research lock runs, only `finished` with no unread evidence counts as a pass; a capped run is usable in the UI but is not a passing run.
 
 `demand_score` is used to rank Needs inside one run. Its denominator differs slightly from multi's by construction, so scores are not compared across modes. *Builder's call.*
 
@@ -171,7 +184,7 @@ The designer approves the stored PLOs, then `plo_report` runs unchanged from wha
 
 ### Budgets
 
-Settings, with defaults: `single_agent_max_turns` 80 per half, `single_agent_timeout_seconds` 1800 per half, `single_agent_evidence_part_chars` 6000. *Builder's call on the numbers after one real run;* the report of that run should state what the run actually used.
+Settings, with defaults: `single_agent_max_turns` 80 per half, `single_agent_timeout_seconds` 1800 per half, `single_agent_evidence_part_chars` 6000, `single_agent_context_budget_ratio` 0.7, `single_agent_context_window_tokens` (set to the pinned model's window). The turn budget is per half and is the designed-for-small-corpus number; a large corpus needs it raised, and the turn cap, not a refusal at the start, is what stops a run that is too long. *Builder's call on the numbers after one real run;* the report of that run should state what the run actually used.
 
 ## UI
 
@@ -188,7 +201,8 @@ The job routes call stages directly; only `/sessions` drives the LangGraph graph
 
 - Validators first: `Need` with `origin="single"` and no skills is valid; with `origin="multi"` and no skills still fails; PLO trail validators unchanged.
 - Pure-code pieces: demand/class/optional derivation from cited evidence; save-time refusals; finish-time hard gate sets `smart_escalated`; a Need behind two PLOs refused.
-- The loop with a scripted fake LLM: reads evidence in parts, saves, finishes; turn cap and timeout store partial work with a stop reason; nothing saved fails the job and leaves stored rows alone.
+- Context handling with a scripted fake LLM and a tiny window: oldest evidence text is dropped first and replaced by the marker, notes and saved Needs survive, a dropped item can be read again, `context_full` stores partial work, and a small corpus drops nothing.
+- The loop with a scripted fake LLM: reads evidence in parts, notes, saves, finishes; turn cap and timeout store partial work with a stop reason; nothing saved fails the job and leaves stored rows alone.
 - Routes: `/needs/run` and `/plos/run` dispatch by mode; a multi program's behaviour is byte-for-byte what it was; mode-changing `full` copy refused.
 - `scripts/dump_prompts.py --check` passes with the new prompt in `docs/prompt-inventory.md`.
 - One real run on the copy DB (`curriculum_phase1`, never the shared DB) from evidence to report, reported under `.scratch/reports/` with tokens, turns and wall time for each half.
