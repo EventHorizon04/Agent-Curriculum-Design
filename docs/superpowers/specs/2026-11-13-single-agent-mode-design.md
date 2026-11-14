@@ -143,7 +143,7 @@ Re-running either half on a program that already has later-stage rows (PLOs, sup
 `Need.member_skill_ids` currently requires at least one id. Single's Needs have none.
 
 - Add `origin: "multi" | "single"` to `Need` (default `"multi"`, stored). `member_skill_ids` may be empty only when `origin == "single"`; multi's guarantee is untouched.
-- For a single Need, `top_skill_ids` is empty, the skill counts are 0, and the ratio properties return 0 instead of dividing by zero.
+- For a single Need, `top_skill_ids` is empty, the skill counts are 0, and the ratio properties keep today's behaviour for an empty member list (1.0, no division). *Corrected 2026-11-14 after the code audit: returning 0 would mark the Need off-scope.*
 - Scope guard: `is_in_scope` treats a single Need as in scope. Staying inside the program's field is the prompt's job in this mode; the designer can exclude a Need at the checkpoint. *Builder's call.*
 
 ### Need checkpoint
@@ -151,7 +151,7 @@ Re-running either half on a program that already has later-stage rows (PLOs, sup
 The `need_analysis` page and its actions work on single's Needs:
 
 - approve; exclude / restore;
-- **merge 2-5 Needs**: the merged Need's evidence, stakeholder types, `demand_score`, `freq` and class are recomputed by code from the union of evidence; KSEC tags are the sorted union; the statement comes from the designer's merge dialog as today. If today's designer merge calls an LLM for the merged statement, single uses the `single_agent` slot for that one call. Split works as today;
+- **merge 2-5 Needs**: the merged Need's evidence, stakeholder types, `demand_score`, `freq` and class are recomputed by code from the union of evidence; KSEC tags are the sorted union. Today's designer merge has the model write the merged statement (the dialog supplies only a reason), so in single mode the single agent writes it: same system prompt, `single_agent` slot, a merge task as the first user message. *Corrected 2026-11-14 after the code audit.* Split works as today;
 - the trace view shows evidence only (no skills section).
 
 Evidence locks once Needs exist, as in multi.
