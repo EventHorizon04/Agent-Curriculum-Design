@@ -338,6 +338,14 @@ def _build() -> str:
         current_statement_th="<ประโยค PLO ปัจจุบัน>",
         note_th=None,
     )
+    single_one_plo_kept = build_one_plo_task(
+        program_context="<program context>",
+        scope_th=None,
+        needs=[single_core],
+        current_statement_th="<ประโยค PLO ที่ผู้ออกแบบแก้เอง>",
+        note_th=None,
+        keep_wording=True,
+    )
     single_merge = build_merge_need_task(
         program_context="<program context>",
         needs=[single_core, single_optional],
@@ -375,6 +383,7 @@ def _build() -> str:
         single=single,
         single_plos=single_plos,
         single_one_plo=single_one_plo,
+        single_one_plo_kept=single_one_plo_kept,
         single_merge=single_merge,
         single_marker=single_marker,
         single_marker_unnoted=single_marker_unnoted,
@@ -805,6 +814,13 @@ system prompt ต้องพกกติกาโดเมนทุกข้อ
 
 ```text
 {single_one_plo}
+```
+
+แบบ ค เมื่อ `keep_wording=True` — revalidate PLO ที่ผู้ออกแบบแก้เอง (`designer_edited_at`): ระบบเก็บประโยค
+กริยา และระดับของผู้ออกแบบไว้เสมอ จึงสั่งให้ตัวแทนบันทึกประโยคเดิมและประเมินอย่างเดียว ผล soft จะได้ตรงกับประโยคที่เก็บจริง:
+
+```text
+{single_one_plo_kept}
 ```
 
 ข้อความเปิดงานแบบ ง (รวม Need ตามที่ผู้ออกแบบเลือก):

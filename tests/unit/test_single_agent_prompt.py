@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import ast
 import inspect
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
+from curriculum_agent import smart_vocabulary
 from curriculum_agent.prompts import single_agent
 from curriculum_agent.prompts.designer_note import NOTE_HEADER_TH, NOTE_POLICY_TH
 from curriculum_agent.prompts.single_agent import (
@@ -139,6 +141,64 @@ def test_system_prompt_names_the_fields_the_actions_carry(field: str) -> None:
     assert field in build_single_agent_system()
 
 
+def _declared_forbidden_words() -> list[str]:
+    """FORBIDDEN_WORDS_TH in the order its source literal declares them.
+
+    The constant is a set, so its iteration order is not the declared order; the
+    literal is read off the module source instead.
+    """
+    tree = ast.parse(Path(inspect.getfile(smart_vocabulary)).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(t, ast.Name) and t.id == "FORBIDDEN_WORDS_TH" for t in node.targets)
+            and isinstance(node.value, ast.Set)
+        ):
+            return [ast.literal_eval(element) for element in node.value.elts]
+    raise AssertionError("FORBIDDEN_WORDS_TH literal not found")
+
+
+def test_system_prompt_lists_the_forbidden_words_whole_and_in_order() -> None:
+    # Substring checks alone are vacuous for Thai: "รู้" sits inside "เรียนรู้",
+    # "จำ" inside "จำนวน", "รัก" inside "รักษา". The contiguous list cannot.
+    declared = _declared_forbidden_words()
+    assert set(declared) == FORBIDDEN_WORDS_TH
+    assert " ".join(declared) in build_single_agent_system()
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        '"kind": "call_tool"',
+        '"kind": "note"',
+        '"kind": "save_need"',
+        '"kind": "drop_need"',
+        '"kind": "save_plo"',
+        '"kind": "drop_plo"',
+        '"kind": "finish"',
+        '"tool": "get_evidence"',
+        '"tool": "get_need"',
+        '"tool": "list_sibling_plos"',
+        '"tool": "check_hard"',
+        '"tool": "bloom_lookup"',
+        '"tool": "check_verbs"',
+    ],
+)
+def test_system_prompt_shows_every_action_and_tool_shape(shape: str) -> None:
+    # "note" and "finish" occur all over the prompt; the JSON shape occurs once.
+    assert shape in build_single_agent_system()
+
+
+def test_system_prompt_forbids_citing_needs_that_lost_the_cut() -> None:
+    assert "อ้างใน source_need_ids ไม่ได้" in build_single_agent_system()
+
+
+def test_system_prompt_lets_a_short_budget_override_reading_everything() -> None:
+    system = build_single_agent_system()
+    assert "สำคัญกว่ากติกา 'อ่านหลักฐานให้ครบทุกรายการก่อน finish'" in system
+    assert "ไม่ต้องอ่านหลักฐานที่เหลือ" in build_turns_left_note(3)
+
+
 def test_system_prompt_names_every_ksec_tag_and_bloom_level() -> None:
     system = build_single_agent_system()
     for level in ("remember", "understand", "apply", "analyze", "evaluate", "create"):
@@ -216,12 +276,78 @@ def test_one_plo_task_shows_the_current_statement_only_when_there_is_one() -> No
     assert "แปลเอกสารสัญญาธุรกิจไทย-อังกฤษ" in again and "ประโยคปัจจุบัน" in again
 
 
+_KEEP_WORDING_MARK = "ห้ามแก้ถ้อยคำ"
+_EDITED = "แปลเอกสารสัญญาธุรกิจไทย-อังกฤษโดยใช้เครื่องมือช่วยแปล"
+
+
+def test_keep_wording_tells_the_agent_to_judge_the_designers_sentence_unchanged() -> None:
+    msg = build_one_plo_task(
+        program_context="ctx",
+        scope_th=None,
+        needs=[CORE],
+        current_statement_th=_EDITED,
+        note_th=None,
+        keep_wording=True,
+    )
+    assert _EDITED in msg
+    assert _KEEP_WORDING_MARK in msg
+    assert "ทุกตัวอักษร" in msg and "findings_th" in msg
+    assert "ให้แก้แล้วบันทึกฉบับที่แก้" not in msg
+
+
+def test_without_keep_wording_the_agent_may_revise() -> None:
+    msg = build_one_plo_task(
+        program_context="ctx",
+        scope_th=None,
+        needs=[CORE],
+        current_statement_th=_EDITED,
+        note_th=None,
+    )
+    assert _KEEP_WORDING_MARK not in msg
+    assert "ให้แก้แล้วบันทึกฉบับที่แก้" in msg
+
+
+def test_keep_wording_without_a_statement_is_a_caller_error() -> None:
+    with pytest.raises(ValueError):
+        build_one_plo_task(
+            program_context="ctx",
+            scope_th=None,
+            needs=[CORE],
+            current_statement_th=None,
+            note_th=None,
+            keep_wording=True,
+        )
+
+
 def test_merge_task_lists_every_need_and_the_reason() -> None:
     msg = build_merge_need_task(
         program_context="ctx", needs=[CORE, OPTIONAL], reason_th="ขอสมรรถนะเดียวกัน"
     )
     assert CORE.need_id in msg and OPTIONAL.need_id in msg and "ขอสมรรถนะเดียวกัน" in msg
     assert "ev-a" in msg
+
+
+@pytest.mark.parametrize(
+    "opener",
+    [
+        lambda: build_merge_need_task(
+            program_context="ctx", needs=[CORE, OPTIONAL], reason_th=None
+        ),
+        lambda: build_one_plo_task(
+            program_context="ctx",
+            scope_th=None,
+            needs=[CORE],
+            current_statement_th=None,
+            note_th=None,
+        ),
+    ],
+    ids=["merge", "one_plo"],
+)
+def test_openers_that_allow_reading_evidence_keep_the_note_rule(opener: Callable[[], str]) -> None:
+    # The system prompt requires a note after every evidence item in every task;
+    # an opener that mentions get_evidence must not imply otherwise.
+    msg = opener()
+    assert "get_evidence" in msg and "ส่ง note หลังอ่านครบแต่ละรายการ" in msg
 
 
 def test_loop_messages_carry_what_they_are_given() -> None:

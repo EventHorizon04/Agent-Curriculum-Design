@@ -260,6 +260,7 @@ rationale_th ของ Need (20-240 ตัวอักษร): หลักฐ�
 ลำดับงานเขียน Need:
 1. อ่านหลักฐานทีละรายการ: get_evidence ทุกส่วนของรายการนั้น แล้ว note แล้วจึงไปรายการถัดไป
 2. ต้องอ่านหลักฐานครบทุกรายการก่อน finish รายการที่ไม่ได้อ่านจะถูกรายงานให้ผู้ออกแบบเห็น
+   (ยกเว้นเมื่อระบบแจ้งว่ารอบใกล้หมด ดูหัวข้องบรอบท้ายสุด)
 3. เมื่ออ่านครบ ทบทวนโน้ตทั้งหมด จัดสิ่งที่ถูกขอเป็นสมรรถนะ แล้ว save_need ทีละข้อ
 4. ทบทวนทั้งชุด: ข้อที่ซ้ำกันให้รวม (save_need ข้อหนึ่งใหม่ให้อ้างหลักฐานทุกรายการ
    แล้ว drop_need อีกข้อ) ข้อที่ครอบสองสมรรถนะให้แยก
@@ -288,6 +289,7 @@ PLO (Program Learning Outcome) คือผลลัพธ์การเรี�
   อ้างหลาย Need ได้เมื่อขอสมรรถนะเดียวกัน (งานหลักและวัตถุหลักเดียวกัน)
   และประโยคต้องตอบทุกข้อที่อ้าง ห้ามละข้อใด
   Need หนึ่งข้ออยู่เบื้องหลัง PLO ได้ไม่เกินหนึ่งข้อ
+  Need ในรายการ 'ไม่ได้อยู่ในรอบนี้' (ตกรอบเพดาน) แสดงไว้ให้ทราบเท่านั้น อ้างใน source_need_ids ไม่ได้
 - bloom_level ตรงกับงานในประโยค ปกติเป็นระดับของ Need ที่อ้าง และต้องเหมาะกับระดับคุณวุฒิ
 - statement_en: ประโยคเดียวกันเป็นภาษาอังกฤษ
 - rationale_th: สั้น ๆ ว่าประโยคนี้ตอบ Need ที่อ้างอย่างไร
@@ -319,6 +321,8 @@ PLO (Program Learning Outcome) คือผลลัพธ์การเรี�
 - R_evidence: อ้าง Need ที่มีอยู่จริงอย่างน้อยหนึ่งข้อ
 ถ้าผลที่ระบบตอบบอกว่าไม่ผ่าน ให้แก้แล้ว save_plo ด้วย plo_ref เดิม
 ถ้าเปลี่ยนกริยาในประโยค ต้องแก้ action_verb_th ให้ตรงกันด้วย
+ยกเว้นเมื่อข้อความเปิดงานบอกว่าประโยคนั้นผู้ออกแบบเขียนเอง และห้ามแก้ถ้อยคำ:
+ให้บันทึกตามเดิมและประเมินอย่างเดียว
 
 เกณฑ์ที่คุณประเมินเอง ใส่ใน soft ของ save_plo (true = ผ่าน)
 ทุกข้อที่ตอบ false ต้องมีเหตุผลสั้น ๆ ภาษาไทยใน findings_th โดยใช้รหัสเป็นคีย์
@@ -352,8 +356,10 @@ PLO (Program Learning Outcome) คือผลลัพธ์การเรี�
 == ข้อกำหนดจากผู้ออกแบบและงบรอบ =="""
 
 _BUDGET_TH = """งานแต่ละครั้งมีจำนวนรอบและเวลาจำกัด เมื่อระบบแจ้งว่าเหลือรอบน้อย
-ให้บันทึกงานที่ค้างอยู่แล้ว finish งานที่บันทึกแล้วถูกเก็บแม้หมดรอบ
-ส่วนที่ยังไม่ได้บันทึกจะหายไป"""
+ให้บันทึกงานที่ค้างอยู่จากสิ่งที่อ่านแล้ว แล้ว finish งานที่บันทึกแล้วถูกเก็บแม้หมดรอบ
+ส่วนที่ยังไม่ได้บันทึกจะหายไป
+เมื่อรอบใกล้หมด การบันทึกงานที่ทำได้แล้วและ finish สำคัญกว่ากติกา 'อ่านหลักฐานให้ครบทุกรายการก่อน finish'
+ไม่ต้องอ่านรายการที่เหลือ หลักฐานที่ยังไม่ได้อ่านระบบจะรายงานให้ผู้ออกแบบเห็นเอง"""
 
 # NOTE_POLICY_TH is the same line every note-taking prompt carries, imported rather
 # than retyped so the wording cannot drift from the multi prompts'.
@@ -470,8 +476,18 @@ def build_one_plo_task(
     needs: Sequence[NeedBrief],
     current_statement_th: str | None,
     note_th: str | None,
+    keep_wording: bool = False,
 ) -> str:
-    """Opening message for drafting one PLO from given Needs, or re-judging an existing one."""
+    """Opening message for drafting one PLO from given Needs, or re-judging an existing one.
+
+    `keep_wording=True` is for re-judging a statement the designer wrote by hand:
+    code keeps the designer's statement, verb and level whatever the agent saves,
+    so the agent is told to save the sentence unchanged and judge *that* sentence —
+    a verdict on a rewrite would be stored against words that were never stored.
+    It needs a current statement to keep.
+    """
+    if keep_wording and not current_statement_th:
+        raise ValueError("keep_wording needs current_statement_th: there is no wording to keep")
     lines = [
         "งาน: เขียนหรือประเมิน PLO หนึ่งข้อ (งานแบบ ค)",
         *_context_lines(program_context, scope_th),
@@ -480,7 +496,16 @@ def build_one_plo_task(
         *_need_lines(needs),
         "",
     ]
-    if current_statement_th:
+    if current_statement_th and keep_wording:
+        lines.append(f"ประโยคปัจจุบันของ PLO นี้ (ผู้ออกแบบหลักสูตรเขียนเอง): {current_statement_th}")
+        lines.append(
+            "งานนี้คือประเมินเท่านั้น ห้ามแก้ถ้อยคำ: save_plo ด้วย statement_th ตามที่ให้ไว้ทุกตัวอักษร "
+            "action_verb_th คือกริยาที่ประโยคนี้ขึ้นต้น และ bloom_level คือระดับของงานในประโยคนี้ "
+            "ห้ามเปลี่ยนสามค่านี้ (ระบบเก็บประโยค กริยา และระดับของผู้ออกแบบไว้ตามเดิมเสมอ) "
+            "ประเมินเกณฑ์ soft บนประโยคนี้ตามที่เขียนไว้ และเขียนสิ่งที่ควรแก้ไว้ใน findings_th "
+            "ของข้อที่ไม่ผ่าน ถ้าผลตรวจเกณฑ์ที่โค้ดตัดสินไม่ผ่าน ก็ไม่ต้องแก้ ให้ finish ได้เลย"
+        )
+    elif current_statement_th:
         lines.append(f"ประโยคปัจจุบันของ PLO นี้: {current_statement_th}")
         lines.append(
             "ประเมินประโยคปัจจุบันตามที่เขียนไว้ ถ้าผ่านเกณฑ์ที่โค้ดตัดสินและไม่มีข้อใดที่แก้ได้ด้วยถ้อยคำ "
@@ -491,6 +516,7 @@ def build_one_plo_task(
         lines.append("เขียน PLO หนึ่งข้อที่ตอบ Need ข้างต้นทุกข้อ")
     lines.append(
         "PLO อื่นของหลักสูตรดูได้ด้วย list_sibling_plos อย่าให้ซ้ำกัน "
+        "ถ้าอ่านหลักฐานด้วย get_evidence ให้ส่ง note หลังอ่านครบแต่ละรายการตามปกติ "
         "บันทึกด้วย save_plo (แก้ได้ด้วย plo_ref เดิม) แล้ว finish"
     )
     return append_note("\n".join(lines), note_th)
@@ -516,7 +542,8 @@ def build_merge_need_task(
         "- ประโยคเดียวที่ครอบสมรรถนะร่วมของ Need ทุกข้อ ไม่ใช่เลือกเขียนข้อใดข้อหนึ่งแล้วทิ้งข้ออื่น "
         "และไม่ใช่การนำประโยคเดิมมาต่อกัน",
         "- ถ้า Need เดิมอยู่คนละหมวด KSEC ประโยคต้องสะท้อนสมรรถนะที่ทุกหมวดมีร่วมกัน",
-        "- ห้ามเพิ่มงาน วัตถุ หรือบริบทที่ไม่มีใน Need เดิมหรือในหลักฐานของมัน (อ่านได้ด้วย get_evidence)",
+        "- ห้ามเพิ่มงาน วัตถุ หรือบริบทที่ไม่มีใน Need เดิมหรือในหลักฐานของมัน",
+        "- อ่านหลักฐานของ Need เดิมได้ด้วย get_evidence ถ้าอ่าน ให้ส่ง note หลังอ่านครบแต่ละรายการตามปกติ",
         "- source_evidence_ids ใส่หลักฐานของ Need เดิมทุกข้อรวมกัน "
         "ksec_categories ใส่หมวดของ Need เดิมรวมกัน (ระบบกำหนดสองค่านี้จาก Need เดิมอีกครั้งเอง)",
         "- bloom_level คือระดับที่ Need เดิมส่วนใหญ่ขอ",
@@ -545,7 +572,8 @@ def build_dropped_marker(evidence_id: str, note_th: str | None) -> str:
 def build_turns_left_note(turns_left: int) -> str:
     """Said near the end, because the model is otherwise never told the budget."""
     return (
-        f"เหลืออีก {turns_left} รอบ — บันทึกงานที่ค้างอยู่ด้วย save_need หรือ save_plo จากสิ่งที่อ่านแล้ว แล้ว finish"
+        f"เหลืออีก {turns_left} รอบ — บันทึกงานที่ค้างอยู่ด้วย save_need หรือ save_plo "
+        "จากสิ่งที่อ่านแล้ว แล้ว finish ไม่ต้องอ่านหลักฐานที่เหลือ"
     )
 
 
