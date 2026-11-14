@@ -204,6 +204,7 @@ def _fake_loop(
 
 
 def _write_one(h: NeedsHandler) -> None:
+    h.tool_ctx.read_parts.update({("e1", 1), ("e2", 1)})
     h.handle(Note(kind="note", evidence_id="e1", points_th="จุด"))
     h.handle(_save_need(source_evidence_ids=["e1", "e2"]))
 
@@ -253,3 +254,50 @@ async def test_no_evidence_refuses_before_the_loop(
     assert exc.value.status_code == 422
     loop.assert_not_awaited()
     repos.replace.assert_not_awaited()
+
+
+def test_opening_message_names_the_degree_level() -> None:
+    assert "ปริญญาตรี" in NeedsHandler(PROGRAM, [E1]).opening_message()
+
+
+def test_a_draft_that_fails_need_validation_is_refused_and_old_drafts_kept() -> None:
+    h = NeedsHandler(PROGRAM, [E1, E2])
+    h.handle(_save_need())
+    before = h.drafts()
+    obs = h.handle(_save_need(statement_th=""))
+    assert "ระบบปฏิเสธ" in obs
+    assert h.drafts() == before
+    assert len(h.tool_ctx.needs_by_id) == 1
+
+
+def _long_evidence() -> StakeholderEvidence:
+    return StakeholderEvidence(
+        evidence_id="long",
+        program_id="p",
+        stakeholder_type=StakeholderType.EMPLOYER,
+        source_name="ยาว",
+        raw_text_th="ก" * 7000,  # two parts at the default 6000-char window
+    )
+
+
+async def test_multi_part_item_is_unread_until_every_part_is_read(
+    monkeypatch: pytest.MonkeyPatch, repos: _Repos
+) -> None:
+    long_ev = _long_evidence()
+    monkeypatch.setattr(
+        single_needs.EvidenceRepository, "list_by_program", AsyncMock(return_value=[long_ev])
+    )
+
+    def read(parts: set[int]) -> Script:
+        def script(h: NeedsHandler) -> None:
+            assert len(single_needs.evidence_parts(long_ev.raw_text_th, h.tool_ctx.part_chars)) == 2
+            h.tool_ctx.read_parts.update(("long", p) for p in parts)
+            h.handle(Note(kind="note", evidence_id="long", points_th="จุด"))
+            h.handle(_save_need(source_evidence_ids=["long"]))
+
+        return script
+
+    _fake_loop(monkeypatch, read({1}), "finished", ["long"])
+    assert (await run_single_needs("p")).unread_evidence_ids == ["long"]
+    _fake_loop(monkeypatch, read({1, 2}), "finished", ["long"])
+    assert (await run_single_needs("p")).unread_evidence_ids == []

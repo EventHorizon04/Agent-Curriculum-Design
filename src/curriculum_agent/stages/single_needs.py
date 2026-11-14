@@ -18,7 +18,7 @@ from collections.abc import Sequence
 
 from fastapi import HTTPException
 from loguru import logger
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from curriculum_agent.config import settings
 from curriculum_agent.data.repositories import (
@@ -55,7 +55,7 @@ class SingleNeedsResult(BaseModel):
     stop_reason: StopReason
     turns: int
     dropped_evidence_count: int
-    unread_evidence_ids: list[str]  # never opened with get_evidence
+    unread_evidence_ids: list[str]  # not every part fetched with get_evidence
     uncited_evidence_ids: list[str]  # cited by no stored Need
     unnoted_evidence_ids: list[str]  # opened, no Note handed in
 
@@ -109,6 +109,20 @@ class NeedsHandler:
     def noted_evidence_ids(self) -> set[str]:
         return set(self._notes)
 
+    def fully_read_evidence_ids(self) -> set[str]:
+        """Items whose every part was fetched; one part of a long item is not a read."""
+        read = self.tool_ctx.read_parts
+        return {
+            e.evidence_id
+            for e in self._evidence
+            if all(
+                (e.evidence_id, part) in read
+                for part in range(
+                    1, len(evidence_parts(e.raw_text_th, self.tool_ctx.part_chars)) + 1
+                )
+            )
+        }
+
     def handle(self, action: OutputAction) -> str:
         if isinstance(action, Note):
             if action.evidence_id not in self._type_by_evidence:
@@ -137,14 +151,25 @@ class NeedsHandler:
             return build_refusal(
                 f"ไม่พบ Need รหัส {action.need_id} ให้แก้ (ใช้ need_id: null เพื่อบันทึกข้อใหม่)"
             )
-        self._drafts[need_id] = action.model_copy(update={"need_id": need_id})
-        self._refresh_briefs()
+        draft = action.model_copy(update={"need_id": need_id})
+        candidate = {**self._drafts, need_id: draft}
+        try:
+            briefs = self._briefs_for(list(candidate.values()))
+        except ValidationError as exc:
+            # A draft the Need model rejects is refused; the earlier drafts stay.
+            reason = "; ".join(str(e["msg"]) for e in exc.errors())
+            return build_refusal(f"Need นี้ไม่ผ่านการตรวจรูปแบบ: {reason}")
+        self._drafts = candidate
+        self.tool_ctx.needs_by_id = briefs
         return f"บันทึก Need แล้ว need_id: {need_id}"
 
     def _refresh_briefs(self) -> None:
-        """Rebuild the briefs: one save moves every score (the corpus is all drafts)."""
-        built = build_single_needs(self._program.program_id, self.drafts(), self._evidence)
-        self.tool_ctx.needs_by_id = {
+        self.tool_ctx.needs_by_id = self._briefs_for(self.drafts())
+
+    def _briefs_for(self, drafts: list[SaveNeed]) -> dict[str, NeedBrief]:
+        """Briefs for these drafts: the corpus is all of them, so one save moves every score."""
+        built = build_single_needs(self._program.program_id, drafts, self._evidence)
+        return {
             n.need_id: NeedBrief(
                 need_id=n.need_id,
                 statement_th=n.statement_th,
@@ -227,6 +252,7 @@ async def run_single_needs(program_id: str) -> SingleNeedsResult:
 
     all_ids = [e.evidence_id for e in evidence]
     opened = set(outcome.opened_evidence_ids)
+    fully_read = handler.fully_read_evidence_ids()
     cited = {i for n in needs for i in n.source_evidence_ids}
     noted = handler.noted_evidence_ids()
     return SingleNeedsResult(
@@ -234,7 +260,7 @@ async def run_single_needs(program_id: str) -> SingleNeedsResult:
         stop_reason=outcome.stop_reason,
         turns=outcome.turns,
         dropped_evidence_count=outcome.dropped_evidence_count,
-        unread_evidence_ids=[i for i in all_ids if i not in opened],
+        unread_evidence_ids=[i for i in all_ids if i not in fully_read],
         uncited_evidence_ids=[i for i in all_ids if i not in cited],
         unnoted_evidence_ids=[i for i in all_ids if i in opened and i not in noted],
     )
