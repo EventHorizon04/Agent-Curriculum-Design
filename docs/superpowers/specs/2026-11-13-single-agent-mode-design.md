@@ -180,7 +180,7 @@ Same partial-result rule as the first half: at least one saved PLO stores and su
 The designer approves the stored PLOs, then `plo_report` runs unchanged from what is stored. Manual PLO edits, revalidate and `POST /plos/from-needs` on a single program:
 
 - hand edit and the hard check on save: unchanged;
-- *Added during the build, 2026-11-14.* A revalidate of a hand-edited PLO keeps the stored `statement_th`, `rationale_th` and `distinctive_feature_th` (the agent judges the sentence and does not reword it, `keep_wording`; an agent-written rationale about a different sentence would be wrong beside the kept wording, the same as multi's revalidate). A redraft from `POST /plos/from-needs` has no distinctive feature, because `SavePLO` carries no such field;
+- *Added during the build, 2026-11-14.* A revalidate of a hand-edited PLO keeps the stored `statement_th`, `statement_en`, `action_verb_th`, `bloom_level` and `rationale_th`, and every revalidate (edited or not) keeps the stored `distinctive_feature_th` (the agent judges the sentence and does not reword it, `keep_wording`; an agent-written rationale about a different sentence would be wrong beside the kept wording, the same as multi's revalidate). A redraft from `POST /plos/from-needs` has no distinctive feature, because `SavePLO` carries no such field;
 - revalidate and the designer's merge-from-Needs redraft run through the `single_agent` slot, with no vote. The system prompt is the same one, unchanged; only the first user message differs (it names the one PLO or the Needs to draft from). The stored verdict is `smart_validated_by = "single_agent"`, hand-edited or not. It must not call the multi slots.
 
 ### Budgets
