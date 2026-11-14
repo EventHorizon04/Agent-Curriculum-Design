@@ -176,6 +176,19 @@ The repair prompt carries the instruction, the original statement, the declared 
 
 ---
 
+## Single-agent mode: one prompt for every task (`prompts/single_agent.py`)
+
+The one place two halves, a merge and a revalidate share a system prompt. The builder is `build_single_agent_system()`; the first user message (`build_needs_task`, `build_plos_task`, `build_one_plo_task`, `build_merge_need_task`) says which job this is and carries its input. Why it says what it says:
+
+- **One prompt, four task kinds.** The mode is one LLM whose whole behaviour is one prompt, so the designer's merge and the PLO revalidate run through the same system text rather than a role-specific prompt each. A second system prompt would be multi under another name.
+- **A note after every evidence read.** Raw `get_evidence` text can be dropped from the history when it nears the context window (the dropped marker points at the note), so what the agent found in an item has to be in its own words by then. The `Note` action is required on every run, large corpus or small, so behaviour is the same in both. An item counts as read only when every part was read.
+- **The agent never classifies or scores.** Evidence class, `demand_score`, `freq`, the optional flag and stakeholder coverage are derived in code from the cited evidence (`single_need_stats.py`). The prompt asks for the Need's statement, KSEC tags, Bloom level and evidence ids, and nothing else the code can compute.
+- **The hard check is reported after each `save_plo`.** The save observation names the hard failures, so the agent can repair its own work in the same loop; it is the code floor, not the agent's judgement, and `Finish` carries no way to clear one. Codes are shown as the enum values the prompt teaches (`S_verb`, not `S_VERB`), because the agent must see the names it was taught.
+- **`keep_wording` for a designer-edited PLO.** Revalidating a hand-edited PLO says judge only, do not reword: soft verdicts about a sentence that is not the stored one would mislead the designer.
+- **Everything multi's stage prompts cover** — KSEC, Bloom table use, forbidden words, one declared verb, the seven soft criteria, Need-writing rules, staying in the program's field, the actor is the graduate — is stated once in this prompt. Its length (about 17.8k Thai characters, resent each turn) is a measured cost, not an accident.
+
+---
+
 ## plo_report: no prompt
 
 `plo_report` no longer classifies PLOs generic vs specific — that call read the fraction of `SS`-tagged Needs behind a PLO, and the `SS`/`GS` KSEC split it depended on no longer exists. The stage is pure assembly and export now: it loads each PLO's source Needs, resolves the evidence trail, and puts the assembled report (every PLO with its Bloom level, KSEC tag, SMART soft flags, escalation status, evidence drill-down) into state — no LLM call.

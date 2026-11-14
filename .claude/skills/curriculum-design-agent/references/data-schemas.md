@@ -59,6 +59,18 @@ class ProgramMetadata(BaseModel):
 
 **`program_id` comes from `field`.** With no program name to slug, `_generate_program_id` slugs the field of study and appends `-2`, `-3`, … on collision. `_slugify` keeps ASCII only, so a Thai field yields `program`, `program-2`, … — readable ids are a nice-to-have, uniqueness is not. Anything showing a program to a human should fall back through name → field → id; `ProgramSummary` carries `field` and `faculty` for exactly that.
 
+## Single-agent mode additions (2026-11-14)
+
+- `ProgramMetadata.agent_mode: Literal["multi", "single"] = "multi"` — stored on the program row, chosen at creation, not editable. A copy may change it only as `evidence_only`.
+- `Need.origin: Literal["multi", "single"] = "multi"`. `member_skill_ids` may be empty **only when `origin == "single"`**; for a single Need `top_skill_ids` is empty, the skill counts are 0 and the ratio properties keep their 1.0 for an empty member list (0 would mark it off-scope). A single Need may carry more than one `ksec_categories` tag with no merge behind it, and `is_in_scope` treats it as in scope.
+- **Statistics derive from cited evidence** (`stages/single_need_stats.py`, `derive_need_stats`): `freq` = distinct cited items; `source_stakeholder_types` and `stakeholder_coverage` from them; class = `requirement` when any cited item is `requirement` (by `classify_evidence_type`), otherwise `need` when it cites more than one item and `want` when one; `classification_coverage` records that one class; `is_optional` via `is_optional_group`; `demand_score` via `compute_demand_score` against a corpus of **the evidence cited by any Need of the run** (so scores are not comparable across modes).
+- `PLO.smart_validated_by` gains `"single_agent"`: the soft verdicts are the single agent's own, one run, no vote. The hard floor still sets `smart_escalated`.
+- `JobKind` gains `single_needs` and `single_plos`.
+- `StopReason` (`stages/single_agent_loop.py`): `finished` | `turn_cap` | `timeout` | `context_full` | `malformed`. `malformed` means the loop ended through the closing call after repeated malformed steps; it is **not a pass** (like `turn_cap`, `timeout`, `context_full`: usable, stored, but not a passing lock run).
+- Job results. `single_needs` (`SingleNeedsResult`): `needs`, `stop_reason`, `turns`, `dropped_evidence_count`, `unread_evidence_ids` (not every part fetched), `uncited_evidence_ids` (cited by no stored Need), `unnoted_evidence_ids` (opened, no Note). `single_plos` (`SinglePlosResult`): `plos`, `stop_reason`, `turns`, `uncited_core_need_ids` (core Needs no stored PLO answers). Nothing saved fails the job and leaves stored rows alone.
+
+---
+
 ## Stage 2: Stakeholder evidence
 
 ```python

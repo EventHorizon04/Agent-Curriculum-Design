@@ -75,7 +75,7 @@ Two jobs, one per half, each ending at a checkpoint. The existing routes dispatc
 
 Both halves use the **same system prompt** (`prompts/single_agent.py`, one builder). The first user message says which half is being run and carries that half's input. *Builder's call (agreed in conversation):* the second half starts a fresh context from the approved Needs rather than holding the first conversation open while a human reviews.
 
-The loop follows the existing agent loops (`smart_agent.py`, `plo_review_agent.py`): Instructor, a Pydantic step with `reasoning_th` and a discriminated action, tool results fed back as user messages, a repeated identical call refused, malformed steps tolerated a bounded number of times, a closing call that only allows finishing when the turn budget runs out.
+The loop follows the existing agent loops (`smart_agent.py`, `plo_review_agent.py`): Instructor, a Pydantic step with `reasoning_th` and a discriminated action, tool results fed back as user messages, a repeated identical call refused (*added during the build, 2026-11-14:* except a call whose answer depends on stored state, namely `list_sibling_plos`, `get_need` and `need_detail`, which may be repeated after the agent has saved, dropped or finished something, so it can re-read its own work), malformed steps tolerated a bounded number of times, a closing call that only allows finishing when the turn budget runs out.
 
 ### One slot
 
@@ -130,7 +130,7 @@ Code, at `Finish` (one transaction, replacing the program's Needs as multi's sta
 - evidence items the agent never opened, and evidence no Need cites, are logged and returned in the job result so the Need page can show them;
 - fewer than 6 non-optional Needs logs the same policy warning multi logs. No cap on the number of Needs.
 
-A run that ends (finish, turn cap or timeout) with at least one saved Need stores what it has and succeeds, with the stop reason in the job result. With none, the job fails and nothing is replaced. The job result carries `stop_reason` (`finished` | `turn_cap` | `timeout` | `context_full`), turns used, the number of evidence items whose text was dropped, and the unread and uncited evidence ids. *Builder's call:* for the research lock runs, only `finished` with no unread evidence counts as a pass; a capped run is usable in the UI but is not a passing run.
+A run that ends (finish, turn cap or timeout) with at least one saved Need stores what it has and succeeds, with the stop reason in the job result. With none, the job fails and nothing is replaced. The job result carries `stop_reason` (`finished` | `turn_cap` | `timeout` | `context_full` | `malformed`), turns used, the number of evidence items whose text was dropped, and the unread and uncited evidence ids. *Builder's call:* for the research lock runs, only `finished` with no unread evidence counts as a pass; a capped run is usable in the UI but is not a passing run. *Added during the build, 2026-11-14.* `malformed` (the loop ended through its closing call after repeated malformed steps) is a fifth stop reason and is not a pass either: with the four values alone an unfinished run would have looked finished. *Added during the build, 2026-11-14.* An evidence item counts as read only when **every part** of it was fetched with `get_evidence`; a partly read item is listed in `unread_evidence_ids`, so a lock run cannot pass without reading long documents. The job result also lists `unnoted_evidence_ids` (opened, no Note handed in).
 
 `demand_score` is used to rank Needs inside one run. Its denominator differs slightly from multi's by construction, so scores are not compared across modes. *Builder's call.*
 
@@ -151,7 +151,7 @@ Re-running either half on a program that already has later-stage rows (PLOs, sup
 The `need_analysis` page and its actions work on single's Needs:
 
 - approve; exclude / restore;
-- **merge 2-5 Needs**: the merged Need's evidence, stakeholder types, `demand_score`, `freq` and class are recomputed by code from the union of evidence; KSEC tags are the sorted union. Today's designer merge has the model write the merged statement (the dialog supplies only a reason), so in single mode the single agent writes it: same system prompt, `single_agent` slot, a merge task as the first user message. *Corrected 2026-11-14 after the code audit.* Split works as today;
+- **merge 2-5 Needs**: the merged Need's evidence, stakeholder types, `demand_score`, `freq` and class are recomputed by code from the union of evidence; KSEC tags are the sorted union. Today's designer merge has the model write the merged statement (the dialog supplies only a reason), so in single mode the single agent writes it: same system prompt, `single_agent` slot, a merge task as the first user message. *Corrected 2026-11-14 after the code audit.* Split works as today; *added during the build, 2026-11-14:* the merged statement is written by the single agent, as said here, and the dialog's reason is passed to it;
 - the trace view shows evidence only (no skills section).
 
 Evidence locks once Needs exist, as in multi.
@@ -180,6 +180,7 @@ Same partial-result rule as the first half: at least one saved PLO stores and su
 The designer approves the stored PLOs, then `plo_report` runs unchanged from what is stored. Manual PLO edits, revalidate and `POST /plos/from-needs` on a single program:
 
 - hand edit and the hard check on save: unchanged;
+- *Added during the build, 2026-11-14.* A revalidate of a hand-edited PLO keeps the stored `statement_th`, `rationale_th` and `distinctive_feature_th` (the agent judges the sentence and does not reword it, `keep_wording`; an agent-written rationale about a different sentence would be wrong beside the kept wording, the same as multi's revalidate). A redraft from `POST /plos/from-needs` has no distinctive feature, because `SavePLO` carries no such field;
 - revalidate and the designer's merge-from-Needs redraft run through the `single_agent` slot, with no vote. The system prompt is the same one, unchanged; only the first user message differs (it names the one PLO or the Needs to draft from). The stored verdict is `smart_validated_by = "single_agent"`, hand-edited or not. It must not call the multi slots.
 
 ### Budgets
