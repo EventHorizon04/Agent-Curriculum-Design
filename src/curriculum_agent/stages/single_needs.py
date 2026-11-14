@@ -31,6 +31,7 @@ from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.single_agent import (
     EvidenceIndexRow,
     NeedBrief,
+    build_merge_need_task,
     build_needs_task,
     build_refusal,
 )
@@ -263,4 +264,157 @@ async def run_single_needs(program_id: str) -> SingleNeedsResult:
         unread_evidence_ids=[i for i in all_ids if i not in fully_read],
         uncited_evidence_ids=[i for i in all_ids if i not in cited],
         unnoted_evidence_ids=[i for i in all_ids if i in opened and i not in noted],
+    )
+
+
+_NOT_A_MERGE_STEP_TH = "ขั้นนี้คือรวม Need: ใช้ save_need หนึ่งครั้งเท่านั้น"
+
+
+def _merged_need(
+    program_id: str,
+    draft: SaveNeed,
+    originals: Sequence[Need],
+    all_active: Sequence[Need],
+    evidence: Sequence[StakeholderEvidence],
+    *,
+    reason_th: str | None,
+) -> Need:
+    """The merged Need: wording from the agent, trail and statistics from code.
+
+    The agent's tags and evidence list are ignored; the tags are the originals' union
+    and the evidence is theirs combined, so the merge cannot gain or lose a citation.
+    """
+    type_by_evidence = {e.evidence_id: e.stakeholder_type for e in evidence}
+    ids = list(dict.fromkeys(i for n in originals for i in n.source_evidence_ids))
+    original_ids = {n.need_id for n in originals}
+    corpus = scoring_corpus_for(
+        [i for n in all_active if n.need_id not in original_ids for i in n.source_evidence_ids]
+        + ids,
+        type_by_evidence,
+    )
+    stats = derive_need_stats(ids, type_by_evidence, corpus)
+    return Need(
+        need_id=str(uuid.uuid4()),
+        program_id=program_id,
+        statement_th=draft.statement_th,
+        rationale_th=draft.rationale_th,
+        ksec_categories=[c for n in originals for c in n.ksec_categories],  # model sorts/dedupes
+        bloom_level=draft.bloom_level,
+        member_skill_ids=[],
+        top_skill_ids=[],
+        source_evidence_ids=ids,
+        stakeholder_coverage=stats.stakeholder_coverage,
+        source_stakeholder_types=stats.source_stakeholder_types,
+        freq=stats.freq,
+        demand_score=stats.demand_score,
+        is_optional=stats.is_optional,
+        classification_coverage=stats.classification_coverage,
+        in_field_skill_count=0,
+        graduate_capability_skill_count=0,
+        origin="single",
+        merged_from=[n.need_id for n in originals],
+        merged_by="designer",
+        merge_reason_th=reason_th or "",
+    )
+
+
+class MergeNeedHandler:
+    """Holds the one merged-Need draft. Implements TaskHandler.
+
+    Notes are accepted (the system prompt asks for one after every evidence read);
+    exactly one save is expected and a later save replaces it.
+    """
+
+    def __init__(
+        self,
+        program: ProgramMetadata,
+        originals: Sequence[Need],
+        all_active: Sequence[Need],
+        evidence: Sequence[StakeholderEvidence],
+        reason_th: str | None,
+    ) -> None:
+        self._program = program
+        self._originals = list(originals)
+        self._all_active = list(all_active)
+        self._all_evidence = list(evidence)
+        self._reason_th = reason_th
+        wanted = {i for n in originals for i in n.source_evidence_ids}
+        self._evidence = [e for e in evidence if e.evidence_id in wanted]
+        self._notes: dict[str, str] = {}
+        self._draft: SaveNeed | None = None
+        self.tool_ctx = SingleToolContext(
+            evidence_by_id={e.evidence_id: e for e in self._evidence},
+            needs_by_id={n.need_id: _brief_of(n) for n in originals},
+            plos=[],
+            part_chars=settings.single_agent_evidence_part_chars,
+        )
+
+    def opening_message(self) -> str:
+        return build_merge_need_task(
+            program_context=program_context_for(self._program),
+            needs=[_brief_of(n) for n in self._originals],
+            reason_th=self._reason_th,
+        )
+
+    def note_for(self, evidence_id: str) -> str | None:
+        return self._notes.get(evidence_id)
+
+    def draft(self) -> SaveNeed | None:
+        return self._draft
+
+    def handle(self, action: OutputAction) -> str:
+        if isinstance(action, Note):
+            if action.evidence_id not in self.tool_ctx.evidence_by_id:
+                return build_refusal(f"ไม่พบหลักฐานรหัส {action.evidence_id} ใน Need ที่เลือก")
+            self._notes[action.evidence_id] = action.points_th
+            return f"รับโน้ตของ {action.evidence_id} แล้ว"
+        if isinstance(action, SaveNeed):
+            try:
+                _merged_need(
+                    self._program.program_id,
+                    action,
+                    self._originals,
+                    self._all_active,
+                    self._all_evidence,
+                    reason_th=self._reason_th,
+                )
+            except ValidationError as exc:
+                reason = "; ".join(str(e["msg"]) for e in exc.errors())
+                return build_refusal(f"Need นี้ไม่ผ่านการตรวจรูปแบบ: {reason}")
+            self._draft = action
+            return "บันทึก Need ที่รวมแล้ว"
+        return build_refusal(_NOT_A_MERGE_STEP_TH)
+
+
+def _brief_of(need: Need) -> NeedBrief:
+    return NeedBrief(
+        need_id=need.need_id,
+        statement_th=need.statement_th,
+        ksec_categories=tuple(str(getattr(c, "value", c)) for c in need.ksec_categories),
+        bloom_level=str(getattr(need.bloom_level, "value", need.bloom_level)),
+        demand_score=need.demand_score,
+        stakeholder_types=tuple(t.value for t in need.source_stakeholder_types),
+        evidence_ids=tuple(need.source_evidence_ids),
+    )
+
+
+async def merge_single_needs(
+    program: ProgramMetadata,
+    originals: Sequence[Need],
+    all_active: Sequence[Need],
+    evidence: Sequence[StakeholderEvidence],
+    *,
+    reason_th: str | None,
+) -> Need:
+    """Write one Need in place of `originals` through the single agent; 502 when none is saved."""
+    handler = MergeNeedHandler(program, originals, all_active, evidence, reason_th)
+    outcome = await run_single_agent(handler)
+    draft = handler.draft()
+    if draft is None:
+        raise HTTPException(
+            status_code=502,
+            detail=f"ตัวแทนไม่ได้เขียน Need ที่รวมแล้ว ({outcome.stop_reason}) ลองใหม่อีกครั้ง",
+        )
+    return _merged_need(
+        program.program_id, draft, originals, all_active, evidence, reason_th=reason_th
     )

@@ -35,7 +35,12 @@ from curriculum_agent.models import (
     SmartFinding,
     StakeholderEvidence,
 )
-from curriculum_agent.prompts.single_agent import NeedBrief, build_plos_task, build_refusal
+from curriculum_agent.prompts.single_agent import (
+    NeedBrief,
+    build_one_plo_task,
+    build_plos_task,
+    build_refusal,
+)
 from curriculum_agent.smart_vocabulary import FINDING_LABEL_TH, SmartFindingCode
 from curriculum_agent.stages.need_grouping import (
     MAX_CORE_PLOS,
@@ -392,4 +397,136 @@ async def run_single_plos(program_id: str, *, note_th: str | None = None) -> Sin
         stop_reason=outcome.stop_reason,
         turns=outcome.turns,
         uncited_core_need_ids=[n.need_id for n in core if n.need_id not in cited],
+    )
+
+
+_NOT_A_ONE_PLO_STEP_TH = "ขั้นนี้คือเขียนหรือประเมิน PLO หนึ่งข้อ: ใช้ save_plo หนึ่งครั้งเท่านั้น"
+
+
+class OnePloHandler:
+    """Holds the one PLO draft of a redraft or revalidate. Implements TaskHandler.
+
+    Notes are accepted; exactly one save is expected and a later save replaces it.
+    """
+
+    def __init__(
+        self,
+        program: ProgramMetadata,
+        needs: Sequence[Need],
+        evidence: Sequence[StakeholderEvidence],
+        siblings: Sequence[SiblingSummary],
+        note_th: str | None,
+        current: PLO | None,
+    ) -> None:
+        self._program = program
+        self._needs = list(needs)
+        self._note_th = note_th
+        self._current = current
+        self._needs_by_id = {n.need_id: n for n in needs}
+        self.is_optional = current.is_optional if current else _is_optional(self._needs)
+        self._notes: dict[str, str] = {}
+        self._draft: SavePLO | None = None
+        self.tool_ctx = SingleToolContext(
+            evidence_by_id={e.evidence_id: e for e in evidence},
+            needs_by_id={n.need_id: _brief(n) for n in needs},
+            plos=list(siblings),
+            part_chars=settings.single_agent_evidence_part_chars,
+        )
+
+    @property
+    def keep_wording(self) -> bool:
+        return self._current is not None and self._current.designer_edited_at is not None
+
+    def opening_message(self) -> str:
+        return build_one_plo_task(
+            program_context=program_context_for(self._program),
+            scope_th=self._program.scope_th or None,
+            needs=[_brief(n) for n in self._needs],
+            current_statement_th=self._current.statement_th if self._current else None,
+            note_th=self._note_th,
+            keep_wording=self.keep_wording,
+        )
+
+    def note_for(self, evidence_id: str) -> str | None:
+        return self._notes.get(evidence_id)
+
+    def draft(self) -> SavePLO | None:
+        return self._draft
+
+    def handle(self, action: OutputAction) -> str:
+        if isinstance(action, Note):
+            if action.evidence_id not in self.tool_ctx.evidence_by_id:
+                return build_refusal(f"ไม่พบหลักฐานรหัส {action.evidence_id} ในหลักสูตรนี้")
+            self._notes[action.evidence_id] = action.points_th
+            return f"รับโน้ตของ {action.evidence_id} แล้ว"
+        if isinstance(action, SavePLO):
+            # The cited Needs are the ones this task was given, whatever the agent listed.
+            draft = action.model_copy(update={"source_need_ids": list(self._needs_by_id)})
+            try:
+                built = build_single_plo(
+                    self._program.program_id,
+                    "draft",
+                    draft,
+                    self._needs_by_id,
+                    is_optional=self.is_optional,
+                )
+            except ValidationError as exc:
+                reason = "; ".join(str(e["msg"]) for e in exc.errors())
+                return build_refusal(f"PLO นี้ไม่ผ่านการตรวจรูปแบบ: {reason}")
+            self._draft = draft
+            hard = built.smart_check.hard_findings
+            if hard:
+                detail = "; ".join(f"{f.criterion.value}: {f.note_th}" for f in hard)
+                return f"บันทึก PLO แล้ว · hard check ไม่ผ่าน {detail}"
+            return "บันทึก PLO แล้ว · ผ่าน hard check"
+        return build_refusal(_NOT_A_ONE_PLO_STEP_TH)
+
+
+async def draft_single_plo(
+    program: ProgramMetadata,
+    needs: Sequence[Need],
+    evidence: Sequence[StakeholderEvidence],
+    *,
+    plo_id: str,
+    known_need_ids: set[str],
+    siblings: Sequence[SiblingSummary],
+    note_th: str | None,
+    current: PLO | None = None,
+) -> PLO:
+    """One PLO from `needs` through the single agent; 502 when none is saved.
+
+    With `current` it is a revalidation: id, optional flag and edit marker are kept,
+    and on a hand-edited PLO the designer's statement, verb and level are kept too —
+    only the soft verdicts are the agent's. The hard check decides escalation either way.
+    """
+    unknown = [n.need_id for n in needs if n.need_id not in known_need_ids]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"ไม่พบ Need ที่ใช้งาน: {', '.join(unknown)}")
+    handler = OnePloHandler(program, needs, evidence, siblings, note_th, current)
+    outcome = await run_single_agent(handler)
+    draft = handler.draft()
+    if draft is None:
+        raise HTTPException(
+            status_code=502, detail=f"ตัวแทนไม่ได้เขียน PLO ({outcome.stop_reason}) ลองใหม่อีกครั้ง"
+        )
+    edited_at = current.designer_edited_at if current else None
+    if current is not None and edited_at is not None:
+        draft = draft.model_copy(
+            update={
+                "statement_th": current.statement_th,
+                "statement_en": current.statement_en,
+                "action_verb_th": current.action_verb_th,
+                "bloom_level": current.bloom_level,
+                # The stored rationale, as the multi revalidate carries it.
+                "rationale_th": current.rationale_th,
+            }
+        )
+    return build_single_plo(
+        program.program_id,
+        current.plo_id if current else plo_id,
+        draft,
+        {n.need_id: n for n in needs},
+        is_optional=handler.is_optional,
+        designer_edited_at=edited_at,
+        version=current.version if current else 1,
     )

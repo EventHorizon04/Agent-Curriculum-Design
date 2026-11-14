@@ -40,7 +40,7 @@ from curriculum_agent.stages.need_grouping import (
     is_unwritten_need,
 )
 from curriculum_agent.stages.plo_synthesis import plos_citing
-from curriculum_agent.stages.single_needs import SingleNeedsResult
+from curriculum_agent.stages.single_needs import SingleNeedsResult, merge_single_needs
 
 router = APIRouter()
 _repo = NeedRepository()
@@ -235,6 +235,20 @@ async def merge_needs(program_id: str, body: ManualMergeRequest) -> Need:
         out_of_scope = [n.need_id for n in selected if not is_in_scope(n)]
         if out_of_scope:
             logger.info(f"manual merge for {program_id} includes out-of-scope Needs {out_of_scope}")
+
+        reason = (body.reason_th or "").strip() or _MANUAL_MERGE_REASON_TH
+        if metadata.agent_mode == "single":
+            # No skill rows exist in single mode, and the multi slot is never called.
+            evidence = await EvidenceRepository().list_by_program(program_id)
+            ordered = need_merge._demand_order(selected)
+            with llm_scope(program_id=program_id):
+                single_merged = await merge_single_needs(
+                    metadata, ordered, active, evidence, reason_th=reason
+                )
+            try:
+                return await _repo.write_merge(program_id, ordered, single_merged)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="ไม่พบ Need นี้") from exc
 
         skills = await SkillRepository().list_by_program(program_id)
         # `/needs/skills/run` replaces every skill row under fresh ids without

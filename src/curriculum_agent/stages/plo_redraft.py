@@ -7,7 +7,7 @@ lock — see `redraft_from_needs` — and imports nothing from `api`.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 from loguru import logger
 
@@ -147,6 +147,7 @@ async def redraft_from_needs(
     cause: str,
     accept: Callable[[PLO], str | None] | None = None,
     trail: Callable[[PLO], FeedbackAction] | None = None,
+    drafter: Callable[..., Awaitable[PLO | None]] | None = None,
 ) -> tuple[PLO, list[str]]:
     """Draft one PLO from `need_ids` and swap it in for every PLO citing them.
 
@@ -164,6 +165,10 @@ async def redraft_from_needs(
     draft; `replace` writes it in the transaction that swaps the PLOs, so the
     change and its trail row cannot be separated by a cancellation. Send-back
     passes it; the designer's route does not.
+
+    `drafter`, when given, writes the draft instead of `synthesize_from_needs`; it is
+    called with the same arguments. A single-mode program passes the single agent's.
+    Every bound, the supersede and the trail stay here, shared.
     """
     from curriculum_agent.stages.need_grouping import is_in_scope  # noqa: PLC0415
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
@@ -217,7 +222,7 @@ async def redraft_from_needs(
             f"leaves Need(s) {released} without an outcome — they return to the pool"
         )
 
-    plo = await synthesize_from_needs(
+    plo = await (drafter or synthesize_from_needs)(
         program,
         selected,
         program_id,
