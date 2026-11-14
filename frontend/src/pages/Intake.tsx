@@ -137,6 +137,7 @@ export default function Intake() {
         // leave the stored skills answering a question nobody is asking any more.
         const stale =
           loaded !== null &&
+          form.agent_mode !== 'single' &&
           (loaded.field !== payload.field || loaded.scope_th.trim() !== payload.scope_th)
         setSuccess(
           stale

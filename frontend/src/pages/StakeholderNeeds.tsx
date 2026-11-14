@@ -565,7 +565,11 @@ export default function StakeholderNeeds() {
         from="stakeholder_needs"
         mode={mode ?? 'multi'}
         ready={Boolean(programId) && items.length > 0}
-        blockedReason="เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นถัดไปอ่านจากหลักฐานเหล่านี้"
+        blockedReason={
+          mode === 'single'
+            ? 'เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นถัดไปอ่านจากหลักฐานเหล่านี้'
+            : 'เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นสกัดทักษะอ่านจากหลักฐานเหล่านี้'
+        }
       />
     </div>
   )

@@ -101,6 +101,11 @@ export function stagesFor(mode: AgentMode): StageDef[] {
   )
 }
 
+/** The ordinal a stage carries on the rail of `mode`. */
+export function ordinalOf(key: string, mode: AgentMode): number {
+  return stagesFor(mode).find((s) => s.key === key)?.ordinal ?? 0
+}
+
 export const STAGE_LABELS: Record<string, string> = Object.fromEntries(
   STAGES.map((s) => [s.key, `ขั้นที่ ${s.ordinal}: ${s.label}`])
 )

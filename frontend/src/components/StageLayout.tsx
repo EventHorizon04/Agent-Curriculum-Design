@@ -367,7 +367,9 @@ export default function StageLayout() {
 
         <div className="mt-4 space-y-0.5 border-t border-hair px-3 pt-4">
           <RailLink to="/" label="หลักสูตรทั้งหมด" note="เลือกหลักสูตรที่จะทำงานด้วย" />
-          <RailLink to="/pipeline" label="รันทั้งชุด" note="รันต่อเนื่องและอนุมัติทีละขั้น" />
+          {program?.agent_mode !== 'single' && (
+            <RailLink to="/pipeline" label="รันทั้งชุด" note="รันต่อเนื่องและอนุมัติทีละขั้น" />
+          )}
         </div>
       </nav>
 

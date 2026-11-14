@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { PLO_SYNTHESIS_PLAN, PLO_SYNTHESIS_CODE_ONLY_PLAN, SINGLE_PLOS_PLAN } from '../constants/runPlans'
-import { SINGLE_STOP_REASON_TH } from '../constants/stages'
+import { SINGLE_STOP_REASON_TH, ordinalOf } from '../constants/stages'
 import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
@@ -70,8 +70,9 @@ const RELOAD_KINDS: JobKind[] = [
   'need_combination',
   'single_needs',
   'single_plos',
-  'plo_report',
 ]
+/** The approval's report job: only a single-agent page starts one here. */
+const SINGLE_RELOAD_KINDS: JobKind[] = [...RELOAD_KINDS, 'plo_report']
 
 /** What a finished single-agent PLO run says about itself. */
 interface SinglePlosResult {
@@ -190,7 +191,7 @@ export default function PloSynthesis() {
   // started it and whichever way it ended: a run that fails part-way has already
   // written rows. A re-check changes one outcome, so it reloads behind the list
   // on screen.
-  const watch = useReloadOnJobs(RELOAD_KINDS, (job) => {
+  const watch = useReloadOnJobs(single ? SINGLE_RELOAD_KINDS : RELOAD_KINDS, (job) => {
     void fetchPlos(job.kind === 'plo_revalidate')
     if (job.kind === 'plo_report' && job.job_id === approvalJob.current) {
       approvalJob.current = null
@@ -341,7 +342,7 @@ export default function PloSynthesis() {
   return (
     <div>
       <div className="mb-6">
-        <p className="eyebrow">ขั้นที่ {single ? 4 : 5}</p>
+        <p className="eyebrow">ขั้นที่ {ordinalOf('plo_synthesis', mode ?? 'multi')}</p>
         <h1 className="page-title">{single ? 'ตรวจ PLO' : 'สังเคราะห์ PLO'}</h1>
         <p className="mt-1 text-sm text-pencil">
           {single

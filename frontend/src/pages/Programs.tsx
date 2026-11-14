@@ -6,7 +6,7 @@ import { useProgram } from '../hooks/useProgram'
 import {
   AGENT_MODE_LABEL_TH,
   SESSION_STATUS_LABELS,
-  STAGE_LABELS,
+  stagesFor,
   STAGE_ROUTES,
   type AgentMode,
 } from '../constants/stages'
@@ -42,6 +42,12 @@ const DEGREE_LABELS: Record<string, string> = {
   bachelor: 'ปริญญาตรี',
   master: 'ปริญญาโท',
   doctoral: 'ปริญญาเอก',
+}
+
+/** The rail label of a stage in the program's own mode. */
+function stageLabelOf(key: string, mode: AgentMode): string | undefined {
+  const s = stagesFor(mode).find((x) => x.key === key)
+  return s && `ขั้นที่ ${s.ordinal}: ${s.label}`
 }
 
 function stageRoute(stage: string | null): string {
@@ -286,7 +292,7 @@ export default function Programs() {
                 <td>
                   <span className="chip chip-neutral">
                     {p.current_stage
-                      ? (STAGE_LABELS[p.current_stage] ?? p.current_stage)
+                      ? (stageLabelOf(p.current_stage, p.agent_mode ?? 'multi') ?? p.current_stage)
                       : 'ยังไม่เริ่ม'}
                   </span>
                   {p.session_status && (

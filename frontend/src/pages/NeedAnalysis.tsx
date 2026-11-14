@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { SINGLE_NEEDS_PLAN, SKILL_RUN_PLANS } from '../constants/runPlans'
-import { SINGLE_STOP_REASON_TH } from '../constants/stages'
+import { SINGLE_STOP_REASON_TH, ordinalOf } from '../constants/stages'
 import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
@@ -292,7 +292,7 @@ export default function NeedAnalysis() {
   return (
     <div className="max-w-4xl">
       <div className="mb-6">
-        <p className="eyebrow">ขั้นที่ {single ? 3 : 4}</p>
+        <p className="eyebrow">ขั้นที่ {ordinalOf('need_analysis', mode ?? 'multi')}</p>
         <h1 className="page-title mb-1">วิเคราะห์ Need</h1>
         <p className="text-sm text-pencil">
           {single
@@ -411,11 +411,20 @@ export default function NeedAnalysis() {
                   <Link to="/intake" className="underline underline-offset-2">
                     Intake
                   </Link>{' '}
-                  แล้วกด <span className="font-semibold">สกัดทักษะใหม่</span> ที่หน้า{' '}
-                  <Link to="/skill-extraction" className="underline underline-offset-2">
-                    สกัดทักษะ
-                  </Link>{' '}
-                  — ทั้งโปรแกรมถูกสกัดใหม่ (ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ)
+                  {single ? (
+                    <>
+                      แล้วกด <span className="font-semibold">ให้ตัวแทนเขียน Need ใหม่</span> —
+                      ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ
+                    </>
+                  ) : (
+                    <>
+                      แล้วกด <span className="font-semibold">สกัดทักษะใหม่</span> ที่หน้า{' '}
+                      <Link to="/skill-extraction" className="underline underline-offset-2">
+                        สกัดทักษะ
+                      </Link>{' '}
+                      — ทั้งโปรแกรมถูกสกัดใหม่ (ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ)
+                    </>
+                  )}
                 </p>
                 <p className="mt-1.5">
                   <span className="font-semibold">ถ้าตัดสินถูกแต่ยังอยากได้:</span> เลือกมันที่หน้า

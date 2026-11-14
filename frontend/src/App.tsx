@@ -40,7 +40,14 @@ export default function App() {
               </SingleRedirect>
             }
           />
-          <Route path="pipeline" element={<Pipeline />} />
+          <Route
+            path="pipeline"
+            element={
+              <SingleRedirect notice="หลักสูตรโหมด single ใช้การรันทีละขั้นจากหน้าเว็บ ไม่ใช้ session">
+                <Pipeline />
+              </SingleRedirect>
+            }
+          />
         </Route>
       </Routes>
     </BrowserRouter>

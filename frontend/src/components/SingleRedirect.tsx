@@ -11,11 +11,22 @@ import { useProgram } from '../hooks/useProgram'
  * of the guarded page mounts until the mode is known, so it never fires a
  * request for a stage the program does not run.
  */
-export default function SingleRedirect({ to, children }: { to: string; children: ReactNode }) {
+export default function SingleRedirect({
+  to,
+  children,
+  notice,
+}: {
+  to?: string
+  children: ReactNode
+  /** Shown instead of redirecting, for a page with nowhere to redirect to. */
+  notice?: string
+}) {
   const { programId } = useProgram()
   const mode = useAgentMode(programId)
   if (!programId) return <>{children}</>
   if (mode === null) return <LoadingLine />
-  if (mode === 'single') return <Navigate to={to} replace />
+  if (mode === 'single') {
+    return to ? <Navigate to={to} replace /> : <p className="notice notice-warn">{notice}</p>
+  }
   return <>{children}</>
 }
