@@ -44,6 +44,7 @@ class FakeHandler:
         )
         self.handled: list[Any] = []
         self.notes: dict[str, str] = {}
+        self.refusals: list[str] = []
 
     def opening_message(self) -> str:
         return "เปิดงาน"
@@ -56,6 +57,9 @@ class FakeHandler:
 
     def note_for(self, evidence_id: str) -> str | None:
         return self.notes.get(evidence_id)
+
+    def finish_refusal(self) -> str | None:
+        return self.refusals.pop(0) if self.refusals else None
 
 
 class FakeLLM:
@@ -138,6 +142,27 @@ async def test_reads_notes_and_finishes(fake: FakeLLM, handler: FakeHandler) -> 
     first = fake.messages_seen[0]
     assert first[0]["role"] == "system" and first[1] == {"role": "user", "content": "เปิดงาน"}
     assert fake.kwargs_seen[0]["temperature"] == 0
+
+
+async def test_refused_finish_continues_the_loop(fake: FakeLLM, handler: FakeHandler) -> None:
+    handler.refusals = ["ยังมีหลักฐาน requirement ไม่มี Need อ้าง"]
+    fake.script(_finish(), _finish())
+    out = await run_single_agent(handler)
+    assert (out.stop_reason, out.turns) == ("finished", 2)
+    second_call = fake.messages_seen[1]
+    assert "ระบบปฏิเสธ" in second_call[-1]["content"]
+    assert "requirement" in second_call[-1]["content"]
+
+
+async def test_finish_on_the_last_turn_is_never_refused(
+    fake: FakeLLM, handler: FakeHandler, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(loop.settings, "single_agent_max_turns", 1)
+    handler.refusals = ["ปฏิเสธ"]
+    fake.script(_finish())
+    out = await run_single_agent(handler)
+    assert (out.stop_reason, out.turns) == ("finished", 1)
+    assert handler.refusals == ["ปฏิเสธ"]
 
 
 async def test_turn_cap_makes_a_closing_call(
@@ -418,9 +443,7 @@ def _outage() -> InstructorRetryException:
     )
 
 
-async def test_provider_outage_is_not_a_malformed_step(
-    fake: FakeLLM, handler: FakeHandler
-) -> None:
+async def test_provider_outage_is_not_a_malformed_step(fake: FakeLLM, handler: FakeHandler) -> None:
     fake.script(_outage(), _outage(), _finish())
     with pytest.raises(InstructorRetryException):
         await run_single_agent(handler)

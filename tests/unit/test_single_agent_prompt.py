@@ -29,6 +29,7 @@ from curriculum_agent.prompts.single_agent import (
     build_one_plo_task,
     build_plos_task,
     build_refusal,
+    build_requirement_uncited_refusal,
     build_single_agent_system,
     build_turns_left_note,
 )
@@ -197,6 +198,22 @@ def test_system_prompt_lets_a_short_budget_override_reading_everything() -> None
     system = build_single_agent_system()
     assert "สำคัญกว่ากติกา 'อ่านหลักฐานให้ครบทุกรายการก่อน finish'" in system
     assert "ไม่ต้องอ่านหลักฐานที่เหลือ" in build_turns_left_note(3)
+
+
+def test_system_prompt_requires_requirement_evidence_to_be_cited() -> None:
+    system = build_single_agent_system()
+    assert "ต้องมี Need อย่างน้อยหนึ่งข้ออ้างรายการนั้น" in system
+    # The escape (pure institutional goals) and the guard against loose citing.
+    assert "ไม่ระบุสมรรถนะของบัณฑิตเลย" in system
+    assert "ห้ามอ้างเพียงเพราะหัวข้อใกล้เคียง" in system
+    assert "ระบบจะปฏิเสธ finish ครั้งแรก" in system
+
+
+def test_requirement_refusal_lists_each_item_and_the_way_out() -> None:
+    text = build_requirement_uncited_refusal([("v1", "วิสัยทัศน์"), ("c1", "สภาวิชาชีพ")])
+    assert "2 รายการ" in text
+    assert "- v1 (วิสัยทัศน์)" in text and "- c1 (สภาวิชาชีพ)" in text
+    assert "need_id เดิม" in text and "summary_th" in text
 
 
 def test_system_prompt_names_every_ksec_tag_and_bloom_level() -> None:

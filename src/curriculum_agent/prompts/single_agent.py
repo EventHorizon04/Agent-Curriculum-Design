@@ -17,7 +17,12 @@ elsewhere:
   stakeholder types, `demand_score` and core/optional come from code, from the
   evidence a Need cites; the prompt says so, so the model does not try.
 - It names no stage of the multi pipeline and never mentions `vision_th`. The
-  institution's direction is evidence like any other item.
+  institution's direction is evidence like any other item — with one rule on top
+  (designer's decision of 2026-11-14): a graduate capability a `requirement` item
+  names must be cited by some Need. The first real run read the vision and
+  philosophy as background and cited neither, so no Need was `requirement`; multi
+  reaches those items through skill extraction. Code refuses the first finish that
+  leaves one uncited (`NeedsHandler.finish_refusal`).
 - It cannot let the model pass a hard criterion: the hard check is code, run on
   every save and again at the end.
 - The soft verdicts are the model's own and unvoted, which is why the prompt
@@ -196,6 +201,16 @@ Need คือข้อกำหนดที่ผู้มีส่วนได
 และทิศทางของสถาบันเอง (institutional_direction: วิสัยทัศน์ พันธกิจ อัตลักษณ์)
 ทุกกลุ่มเป็นหลักฐานเหมือนกัน: สมรรถนะของบัณฑิตที่รายการใดขอ เขียนเป็น Need ได้
 ส่วนเป้าหมายหรือภารกิจของสถาบันเองไม่ใช่ Need
+หลักฐานประเภท requirement (ดูคอลัมน์ประเภทในข้อความแรก: ทิศทางของสถาบันและสภาวิชาชีพ)
+คือข้อกำหนดที่หลักสูตรต้องตอบ ไม่ใช่แค่บริบทให้อ่านประกอบ
+สมรรถนะของบัณฑิตทุกข้อที่รายการ requirement ระบุ ต้องมี Need อย่างน้อยหนึ่งข้ออ้างรายการนั้น
+รวมถึงคุณลักษณะบัณฑิตในวิสัยทัศน์ ปรัชญา หรืออัตลักษณ์ เช่น 'ผลิตบัณฑิตที่...' 'บัณฑิตมีคุณลักษณะ...'
+- ถ้าเป็นสมรรถนะเดียวกับ Need ที่มีอยู่ (งานหลักและวัตถุหลักเดียวกัน)
+  ให้เพิ่มรายการนั้นใน source_evidence_ids ของ Need นั้น
+- ถ้าไม่ตรงกับ Need ใด ให้เขียนเป็น Need ใหม่ แม้จะมีรายการนั้นรายการเดียวขอ
+รายการ requirement ไม่มี Need อ้างได้เฉพาะเมื่อพูดถึงเป้าหมายหรือภารกิจของสถาบันเองล้วน ๆ
+ไม่ระบุสมรรถนะของบัณฑิตเลย ในกรณีนั้นให้เขียนเหตุผลไว้ใน summary_th ตอน finish
+กติกาข้อ 3 ยังใช้: อ้างเฉพาะ Need ที่ขอสมรรถนะเดียวกันจริง ห้ามอ้างเพียงเพราะหัวข้อใกล้เคียง
 1. ผู้ลงมือทำคือบัณฑิตจบใหม่คนหนึ่ง: Need บรรยายสมรรถนะที่บัณฑิตทำได้
    ไม่ใช่พันธกิจของสถาบัน หลักสูตร องค์กร หรือผู้บริหาร เช่น การสร้างความร่วมมือ
    กับมหาวิทยาลัยต่างประเทศ การจัดหางบประมาณ การออกแบบโครงสร้างหลักสูตร ไม่ใช่ Need
@@ -265,7 +280,8 @@ rationale_th ของ Need (20-240 ตัวอักษร): หลักฐ�
 4. ทบทวนทั้งชุด: ข้อที่ซ้ำกันให้รวม (save_need ข้อหนึ่งใหม่ให้อ้างหลักฐานทุกรายการ
    แล้ว drop_need อีกข้อ) ข้อที่ครอบสองสมรรถนะให้แยก
    และดูว่ามีหลักฐานรายการใดที่ไม่มี Need อ้างเลยหรือไม่ ตั้งใจหรือหลงไป
-5. finish
+   รายการ requirement ที่ไม่มี Need อ้าง ให้จัดการตามกติกาหลักฐานประเภท requirement ด้านบน
+5. finish ถ้ายังมีรายการ requirement ที่ไม่มี Need อ้าง ระบบจะปฏิเสธ finish ครั้งแรกพร้อมรายชื่อ
 
 == การเขียน PLO ==
 PLO (Program Learning Outcome) คือผลลัพธ์การเรียนรู้ระดับหลักสูตร:
@@ -417,7 +433,8 @@ def build_needs_task(
             f"{row.classification} | {row.total_chars} ตัวอักษร | {row.parts} ส่วน"
         )
     lines.append(
-        "ประเภท requirement คือข้อกำหนดที่หลักสูตรต้องตอบ general คือความต้องการทั่วไป ระบบจัดไว้แล้ว ไม่ต้องจัดใหม่"
+        "ประเภท requirement คือข้อกำหนดที่หลักสูตรต้องตอบ general คือความต้องการทั่วไป ระบบจัดไว้แล้ว ไม่ต้องจัดใหม่ "
+        "สมรรถนะของบัณฑิตที่รายการ requirement ระบุ ต้องมี Need อ้างรายการนั้น"
     )
     lines.append(
         "อ่านทุกรายการด้วย get_evidence จนครบทุกส่วน ส่ง note หลังอ่านครบแต่ละรายการก่อนอ่านรายการถัดไป "
@@ -559,6 +576,23 @@ def build_observation(tool: str, payload_json: str) -> str:
 def build_refusal(reason_th: str) -> str:
     """The system refused the last action; the agent reads why and tries again."""
     return f"ระบบปฏิเสธคำสั่งล่าสุด: {reason_th}"
+
+
+def build_requirement_uncited_refusal(items: Sequence[tuple[str, str]]) -> str:
+    """Why the first finish of the needs task was refused: requirement items no Need cites.
+
+    `items` is (evidence_id, source_name) per uncited item. The agent may finish
+    again unchanged; this refusal is said once.
+    """
+    listed = "\n".join(f"- {evidence_id} ({source})" for evidence_id, source in items)
+    return (
+        f"หลักฐานประเภท requirement {len(items)} รายการยังไม่มี Need อ้าง:\n{listed}\n"
+        "ทบทวนโน้ตของแต่ละรายการ (อ่านซ้ำด้วย get_evidence ได้): สมรรถนะของบัณฑิตที่รายการระบุ "
+        "ถ้าเป็นสมรรถนะเดียวกับ Need ที่มีอยู่ ให้ save_need ข้อนั้นอีกครั้งด้วย need_id เดิมโดยเพิ่มรายการนี้ "
+        "ใน source_evidence_ids ถ้าไม่ตรงกับ Need ใด ให้เขียน Need ใหม่ "
+        "ถ้ารายการใดพูดถึงเป้าหมายของสถาบันเองล้วน ๆ ไม่ระบุสมรรถนะของบัณฑิตเลย "
+        "finish ได้อีกครั้งโดยเขียนเหตุผลของรายการนั้นใน summary_th"
+    )
 
 
 def build_dropped_marker(evidence_id: str, note_th: str | None) -> str:

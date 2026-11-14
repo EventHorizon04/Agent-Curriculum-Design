@@ -224,6 +224,9 @@ class PlosHandler:
     def note_for(self, evidence_id: str) -> str | None:
         return None
 
+    def finish_refusal(self) -> str | None:
+        return None
+
     def drafts(self) -> list[SavePLO]:
         return list(self._drafts.values())
 
@@ -439,6 +442,9 @@ class OnePloHandler:
 
     def note_for(self, evidence_id: str) -> str | None:
         return self._notes.get(evidence_id)
+
+    def finish_refusal(self) -> str | None:
+        return None
 
     def draft(self) -> SavePLO | None:
         return self._draft

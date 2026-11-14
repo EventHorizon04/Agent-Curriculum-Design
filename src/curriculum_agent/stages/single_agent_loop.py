@@ -155,6 +155,14 @@ class TaskHandler(Protocol):
 
     def note_for(self, evidence_id: str) -> str | None: ...
 
+    def finish_refusal(self) -> str | None:
+        """Why a `Finish` is refused now, or None to accept it.
+
+        Called on every `Finish` with turns left; on the last turn a finish is always
+        accepted, since a refusal there would only end the loop at the turn cap.
+        """
+        ...
+
 
 class LoopOutcome(BaseModel):
     stop_reason: StopReason
@@ -183,9 +191,7 @@ class History:
     def add_assistant(self, step_json: str) -> None:
         self._messages.append({"role": "assistant", "content": step_json})
 
-    def add_observation(
-        self, text: str, *, evidence_id: str | None = None, part: int = 1
-    ) -> None:
+    def add_observation(self, text: str, *, evidence_id: str | None = None, part: int = 1) -> None:
         if evidence_id is not None:
             self._evidence_at[len(self._messages)] = (evidence_id, part)
             self._absent.discard((evidence_id, part))
@@ -389,8 +395,11 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
         action = step.action
 
         if isinstance(action, Finish):
-            return "finished"
-        if isinstance(action, CallTool):
+            not_yet = handler.finish_refusal() if turn < state.max_turns else None
+            if not_yet is None:
+                return "finished"
+            history.add_observation(_with_turns_left(build_refusal(not_yet), turn, state.max_turns))
+        elif isinstance(action, CallTool):
             text, evidence_id = _tool_observation(handler, state, seen_calls, action)
             history.add_observation(
                 _with_turns_left(text, turn, state.max_turns),

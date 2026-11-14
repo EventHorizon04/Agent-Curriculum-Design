@@ -34,6 +34,7 @@ from curriculum_agent.prompts.single_agent import (
     build_merge_need_task,
     build_needs_task,
     build_refusal,
+    build_requirement_uncited_refusal,
 )
 from curriculum_agent.stages.need_grouping import MIN_NEEDS
 from curriculum_agent.stages.single_agent_loop import (
@@ -58,6 +59,9 @@ class SingleNeedsResult(BaseModel):
     dropped_evidence_count: int
     unread_evidence_ids: list[str]  # not every part fetched with get_evidence
     uncited_evidence_ids: list[str]  # cited by no stored Need
+    # The requirement items among them (institution, professional council): the
+    # agent was refused one finish over these and kept them uncited anyway.
+    uncited_requirement_evidence_ids: list[str] = []
     unnoted_evidence_ids: list[str]  # opened, no Note handed in
 
 
@@ -74,8 +78,10 @@ class NeedsHandler:
         self._program = program
         self._evidence = list(evidence)
         self._type_by_evidence = {e.evidence_id: e.stakeholder_type for e in evidence}
+        self._source_by_evidence = {e.evidence_id: e.source_name for e in evidence}
         self._drafts: dict[str, SaveNeed] = {}
         self._notes: dict[str, str] = {}
+        self._requirement_refused = False
         self.tool_ctx = SingleToolContext(
             evidence_by_id={e.evidence_id: e for e in evidence},
             needs_by_id={},
@@ -103,6 +109,36 @@ class NeedsHandler:
 
     def note_for(self, evidence_id: str) -> str | None:
         return self._notes.get(evidence_id)
+
+    def uncited_requirement_ids(self) -> list[str]:
+        """Requirement evidence (institution, professional council) no draft cites."""
+        cited = {i for d in self._drafts.values() for i in d.source_evidence_ids}
+        return [
+            e.evidence_id
+            for e in self._evidence
+            if classify_evidence_type(e.stakeholder_type) == "requirement"
+            and e.evidence_id not in cited
+        ]
+
+    def finish_refusal(self) -> str | None:
+        """Refuse the first finish that leaves requirement evidence uncited; accept the next.
+
+        Designer's decision of 2026-11-14: the first real run read the institution's
+        vision and philosophy, cited neither, and so wrote no `requirement` Need.
+        One refusal makes the agent look again; a second finish is accepted, because
+        an item may name no graduate capability at all (pure institutional goals),
+        and the agent is told to say so in its summary. Whatever stays uncited is in
+        the job result either way (`uncited_requirement_evidence_ids`).
+        """
+        if self._requirement_refused:
+            return None
+        uncited = self.uncited_requirement_ids()
+        if not uncited:
+            return None
+        self._requirement_refused = True
+        return build_requirement_uncited_refusal(
+            [(i, self._source_by_evidence[i]) for i in uncited]
+        )
 
     def drafts(self) -> list[SaveNeed]:
         return list(self._drafts.values())
@@ -252,6 +288,7 @@ async def run_single_needs(program_id: str) -> SingleNeedsResult:
         dropped_evidence_count=outcome.dropped_evidence_count,
         unread_evidence_ids=[i for i in all_ids if i not in fully_read],
         uncited_evidence_ids=[i for i in all_ids if i not in cited],
+        uncited_requirement_evidence_ids=handler.uncited_requirement_ids(),
         unnoted_evidence_ids=[i for i in all_ids if i in opened and i not in noted],
     )
 
@@ -347,6 +384,9 @@ class MergeNeedHandler:
 
     def note_for(self, evidence_id: str) -> str | None:
         return self._notes.get(evidence_id)
+
+    def finish_refusal(self) -> str | None:
+        return None
 
     def draft(self) -> SaveNeed | None:
         return self._draft

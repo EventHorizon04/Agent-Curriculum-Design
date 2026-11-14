@@ -159,6 +159,47 @@ def test_opening_message_lists_evidence_and_program_duration() -> None:
     assert "e1" in msg and "e2" in msg and "4 ปี" in msg and "การแปล" in msg
 
 
+VISION = _ev("vision", StakeholderType.INSTITUTIONAL_DIRECTION)
+
+
+def test_first_finish_is_refused_while_requirement_evidence_is_uncited() -> None:
+    h = NeedsHandler(PROGRAM, [VISION, COUNCIL, EMP1])
+    h.handle(_save_need(source_evidence_ids=["emp1", "council"]))
+    refusal = h.finish_refusal()
+    assert refusal is not None
+    assert "vision" in refusal and "council" not in refusal and "emp1" not in refusal
+    # Said once: the second finish is accepted with the item still uncited.
+    assert h.finish_refusal() is None
+    assert h.uncited_requirement_ids() == ["vision"]
+
+
+def test_finish_is_accepted_when_every_requirement_item_is_cited() -> None:
+    h = NeedsHandler(PROGRAM, [VISION, COUNCIL, EMP1])
+    h.handle(_save_need(source_evidence_ids=["emp1", "council"]))
+    h.handle(
+        _save_need(source_evidence_ids=["vision"], statement_th="ต้องการบัณฑิตที่ล่ามการเจรจาธุรกิจได้")
+    )
+    assert h.finish_refusal() is None and h.uncited_requirement_ids() == []
+
+
+def test_general_evidence_alone_never_refuses_a_finish() -> None:
+    h = NeedsHandler(PROGRAM, [E1, E2])
+    assert h.finish_refusal() is None
+
+
+async def test_run_reports_requirement_evidence_left_uncited(
+    monkeypatch: pytest.MonkeyPatch, repos: _Repos
+) -> None:
+    monkeypatch.setattr(
+        single_needs.EvidenceRepository,
+        "list_by_program",
+        AsyncMock(return_value=[VISION, E1, E2]),
+    )
+    _fake_loop(monkeypatch, _write_one, "finished", ["e1", "e2"])
+    res = await run_single_needs("p")
+    assert res.uncited_requirement_evidence_ids == ["vision"]
+
+
 def test_built_needs_are_single_origin_with_code_derived_statistics() -> None:
     needs = build_single_needs("p", [_draft(["council", "emp1"]), _draft(["emp2"])], EVIDENCE)
     a, b = needs
