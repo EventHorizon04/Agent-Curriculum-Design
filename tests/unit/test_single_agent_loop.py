@@ -154,6 +154,25 @@ async def test_refused_finish_continues_the_loop(fake: FakeLLM, handler: FakeHan
     assert "requirement" in second_call[-1]["content"]
 
 
+async def test_outcome_keeps_one_record_per_turn(fake: FakeLLM, handler: FakeHandler) -> None:
+    handler.refusals = ["ยังขาด Need"]
+    fake.script(_tool("get_evidence", evidence_id="e1"), _malformed(), _finish(), _finish())
+    out = await run_single_agent(handler)
+    assert [s.turn for s in out.steps] == [1, 2, 3, 4]
+    read, bad, refused, done = out.steps
+    assert read.action == {
+        "kind": "call_tool",
+        "tool": "get_evidence",
+        "evidence_id": "e1",
+        "part": 1,
+    }
+    assert read.reasoning_th == "คิด" and len(read.observation) <= 240
+    assert bad.action is None and bad.observation.startswith("malformed")
+    assert refused.action == {"kind": "finish", "summary_th": "จบ"}
+    assert "ยังขาด Need" in refused.observation
+    assert done.observation == "finish accepted"
+
+
 async def test_finish_on_the_last_turn_is_never_refused(
     fake: FakeLLM, handler: FakeHandler, monkeypatch: pytest.MonkeyPatch
 ) -> None:

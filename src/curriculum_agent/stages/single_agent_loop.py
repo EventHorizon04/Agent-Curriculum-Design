@@ -164,11 +164,30 @@ class TaskHandler(Protocol):
         ...
 
 
+_STEP_REASONING_CHARS = 400
+_STEP_OBSERVATION_CHARS = 240
+
+
+class StepRecord(BaseModel):
+    """One turn of the loop, kept so a run can be explained afterwards.
+
+    The cache-off lock runs of 2026-11-14 had single runs collapse to three Needs
+    with nothing stored to say why. The action is whole (it is what the agent
+    wrote); reasoning and observation are cut, so raw evidence text stays short.
+    """
+
+    turn: int
+    reasoning_th: str = ""
+    action: dict[str, Any] | None = None  # None: the step was malformed
+    observation: str
+
+
 class LoopOutcome(BaseModel):
     stop_reason: StopReason
     turns: int
     dropped_evidence_count: int
     opened_evidence_ids: list[str]
+    steps: list[StepRecord] = []
 
 
 class History:
@@ -251,6 +270,17 @@ class _State:
         self.turns = 0
         self.opened: list[str] = []
         self.reasoning_bounded = False
+        self.steps: list[StepRecord] = []
+
+    def record(self, turn: int, step: SingleStep | None, observation: str) -> None:
+        self.steps.append(
+            StepRecord(
+                turn=turn,
+                reasoning_th=step.reasoning_th[:_STEP_REASONING_CHARS] if step else "",
+                action=step.action.model_dump(mode="json", exclude_none=True) if step else None,
+                observation=observation[:_STEP_OBSERVATION_CHARS],
+            )
+        )
 
 
 async def _ask(response_model: type[Any], state: _State, sink: list[int]) -> Any:
@@ -377,10 +407,12 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
                 )
                 raise
             malformed += 1
+            reason = _schema_failure_reason(exc)
             logger.warning(
                 f"  single agent turn {turn}: malformed step ({malformed}/{_MAX_MALFORMED}): "
-                f"{_schema_failure_reason(exc)}"
+                f"{reason}"
             )
+            state.record(turn, None, f"malformed: {reason}")
             if malformed >= _MAX_MALFORMED:
                 await _closing(state)
                 return "malformed"
@@ -397,8 +429,10 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
         if isinstance(action, Finish):
             not_yet = handler.finish_refusal() if turn < state.max_turns else None
             if not_yet is None:
+                state.record(turn, step, "finish accepted")
                 return "finished"
-            history.add_observation(_with_turns_left(build_refusal(not_yet), turn, state.max_turns))
+            text = build_refusal(not_yet)
+            history.add_observation(_with_turns_left(text, turn, state.max_turns))
         elif isinstance(action, CallTool):
             text, evidence_id = _tool_observation(handler, state, seen_calls, action)
             history.add_observation(
@@ -407,12 +441,14 @@ async def _run(handler: TaskHandler, state: _State) -> StopReason:
                 part=action.part,
             )
         else:
-            history.add_observation(_with_turns_left(handler.handle(action), turn, state.max_turns))
+            text = handler.handle(action)
+            history.add_observation(_with_turns_left(text, turn, state.max_turns))
             # What these tools answer depends on what the handler holds, which
             # this action may have changed: asking again is not a repeat.
             seen_calls.difference_update(
                 {c for c in seen_calls if c.split("\x00", 1)[0] in _STATE_DEPENDENT_TOOLS}
             )
+        state.record(turn, step, text)
         if context_full:
             logger.warning(f"  single agent turn {turn}: context full, nothing left to drop")
             return "context_full"
@@ -486,4 +522,5 @@ async def run_single_agent(
         turns=state.turns,
         dropped_evidence_count=len(state.history.dropped_evidence_ids),
         opened_evidence_ids=state.opened,
+        steps=state.steps,
     )

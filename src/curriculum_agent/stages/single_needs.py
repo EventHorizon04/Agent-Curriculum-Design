@@ -43,6 +43,7 @@ from curriculum_agent.stages.single_agent_loop import (
     Note,
     OutputAction,
     SaveNeed,
+    StepRecord,
     StopReason,
     run_single_agent,
 )
@@ -64,6 +65,7 @@ class SingleNeedsResult(BaseModel):
     # agent was refused one finish over these and kept them uncited anyway.
     uncited_requirement_evidence_ids: list[str] = []
     unnoted_evidence_ids: list[str]  # opened, no Note handed in
+    steps: list[StepRecord] = []  # what the agent did each turn, for diagnosis
 
 
 def program_context_for(program: ProgramMetadata) -> str:
@@ -83,7 +85,6 @@ class NeedsHandler:
         self._drafts: dict[str, SaveNeed] = {}
         self._notes: dict[str, str] = {}
         self._requirement_refused = False
-        self._core_refused = False
         self.tool_ctx = SingleToolContext(
             evidence_by_id={e.evidence_id: e for e in evidence},
             needs_by_id={},
@@ -132,10 +133,11 @@ class NeedsHandler:
         and the agent is told to say so in its summary. Whatever stays uncited is in
         the job result either way (`uncited_requirement_evidence_ids`).
 
-        The same once-only refusal applies when fewer than `MIN_NEEDS` core Needs
-        exist (designer's decision of 2026-11-14, after two of three lock runs
-        wrote one-item Needs that code marked optional). Each gate speaks once;
-        when both hold at the same finish they share one refusal.
+        Fewer than `MIN_NEEDS` core Needs refuses **every** finish (designer's
+        decision of 2026-11-15). It was once-only for a day: a run with three Needs,
+        all from the institution's own items, was refused once and finished again
+        unchanged. The loop still accepts a finish on its last turn, so a set the
+        evidence cannot lift to six ends at the turn cap with what it has.
         """
         parts: list[str] = []
         uncited = self.uncited_requirement_ids()
@@ -146,11 +148,9 @@ class NeedsHandler:
                     [(i, self._source_by_evidence[i]) for i in uncited]
                 )
             )
-        if not self._core_refused:
-            short = self._core_short_refusal()
-            if short is not None:
-                self._core_refused = True
-                parts.append(short)
+        short = self._core_short_refusal()
+        if short is not None:
+            parts.append(short)
         return "\n\n".join(parts) or None
 
     def _core_short_refusal(self) -> str | None:
@@ -321,6 +321,7 @@ async def run_single_needs(program_id: str) -> SingleNeedsResult:
         uncited_evidence_ids=[i for i in all_ids if i not in cited],
         uncited_requirement_evidence_ids=handler.uncited_requirement_ids(),
         unnoted_evidence_ids=[i for i in all_ids if i in opened and i not in noted],
+        steps=outcome.steps,
     )
 
 

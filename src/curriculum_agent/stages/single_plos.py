@@ -55,6 +55,7 @@ from curriculum_agent.stages.single_agent_loop import (
     SaveNeed,
     SavePLO,
     SoftVerdict,
+    StepRecord,
     StopReason,
     run_single_agent,
 )
@@ -90,6 +91,7 @@ class SinglePlosResult(BaseModel):
     dropped_evidence_count: int  # evidence texts the loop had to drop from context
     opened_evidence_ids: list[str]
     uncited_core_need_ids: list[str]  # core Needs no stored PLO answers
+    steps: list[StepRecord] = []  # what the agent did each turn, for diagnosis
 
 
 def select_single_input(needs: Sequence[Need]) -> tuple[list[Need], list[Need], list[Need]]:
@@ -390,6 +392,7 @@ async def run_single_plos(program_id: str, *, note_th: str | None = None) -> Sin
         dropped_evidence_count=outcome.dropped_evidence_count,
         opened_evidence_ids=outcome.opened_evidence_ids,
         uncited_core_need_ids=[n.need_id for n in core if n.need_id not in cited],
+        steps=outcome.steps,
     )
 
 

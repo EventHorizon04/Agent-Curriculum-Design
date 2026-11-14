@@ -163,11 +163,12 @@ VISION = _ev("vision", StakeholderType.INSTITUTIONAL_DIRECTION)
 
 
 def test_first_finish_is_refused_while_requirement_evidence_is_uncited() -> None:
-    h = NeedsHandler(PROGRAM, [VISION, COUNCIL, EMP1])
-    h.handle(_save_need(source_evidence_ids=["emp1", "council"]))
+    h = NeedsHandler(PROGRAM, [VISION, COUNCIL, E1, E2])
+    _six_core(h)
+    h.handle(_save_need(source_evidence_ids=["e1", "council"]))
     refusal = h.finish_refusal()
     assert refusal is not None
-    assert "vision" in refusal and "council" not in refusal and "emp1" not in refusal
+    assert "vision" in refusal and "council" not in refusal and "e1" not in refusal
     # Said once: the second finish is accepted with the item still uncited.
     assert h.finish_refusal() is None
     assert h.uncited_requirement_ids() == ["vision"]
@@ -200,7 +201,7 @@ def test_six_core_needs_on_general_evidence_finish_at_once() -> None:
     assert h.finish_refusal() is None
 
 
-def test_first_finish_is_refused_below_six_core_needs_and_says_what_to_recheck() -> None:
+def test_every_finish_is_refused_below_six_core_needs_and_says_what_to_recheck() -> None:
     h = NeedsHandler(PROGRAM, [E1, E2, E3])
     h.handle(_save_need(source_evidence_ids=["e1"]))  # one general item: optional
     h.handle(_save_need(source_evidence_ids=["e1", "e2"], statement_th="ต้องการบัณฑิตที่ล่ามการเจรจาได้"))
@@ -211,7 +212,9 @@ def test_first_finish_is_refused_below_six_core_needs_and_says_what_to_recheck()
     assert "Need หลักมี 1 ข้อ ต่ำกว่าขั้นต่ำ 6 ข้อ" in refusal
     assert f"- {one_item_id} (อ้าง e1)" in refusal and two_item_id not in refusal
     assert "- e3 (แหล่ง)" in refusal and "- e2 (" not in refusal
-    # Said once: the agent is asked to re-check citations, not to reach a number.
+    # Not once-only: a run refused once finished again with three Needs (2026-11-15).
+    assert h.finish_refusal() == refusal
+    _six_core(h)
     assert h.finish_refusal() is None
 
 
@@ -225,14 +228,12 @@ def test_core_gate_still_speaks_after_the_requirement_gate_spoke_alone() -> None
     second = h.finish_refusal()
     assert second is not None and "Need หลักมี 1 ข้อ" in second
     assert "หลักฐานประเภท requirement" not in second
-    assert h.finish_refusal() is None
 
 
-def test_finish_with_no_need_at_all_is_refused_once() -> None:
+def test_finish_with_no_need_at_all_is_refused() -> None:
     h = NeedsHandler(PROGRAM, [E1, E2])
     refusal = h.finish_refusal()
     assert refusal is not None and "Need หลักมี 0 ข้อ" in refusal
-    assert h.finish_refusal() is None
 
 
 async def test_run_reports_requirement_evidence_left_uncited(

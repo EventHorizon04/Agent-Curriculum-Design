@@ -223,10 +223,13 @@ def test_core_short_refusal_lists_one_item_needs_uncited_evidence_and_the_way_ou
     )
     assert "Need หลักมี 2 ข้อ ต่ำกว่าขั้นต่ำ 6 ข้อ" in text
     assert "- n1 (อ้าง e1): ต้องการบัณฑิตที่แปลได้" in text and "- e9 (ผู้ใช้บัณฑิต)" in text
-    assert "need_id เดิม" in text and "summary_th" in text
+    assert "need_id เดิม" in text
+    # No way out by finishing again, and every stakeholder group is a source.
+    assert "ระบบจะไม่รับ finish จนกว่า Need หลักจะมีอย่างน้อย 6 ข้อ" in text
+    assert "ไม่ใช่เฉพาะรายการ requirement" in text
     # It must not read as "reach six": loose citing is named and forbidden.
     assert "ห้ามอ้างรายการที่ไม่ได้ขอสมรรถนะนั้นจริงเพื่อให้ได้ตัวเลข" in text
-    assert "น้อยกว่า 6 ข้อ ระบบจะปฏิเสธ finish ครั้งแรก" in build_single_agent_system()
+    assert "น้อยกว่า 6 ข้อ ระบบจะไม่รับ finish จนกว่าจะครบ" in build_single_agent_system()
 
 
 def test_core_short_refusal_omits_empty_lists() -> None:
