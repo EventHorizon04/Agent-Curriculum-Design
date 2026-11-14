@@ -87,6 +87,8 @@ class SinglePlosResult(BaseModel):
     plos: list[PLO]
     stop_reason: StopReason
     turns: int
+    dropped_evidence_count: int  # evidence texts the loop had to drop from context
+    opened_evidence_ids: list[str]
     uncited_core_need_ids: list[str]  # core Needs no stored PLO answers
 
 
@@ -372,17 +374,18 @@ async def run_single_plos(program_id: str, *, note_th: str | None = None) -> Sin
             "— review at the checkpoint"
         )
 
-    repo = PLORepository()
-    removed = await repo.delete_by_program(program_id)
+    # One session, one commit: a failed insert must not leave the program without PLOs.
+    removed = await PLORepository().replace_by_program(program_id, plos)
     if removed:
         logger.info(f"Replaced {removed} PLO row(s) from a previous run")
-    await repo.bulk_insert(plos)
 
     cited = {i for p in plos for i in p.source_need_ids}
     return SinglePlosResult(
         plos=plos,
         stop_reason=outcome.stop_reason,
         turns=outcome.turns,
+        dropped_evidence_count=outcome.dropped_evidence_count,
+        opened_evidence_ids=outcome.opened_evidence_ids,
         uncited_core_need_ids=[n.need_id for n in core if n.need_id not in cited],
     )
 
@@ -490,7 +493,11 @@ async def draft_single_plo(
     if unknown:
         raise HTTPException(status_code=422, detail=f"ไม่พบ Need ที่ใช้งาน: {', '.join(unknown)}")
     handler = OnePloHandler(program, needs, evidence, siblings, note_th, current)
-    outcome = await run_single_agent(handler)
+    outcome = await run_single_agent(
+        handler,
+        max_turns=settings.single_agent_oneshot_max_turns,
+        timeout_seconds=settings.single_agent_oneshot_timeout_seconds,
+    )
     draft = handler.draft()
     if draft is None:
         raise HTTPException(

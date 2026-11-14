@@ -343,8 +343,7 @@ def test_subject_prefix_is_stripped_but_a_designer_edit_is_kept() -> None:
 
 class _Repos:
     def __init__(self) -> None:
-        self.delete = AsyncMock(return_value=0)
-        self.insert = AsyncMock()
+        self.replace = AsyncMock(return_value=0)
 
 
 @pytest.fixture
@@ -359,8 +358,7 @@ def repos(monkeypatch: pytest.MonkeyPatch) -> _Repos:
         "list_active_by_program",
         AsyncMock(return_value=[N1, N2, N3]),
     )
-    monkeypatch.setattr(single_plos.PLORepository, "delete_by_program", r.delete)
-    monkeypatch.setattr(single_plos.PLORepository, "bulk_insert", r.insert)
+    monkeypatch.setattr(single_plos.PLORepository, "replace_by_program", r.replace)
     return r
 
 
@@ -370,7 +368,7 @@ def _fake_loop(
     async def fake(handler: Any) -> LoopOutcome:
         script(handler)
         return LoopOutcome(
-            stop_reason=reason, turns=4, dropped_evidence_count=0, opened_evidence_ids=[]
+            stop_reason=reason, turns=4, dropped_evidence_count=2, opened_evidence_ids=["e1"]
         )
 
     monkeypatch.setattr(single_plos, "run_single_agent", fake)
@@ -392,9 +390,9 @@ async def test_run_numbers_core_and_optional_separately_and_stores(
     assert by_id["PLO1"].source_need_ids == ["n1"] and by_id["PLO2"].source_need_ids == ["n2"]
     assert by_id["OPT1"].is_optional is True and by_id["PLO1"].is_optional is False
     assert res.stop_reason == "finished" and res.turns == 4 and res.uncited_core_need_ids == []
-    repos.delete.assert_awaited_once_with("p")
-    repos.insert.assert_awaited_once()
-    assert repos.insert.await_args.args[0] == res.plos
+    assert res.dropped_evidence_count == 2 and res.opened_evidence_ids == ["e1"]
+    repos.replace.assert_awaited_once()
+    assert repos.replace.await_args.args == ("p", res.plos)
 
 
 async def test_partial_result_is_stored_on_any_stop_reason(
@@ -403,7 +401,7 @@ async def test_partial_result_is_stored_on_any_stop_reason(
     _fake_loop(monkeypatch, lambda h: h.handle(_save_plo(source_need_ids=["n1"])), "malformed")
     res = await run_single_plos("p")
     assert res.stop_reason == "malformed" and res.uncited_core_need_ids == ["n2"]
-    repos.insert.assert_awaited_once()
+    repos.replace.assert_awaited_once()
 
 
 async def test_no_drafts_fails_and_touches_nothing(
@@ -413,8 +411,7 @@ async def test_no_drafts_fails_and_touches_nothing(
     with pytest.raises(HTTPException) as exc:
         await run_single_plos("p")
     assert exc.value.status_code == 502 and "timeout" in exc.value.detail
-    repos.delete.assert_not_awaited()
-    repos.insert.assert_not_awaited()
+    repos.replace.assert_not_awaited()
 
 
 async def test_no_active_needs_is_422_before_the_loop(

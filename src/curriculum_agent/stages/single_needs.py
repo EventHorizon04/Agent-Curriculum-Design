@@ -398,7 +398,11 @@ async def merge_single_needs(
 ) -> Need:
     """Write one Need in place of `originals` through the single agent; 502 when none is saved."""
     handler = MergeNeedHandler(program, originals, all_active, evidence, reason_th)
-    outcome = await run_single_agent(handler)
+    outcome = await run_single_agent(
+        handler,
+        max_turns=settings.single_agent_oneshot_max_turns,
+        timeout_seconds=settings.single_agent_oneshot_timeout_seconds,
+    )
     draft = handler.draft()
     if draft is None:
         raise HTTPException(

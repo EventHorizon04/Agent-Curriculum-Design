@@ -33,6 +33,7 @@ from curriculum_agent.stages.single_agent_loop import (
     SavePLO,
     StopReason,
 )
+from curriculum_agent.config import settings
 from curriculum_agent.stages.single_needs import MergeNeedHandler, merge_single_needs
 from curriculum_agent.stages.single_plos import OnePloHandler, draft_single_plo
 from tests.support.jobs import InMemoryJobs
@@ -159,13 +160,15 @@ def fake_loop(monkeypatch: pytest.MonkeyPatch) -> Any:
             self.script: list[Any] = []
             self.observations: list[str] = []
             self.reason: StopReason = "finished"
+            self.budgets: list[dict[str, Any]] = []
 
         def actions(self, *acts: Any) -> None:
             self.script = list(acts)
 
     loop = Loop()
 
-    async def fake(handler: Any) -> LoopOutcome:
+    async def fake(handler: Any, **budget: Any) -> LoopOutcome:
+        loop.budgets.append(budget)
         loop.observations = [handler.handle(a) for a in loop.script]
         return LoopOutcome(
             stop_reason=loop.reason, turns=2, dropped_evidence_count=0, opened_evidence_ids=[]
@@ -504,3 +507,24 @@ def test_single_merge_route_still_refuses_at_the_min_core_floor(
     assert response.status_code == 422
     assert "ต่ำกว่าขั้นต่ำ" in response.json()["detail"]
     loop.assert_not_awaited()
+
+
+async def test_one_shot_actions_run_the_loop_on_the_one_shot_budget(fake_loop: Any) -> None:
+    fake_loop.actions(_save_need(source_evidence_ids=["e1"], ksec_categories=["C"]))
+    await merge_single_needs(PROGRAM, [N1, N2], ACTIVE, EVIDENCE, reason_th=None)
+    fake_loop.actions(_save_plo())
+    await draft_single_plo(
+        PROGRAM,
+        [N1],
+        EVIDENCE,
+        plo_id="PLO1",
+        known_need_ids={"n1"},
+        siblings=[],
+        note_th=None,
+    )
+    expected = {
+        "max_turns": settings.single_agent_oneshot_max_turns,
+        "timeout_seconds": settings.single_agent_oneshot_timeout_seconds,
+    }
+    assert fake_loop.budgets == [expected, expected]
+    assert settings.single_agent_oneshot_max_turns < settings.single_agent_max_turns
