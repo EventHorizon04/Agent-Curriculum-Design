@@ -413,3 +413,94 @@ def test_revalidate_on_a_single_program_runs_the_single_agent_and_stores_it(
     assert stored.version == 4 and stored.soft_flags == ["A_scope"]
     assert update.await_args.kwargs["expected_version"] == 3
     boom.assert_not_awaited()
+
+
+# ---- review round 1 ----------------------------------------------------------
+
+
+def _with_hard_failure(statement: str) -> PLO:
+    # The model lets a hard-failing statement exist only when it is escalated.
+    return _plo(edited=True).model_copy(update={"statement_th": statement, "smart_escalated": True})
+
+
+@pytest.mark.parametrize(
+    "statement",
+    ["เข้าใจหลักการแปลเอกสารธุรกิจ", "เอกสารธุรกิจถูกแปลโดยบัณฑิต"],
+    ids=["forbidden_word", "does_not_open_with_the_verb"],
+)
+async def test_revalidating_a_hand_edited_plo_with_a_hard_failure_escalates_and_keeps_it(
+    fake_loop: Any, statement: str
+) -> None:
+    fake_loop.actions(_save_plo())
+    plo = await draft_single_plo(
+        PROGRAM,
+        [N1],
+        EVIDENCE,
+        plo_id="PLO1",
+        known_need_ids={"n1"},
+        siblings=[],
+        note_th=None,
+        current=_with_hard_failure(statement),
+    )
+    assert plo.statement_th == statement and plo.smart_escalated is True
+    assert plo.designer_edited_at is not None
+
+
+async def test_revalidate_keeps_the_stored_distinctive_feature(fake_loop: Any) -> None:
+    fake_loop.actions(_save_plo())
+    for edited in (True, False):
+        current = _plo(edited=edited).model_copy(update={"distinctive_feature_th": "จุดเด่นเดิม"})
+        plo = await draft_single_plo(
+            PROGRAM,
+            [N1],
+            EVIDENCE,
+            plo_id="PLO1",
+            known_need_ids={"n1"},
+            siblings=[],
+            note_th=None,
+            current=current,
+        )
+        assert plo.distinctive_feature_th == "จุดเด่นเดิม"
+
+
+async def test_a_new_draft_has_no_distinctive_feature(fake_loop: Any) -> None:
+    fake_loop.actions(_save_plo())
+    plo = await draft_single_plo(
+        PROGRAM, [N1], EVIDENCE, plo_id="PLO5", known_need_ids={"n1"}, siblings=[], note_th=None
+    )
+    assert plo.distinctive_feature_th is None
+
+
+def test_merge_handler_refuses_a_save_that_fails_need_validation_and_keeps_the_earlier_one() -> (
+    None
+):
+    h = MergeNeedHandler(PROGRAM, [N1, N2], ACTIVE, EVIDENCE, None)
+    h.handle(_save_need(statement_th="ต้องการบัณฑิตที่แปลเอกสารได้ข้อแรก"))
+    obs = h.handle(_save_need(statement_th=""))
+    assert obs.startswith("ระบบปฏิเสธ") and "ไม่ผ่านการตรวจรูปแบบ" in obs
+    draft = h.draft()
+    assert draft is not None and draft.statement_th.endswith("ข้อแรก")
+
+
+def test_one_plo_handler_second_save_replaces_the_first() -> None:
+    h = OnePloHandler(PROGRAM, [N1], EVIDENCE, [], None, None)
+    h.handle(_save_plo(statement_th="แปลเอกสารข้อแรก"))
+    h.handle(_save_plo(statement_th="แปลเอกสารข้อสอง"))
+    draft = h.draft()
+    assert draft is not None and draft.statement_th == "แปลเอกสารข้อสอง"
+
+
+def test_single_merge_route_still_refuses_at_the_min_core_floor(
+    monkeypatch: pytest.MonkeyPatch, fake_loop: Any
+) -> None:
+    # A, B, C, F0 are the four core Needs: folding two leaves three, under the floor.
+    _install_multi_merge(monkeypatch, _pool(extra=1))
+    monkeypatch.setattr(needs_route.ProgramRepository, "get", AsyncMock(return_value=PROGRAM))
+    loop = AsyncMock()
+    monkeypatch.setattr(single_needs, "run_single_agent", loop)
+
+    response = _merge(["A", "B"])
+
+    assert response.status_code == 422
+    assert "ต่ำกว่าขั้นต่ำ" in response.json()["detail"]
+    loop.assert_not_awaited()

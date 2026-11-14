@@ -36,7 +36,6 @@ from curriculum_agent.models import (
     StakeholderEvidence,
 )
 from curriculum_agent.prompts.single_agent import (
-    NeedBrief,
     build_one_plo_task,
     build_plos_task,
     build_refusal,
@@ -60,7 +59,7 @@ from curriculum_agent.stages.single_agent_loop import (
     run_single_agent,
 )
 from curriculum_agent.stages.single_agent_tools import SingleToolContext
-from curriculum_agent.stages.single_needs import program_context_for
+from curriculum_agent.stages.single_needs import brief_of, program_context_for
 from curriculum_agent.stages.smart_agent import hard_findings_for
 from curriculum_agent.stages.smart_agent_tools import SiblingSummary
 from curriculum_agent.stages.smart_rules import (
@@ -108,18 +107,6 @@ def select_single_input(needs: Sequence[Need]) -> tuple[list[Need], list[Need], 
     chosen = {n.need_id for n in core}
     unused = [n for n in synthesis_order(eligible) if not n.is_optional and n.need_id not in chosen]
     return core, optional, unused
-
-
-def _brief(need: Need) -> NeedBrief:
-    return NeedBrief(
-        need_id=need.need_id,
-        statement_th=need.statement_th,
-        ksec_categories=tuple(str(getattr(c, "value", c)) for c in need.ksec_categories),
-        bloom_level=str(getattr(need.bloom_level, "value", need.bloom_level)),
-        demand_score=need.demand_score,
-        stakeholder_types=tuple(t.value for t in need.source_stakeholder_types),
-        evidence_ids=tuple(need.source_evidence_ids),
-    )
 
 
 def _is_optional(cited: Sequence[Need]) -> bool:
@@ -214,7 +201,7 @@ class PlosHandler:
         self._usable = {n.need_id: n for n in (*core, *optional)}
         self._drafts: dict[str, SavePLO] = {}
         self._minted = 0
-        briefs = {n.need_id: _brief(n) for n in (*core, *optional, *unused)}
+        briefs = {n.need_id: brief_of(n) for n in (*core, *optional, *unused)}
         self.tool_ctx = SingleToolContext(
             evidence_by_id={e.evidence_id: e for e in evidence},
             needs_by_id=briefs,
@@ -226,9 +213,9 @@ class PlosHandler:
         return build_plos_task(
             program_context=program_context_for(self._program),
             scope_th=self._program.scope_th or None,
-            core_needs=[_brief(n) for n in self._core],
-            optional_needs=[_brief(n) for n in self._optional],
-            unused_needs=[_brief(n) for n in self._unused],
+            core_needs=[brief_of(n) for n in self._core],
+            optional_needs=[brief_of(n) for n in self._optional],
+            unused_needs=[brief_of(n) for n in self._unused],
             note_th=self._note_th,
         )
 
@@ -428,7 +415,7 @@ class OnePloHandler:
         self._draft: SavePLO | None = None
         self.tool_ctx = SingleToolContext(
             evidence_by_id={e.evidence_id: e for e in evidence},
-            needs_by_id={n.need_id: _brief(n) for n in needs},
+            needs_by_id={n.need_id: brief_of(n) for n in needs},
             plos=list(siblings),
             part_chars=settings.single_agent_evidence_part_chars,
         )
@@ -441,7 +428,7 @@ class OnePloHandler:
         return build_one_plo_task(
             program_context=program_context_for(self._program),
             scope_th=self._program.scope_th or None,
-            needs=[_brief(n) for n in self._needs],
+            needs=[brief_of(n) for n in self._needs],
             current_statement_th=self._current.statement_th if self._current else None,
             note_th=self._note_th,
             keep_wording=self.keep_wording,
@@ -521,7 +508,7 @@ async def draft_single_plo(
                 "rationale_th": current.rationale_th,
             }
         )
-    return build_single_plo(
+    plo = build_single_plo(
         program.program_id,
         current.plo_id if current else plo_id,
         draft,
@@ -530,3 +517,7 @@ async def draft_single_plo(
         designer_edited_at=edited_at,
         version=current.version if current else 1,
     )
+    if current is not None and current.distinctive_feature_th is not None:
+        # The agent's draft has no such field; a revalidation must not drop the stored one.
+        plo = plo.model_copy(update={"distinctive_feature_th": current.distinctive_feature_th})
+    return plo

@@ -706,16 +706,6 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
             detail=f"{plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน",
         )
 
-    draft = _PLODraft(
-        statement_th=match.statement_th,
-        statement_en=match.statement_en,
-        bloom_level=match.bloom_level,
-        action_verb_th=match.action_verb_th,
-        source_need_ids=list(match.source_need_ids),
-        rationale_th=match.rationale_th,
-        distinctive_feature_th=match.distinctive_feature_th,
-    )
-
     async def work() -> PLO:
         siblings = [SiblingSummary.from_plo(p) for p in stored if p.plo_id != plo_id]
         revalidated: PLO | None
@@ -736,6 +726,15 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
                 current=match,
             )
         else:
+            draft = _PLODraft(
+                statement_th=match.statement_th,
+                statement_en=match.statement_en,
+                bloom_level=match.bloom_level,
+                action_verb_th=match.action_verb_th,
+                source_need_ids=list(match.source_need_ids),
+                rationale_th=match.rationale_th,
+                distinctive_feature_th=match.distinctive_feature_th,
+            )
             revalidated = await validate_and_build(
                 draft,
                 metadata=program,

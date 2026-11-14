@@ -170,18 +170,7 @@ class NeedsHandler:
     def _briefs_for(self, drafts: list[SaveNeed]) -> dict[str, NeedBrief]:
         """Briefs for these drafts: the corpus is all of them, so one save moves every score."""
         built = build_single_needs(self._program.program_id, drafts, self._evidence)
-        return {
-            n.need_id: NeedBrief(
-                need_id=n.need_id,
-                statement_th=n.statement_th,
-                ksec_categories=tuple(str(getattr(c, "value", c)) for c in n.ksec_categories),
-                bloom_level=str(getattr(n.bloom_level, "value", n.bloom_level)),
-                demand_score=n.demand_score,
-                stakeholder_types=tuple(t.value for t in n.source_stakeholder_types),
-                evidence_ids=tuple(n.source_evidence_ids),
-            )
-            for n in built
-        }
+        return {n.need_id: brief_of(n) for n in built}
 
 
 def build_single_needs(
@@ -344,7 +333,7 @@ class MergeNeedHandler:
         self._draft: SaveNeed | None = None
         self.tool_ctx = SingleToolContext(
             evidence_by_id={e.evidence_id: e for e in self._evidence},
-            needs_by_id={n.need_id: _brief_of(n) for n in originals},
+            needs_by_id={n.need_id: brief_of(n) for n in originals},
             plos=[],
             part_chars=settings.single_agent_evidence_part_chars,
         )
@@ -352,7 +341,7 @@ class MergeNeedHandler:
     def opening_message(self) -> str:
         return build_merge_need_task(
             program_context=program_context_for(self._program),
-            needs=[_brief_of(n) for n in self._originals],
+            needs=[brief_of(n) for n in self._originals],
             reason_th=self._reason_th,
         )
 
@@ -386,7 +375,8 @@ class MergeNeedHandler:
         return build_refusal(_NOT_A_MERGE_STEP_TH)
 
 
-def _brief_of(need: Need) -> NeedBrief:
+def brief_of(need: Need) -> NeedBrief:
+    """The one Need-to-NeedBrief mapping every single-agent task uses."""
     return NeedBrief(
         need_id=need.need_id,
         statement_th=need.statement_th,
