@@ -60,7 +60,7 @@ class SingleNeedsResult(BaseModel):
     unnoted_evidence_ids: list[str]  # opened, no Note handed in
 
 
-def _program_context(program: ProgramMetadata) -> str:
+def program_context_for(program: ProgramMetadata) -> str:
     base = build_program_context_th(program.model_dump(mode="json")) or "หลักสูตร"
     # The prompt's level criterion asks about the programme's length.
     return f"{base} ระยะเวลาเรียน {program.duration_years} ปี"
@@ -95,7 +95,7 @@ class NeedsHandler:
             for e in self._evidence
         ]
         return build_needs_task(
-            program_context=_program_context(self._program),
+            program_context=program_context_for(self._program),
             scope_th=self._program.scope_th or None,
             evidence_index=rows,
         )

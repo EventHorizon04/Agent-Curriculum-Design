@@ -55,7 +55,7 @@ from curriculum_agent.stages.single_agent_loop import (
     run_single_agent,
 )
 from curriculum_agent.stages.single_agent_tools import SingleToolContext
-from curriculum_agent.stages.single_needs import _program_context
+from curriculum_agent.stages.single_needs import program_context_for
 from curriculum_agent.stages.smart_agent import hard_findings_for
 from curriculum_agent.stages.smart_agent_tools import SiblingSummary
 from curriculum_agent.stages.smart_rules import (
@@ -219,7 +219,7 @@ class PlosHandler:
 
     def opening_message(self) -> str:
         return build_plos_task(
-            program_context=_program_context(self._program),
+            program_context=program_context_for(self._program),
             scope_th=self._program.scope_th or None,
             core_needs=[_brief(n) for n in self._core],
             optional_needs=[_brief(n) for n in self._optional],
@@ -274,10 +274,12 @@ class PlosHandler:
         clash = [i for i in dict.fromkeys(action.source_need_ids) if i in taken]
         if clash:
             return build_refusal(f"Need {', '.join(clash)} อยู่เบื้องหลัง PLO อื่นแล้ว")
-        draft = action.model_copy(update={"plo_ref": ref})
+        draft = action.model_copy(
+            update={"plo_ref": ref, "source_need_ids": list(dict.fromkeys(action.source_need_ids))}
+        )
         cited = [self._usable[i] for i in draft.source_need_ids]
         try:
-            build_single_plo(
+            built = build_single_plo(
                 self._program.program_id,
                 ref,
                 draft,
@@ -290,16 +292,11 @@ class PlosHandler:
             return build_refusal(f"PLO นี้ไม่ผ่านการตรวจรูปแบบ: {reason}")
         self._drafts = {**self._drafts, ref: draft}
         self._refresh_siblings()
-        statement = strip_outcome_prefix(draft.statement_th)
-        fails = hard_failures(
-            statement,
-            draft.action_verb_th,
-            list(draft.source_need_ids),
-            set(self._usable),
-        )
-        if fails:
-            checked = "; ".join(f"{f.name}: {CRITERION_FIX_HINTS_TH[f]}" for f in fails)
-            checked = f"hard check ไม่ผ่าน {checked}"
+        # The built PLO already ran the hard check; read its findings, do not rerun it.
+        hard = built.smart_check.hard_findings
+        if hard:
+            detail = "; ".join(f"{f.criterion.value}: {f.note_th}" for f in hard)
+            checked = f"hard check ไม่ผ่าน {detail}"
         else:
             checked = "ผ่าน hard check"
         return f"บันทึก PLO แล้ว plo_ref: {ref} · {checked}"

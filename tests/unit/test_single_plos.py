@@ -182,7 +182,31 @@ def test_save_observation_reports_hard_failures() -> None:
     obs = _handler().handle(
         _save_plo(statement_th="มีความสามารถวิเคราะห์ข้อมูล", action_verb_th="วิเคราะห์")
     )
-    assert "S_VERB" in obs
+    assert "S_verb" in obs
+
+
+def test_a_draft_the_plo_model_rejects_is_refused_and_drafts_kept() -> None:
+    # A Need with no evidence trail makes PLO.check_evidence fail for real.
+    bare = Need.model_construct(**{**N2.model_dump(), "source_evidence_ids": []})
+    h = PlosHandler(PROGRAM, [N1, bare], [N3], [], EVIDENCE, None)
+    h.handle(_save_plo(source_need_ids=["n1"]))
+    before = h.drafts()
+    obs = h.handle(_save_plo(source_need_ids=["n2"]))
+    assert "ระบบปฏิเสธ" in obs and "ไม่ผ่านการตรวจรูปแบบ" in obs
+    assert h.drafts() == before and len(h.tool_ctx.plos) == 1
+
+
+def test_forbidden_word_draft_is_accepted_and_the_hard_failure_reported() -> None:
+    h = _handler()
+    obs = h.handle(_save_plo(statement_th="เข้าใจหลักการแปล", action_verb_th="เข้าใจ"))
+    assert "ระบบปฏิเสธ" not in obs and "M_forbidden" in obs
+    assert len(h.drafts()) == 1 and len(h.tool_ctx.plos) == 1
+
+
+def test_repeated_need_ids_in_one_draft_are_deduplicated() -> None:
+    h = _handler()
+    h.handle(_save_plo(source_need_ids=["n1", "n1", "n2"]))
+    assert h.drafts()[0].source_need_ids == ["n1", "n2"]
 
 
 def test_save_observation_says_when_the_hard_check_passes() -> None:
