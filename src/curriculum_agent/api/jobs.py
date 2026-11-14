@@ -60,6 +60,8 @@ JOB_KIND_LABEL_TH: dict[str, str] = {
     "plo_review": "ตรวจคุณภาพชุด PLO",
     "plo_report": "ออกรายงาน PLO",
     "plo_revalidate": "ตรวจ SMART ซ้ำ",
+    "single_needs": "วิเคราะห์ Need (single agent)",
+    "single_plos": "สังเคราะห์ PLO (single agent)",
 }
 RESTART_MESSAGE_TH = "backend ถูกปิดระหว่างทำงาน — กดรันใหม่"
 

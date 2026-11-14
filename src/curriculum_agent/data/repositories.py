@@ -245,6 +245,7 @@ class ProgramRepository:
                 ),
                 session_status=(latest[p.program_id].status if p.program_id in latest else None),
                 copied_from=p.copied_from,
+                agent_mode=p.agent_mode,
             )
             for p in prog_rows
         ]
