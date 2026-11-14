@@ -31,6 +31,7 @@ from curriculum_agent.prompts.program_context import build_program_context_th
 from curriculum_agent.prompts.single_agent import (
     EvidenceIndexRow,
     NeedBrief,
+    build_core_needs_short_refusal,
     build_merge_need_task,
     build_needs_task,
     build_refusal,
@@ -82,6 +83,7 @@ class NeedsHandler:
         self._drafts: dict[str, SaveNeed] = {}
         self._notes: dict[str, str] = {}
         self._requirement_refused = False
+        self._core_refused = False
         self.tool_ctx = SingleToolContext(
             evidence_by_id={e.evidence_id: e for e in evidence},
             needs_by_id={},
@@ -129,15 +131,44 @@ class NeedsHandler:
         an item may name no graduate capability at all (pure institutional goals),
         and the agent is told to say so in its summary. Whatever stays uncited is in
         the job result either way (`uncited_requirement_evidence_ids`).
+
+        The same once-only refusal applies when fewer than `MIN_NEEDS` core Needs
+        exist (designer's decision of 2026-11-14, after two of three lock runs
+        wrote one-item Needs that code marked optional). Each gate speaks once;
+        when both hold at the same finish they share one refusal.
         """
-        if self._requirement_refused:
-            return None
+        parts: list[str] = []
         uncited = self.uncited_requirement_ids()
-        if not uncited:
+        if uncited and not self._requirement_refused:
+            self._requirement_refused = True
+            parts.append(
+                build_requirement_uncited_refusal(
+                    [(i, self._source_by_evidence[i]) for i in uncited]
+                )
+            )
+        if not self._core_refused:
+            short = self._core_short_refusal()
+            if short is not None:
+                self._core_refused = True
+                parts.append(short)
+        return "\n\n".join(parts) or None
+
+    def _core_short_refusal(self) -> str | None:
+        drafts = self.drafts()
+        needs = build_single_needs(self._program.program_id, drafts, self._evidence)
+        core = sum(1 for n in needs if not n.is_optional)
+        if core >= MIN_NEEDS:
             return None
-        self._requirement_refused = True
-        return build_requirement_uncited_refusal(
-            [(i, self._source_by_evidence[i]) for i in uncited]
+        cited = {i for d in drafts for i in d.source_evidence_ids}
+        return build_core_needs_short_refusal(
+            core,
+            MIN_NEEDS,
+            [
+                (n.need_id, n.statement_th, n.source_evidence_ids[0])
+                for n in needs
+                if len(n.source_evidence_ids) == 1
+            ],
+            [(e.evidence_id, e.source_name) for e in self._evidence if e.evidence_id not in cited],
         )
 
     def drafts(self) -> list[SaveNeed]:

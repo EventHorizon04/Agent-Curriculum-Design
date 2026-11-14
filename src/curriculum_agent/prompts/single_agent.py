@@ -23,6 +23,12 @@ elsewhere:
   philosophy as background and cited neither, so no Need was `requirement`; multi
   reaches those items through skill extraction. Code refuses the first finish that
   leaves one uncited (`NeedsHandler.finish_refusal`).
+- Fewer than 6 core Needs also refuses the first finish (designer's decision of
+  2026-11-14, after the cache-off lock runs: two of three single runs wrote Needs
+  that each cited one evidence item, so code marked them optional and the set had
+  3 and 2 core Needs). The refusal lists the one-item Needs and the uncited
+  evidence and asks for a re-check of citations, not for a number: the second
+  finish is accepted.
 - It cannot let the model pass a hard criterion: the hard check is code, run on
   every save and again at the end.
 - The soft verdicts are the model's own and unvoted, which is why the prompt
@@ -282,6 +288,8 @@ rationale_th ของ Need (20-240 ตัวอักษร): หลักฐ�
    และดูว่ามีหลักฐานรายการใดที่ไม่มี Need อ้างเลยหรือไม่ ตั้งใจหรือหลงไป
    รายการ requirement ที่ไม่มี Need อ้าง ให้จัดการตามกติกาหลักฐานประเภท requirement ด้านบน
 5. finish ถ้ายังมีรายการ requirement ที่ไม่มี Need อ้าง ระบบจะปฏิเสธ finish ครั้งแรกพร้อมรายชื่อ
+   และถ้า Need หลักมีน้อยกว่า 6 ข้อ ระบบจะปฏิเสธ finish ครั้งแรกเช่นกัน
+   พร้อมรายชื่อ Need ที่อ้างหลักฐานรายการเดียวและหลักฐานที่ยังไม่มี Need อ้าง
 
 == การเขียน PLO ==
 PLO (Program Learning Outcome) คือผลลัพธ์การเรียนรู้ระดับหลักสูตร:
@@ -593,6 +601,44 @@ def build_requirement_uncited_refusal(items: Sequence[tuple[str, str]]) -> str:
         "ถ้ารายการใดพูดถึงเป้าหมายของสถาบันเองล้วน ๆ ไม่ระบุสมรรถนะของบัณฑิตเลย "
         "finish ได้อีกครั้งโดยเขียนเหตุผลของรายการนั้นใน summary_th"
     )
+
+
+def build_core_needs_short_refusal(
+    core_count: int,
+    minimum: int,
+    single_item_needs: Sequence[tuple[str, str, str]],
+    uncited: Sequence[tuple[str, str]],
+) -> str:
+    """Why the first finish of the needs task was refused: fewer core Needs than the floor.
+
+    `single_item_needs` is (need_id, statement_th, evidence_id) per Need citing one
+    item; `uncited` is (evidence_id, source_name) per item no Need cites. It asks
+    for a re-check of citations, never for a number; this refusal is said once.
+    """
+    lines = [
+        f"Need หลักมี {core_count} ข้อ ต่ำกว่าขั้นต่ำ {minimum} ข้อ "
+        "(Need ที่มีหลักฐานรายการเดียวขอและไม่ใช่ requirement ระบบถือเป็น Need เสริม)"
+    ]
+    if single_item_needs:
+        lines.append(f"Need ที่อ้างหลักฐานรายการเดียว {len(single_item_needs)} ข้อ:")
+        lines.extend(
+            f"- {need_id} (อ้าง {evidence_id}): {statement}"
+            for need_id, statement, evidence_id in single_item_needs
+        )
+    if uncited:
+        lines.append(f"หลักฐานที่ยังไม่มี Need อ้าง {len(uncited)} รายการ:")
+        lines.extend(f"- {evidence_id} ({source})" for evidence_id, source in uncited)
+    lines.append(
+        "ทบทวนโน้ตของหลักฐานทุกรายการ (อ่านซ้ำด้วย get_evidence ได้) เทียบกับ Need ทีละข้อ: "
+        "รายการอื่นที่ขอสมรรถนะเดียวกัน (งานหลักและวัตถุหลักเดียวกัน) แม้ใช้ถ้อยคำต่างกัน "
+        "ให้ save_need ข้อนั้นอีกครั้งด้วย need_id เดิมโดยเพิ่มรายการนั้นใน source_evidence_ids "
+        "Need สองข้อที่เป็นสมรรถนะเดียวกันให้รวมเป็นข้อเดียวที่อ้างทุกรายการ "
+        "สมรรถนะที่หลักฐานขอแต่ยังไม่มี Need ให้เขียน Need ใหม่ "
+        "กติกาข้อ 3 ยังใช้: ห้ามอ้างรายการที่ไม่ได้ขอสมรรถนะนั้นจริงเพื่อให้ได้ตัวเลข "
+        "ถ้าทบทวนแล้วหลักฐานรองรับ Need หลักได้เท่านี้จริง finish ได้อีกครั้ง"
+        "โดยเขียนเหตุผลใน summary_th"
+    )
+    return "\n".join(lines)
 
 
 def build_dropped_marker(evidence_id: str, note_th: str | None) -> str:

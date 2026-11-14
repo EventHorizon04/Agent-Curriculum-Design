@@ -179,11 +179,59 @@ def test_finish_is_accepted_when_every_requirement_item_is_cited() -> None:
     h.handle(
         _save_need(source_evidence_ids=["vision"], statement_th="ต้องการบัณฑิตที่ล่ามการเจรจาธุรกิจได้")
     )
-    assert h.finish_refusal() is None and h.uncited_requirement_ids() == []
+    assert h.uncited_requirement_ids() == []
+    # Two core Needs is still under the floor, but the requirement gate is silent.
+    refusal = h.finish_refusal()
+    assert refusal is not None and "หลักฐานประเภท requirement" not in refusal
 
 
-def test_general_evidence_alone_never_refuses_a_finish() -> None:
+def _six_core(h: NeedsHandler) -> None:
+    for n in range(6):
+        h.handle(
+            _save_need(
+                source_evidence_ids=["e1", "e2"], statement_th=f"ต้องการบัณฑิตที่แปลเอกสารธุรกิจได้ {n}"
+            )
+        )
+
+
+def test_six_core_needs_on_general_evidence_finish_at_once() -> None:
     h = NeedsHandler(PROGRAM, [E1, E2])
+    _six_core(h)
+    assert h.finish_refusal() is None
+
+
+def test_first_finish_is_refused_below_six_core_needs_and_says_what_to_recheck() -> None:
+    h = NeedsHandler(PROGRAM, [E1, E2, E3])
+    h.handle(_save_need(source_evidence_ids=["e1"]))  # one general item: optional
+    h.handle(_save_need(source_evidence_ids=["e1", "e2"], statement_th="ต้องการบัณฑิตที่ล่ามการเจรจาได้"))
+    one_item_id = h.drafts()[0].need_id or ""
+    two_item_id = h.drafts()[1].need_id or ""
+    refusal = h.finish_refusal()
+    assert refusal is not None
+    assert "Need หลักมี 1 ข้อ ต่ำกว่าขั้นต่ำ 6 ข้อ" in refusal
+    assert f"- {one_item_id} (อ้าง e1)" in refusal and two_item_id not in refusal
+    assert "- e3 (แหล่ง)" in refusal and "- e2 (" not in refusal
+    # Said once: the agent is asked to re-check citations, not to reach a number.
+    assert h.finish_refusal() is None
+
+
+def test_core_gate_still_speaks_after_the_requirement_gate_spoke_alone() -> None:
+    h = NeedsHandler(PROGRAM, [VISION, E1, E2])
+    _six_core(h)
+    first = h.finish_refusal()
+    assert first is not None and "vision" in first and "Need หลักมี" not in first
+    for d in h.drafts()[1:]:
+        h.handle(DropNeed(kind="drop_need", need_id=d.need_id or ""))
+    second = h.finish_refusal()
+    assert second is not None and "Need หลักมี 1 ข้อ" in second
+    assert "หลักฐานประเภท requirement" not in second
+    assert h.finish_refusal() is None
+
+
+def test_finish_with_no_need_at_all_is_refused_once() -> None:
+    h = NeedsHandler(PROGRAM, [E1, E2])
+    refusal = h.finish_refusal()
+    assert refusal is not None and "Need หลักมี 0 ข้อ" in refusal
     assert h.finish_refusal() is None
 
 

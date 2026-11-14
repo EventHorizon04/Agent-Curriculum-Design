@@ -22,6 +22,7 @@ from curriculum_agent.prompts.single_agent import (
     EvidenceIndexRow,
     NeedBrief,
     build_closing_instruction,
+    build_core_needs_short_refusal,
     build_dropped_marker,
     build_merge_need_task,
     build_needs_task,
@@ -214,6 +215,23 @@ def test_requirement_refusal_lists_each_item_and_the_way_out() -> None:
     assert "2 รายการ" in text
     assert "- v1 (วิสัยทัศน์)" in text and "- c1 (สภาวิชาชีพ)" in text
     assert "need_id เดิม" in text and "summary_th" in text
+
+
+def test_core_short_refusal_lists_one_item_needs_uncited_evidence_and_the_way_out() -> None:
+    text = build_core_needs_short_refusal(
+        2, 6, [("n1", "ต้องการบัณฑิตที่แปลได้", "e1")], [("e9", "ผู้ใช้บัณฑิต")]
+    )
+    assert "Need หลักมี 2 ข้อ ต่ำกว่าขั้นต่ำ 6 ข้อ" in text
+    assert "- n1 (อ้าง e1): ต้องการบัณฑิตที่แปลได้" in text and "- e9 (ผู้ใช้บัณฑิต)" in text
+    assert "need_id เดิม" in text and "summary_th" in text
+    # It must not read as "reach six": loose citing is named and forbidden.
+    assert "ห้ามอ้างรายการที่ไม่ได้ขอสมรรถนะนั้นจริงเพื่อให้ได้ตัวเลข" in text
+    assert "น้อยกว่า 6 ข้อ ระบบจะปฏิเสธ finish ครั้งแรก" in build_single_agent_system()
+
+
+def test_core_short_refusal_omits_empty_lists() -> None:
+    text = build_core_needs_short_refusal(0, 6, [], [])
+    assert "อ้างหลักฐานรายการเดียว" not in text and "ยังไม่มี Need อ้าง" not in text
 
 
 def test_system_prompt_names_every_ksec_tag_and_bloom_level() -> None:
