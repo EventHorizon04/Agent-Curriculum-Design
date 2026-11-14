@@ -29,6 +29,7 @@ interface SingleNeedsResult {
   stop_reason?: string
   unread_evidence_ids?: string[]
   uncited_evidence_ids?: string[]
+  dropped_evidence_count?: number
 }
 
 function SingleRunNotes({ result }: { result: SingleNeedsResult | null }) {
@@ -36,12 +37,14 @@ function SingleRunNotes({ result }: { result: SingleNeedsResult | null }) {
   const stop = result.stop_reason && result.stop_reason !== 'finished' ? result.stop_reason : null
   const unread = result.unread_evidence_ids?.length ?? 0
   const uncited = result.uncited_evidence_ids?.length ?? 0
-  if (!stop && unread === 0 && uncited === 0) return null
+  const dropped = result.dropped_evidence_count ?? 0
+  if (!stop && unread === 0 && uncited === 0 && dropped === 0) return null
   return (
     <div className="notice notice-warn mb-6 space-y-1">
       {stop && <p>{SINGLE_STOP_REASON_TH[stop] ?? stop} — Need ที่ได้อาจไม่ครบ</p>}
       {unread > 0 && <p>หลักฐานที่ตัวแทนยังไม่ได้อ่าน {unread} รายการ</p>}
       {uncited > 0 && <p>หลักฐานที่ไม่มี Need ใดอ้างถึง {uncited} รายการ</p>}
+      {dropped > 0 && <p>ตัวแทนต้องตัดข้อความหลักฐานออกจากบริบท {dropped} รายการ ระหว่างอ่าน</p>}
     </div>
   )
 }

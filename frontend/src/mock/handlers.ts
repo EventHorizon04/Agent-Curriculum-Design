@@ -1444,7 +1444,14 @@ export function buildRouter(): Router {
           for (const plo of plos) plo.smart_validated_by = 'single_agent'
           replaceRows('plos', pid, plos)
           getDb().superseded = (getDb().superseded ?? []).filter((x) => x.program_id !== pid)
-          return ok({ plos, stop_reason: 'finished', turns: 14, uncited_core_need_ids: [] })
+          return ok({
+            plos,
+            stop_reason: 'finished',
+            turns: 14,
+            dropped_evidence_count: 0,
+            opened_evidence_ids: [],
+            uncited_core_need_ids: [],
+          })
         },
       })
     }

@@ -13,6 +13,8 @@ import { SCOPE_REASON_TH, scopeCountsTh, scopeVerdict } from '../constants/scope
 import { MAX_CORE_PLOS, MIN_CORE_PLOS } from '../constants/needPolicy'
 import { BLOOM_LABEL } from '../constants/bloom'
 import type { PLO } from '../types/plo'
+import { ordinalOf } from '../constants/stages'
+import { useAgentMode } from '../hooks/useAgentMode'
 
 /** `/needs/` returns whole Needs; the report only reads these fields, and the
  *  unused-Need list needs the statement to be worth showing at all. */
@@ -245,6 +247,11 @@ function PolicyBand({ core, optional }: { core: number; optional: number }) {
 
 export default function PloReport() {
   const { programId } = useProgram()
+  const mode = useAgentMode(programId)
+  // A single-agent program approves at its PLO page; multi approves at the review page.
+  const single = mode === 'single'
+  const approveRoute = single ? '/plo-synthesis' : '/plo-review'
+  const approveStage = single ? 'ตรวจ PLO' : 'ตรวจคุณภาพ'
   const [plos, setPlos] = useState<PLO[]>([])
   const [needsById, setNeedsById] = useState<Record<string, NeedSummary>>({})
   const [counts, setCounts] = useState<ReportCounts>({
@@ -335,7 +342,7 @@ export default function PloReport() {
   return (
     <div className="space-y-6">
       <header>
-        <p className="eyebrow">ขั้นที่ 7</p>
+        <p className="eyebrow">ขั้นที่ {ordinalOf('plo_report', mode ?? 'multi')}</p>
         <h1 className="page-title">รายงาน PLO</h1>
         <p className="mt-1 text-sm text-pencil">
           ชุด PLO ที่อนุมัติแล้ว พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
@@ -346,8 +353,8 @@ export default function PloReport() {
       {hasReport && stale && (
         <p className="notice notice-warn">
           รายงานนี้จัดทำจากชุด PLO ก่อนหน้า — PLO หรือ Need เปลี่ยนหลังอนุมัติ กลับไปตรวจและอนุมัติใหม่เพื่อให้ตรงกับชุดปัจจุบัน{' '}
-          <Link to="/plo-review" className="link">
-            ไปหน้าตรวจคุณภาพ
+          <Link to={approveRoute} className="link">
+            ไปหน้า{approveStage}
           </Link>
         </p>
       )}
@@ -358,11 +365,11 @@ export default function PloReport() {
         <div className="panel px-6 py-12 text-center">
           <p className="record text-lg">ยังไม่ได้อนุมัติชุด PLO</p>
           <p className="mx-auto mt-2 max-w-md text-sm text-pencil">
-            รายงานเก็บเมื่อผู้ออกแบบอนุมัติชุด PLO ที่ขั้นตรวจคุณภาพ
+            รายงานเก็บเมื่อผู้ออกแบบอนุมัติชุด PLO ที่ขั้น{approveStage}
           </p>
           <div className="mt-5">
-            <Link to="/plo-review" className="link text-sm">
-              ไปตรวจคุณภาพชุด PLO
+            <Link to={approveRoute} className="link text-sm">
+              {single ? 'ไปตรวจ PLO' : 'ไปตรวจคุณภาพชุด PLO'}
             </Link>
           </div>
         </div>
@@ -417,8 +424,8 @@ export default function PloReport() {
           {excludedNeeds.length > 0 && <ExcludedNeeds needs={excludedNeeds} />}
 
           <p className="border-t border-hair pt-4 text-sm text-pencil">
-            <Link to="/plo-review" className="link">
-              ← กลับไปหน้าตรวจคุณภาพชุด PLO
+            <Link to={approveRoute} className="link">
+              {single ? '← กลับไปหน้าตรวจ PLO' : '← กลับไปหน้าตรวจคุณภาพชุด PLO'}
             </Link>
           </p>
         </>

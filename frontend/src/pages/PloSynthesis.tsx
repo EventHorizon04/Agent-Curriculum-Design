@@ -78,6 +78,8 @@ const SINGLE_RELOAD_KINDS: JobKind[] = [...RELOAD_KINDS, 'plo_report']
 interface SinglePlosResult {
   stop_reason?: string
   uncited_core_need_ids?: string[]
+  dropped_evidence_count?: number
+  opened_evidence_ids?: string[]
 }
 
 /** Wall clock, read from an event handler: kept out of the component body so
@@ -126,6 +128,7 @@ export default function PloSynthesis() {
   const singleStop =
     lastSingle?.stop_reason && lastSingle.stop_reason !== 'finished' ? lastSingle.stop_reason : null
   const singleUncited = lastSingle?.uncited_core_need_ids?.length ?? 0
+  const singleDropped = lastSingle?.dropped_evidence_count ?? 0
   // Any job of the program blocks every start button, not just this page's
   // kinds: the backend allows one writer per program, merging included.
   const busy = running !== null || starting || merging
@@ -371,6 +374,11 @@ export default function PloSynthesis() {
       {singleUncited > 0 && (
         <div className="notice notice-warn mb-6">
           Need หลักที่ยังไม่มี PLO อ้างถึง {singleUncited} รายการ
+        </div>
+      )}
+      {singleDropped > 0 && (
+        <div className="notice notice-warn mb-6">
+          ตัวแทนต้องตัดข้อความหลักฐานออกจากบริบท {singleDropped} รายการ ระหว่างเขียน PLO
         </div>
       )}
       {single && lastReport?.status === 'failed' && (
