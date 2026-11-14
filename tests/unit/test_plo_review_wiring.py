@@ -22,6 +22,16 @@ client = TestClient(app)
 # synthesis); conftest otherwise stubs `_start_review_job` with a recorder.
 pytestmark = pytest.mark.review_chain
 
+
+
+@pytest.fixture(autouse=True)
+def _program_is_not_single(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The review routes read the program's mode first; these tests are all multi."""
+    monkeypatch.setattr(
+        "curriculum_agent.api.routes.plos.ProgramRepository.get", AsyncMock(return_value=None)
+    )
+
+
 _SMART = SMARTCheck(specific=True, measurable=True, achievable=True, relevant=True, timely=True)
 _PLO = PLO(
     plo_id="PLO1",

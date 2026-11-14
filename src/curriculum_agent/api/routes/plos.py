@@ -406,11 +406,22 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
     )
 
 
-async def _start_review_job(program_id: str, *, or_409: bool) -> JobInfo:
+_SINGLE_NO_REVIEW_TH = "หลักสูตรโหมด single ไม่มีขั้นตรวจคุณภาพและการส่งกลับ"
+
+
+async def _start_review_job(program_id: str, *, or_409: bool) -> JobInfo | None:
     """The QA review as a job. Its input is read from storage when the job starts,
     so the same job serves `POST /review/run` and the one chained after synthesis.
-    `or_409=False` raises `JobConflict` instead of an HTTP 409, for the chain."""
+    `or_409=False` raises `JobConflict` instead of an HTTP 409, for the chain.
+
+    A single-mode program has no review and no send-back: this starts nothing and
+    returns None, so no caller can chain one onto it."""
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
+
+    program = await ProgramRepository().get(program_id)
+    if program is not None and program.agent_mode == "single":
+        logger.warning(f"plo_review not started for {program_id}: single-mode program")
+        return None
 
     plos = await _repo.list_by_program(program_id)
     if not plos:
@@ -449,7 +460,13 @@ async def run_plo_review(program_id: str) -> JobInfo:
     agent, so there is no disabled-feature 503 — `review_enabled` in the result
     says whether the agent judged it.
     """
-    return await _start_review_job(program_id, or_409=True)
+    program = await ProgramRepository().get(program_id)
+    if program is not None and program.agent_mode == "single":
+        raise HTTPException(status_code=409, detail=_SINGLE_NO_REVIEW_TH)
+    job = await _start_review_job(program_id, or_409=True)
+    if job is None:  # a single program is refused above; this is the same guard, kept total
+        raise HTTPException(status_code=409, detail=_SINGLE_NO_REVIEW_TH)
+    return job
 
 
 class MergeNeedsRequest(DesignerNoteRequest):

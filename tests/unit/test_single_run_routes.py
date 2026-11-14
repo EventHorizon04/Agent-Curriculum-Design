@@ -103,7 +103,12 @@ class _Stages:
         )
         self.single_plos = AsyncMock(
             return_value=SinglePlosResult(
-                plos=[_plo()], stop_reason="finished", turns=1, uncited_core_need_ids=[]
+                plos=[_plo()],
+                stop_reason="finished",
+                turns=1,
+                dropped_evidence_count=0,
+                opened_evidence_ids=[],
+                uncited_core_need_ids=[],
             )
         )
         self.skill_extraction = AsyncMock(side_effect=lambda s: {**s, "extracted_skills": []})
@@ -311,3 +316,23 @@ def test_session_approve_for_a_single_program_is_refused(
     r = client.post(f"/programs/{PID}/sessions/s1/approve")
     assert r.status_code == 409
     assert r.json()["detail"] == SINGLE_SESSION_TH
+
+
+def test_review_run_on_a_single_program_is_409_and_makes_no_job(
+    single_program: None,
+    stages: _Stages,
+    jobs_store: InMemoryJobs,
+    review_chain_calls: list[tuple[str, bool]],
+) -> None:
+    r = client.post(f"/programs/{PID}/plos/review/run")
+    assert r.status_code == 409
+    assert r.json()["detail"] == "หลักสูตรโหมด single ไม่มีขั้นตรวจคุณภาพและการส่งกลับ"
+    assert jobs_store.rows == {} and review_chain_calls == []
+
+
+@pytest.mark.review_chain
+async def test_the_review_chain_refuses_to_start_for_a_single_program(
+    single_program: None, stages: _Stages, jobs_store: InMemoryJobs
+) -> None:
+    assert await plos_route._start_review_job(PID, or_409=False) is None
+    assert jobs_store.rows == {}
