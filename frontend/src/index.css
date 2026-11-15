@@ -67,6 +67,7 @@
 
 @layer base {
   html {
+    scroll-padding-top: 7.5rem;
     -webkit-text-size-adjust: 100%;
   }
 
@@ -161,7 +162,7 @@
   }
 
   .link {
-    @apply text-stamp no-underline hover:underline;
+    @apply text-stamp underline decoration-stamp/30 underline-offset-[3px] hover:decoration-stamp;
   }
 
   /* --- Form fields -------------------------------------------------------- */

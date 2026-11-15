@@ -61,7 +61,7 @@ const STEP_TITLE: Record<StepState, string> = {
   ahead: 'ยังไม่ถึง',
 }
 
-/** Same marks as the rail — ● done, ◐ waiting on the designer, ○ not reached —
+/** Marks: ● done, ◐ waiting on the designer, ○ not reached —
  *  plus the moving dial for the stage that is running right now. */
 function StepMark({ state }: { state: StepState }) {
   if (state === 'running') return <span className="run-dial h-3 w-3" aria-hidden="true" />
@@ -405,7 +405,7 @@ export default function Pipeline() {
       {!programId && (
         <p className="notice notice-error">
           ยังไม่ได้เลือกหลักสูตร —{' '}
-          <Link to="/programs" className="font-medium underline underline-offset-2">
+          <Link to="/my-programs" className="font-medium underline underline-offset-2">
             เลือกจากรายการหลักสูตร
           </Link>
         </p>

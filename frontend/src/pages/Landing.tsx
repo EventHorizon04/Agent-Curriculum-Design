@@ -13,7 +13,7 @@ const STEPS = [
     n: 'STEP 2',
     title: 'Evidence',
     body: 'ใส่ข้อมูลจากผู้ใช้บัณฑิต ศิษย์เก่า สภาวิชาชีพ และวิสัยทัศน์ของสถาบัน',
-    approve: true,
+    approve: false,
   },
   {
     n: 'STEP 3',
@@ -99,7 +99,7 @@ export default function Landing() {
           <div className="mb-2.5 flex flex-wrap items-center gap-2">
             <span className="text-[15px] font-bold">PLO1</span>
             <span className="chip">Skill</span>
-            <span className="chip">Apply</span>
+            <span className="chip">Evaluate</span>
             <span className="chip chip-stamp">SMART ✓</span>
           </div>
           <p className="record mb-3.5">
@@ -178,7 +178,7 @@ export default function Landing() {
             >
               เริ่มหลักสูตรใหม่
             </button>
-            <Link to="/programs" className="text-[17px] font-medium text-marker hover:underline">
+            <Link to="/my-programs" className="text-[17px] font-medium text-marker hover:underline">
               หลักสูตรของฉัน ›
             </Link>
           </div>

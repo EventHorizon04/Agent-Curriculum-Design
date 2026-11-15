@@ -20,7 +20,7 @@ export default function App() {
       <Routes>
         <Route element={<StageLayout />}>
           <Route index element={<Landing />} />
-          <Route path="programs" element={<Programs />} />
+          <Route path="my-programs" element={<Programs />} />
           <Route path="intake" element={<Intake />} />
           <Route path="stakeholder-needs" element={<StakeholderNeeds />} />
           <Route

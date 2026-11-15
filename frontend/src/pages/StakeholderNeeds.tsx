@@ -297,7 +297,7 @@ export default function StakeholderNeeds() {
         <div className="notice notice-warn">
           <p className="mb-3">
             ยังไม่ได้เลือกหลักสูตร —{' '}
-            <button onClick={() => navigate('/programs')} className="font-medium underline underline-offset-2">
+            <button onClick={() => navigate('/my-programs')} className="font-medium underline underline-offset-2">
               ไปที่ขั้นตอนที่ 1
             </button>{' '}
             หรือระบุรหัสหลักสูตรที่นี่
@@ -348,7 +348,7 @@ export default function StakeholderNeeds() {
       {programId && lock.locked && (
         <div className="notice notice-warn flex flex-wrap items-center justify-between gap-x-4 gap-y-1" role="status">
           <span>{lock.reason_th ?? 'หลักฐานของหลักสูตรนี้แก้ไม่ได้ในขณะนี้'}</span>
-          <Link to="/programs" className="font-medium underline underline-offset-2">
+          <Link to="/my-programs" className="font-medium underline underline-offset-2">
             ไปที่รายการหลักสูตร →
           </Link>
         </div>

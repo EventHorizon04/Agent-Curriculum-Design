@@ -40,9 +40,10 @@ function RunningJobLine({ pathname }: { pathname: string }) {
   const owner = JOB_PAGE[running.kind]?.path
   const start = startedAt(running.created_at)
   return (
+    <div className="mx-auto mt-4 w-full max-w-5xl px-4 sm:px-6 lg:px-10">
     <div
       role="status"
-      className="mx-4 mt-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-stamp-wash px-4 py-3 text-sm text-stamp-deep sm:mx-6 lg:mx-10"
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-stamp-wash px-4 py-3 text-sm text-stamp-deep"
     >
       <span className="run-dial" aria-hidden="true" />
       <span>
@@ -54,6 +55,7 @@ function RunningJobLine({ pathname }: { pathname: string }) {
           ไปที่หน้างานนี้
         </Link>
       )}
+    </div>
     </div>
   )
 }
@@ -69,10 +71,10 @@ export default function StageLayout() {
   // reading "หลักสูตรที่กำลังทำงาน" above a table of every program says the
   // designer is inside one while they are standing outside all of them — and it
   // is the one page that shows which is selected on its own row.
-  const bare = pathname === '/' || pathname === '/programs'
+  const bare = pathname === '/' || pathname === '/my-programs'
 
   // Re-read on navigation: approving a checkpoint on one page moves the program
-  // forward, and the rail has to show that without a reload. The shell degrades
+  // forward, and the stage bar has to show that without a reload. The shell degrades
   // to bare navigation if the API is unreachable — it must never be the reason
   // a page fails to render.
   useEffect(() => {
@@ -96,13 +98,13 @@ export default function StageLayout() {
     }
   }, [programId, pathname])
 
-  // The rail answers "how far has the program being worked on got", and while
+  // The stage bar answers "how far has the program being worked on got", and while
   // one is being typed the answer is nowhere — not however far the curriculum
   // still sitting in storage happens to have reached.
   const stages = stagesFor(program?.agent_mode ?? 'multi')
   const reached = creating ? -1 : stageIndex(program?.current_stage ?? null, stages)
 
-  const showPipeline = !bare && program?.agent_mode !== 'single' && !!programId
+  const showPipeline = !bare && !creating && program?.agent_mode !== 'single' && !!programId
 
   return (
     <div className="flex min-h-screen flex-col">

@@ -328,7 +328,7 @@ export default function PloSynthesis() {
     return (
       <div className="panel mx-auto max-w-2xl border-dashed px-6 py-12 text-center">
         <p className="mb-3 text-pencil">ยังไม่ได้เลือกโปรแกรม</p>
-        <Link to="/programs" className="link">เลือกหลักสูตร</Link>
+        <Link to="/my-programs" className="link">เลือกหลักสูตร</Link>
       </div>
     )
   }
@@ -820,7 +820,10 @@ function PLOCard({
               fallback for rows written before findings existed. */}
           {softFindings.length > 0 ? (
             <div className="mt-1 mb-2 space-y-1">
-              {single && <p className="eyebrow">ตัวแทนประเมินเอง</p>}
+              <div className="flex flex-wrap items-center gap-1">
+                {single && <span className="eyebrow mr-1">ตัวแทนประเมินเอง</span>}
+                <ReviewNoteChip count={softFindings.length} />
+              </div>
               {softFindings.map(f => (
                 <p key={f.criterion} className="notice notice-warn py-1.5 text-xs">
                   <span className="font-medium">{findingLabel(f.criterion)}</span>

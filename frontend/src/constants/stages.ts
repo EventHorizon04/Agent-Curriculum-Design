@@ -79,10 +79,10 @@ export const AGENT_MODE_LABEL_TH: Record<AgentMode, string> = {
   single: 'Single-agent',
 }
 
-/** The rail for one mode. A single-agent program has no skill stage and no
+/** The stage list for one mode. A single-agent program has no skill stage and no
  *  separate review stage: its PLO step is the checkpoint, and carries the gate
- *  note the review stage carries in the multi-agent rail. Ordinals are renumbered
- *  so the rail still counts 1..n. */
+ *  note the review stage carries in the multi-agent list. Ordinals are renumbered
+ *  so the stage bar still counts 1..n. */
 export function stagesFor(mode: AgentMode): StageDef[] {
   if (mode === 'multi') return STAGES
   const review = STAGES.find((s) => s.key === 'plo_review')
@@ -101,7 +101,7 @@ export function stagesFor(mode: AgentMode): StageDef[] {
   )
 }
 
-/** The ordinal a stage carries on the rail of `mode`. */
+/** The ordinal a stage carries on the stage bar of `mode`. */
 export function ordinalOf(key: string, mode: AgentMode): number {
   return stagesFor(mode).find((s) => s.key === key)?.ordinal ?? 0
 }

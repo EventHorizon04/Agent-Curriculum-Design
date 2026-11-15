@@ -176,7 +176,7 @@ export default function Programs() {
           onClick={() => navigate('/intake', { state: CREATING_INTAKE })}
           className="btn btn-primary"
         >
-          + สร้างหลักสูตรใหม่
+          เริ่มหลักสูตรใหม่
         </button>
       </div>
 

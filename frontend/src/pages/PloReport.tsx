@@ -333,7 +333,7 @@ export default function PloReport() {
     return (
       <div className="py-16 text-center">
         <p className="mb-3 text-pencil">ยังไม่ได้เลือกหลักสูตร</p>
-        <Link to="/programs" className="link">
+        <Link to="/my-programs" className="link">
           เลือกจากรายการหลักสูตร
         </Link>
       </div>

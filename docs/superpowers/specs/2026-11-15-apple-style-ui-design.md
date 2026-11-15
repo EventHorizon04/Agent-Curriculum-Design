@@ -51,7 +51,7 @@ Knowledge, Skill …); explanatory sentences stay Thai.
 - **A. Token + component + shell re-skin, new landing page (chosen by the designer).** Rewrite
   `index.css` tokens and component classes in the Apple language, rebuild the shell in
   `StageLayout.tsx` (top bar + stage bar), add the landing page, move the program list to
-  `/programs`, switch labels to English technical terms. Pages inherit the look. Medium size,
+  `/my-programs`, switch labels to English technical terms. Pages inherit the look. Medium size,
   low workflow risk; dense pages keep their current arrangement.
 - B. Redesign every page (13 pages, ~7.9k lines). Closest to Apple, very large, high risk of
   breaking working flows.
@@ -124,10 +124,10 @@ may be kept or lightly adjusted to sit on the new ground).
 
 - **Global top bar**: 48 px, sticky, translucent (`backdrop-filter: blur`), thin bottom hair.
   Left: wordmark "Curriculum Design Agent" (text, no logo) linking to `/`. Right: "วิธีใช้"
-  (to the landing page's steps section), "หลักสูตรของฉัน" (`/programs`), "Pipeline"
+  (to the landing page's steps section), "หลักสูตรของฉัน" (`/my-programs`), "Pipeline"
   (`/pipeline`, hidden for single-agent programs as today), and a primary pill
   "เริ่มหลักสูตรใหม่" on the landing page.
-- **Stage bar** (on work pages, not on `/` or `/programs`): sticky under the top bar,
+- **Stage bar** (on work pages, not on `/` or `/my-programs`): sticky under the top bar,
   translucent. Left: the working program's name with faculty and mode
   ("Multi-agent"/"Single-agent") beneath. Right: the stages as pills, from `stagesFor(mode)`
   (single-agent still drops Skills and Review). Reached stages show a navy dot; the current
@@ -143,9 +143,9 @@ may be kept or lightly adjusted to sit on the new ground).
 ### Routes
 
 - `/` → new `Landing` page.
-- `/programs` → the current `Programs` list (moved from `/`). Every link/navigation to `/`
+- `/my-programs` → the current `Programs` list (moved from `/`). Every link/navigation to `/`
   that means "program list" (about 10 sites, including "หลักสูตรทั้งหมด" and the
-  "ยังไม่ได้เลือกหลักสูตร" link) points to `/programs`.
+  "ยังไม่ได้เลือกหลักสูตร" link) points to `/my-programs`.
 
 ### Landing page (`/`)
 
@@ -177,20 +177,20 @@ All landing copy is static; it calls no API.
 ## Calls made after the builder check (author's calls, not the designer's)
 
 1. **Links to `/`.** Every link or `navigate('/')` that means "choose a program" goes to
-   `/programs`, including the "ไปหน้า Intake"-labelled links that point at `/` today
+   `/my-programs`, including the "ไปหน้า Intake"-labelled links that point at `/` today
    (they send a designer with no program selected to the picker), `SingleRedirect`'s default
-   target, and StageLayout's `picking` test (`pathname === '/programs'`). Only the top-bar
+   target, and StageLayout's `picking` test (`pathname === '/my-programs'`). Only the top-bar
    wordmark and "วิธีใช้" go to the landing page. Nothing in a work flow lands on `/`.
-2. **Layouts.** `/` and `/programs` render the top bar only: no stage bar, no program bar, no
+2. **Layouts.** `/` and `/my-programs` render the top bar only: no stage bar, no program bar, no
    running-job line (today's `/` hides the last two as well). Every other route, `/pipeline`
    and `/intake` included, gets top bar + stage bar + running-job line. On `/intake` in
    creating mode the stage bar shows "หลักสูตรใหม่" in place of the program name, Program as
    current, nothing reached (today's `reached = -1`), and no running-job line (as today).
    The "หลักสูตรที่เลือกไว้: <id>" hint stays on that bar.
 3. **Top bar items.** Wordmark → `/`; "วิธีใช้" → `/#steps` (the landing page scrolls to the
-   element with that id after navigation); "หลักสูตรของฉัน" → `/programs`; "Pipeline" only on
+   element with that id after navigation); "หลักสูตรของฉัน" → `/my-programs`; "Pipeline" only on
    work pages of a multi-agent program; the primary pill "เริ่มหลักสูตรใหม่" on `/` and
-   `/programs` only.
+   `/my-programs` only.
 4. **Stage labels.** Multi-agent: Program, Evidence, Skills, Needs, PLO, Review, Report.
    Single-agent: Program, Evidence, Needs, PLO, Report (its PLO step stays the checkpoint
    and keeps the single-mode summary). `STAGE_LABELS` keeps its "ขั้นที่ N: label" shape with
@@ -214,12 +214,13 @@ All landing copy is static; it calls no API.
    | `/plo-report` | Report | รายงานผลลัพธ์การเรียนรู้ |
 
    Titles for Report (not an agent in table 3.2) and the two input pages follow the table's
-   wording; `/pipeline` and `/programs` keep their current Thai titles.
+   wording; `/pipeline` and `/my-programs` keep their current Thai titles.
 6. **Fonts.** Loaded from Google Fonts as today (Noto Sans Thai + Sarabun replace the four
    current families). Self-hosting is a separate change if campus networks block it.
 7. **Status stamp.** The session-status stamp drops the rotated double-rule frame and
    becomes a soft pill (navy wash for completed, gold wash for awaiting the designer, red
    wash for rejected/failed). Other `stamp` uses follow the same pill style.
+8. The program list lives at `/my-programs`, not `/programs`: the API owns the `/programs` prefix (`api/static.py` `API_PREFIXES`, Vite proxy), so a reload on `/programs` returned JSON.
 
 ## Left to the builder
 

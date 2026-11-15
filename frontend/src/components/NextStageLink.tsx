@@ -7,7 +7,7 @@ import { stagesFor, type AgentMode } from '../constants/stages'
  * The sequence and the label come from `STAGES`, so a page never spells its
  * successor's name: two pages carried a hardcoded "ดำเนินการต่อ → PLO Synthesis"
  * while the first two stages offered no way forward at all, and the designer had
- * to find the rail to continue.
+ * to find the stage bar to continue.
  *
  * It navigates and nothing else. Immutable rule 7 puts a human at every stage
  * boundary, so moving to the next page is the designer's act of approving this
@@ -31,7 +31,7 @@ export default function NextStageLink({
   ready: boolean
   /** Why not, in the designer's words. Shown in place of the button. */
   blockedReason?: string
-  /** The program's agent mode: a single-agent rail skips two stages. */
+  /** The program's agent mode: a single-agent stage list skips two stages. */
   mode?: AgentMode
 }) {
   const stages = stagesFor(mode)

@@ -9,7 +9,7 @@ function statusClass(status: string): string {
   return 'chip chip-neutral'
 }
 
-const SHELL = 'sticky top-12 z-30 border-b border-hair px-4 sm:px-6 lg:px-10'
+const SHELL = 'sticky top-12 z-30 border-b border-hair'
 const SHELL_STYLE = {
   background: 'rgb(255 255 255 / 0.85)',
   backdropFilter: 'saturate(180%) blur(20px)',
@@ -37,9 +37,9 @@ export default function StageBar({
   if (!creating && !programId) {
     return (
       <div className={`${SHELL} py-3`} style={SHELL_STYLE}>
-        <p className="text-sm text-pencil">
+        <p className="mx-auto max-w-5xl px-4 text-sm text-pencil sm:px-6 lg:px-10">
           ยังไม่ได้เลือกหลักสูตร{' '}
-          <Link to="/programs" className="link">
+          <Link to="/my-programs" className="link">
             เลือกจากรายการหลักสูตร
           </Link>
         </p>
@@ -57,7 +57,7 @@ export default function StageBar({
 
   return (
     <div className={SHELL} style={SHELL_STYLE}>
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 py-2">
+      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6 lg:px-10">
         <div className="flex min-w-0 items-center gap-3">
           <div className="min-w-0">
             {/* Not an h1: the page below owns that. */}
@@ -77,7 +77,8 @@ export default function StageBar({
             </span>
           )}
         </div>
-        <ol className="ml-auto flex min-w-0 max-w-full gap-0.5 overflow-x-auto text-[0.8125rem] [scrollbar-width:none]">
+        <nav aria-label="ขั้นตอนของหลักสูตร" className="ml-auto min-w-0 max-w-full">
+        <ol className="flex gap-0.5 overflow-x-auto py-1 text-[0.8125rem] [scrollbar-width:none]">
           {stages.map((stage, i) => {
             const current = pathname === stage.route
             const done = i <= reached
@@ -99,6 +100,8 @@ export default function StageBar({
                     <span className="h-1.5 w-1.5 rounded-full bg-stamp" aria-hidden="true" />
                   )}
                   {stage.label}
+                  {done && !current && <span className="sr-only"> — ผ่านแล้ว</span>}
+                  {stage.gateNote && <span className="sr-only"> — {stage.gateNote}</span>}
                   {stage.gateNote && (
                     <svg
                       viewBox="0 0 16 16"
@@ -114,6 +117,7 @@ export default function StageBar({
             )
           })}
         </ol>
+        </nav>
       </div>
     </div>
   )

@@ -13,22 +13,22 @@ export default function TopBar({
   const navigate = useNavigate()
   return (
     <header
-      className="sticky top-0 z-40 flex h-12 items-center gap-4 border-b border-hair text-[0.8125rem] sm:gap-7"
+      className="sticky top-0 z-40 flex h-12 items-center border-b border-hair text-[0.8125rem]"
       style={{
         background: 'rgb(251 251 253 / 0.8)',
         backdropFilter: 'saturate(180%) blur(20px)',
         WebkitBackdropFilter: 'saturate(180%) blur(20px)',
-        padding: '0 max(1rem, calc(50% - 490px))',
       }}
     >
+      <div className="mx-auto flex w-full max-w-5xl items-center gap-4 px-4 sm:gap-7 sm:px-6 lg:px-10">
       <Link to="/" className="min-w-0 truncate font-semibold tracking-tight text-graphite">
         Curriculum Design Agent
       </Link>
-      <nav className="ml-auto flex shrink-0 items-center gap-4 sm:gap-7">
+      <nav aria-label="เมนูหลัก" className="ml-auto flex shrink-0 items-center gap-4 sm:gap-7">
         <Link to="/#steps" className="hidden text-graphite/80 hover:text-graphite min-[400px]:inline">
           วิธีใช้
         </Link>
-        <Link to="/programs" className="text-graphite/80 hover:text-graphite">
+        <Link to="/my-programs" className="text-graphite/80 hover:text-graphite">
           หลักสูตรของฉัน
         </Link>
         {showPipeline && (
@@ -46,6 +46,7 @@ export default function TopBar({
           </button>
         )}
       </nav>
+      </div>
     </header>
   )
 }

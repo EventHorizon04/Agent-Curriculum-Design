@@ -24,7 +24,7 @@ export default function MockPanel() {
   const reset = () => {
     seedScenario(scenario)
     // Every page and the shell re-read from the fresh database.
-    window.location.assign('/')
+    window.location.assign('/my-programs')
   }
 
   if (!open) {
