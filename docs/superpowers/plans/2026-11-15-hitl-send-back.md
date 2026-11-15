@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Branch `feat/four-agent-pipeline`. Run `git branch --show-current` before every commit; stage by explicit path.
-- Commit trailer: `Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>`.
+- Commit trailer: `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>` (Task 1 used the Fable 5.2 trailer; the session model changed after it).
 - **Never run alembic without `-x url=<copy DB>`.** The shared DB `curriculum_agent` is not touched by any task; the controller asks the user before migrating it.
 - Never print or commit a secret, `.env`, `.env.demo` or `dist/`.
 - CLAUDE.md conventions: type hints, `from __future__ import annotations`, loguru, async-first, repository pattern, prompts only in `prompts/`, Thai for user-facing strings.
