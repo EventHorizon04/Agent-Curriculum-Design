@@ -414,3 +414,22 @@ def test_prompt_module_imports_nothing_from_stages() -> None:
         for alias in node.names
     ]
     assert not [name for name in imported if name.startswith("curriculum_agent.stages")]
+
+
+# Captured from build_needs_task before it took a note (2026-11-15). The prompts are locked
+# for research runs: with no note, the opening message must stay exactly this.
+_NEEDS_TASK_BEFORE_NOTE = 'งาน: เขียน Need จากหลักฐาน (งานแบบ ก)\nหลักสูตร: ctx\nขอบเขตวิชาชีพของหลักสูตร (ผู้ออกแบบเขียน ใช้ตัดสินว่างานอยู่ในขอบเขตหรือไม่ ไม่ใช่หลักฐาน): ขอบเขต\nหลักฐานทั้งหมด 2 รายการ (evidence_id | กลุ่มผู้มีส่วนได้ส่วนเสีย | แหล่งที่มา | ประเภท | ความยาว | จำนวนส่วน):\n- ev-a | employer | บริษัทแปลภาษา | general | 978 ตัวอักษร | 1 ส่วน\n- ev-b | professional_council | มาตรฐานวิชาชีพ | requirement | 13000 ตัวอักษร | 3 ส่วน\nประเภท requirement คือข้อกำหนดที่หลักสูตรต้องตอบ general คือความต้องการทั่วไป ระบบจัดไว้แล้ว ไม่ต้องจัดใหม่ สมรรถนะของบัณฑิตที่รายการ requirement ระบุ ต้องมี Need อ้างรายการนั้น\nอ่านทุกรายการด้วย get_evidence จนครบทุกส่วน ส่ง note หลังอ่านครบแต่ละรายการก่อนอ่านรายการถัดไป เมื่ออ่านครบทุกรายการแล้วจึงเขียน Need ด้วย save_need ทบทวนทั้งชุด แล้ว finish เริ่มที่ get_evidence ของรายการแรก'
+
+
+@pytest.mark.parametrize("note", [None, ""])
+def test_needs_task_without_a_note_is_byte_identical_to_before(note: str | None) -> None:
+    kw = {"program_context": "ctx", "scope_th": "ขอบเขต", "evidence_index": [ROW_A, ROW_B]}
+    assert build_needs_task(**kw, note_th=note) == _NEEDS_TASK_BEFORE_NOTE
+    assert build_needs_task(**kw) == _NEEDS_TASK_BEFORE_NOTE
+    assert NOTE_HEADER_TH not in build_needs_task(**kw, note_th=note)
+
+
+def test_needs_task_with_a_note_ends_with_the_appended_note() -> None:
+    kw = {"program_context": "ctx", "scope_th": "ขอบเขต", "evidence_index": [ROW_A, ROW_B]}
+    msg = build_needs_task(**kw, note_th="เน้นทักษะการแปลเชิงกฎหมาย")
+    assert msg == _NEEDS_TASK_BEFORE_NOTE + "\n\n" + NOTE_HEADER_TH + "\nเน้นทักษะการแปลเชิงกฎหมาย"

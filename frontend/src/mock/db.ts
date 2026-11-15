@@ -167,6 +167,8 @@ export interface MockDb {
   superseded?: SupersededRow[]
   /** What each review sent back, newest first once listed. Optional for the same reason. */
   feedback?: FeedbackAction[]
+  /** Programs whose stored review a designer send-back has outdated. Optional for the same reason as `reviews`. */
+  reviewStale?: string[]
   /** The report stored at approval, one per program at most, with the time it was stored.
    *  Optional for the same reason as `reviews`. */
   reports?: Array<{ program_id: string; created_at: string; report: unknown }>

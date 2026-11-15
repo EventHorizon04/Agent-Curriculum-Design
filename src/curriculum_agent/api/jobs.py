@@ -60,6 +60,7 @@ JOB_KIND_LABEL_TH: dict[str, str] = {
     "plo_review": "ตรวจคุณภาพชุด PLO",
     "plo_report": "ออกรายงาน PLO",
     "plo_revalidate": "ตรวจ SMART ซ้ำ",
+    "plo_send_back": "ส่งกลับ PLO ให้ AI แก้",
     "single_needs": "วิเคราะห์ Need (single agent)",
     "single_plos": "สังเคราะห์ PLO (single agent)",
 }

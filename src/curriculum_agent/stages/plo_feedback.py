@@ -77,6 +77,24 @@ REASON_NEED_NOW_CITED = "Need นี้มี PLO อ้างถึงแล้
 REASON_GROUP_TOO_BIG = f"รวมแล้วเกิน {MAX_GROUP_SIZE} Need"
 REASON_EDITED_SINCE_REVIEW = "PLO นี้ถูกแก้หลังการตรวจ — ไม่ส่งกลับ"
 REASON_DESIGNER_EDITED = "PLO นี้ผู้ออกแบบแก้เอง — ไม่เขียนทับ"
+REASON_DESIGNER_SENT_BACK = "PLO นี้ผู้ออกแบบส่งกลับให้เขียนใหม่แล้ว — ไม่เขียนทับ"
+
+
+def _designer_owned(plo: PLO) -> bool:
+    """A PLO the designer wrote or sent back for a rewrite: the loop leaves it alone."""
+    return plo.designer_edited_at is not None or plo.designer_sent_back_at is not None
+
+
+def _designer_reason(plos: list[PLO]) -> str | None:
+    """The skip reason for the designer-owned PLOs among ``plos``, None when none is.
+
+    A hand edit is named first so a PLO with both keeps the existing text."""
+    owned = [p for p in plos if _designer_owned(p)]
+    if not owned:
+        return None
+    if any(p.designer_edited_at is not None for p in owned):
+        return REASON_DESIGNER_EDITED
+    return REASON_DESIGNER_SENT_BACK
 REASON_DRAFT_ESCALATED = "ร่างใหม่ไม่ผ่าน SMART — คงข้อเดิมไว้"
 REASON_DRAFT_WRONG_LEVEL = "ร่างใหม่ไม่ได้ระดับ Bloom ที่ขอ — คงข้อเดิมไว้"
 REASON_KSEC_NO_NEED = "ไม่มี Need หมวดนี้ — ต้องเพิ่มที่ขั้น Need"
@@ -306,8 +324,9 @@ class _Round:
             return REASON_ALREADY_REPLACED
         if any(self._edited_since_review(pid, live) for pid in named):
             return REASON_EDITED_SINCE_REVIEW
-        if any(pid in live and live[pid].designer_edited_at is not None for pid in named):
-            return REASON_DESIGNER_EDITED
+        owned_reason = _designer_reason([live[pid] for pid in named if pid in live])
+        if owned_reason is not None:
+            return owned_reason
         if any(pid not in live for pid in named):
             return REASON_PLO_MISSING
         return None
@@ -547,10 +566,11 @@ async def _send_unused(rnd: _Round, finding: UnusedNeedFinding) -> FeedbackActio
         )
     live = await _live_plos(rnd.program_id)
     # An unused Need's draft replaces whatever cites it; a hand-written outcome stays.
-    if any(p.designer_edited_at is not None for p in plos_citing(live.values(), [finding.need_id])):
+    owned_reason = _designer_reason(plos_citing(live.values(), [finding.need_id]))
+    if owned_reason is not None:
         return rnd.skipped(
             "unused_need",
-            REASON_DESIGNER_EDITED,
+            owned_reason,
             plo_ids=[],
             need_ids=[finding.need_id],
             finding_reason_th=finding.reason_th,

@@ -5,14 +5,20 @@ import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
 import ReviewNoteChip from '../components/ReviewNoteChip'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
-import { PLO_REPORT_PLAN, PLO_REVIEW_PLAN } from '../constants/runPlans'
+import {
+  PLO_REPORT_PLAN,
+  PLO_REVIEW_PLAN,
+  PLO_SYNTHESIS_CODE_ONLY_PLAN,
+  PLO_SYNTHESIS_PLAN,
+} from '../constants/runPlans'
 import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import { BLOOM_ORDER, bloomLabel } from '../constants/bloom'
 import { ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import FeedbackTrail from './components/FeedbackTrail'
+import SendBackList from './components/SendBackList'
 import { KIND_TH, OUTCOME_TH, isLoopEnd, jobIsFor, jobsOf, ms } from './components/feedbackJobs'
-import type { SupersededPLO } from '../types/plo'
+import type { PLO, SupersededPLO } from '../types/plo'
 import type {
   FeedbackAction,
   KsecFinding,
@@ -21,7 +27,7 @@ import type {
 } from '../types/ploReview'
 
 /** The job kinds whose runs this page shows. */
-const PAGE_KINDS: JobKind[] = ['plo_review']
+const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_review']
 /** The jobs that change what this page draws, whichever page started them: the
  *  review is a reading of the PLOs and the Needs, so a synthesis, a re-check or
  *  a new set of Needs all leave it describing a set that moved. `plo_report` is
@@ -31,6 +37,8 @@ const RELOAD_KINDS: JobKind[] = [
   'plo_report',
   'plo_synthesis',
   'plo_revalidate',
+  'plo_send_back',
+  'single_plos',
   'needs_pipeline',
   'skill_extraction',
   'need_combination',
@@ -90,7 +98,7 @@ export default function PloReview() {
   const data = read?.programId === programId ? read.response : null
   const [loadError, setLoadError] = useState('')
   // The send-back trail and the history it points into. Secondary: a failed read leaves them empty.
-  const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[]; failed: boolean } | null>(null)
+  const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[]; failed: boolean; anySentBack: boolean } | null>(null)
   const [starting, setStarting] = useState(false)
   const [runError, setRunError] = useState<RunError | null>(null)
   const navigate = useNavigate()
@@ -101,6 +109,8 @@ export default function PloReview() {
   const { running, latestOf, started, refresh } = useJobs()
   // `running` is any job of this program; `mine` is the review this page shows.
   const mine = running?.kind === 'plo_review' ? running : null
+  // A synthesis run is followed here too: the run chains straight into the review.
+  const synthesizing = running?.kind === 'plo_synthesis' ? running : null
   const last = latestOf(PAGE_KINDS)
   // The approval's own failure; the report is stored by it, so it is this page's.
   const lastReport = latestOf(['plo_report'])
@@ -117,7 +127,7 @@ export default function PloReview() {
     setLoadError('')
     try {
       let trailFailed = false
-      const [res, fb, sup] = await Promise.all([
+      const [res, fb, sup, live] = await Promise.all([
         api.get<PLOReviewResponse>(`/programs/${programId}/plos/review`),
         api.get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`).catch(() => {
           trailFailed = true
@@ -127,10 +137,11 @@ export default function PloReview() {
           trailFailed = true
           return { data: [] as SupersededPLO[] }
         }),
+        api.get<PLO[]>(`/programs/${programId}/plos/`).catch(() => ({ data: [] as PLO[] })),
       ])
       if (mineRead === latestRead.current) {
         setRead({ programId, response: res.data })
-        setTrail({ programId, feedback: fb.data, superseded: sup.data, failed: trailFailed })
+        setTrail({ programId, feedback: fb.data, superseded: sup.data, failed: trailFailed, anySentBack: live.data.some((x) => x.designer_sent_back_at) })
       }
     } catch {
       if (mineRead === latestRead.current) {
@@ -235,6 +246,12 @@ export default function PloReview() {
 
       {approving ? (
         <RunProgress key={approving.job_id} plan={PLO_REPORT_PLAN} since={Date.parse(approving.created_at)} />
+      ) : synthesizing ? (
+        <RunProgress
+          key={synthesizing.job_id}
+          plan={synthesizing.params.run_validation === false ? PLO_SYNTHESIS_CODE_ONLY_PLAN : PLO_SYNTHESIS_PLAN}
+          since={Date.parse(synthesizing.created_at)}
+        />
       ) : mine ? (
         <RunProgress key={mine.job_id} plan={PLO_REVIEW_PLAN} since={Date.parse(mine.created_at)} />
       ) : data === null && !loadError ? (
@@ -252,7 +269,12 @@ export default function PloReview() {
           )}
 
           {data?.stale && (
-            <p className="notice notice-warn">ชุด PLO เปลี่ยนหลังการตรวจ — ตรวจใหม่ก่อนอนุมัติ</p>
+            <p className="notice notice-warn">
+              ชุด PLO เปลี่ยนหลังการตรวจ — ตรวจใหม่ก่อนอนุมัติ
+              {trailNow?.anySentBack && (
+                <span className="mt-1 block">ข้อที่ส่งกลับจะไม่ถูกระบบตรวจเขียนทับ</span>
+              )}
+            </p>
           )}
 
           {(review.runs_requested ?? 1) > 1 && runsOf(review) === 1 && (
@@ -273,6 +295,8 @@ export default function PloReview() {
               review={review}
             />
           )}
+
+          <SendBackList key={programId} programId={programId} />
 
           <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
             <p className="min-w-0 flex-1 text-sm text-pencil">
@@ -333,6 +357,7 @@ export default function PloReview() {
           </div>
         )
       )}
+      {!review && !approving && !synthesizing && !mine && !loadError && data !== null && <SendBackList key={programId} programId={programId} />}
     </div>
   )
 }

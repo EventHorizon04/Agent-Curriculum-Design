@@ -123,10 +123,11 @@ def _plo_row_data(plo: PLO) -> dict[str, Any]:
     ISO strings with an offset, which the ORM DateTime column rejects, so the
     timestamp is handed over as the naive-UTC datetime the column stores."""
     data = plo.model_dump(mode="json")
-    edited = plo.designer_edited_at
-    if edited is not None and edited.tzinfo is not None:
-        edited = edited.astimezone(UTC).replace(tzinfo=None)
-    data["designer_edited_at"] = edited
+    for key in ("designer_edited_at", "designer_sent_back_at"):
+        stamp = getattr(plo, key)
+        if stamp is not None and stamp.tzinfo is not None:
+            stamp = stamp.astimezone(UTC).replace(tzinfo=None)
+        data[key] = stamp
     return data
 
 
@@ -724,14 +725,15 @@ class PLORepository:
         slot it just emptied.
 
         `cause` is written on each history row: "designer" for a merge on the PLO
-        page, "review" for Agent 4's send-back.
+        page, "review" for Agent 4's send-back, "send_back" for the designer's own
+        send-back of a PLO.
 
         `expect` (plo_id -> `version` as the caller read it before drafting)
         is optimistic concurrency for a redraft: the draft takes minutes and
         `PUT /plos/{id}` is not blocked meanwhile, so the rows are re-read here,
         locked, and a row that is gone, has a different version (any PUT bumps it,
         even one that leaves the statement alone), or carries
-        `designer_edited_at` on a `review` replace raises
+        `designer_edited_at` or `designer_sent_back_at` on a `review` replace raises
         `PLOChangedDuringRedraft` with nothing written. Without the check the
         delete below would take the designer's edit with it.
 
@@ -767,7 +769,13 @@ class PLORepository:
                 if (
                     row is None
                     or row.version != version
-                    or (cause == "review" and row.designer_edited_at is not None)
+                    or (
+                        cause == "review"
+                        and (
+                            row.designer_edited_at is not None
+                            or row.designer_sent_back_at is not None
+                        )
+                    )
                 ):
                     raise PLOChangedDuringRedraft(plo_id)
             if remove_plo_ids:

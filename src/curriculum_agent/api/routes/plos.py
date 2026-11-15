@@ -40,6 +40,11 @@ from curriculum_agent.models import (
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused, redraft_from_needs
 from curriculum_agent.stages.plo_review_facts import is_stale, need_demands, plo_fingerprint
+from curriculum_agent.stages.plo_send_back import (
+    PloSendBackRequest,
+    PloSendBackResult,
+    send_back_plos,
+)
 from curriculum_agent.stages.single_plos import SinglePlosResult
 from curriculum_agent.stages.smart_agent_tools import SiblingSummary
 
@@ -525,6 +530,41 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
         return plo
 
 
+@router.post(
+    "/send-back",
+    response_model=JobInfo,
+    status_code=202,
+    dependencies=[Depends(require_api_key)],
+)
+async def send_back_plos_route(program_id: str, body: PloSendBackRequest) -> JobInfo:
+    """The designer sends PLOs back to the AI with a reason each. Answers 202; the
+    per-item outcomes arrive through `GET /jobs`.
+
+    Each item is redrafted from the Needs of the PLO it names, in request order,
+    by `redraft_from_needs` with `cause="send_back"`; the job registration holds
+    the program busy, so the redraft takes no second lock. Reasons stay out of the
+    job params.
+    """
+    program = await ProgramRepository().get(program_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
+
+    async def work() -> PloSendBackResult:
+        from curriculum_agent.stages.plo_synthesis import synthesize_from_needs  # noqa: PLC0415
+
+        if program.agent_mode == "single":
+            drafter = await _single_drafter(program_id)
+        else:
+            drafter = synthesize_from_needs
+        # No llm_scope here: `jobs._run` already scopes the body with program_id and
+        # job_id, and a nested scope would drop the job_id from the usage rows.
+        return await send_back_plos(program, program_id, body.items, drafter=drafter)
+
+    return await start_job_or_409(
+        program_id, "plo_send_back", {"plo_ids": [i.plo_id for i in body.items]}, work
+    )
+
+
 async def _single_drafter(program_id: str) -> Callable[..., Awaitable[PLO | None]]:
     """A `redraft_from_needs` drafter that writes through the single agent."""
     from curriculum_agent.stages.single_plos import draft_single_plo  # noqa: PLC0415
@@ -772,6 +812,8 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
             update={
                 "version": match.version + 1,
                 "designer_edited_at": match.designer_edited_at,
+                "designer_sent_back_at": match.designer_sent_back_at,
+                "designer_send_back_reason_th": match.designer_send_back_reason_th,
             }
         )
         # Update-only and version-conditional, like the PUT: the judging takes

@@ -111,7 +111,7 @@ intake → stakeholder_needs → skill_extraction → need_analysis → plo_synt
 
 | โหมด | ทำงานอย่างไร |
 |---|---|
-| **Multi-agent** (default) | Agent 1 สกัดและจัดกลุ่มทักษะ → Agent 2 รวมเป็น Need → สังเคราะห์ PLO พร้อม SMART vote → review loop ทบทวนและส่งกลับแก้อัตโนมัติ |
+| **Multi-agent** (default) | Agent 1 สกัดและจัดกลุ่มทักษะ → Agent 2 รวมเป็น Need → Agent 3 สังเคราะห์ PLO พร้อม SMART vote → Agent 4 review loop ทบทวนและส่งกลับแก้อัตโนมัติ |
 | **Single-agent** | agent ตัวเดียวอ่านหลักฐานเองแล้วเขียน Need (ระบบไม่รับ finish ถ้า Need หลักไม่ถึง 6 ข้อ) และ PLO ไม่มี vote และไม่มี review loop |
 
 ทั้งสองโหมด PLO ทุกข้อต้องย้อนกลับไปหาหลักฐานได้ และผ่าน SMART hard check ที่เป็น pure code

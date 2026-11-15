@@ -391,3 +391,30 @@ async def test_multi_part_item_is_unread_until_every_part_is_read(
     assert (await run_single_needs("p")).unread_evidence_ids == ["long"]
     _fake_loop(monkeypatch, read({1, 2}), "finished", ["long"])
     assert (await run_single_needs("p")).unread_evidence_ids == []
+
+
+def test_opening_message_carries_the_designer_note_only_when_given() -> None:
+    plain = NeedsHandler(PROGRAM, [E1]).opening_message()
+    assert plain == NeedsHandler(PROGRAM, [E1], note_th=None).opening_message()
+    noted = NeedsHandler(PROGRAM, [E1], note_th="เน้นภาคปฏิบัติ").opening_message()
+    assert noted.startswith(plain) and noted.endswith("เน้นภาคปฏิบัติ")
+
+
+@pytest.mark.asyncio
+async def test_run_single_needs_hands_the_note_to_the_opening_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[str] = []
+
+    async def fake(handler: object, *a: object, **k: object) -> object:
+        seen.append(handler.opening_message())  # type: ignore[attr-defined]
+        raise RuntimeError("stop")
+
+    monkeypatch.setattr(single_needs.ProgramRepository, "get", AsyncMock(return_value=PROGRAM))
+    monkeypatch.setattr(
+        single_needs.EvidenceRepository, "list_by_program", AsyncMock(return_value=[E1])
+    )
+    monkeypatch.setattr(single_needs, "run_single_agent", fake)
+    with pytest.raises(RuntimeError):
+        await run_single_needs("p", note_th="เน้นภาคปฏิบัติ")
+    assert seen and seen[0].endswith("เน้นภาคปฏิบัติ")

@@ -2,9 +2,11 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { fetchWithKey } from '../api/apiKey'
+import { startJob } from '../api/jobs'
 import NextStageLink from '../components/NextStageLink'
 import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
+import { useJobs } from '../hooks/useProgramJobs'
 import { STAKEHOLDER_GROUPS, classStyle, stakeholderLabel } from '../constants/stakeholder'
 
 interface EvidenceItem {
@@ -55,6 +57,57 @@ export default function StakeholderNeeds() {
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null)
   const confirmRevertTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const { running, started, refresh } = useJobs()
+  // Starting the analysis locks the evidence, so it takes a second press.
+  const [confirmingStart, setConfirmingStart] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState('')
+
+  // Both belong to the program the designer opened them on.
+  useEffect(() => {
+    setConfirmingStart(false)
+    setStartError('')
+  }, [programId])
+
+  // An open edit form, a save in flight or a classify run must not be left
+  // behind by the lock the start closes.
+  const startBusy = starting || editingId !== null || submitting || classifying
+
+  async function handleStart() {
+    if (!programId) return
+    setStarting(true)
+    setStartError('')
+    try {
+      // The lock read at load can be stale (the analysis may have run from
+      // another tab); re-read it at press time and refuse when it is closed.
+      try {
+        const lockRes = await api.get<EvidenceLock>(`/programs/${programId}/evidence/lock`)
+        if (lockRes.data.locked) {
+          setLock(lockRes.data)
+          setStartError(lockRes.data.reason_th ?? 'หลักฐานของหลักสูตรนี้แก้ไม่ได้ในขณะนี้')
+          setConfirmingStart(false)
+          return
+        }
+      } catch {
+        // POST /needs/run does not check the lock itself, so an unreadable
+        // lock must stop the start rather than let it through.
+        setStartError('ตรวจสถานะหลักฐานไม่สำเร็จ — ลองอีกครั้ง')
+        setConfirmingStart(false)
+        return
+      }
+      const job = await startJob(`/programs/${programId}/needs/run`)
+      started(job)
+      navigate('/need-analysis')
+    } catch (err: unknown) {
+      const res = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response
+      const detail = res?.data?.detail
+      setStartError(typeof detail === 'string' ? detail : 'เริ่มวิเคราะห์ไม่สำเร็จ')
+      setConfirmingStart(false)
+      if (res?.status === 409) void refresh()
+    } finally {
+      setStarting(false)
+    }
+  }
 
   const fetchEvidence = useCallback(async (pid: string) => {
     setLoadingList(true)
@@ -561,16 +614,50 @@ export default function StakeholderNeeds() {
       {/* Skill extraction reads the evidence table, so one item is the floor.
           Classification is not required here: stage 3 re-reads every item and
           the classify pass is pure code. */}
-      <NextStageLink
-        from="stakeholder_needs"
-        mode={mode ?? 'multi'}
-        ready={Boolean(programId) && items.length > 0}
-        blockedReason={
-          mode === 'single'
-            ? 'เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นถัดไปอ่านจากหลักฐานเหล่านี้'
-            : 'เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นสกัดทักษะอ่านจากหลักฐานเหล่านี้'
-        }
-      />
+      {programId && items.length > 0 && !lock.locked && running === null ? (
+        <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t-[3px] border-double border-hair-strong pt-5">
+          <p className="text-xs text-pencil">
+            <span className="eyebrow mr-1.5">ขั้นถัดไป</span>
+            {confirmingStart
+              ? 'เมื่อเริ่มแล้ว หลักฐานจะถูกล็อก แก้ไม่ได้ (ต้องการแก้ให้คัดลอกหลักสูตรแบบหลักฐานอย่างเดียว)'
+              : 'เริ่มวิเคราะห์จากหลักฐานที่ใส่ไว้'}
+          </p>
+          {confirmingStart ? (
+            <div className="flex gap-2">
+              <button type="button" className="btn btn-sm btn-primary" disabled={startBusy} onClick={() => void handleStart()}>
+                ยืนยันเริ่ม
+              </button>
+              <button type="button" className="btn btn-sm btn-secondary" disabled={starting} onClick={() => setConfirmingStart(false)}>
+                ยกเลิก
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-primary max-w-full text-left"
+              disabled={startBusy}
+              onClick={() => {
+                setStartError('')
+                setConfirmingStart(true)
+              }}
+            >
+              ใส่หลักฐานครบแล้ว เริ่มวิเคราะห์
+            </button>
+          )}
+          {startError && <p className="notice notice-error w-full">{startError}</p>}
+        </div>
+      ) : (
+        <NextStageLink
+          from="stakeholder_needs"
+          mode={mode ?? 'multi'}
+          ready={Boolean(programId) && items.length > 0}
+          blockedReason={
+            mode === 'single'
+              ? 'เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นถัดไปอ่านจากหลักฐานเหล่านี้'
+              : 'เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นสกัดทักษะอ่านจากหลักฐานเหล่านี้'
+          }
+        />
+      )}
     </div>
   )
 }

@@ -183,7 +183,7 @@ def test_needs_run_on_a_single_program_starts_single_needs_and_chains_nothing(
     assert r.status_code == 202, r.text
     assert r.json()["kind"] == "single_needs"
     spawned.drain()
-    stages.single_needs.assert_awaited_once_with(PID)
+    stages.single_needs.assert_awaited_once_with(PID, None)
     stages.skill_extraction.assert_not_awaited()
     stages.need_combination.assert_not_awaited()
     assert [j.kind for j in jobs_store.rows.values()] == ["single_needs"]
@@ -336,3 +336,18 @@ async def test_the_review_chain_refuses_to_start_for_a_single_program(
 ) -> None:
     assert await plos_route._start_review_job(PID, or_409=False) is None
     assert jobs_store.rows == {}
+
+
+@pytest.mark.parametrize("url", ["needs/run", "needs/combine/run"])
+def test_needs_run_on_a_single_program_passes_the_note(
+    url: str,
+    single_program: None,
+    stages: _Stages,
+    spawned: SpawnRecorder,
+    jobs_store: InMemoryJobs,
+) -> None:
+    r = client.post(f"/programs/{PID}/{url}", json={"note_th": "เน้นภาคปฏิบัติ"})
+    assert r.status_code == 202, r.text
+    spawned.drain()
+    stages.single_needs.assert_awaited_once_with(PID, "เน้นภาคปฏิบัติ")
+    assert next(iter(jobs_store.rows.values())).params == {"note_th": "เน้นภาคปฏิบัติ"}

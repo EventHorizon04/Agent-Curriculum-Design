@@ -798,6 +798,66 @@ def test_revalidate_keeps_designer_edited_at(
     assert allow_repair_seen == [False]
 
 
+_SENT_AT = datetime(2026, 11, 15, 9, 0, 0)
+_SENT_REASON = "ปรับให้เจาะจง"
+
+
+def _sent_back_row() -> PLO:
+    return _plo("PLO1", ["N1"]).model_copy(
+        update={
+            "smart_validated_by": "stale",
+            "designer_sent_back_at": _SENT_AT,
+            "designer_send_back_reason_th": _SENT_REASON,
+        }
+    )
+
+
+def test_revalidate_keeps_send_back_marker_in_multi(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    insert = _stored_put(monkeypatch, [_sent_back_row()])
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=_program()))
+
+    async def fake_validate(draft, **kwargs):  # noqa: ANN001, ANN003
+        return _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "agent"})
+
+    with patch(
+        "curriculum_agent.stages.plo_synthesis.validate_and_build", side_effect=fake_validate
+    ):
+        resp = client.post("/programs/cs-test/plos/PLO1/revalidate")
+        assert resp.status_code == 202, resp.text
+        spawned.drain()
+
+    assert jobs_store.rows[resp.json()["job_id"]].status == "succeeded"
+    saved = insert.await_args.args[0]
+    assert saved.designer_sent_back_at == _SENT_AT
+    assert saved.designer_send_back_reason_th == _SENT_REASON
+
+
+def test_revalidate_keeps_send_back_marker_in_single(
+    monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    insert = _stored_put(monkeypatch, [_sent_back_row()])
+    single = _program().model_copy(update={"agent_mode": "single"})
+    monkeypatch.setattr(plos_route.ProgramRepository, "get", AsyncMock(return_value=single))
+    monkeypatch.setattr(
+        plos_route.EvidenceRepository, "list_by_program", AsyncMock(return_value=[])
+    )
+
+    async def fake_draft(*args, **kwargs):  # noqa: ANN002, ANN003
+        return _plo("PLO1", ["N1"]).model_copy(update={"smart_validated_by": "single_agent"})
+
+    with patch("curriculum_agent.stages.single_plos.draft_single_plo", side_effect=fake_draft):
+        resp = client.post("/programs/cs-test/plos/PLO1/revalidate")
+        assert resp.status_code == 202, resp.text
+        spawned.drain()
+
+    assert jobs_store.rows[resp.json()["job_id"]].status == "succeeded"
+    saved = insert.await_args.args[0]
+    assert saved.designer_sent_back_at == _SENT_AT
+    assert saved.designer_send_back_reason_th == _SENT_REASON
+
+
 def test_revalidate_rejudges_the_stored_statement(
     monkeypatch: pytest.MonkeyPatch, jobs_store: InMemoryJobs, spawned: SpawnRecorder
 ) -> None:

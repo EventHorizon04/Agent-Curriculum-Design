@@ -11,7 +11,8 @@ import { stagesFor, type AgentMode } from '../constants/stages'
  *
  * It navigates and nothing else. Immutable rule 7 puts a human at every stage
  * boundary, so moving to the next page is the designer's act of approving this
- * one — the next stage still runs only when they press its own run button.
+ * one. The evidence and Need pages start the next run from their own approval
+ * button; this link only navigates.
  *
  * Shown even when the stage has produced nothing, disabled with the reason:
  * a designer who cannot continue is better told why than left looking for the
