@@ -69,11 +69,28 @@ export default function StakeholderNeeds() {
     setStartError('')
   }, [programId])
 
+  // An open edit form, a save in flight or a classify run must not be left
+  // behind by the lock the start closes.
+  const startBusy = starting || editingId !== null || submitting || classifying
+
   async function handleStart() {
     if (!programId) return
     setStarting(true)
     setStartError('')
     try {
+      // The lock read at load can be stale (the analysis may have run from
+      // another tab); re-read it at press time and refuse when it is closed.
+      try {
+        const lockRes = await api.get<EvidenceLock>(`/programs/${programId}/evidence/lock`)
+        if (lockRes.data.locked) {
+          setLock(lockRes.data)
+          setStartError(lockRes.data.reason_th ?? 'หลักฐานของหลักสูตรนี้แก้ไม่ได้ในขณะนี้')
+          setConfirmingStart(false)
+          return
+        }
+      } catch {
+        // An unreadable lock does not block: the API refuses what it must.
+      }
       const job = await startJob(`/programs/${programId}/needs/run`)
       started(job)
       navigate('/need-analysis')
@@ -603,7 +620,7 @@ export default function StakeholderNeeds() {
           </p>
           {confirmingStart ? (
             <div className="flex gap-2">
-              <button type="button" className="btn btn-sm btn-primary" disabled={starting} onClick={() => void handleStart()}>
+              <button type="button" className="btn btn-sm btn-primary" disabled={startBusy} onClick={() => void handleStart()}>
                 ยืนยันเริ่ม
               </button>
               <button type="button" className="btn btn-sm btn-secondary" disabled={starting} onClick={() => setConfirmingStart(false)}>
@@ -614,7 +631,7 @@ export default function StakeholderNeeds() {
             <button
               type="button"
               className="btn btn-primary max-w-full text-left"
-              disabled={starting}
+              disabled={startBusy}
               onClick={() => {
                 setStartError('')
                 setConfirmingStart(true)

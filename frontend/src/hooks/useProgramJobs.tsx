@@ -150,6 +150,21 @@ function useProgramJobs(programId: string): JobsValue {
     }
   }, [programId, needsPolling, load])
 
+  // The backend marks a job succeeded and only then inserts its chained
+  // follow-up, so a read can land in between and see nothing running. When the
+  // list goes from "something running" to "nothing", read once more a tick
+  // later: a chained job is in by then and polling resumes; otherwise it costs
+  // one extra GET.
+  const anyRunning = jobs.some((j) => j.status === 'running')
+  const wasRunning = useRef(false)
+  useEffect(() => {
+    const settled = wasRunning.current && !anyRunning
+    wasRunning.current = anyRunning
+    if (!settled || !programId) return
+    const timer = window.setTimeout(() => void load(programId), POLL_MS)
+    return () => window.clearTimeout(timer)
+  }, [anyRunning, programId, load])
+
   const refresh = useCallback(async (): Promise<void> => {
     if (current.current) await load(current.current)
   }, [load])

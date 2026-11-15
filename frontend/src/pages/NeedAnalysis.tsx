@@ -340,6 +340,26 @@ export default function NeedAnalysis() {
   const stages = stagesFor(mode ?? 'multi')
   const nextStage = stages[stages.findIndex(st => st.key === 'need_analysis') + 1]
   const approveBlocked = needs.length === 0 || running !== null || busy || loading
+  // The text follows the real reason; transient busy states say nothing.
+  const approveNotice =
+    running !== null
+      ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ผลลัพธ์การเรียนรู้ ต้องอ่านจาก Need ชุดนี้'
+      : needs.length === 0 && !loading
+        ? 'ยังไม่มี Need — รวมกลุ่มทักษะเป็น Need ให้เสร็จก่อน'
+        : ''
+
+  /** Decide at press time, not from the count read at load: another tab or client
+   *  may have stored PLOs since. Only a fresh 0 starts without the confirm. */
+  async function pressApprove(): Promise<void> {
+    setApproveError('')
+    const fresh = await api
+      .get<PLO[]>(`/programs/${programId}/plos/`)
+      .then((res) => res.data.length)
+      .catch(() => null)
+    setPloCount(fresh)
+    if (fresh === 0) void approve()
+    else setConfirmingApprove(true)
+  }
 
   return (
     <div className="max-w-4xl">
@@ -596,26 +616,18 @@ export default function NeedAnalysis() {
             type="button"
             className="btn btn-primary max-w-full text-left"
             disabled={approveBlocked}
-            onClick={() => {
-              setApproveError('')
-              if (ploCount !== 0) setConfirmingApprove(true)
-              else void approve()
-            }}
+            onClick={() => void pressApprove()}
           >
             อนุมัติ Need และสร้าง PLO
           </button>
         )}
-        {ploCount !== 0 && (
+        {ploCount !== null && ploCount !== 0 && (
           <Link to={single ? '/plo-synthesis' : '/plo-review'} className="link w-full text-sm">
             ไปหน้า PLO โดยไม่สร้างใหม่
           </Link>
         )}
-        {approveBlocked && !approving && (
-          <p className="notice notice-warn w-full">
-            {running !== null
-              ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ผลลัพธ์การเรียนรู้ ต้องอ่านจาก Need ชุดนี้'
-              : 'ยังไม่มี Need — รวมกลุ่มทักษะเป็น Need ให้เสร็จก่อน'}
-          </p>
+        {approveNotice && (
+          <p className="notice notice-warn w-full">{approveNotice}</p>
         )}
         {approveError && <p className="notice notice-error w-full">{approveError}</p>}
       </div>
