@@ -55,7 +55,7 @@ export default function ValidationToggle({
           <>ปิดไว้ในการตั้งค่าระบบ (VALIDATION_PROVIDER) — รอบนี้ตรวจด้วยกฎพื้นฐานเท่านั้น</>
         ) : effective ? (
           <>
-            ตรวจทีละข้อและสั่งแก้ได้ไม่เกิน 3 รอบ
+            ตรวจทีละข้อและสั่งแก้ได้ไม่เกิน 5 รอบ
             {status?.model && (
               <>
                 {' · '}โมเดล <span className="data text-graphite">{status.model}</span>

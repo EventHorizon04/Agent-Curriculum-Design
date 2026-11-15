@@ -53,7 +53,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   earliest on a tie), so its diagnosis and notes describe the verdict stored.
   `repair_count` is spent when a repair is *attempted*: a failed call, a discarded
   repair and an unchanged one are budget used, or a stuck PLO would loop on the same
-  sentence. At most `validation_max_repairs` (3) repairs, so at most 4 judgings.
+  sentence. At most `validation_max_repairs` (5) repairs, so at most 6 judgings.
 - **A repair never makes a PLO worse on the hard check, and `A_actor`/`A_scope` are
   never repaired.** A repaired statement that carries a hard failure the previous
   one did not is discarded and the previous statement stays (decision 20 of docs/superpowers/specs/2026-11-04-four-agent-pipeline-phase6-design.md), which

@@ -217,17 +217,17 @@ async def test_allow_repair_false_judges_only(monkeypatch: pytest.MonkeyPatch) -
     assert result.soft_flags == ["M_assessable"]
 
 
-async def test_max_three_repairs_four_judgings(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Three repairs, and the last of them is judged: four rounds of three runs."""
+async def test_max_five_repairs_six_judgings(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Five repairs, and the last of them is judged: six rounds of three runs."""
     judges = _judges(monkeypatch, [_finish(**_FAIL_M, diagnosis_th="วัดไม่ได้")])
-    versions = [_draft(f"ออกแบบระบบสารสนเทศฉบับที่ {n} ได้", "ออกแบบ") for n in (1, 2, 3)]
+    versions = [_draft(f"ออกแบบระบบสารสนเทศฉบับที่ {n} ได้", "ออกแบบ") for n in (1, 2, 3, 4, 5)]
     repairs = _repairs(monkeypatch, *versions)
 
     result = await sa.run_smart_agent(_draft(), _ctx(), META)
 
-    assert repairs.calls == 3
-    assert judges.calls == 12
-    assert result.repair_count == 3
+    assert repairs.calls == 5
+    assert judges.calls == 18
+    assert result.repair_count == 5
     assert result.statement_th == versions[-1].statement_th
     assert result.soft_flags == ["M_assessable"]
 
@@ -309,9 +309,9 @@ async def test_repair_adding_hard_failure_is_discarded(monkeypatch: pytest.Monke
 
     result = await sa.run_smart_agent(original, _ctx(), META)
 
-    assert repairs.calls == 3
+    assert repairs.calls == 5
     assert judges.calls == 3, "an unchanged statement is not re-judged"
-    assert result.repair_count == 3
+    assert result.repair_count == 5
     assert result.statement_th == original.statement_th
     assert result.soft_flags == ["M_assessable"]
 
@@ -329,7 +329,7 @@ async def test_a_failed_repair_call_costs_a_repair_and_keeps_the_statement(
     result = await sa.run_smart_agent(_draft(), _ctx(), META)
 
     assert judges.calls == 3
-    assert result.repair_count == 3
+    assert result.repair_count == 5
     assert result.statement_th == _draft().statement_th
 
 
@@ -430,7 +430,7 @@ async def test_hard_failure_still_escalates_via_validate_and_build(
     assert plo.smart_escalated is True
     assert plo.smart_validated_by == "agent"
     assert plo.soft_flags == []
-    assert plo.smart_retry_count == 3
+    assert plo.smart_retry_count == 5
 
 
 async def test_validate_and_build_passes_allow_repair_to_the_agent(

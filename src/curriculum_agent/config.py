@@ -337,10 +337,10 @@ class Settings(BaseSettings):
     validation_provider: Literal["ollama", "openrouter", "opentyphoon", ""] | None = "openrouter"
     validation_model: str = ""
     validation_max_turns: int = 8
-    # Three, matching the SMART gate's long-standing retry ceiling — the rule is
-    # "max 3 attempts, then escalate", and the agent inherits it rather than
-    # introducing a second number for the same policy.
-    validation_max_repairs: int = 3
+    # Five, the designer's decision of 2026-11-15 so the SMART repair ceiling
+    # matches the PLO review loop's five rounds (`plo_review_max_rounds`);
+    # `validation_timeout_seconds` still bounds a PLO's whole loop.
+    validation_max_repairs: int = 5
     # In-flight agent *loops*, not calls — deliberately not llm_max_concurrency.
     # A loop is serial (turn n+1 needs turn n's observation), so N concurrent
     # loops is N in-flight calls, and bounding here keeps that provable. It also
