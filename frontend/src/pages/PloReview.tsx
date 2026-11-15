@@ -5,7 +5,12 @@ import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
 import ReviewNoteChip from '../components/ReviewNoteChip'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
-import { PLO_REPORT_PLAN, PLO_REVIEW_PLAN } from '../constants/runPlans'
+import {
+  PLO_REPORT_PLAN,
+  PLO_REVIEW_PLAN,
+  PLO_SYNTHESIS_CODE_ONLY_PLAN,
+  PLO_SYNTHESIS_PLAN,
+} from '../constants/runPlans'
 import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import { BLOOM_ORDER, bloomLabel } from '../constants/bloom'
@@ -22,7 +27,7 @@ import type {
 } from '../types/ploReview'
 
 /** The job kinds whose runs this page shows. */
-const PAGE_KINDS: JobKind[] = ['plo_review']
+const PAGE_KINDS: JobKind[] = ['plo_synthesis', 'plo_review']
 /** The jobs that change what this page draws, whichever page started them: the
  *  review is a reading of the PLOs and the Needs, so a synthesis, a re-check or
  *  a new set of Needs all leave it describing a set that moved. `plo_report` is
@@ -104,6 +109,8 @@ export default function PloReview() {
   const { running, latestOf, started, refresh } = useJobs()
   // `running` is any job of this program; `mine` is the review this page shows.
   const mine = running?.kind === 'plo_review' ? running : null
+  // A synthesis run is followed here too: the run chains straight into the review.
+  const synthesizing = running?.kind === 'plo_synthesis' ? running : null
   const last = latestOf(PAGE_KINDS)
   // The approval's own failure; the report is stored by it, so it is this page's.
   const lastReport = latestOf(['plo_report'])
@@ -239,6 +246,12 @@ export default function PloReview() {
 
       {approving ? (
         <RunProgress key={approving.job_id} plan={PLO_REPORT_PLAN} since={Date.parse(approving.created_at)} />
+      ) : synthesizing ? (
+        <RunProgress
+          key={synthesizing.job_id}
+          plan={synthesizing.params.run_validation === false ? PLO_SYNTHESIS_CODE_ONLY_PLAN : PLO_SYNTHESIS_PLAN}
+          since={Date.parse(synthesizing.created_at)}
+        />
       ) : mine ? (
         <RunProgress key={mine.job_id} plan={PLO_REVIEW_PLAN} since={Date.parse(mine.created_at)} />
       ) : data === null && !loadError ? (
@@ -344,7 +357,7 @@ export default function PloReview() {
           </div>
         )
       )}
-      {!review && !approving && !mine && !loadError && data !== null && <SendBackList key={programId} programId={programId} />}
+      {!review && !approving && !synthesizing && !mine && !loadError && data !== null && <SendBackList key={programId} programId={programId} />}
     </div>
   )
 }
