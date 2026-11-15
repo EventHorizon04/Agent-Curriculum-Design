@@ -48,7 +48,8 @@ Both apply in multi and single mode.
 - **Trail:**
   - The replaced PLO is kept in `superseded_plos` with `cause="send_back"` and the reason.
   - The new PLO's card shows "ส่งกลับโดยผู้ออกแบบ: <reason>" and the old statement, in the same way the review loop's redrafts show theirs.
-- **Not re-reviewed.** A send-back does not start the review loop again. The designer is the reviewer at this point, and the new PLO is still judged by the SMART gate. If the page can already tell that the set changed since the last review, it says so.
+- **Review after a send-back (designer's decision of 2026-11-15, option ก).** A send-back does not start the review loop by itself, but in multi mode the existing rule stands: the set changed after the last review, so approval stays locked until the designer runs the review again. That review **never rewrites a PLO the designer sent back**. It is treated like a hand-edited PLO: its findings stay as comments. With no sent-back PLO in the set, the review loop behaves exactly as before, and a test pins that, because the loop is part of the locked pipeline. Single mode has no review and is unaffected.
+- **Where the controls live.** The PLO checkpoint page (`plo_review`) has no PLO cards today, so it gains a list of the current PLOs with the send-back toggle and reason field, near the approve button. *Builder's call.*
 
 ### Need send-back (whole set, with a note)
 
