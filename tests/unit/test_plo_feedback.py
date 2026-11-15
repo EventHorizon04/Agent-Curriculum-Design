@@ -1213,3 +1213,69 @@ async def test_dry_run_never_adds_to_aligned(
     )
     assert action.outcome == "planned"
     assert memory.aligned == set()
+
+
+# --------------------- designer send-back: the loop leaves a sent-back PLO alone ---------------------
+
+SENT_BACK = datetime(2026, 11, 15, 9, 0, 0)
+
+
+async def test_send_back_skips_designer_sent_back_plo(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    plos[1] = plos[1].model_copy(update={"designer_sent_back_at": SENT_BACK})
+    env = _Env(monkeypatch, plos)
+    review = _review(
+        redundancies=[_red("PLO1", "PLO2")],
+        bloom=[_bloom("PLO2")],
+        unused_needs=[_unused("N2", agreed_runs=2)],
+    )
+    actions = await _sb(review)
+    assert [(a.kind, a.outcome, a.outcome_reason_th) for a in actions] == [
+        ("redundancy", "skipped", pf.REASON_DESIGNER_SENT_BACK),
+        ("bloom", "skipped", pf.REASON_DESIGNER_SENT_BACK),
+        ("unused_need", "skipped", pf.REASON_DESIGNER_SENT_BACK),
+    ]
+    assert "แก้เอง" not in pf.REASON_DESIGNER_SENT_BACK
+    env.redraft.assert_not_awaited()
+
+
+async def test_designer_sent_back_is_judged_before_missing(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    plos[0] = plos[0].model_copy(update={"designer_sent_back_at": SENT_BACK})
+    env = _Env(monkeypatch, plos)
+    del env.plos[1]
+    (action,) = await _sb(_review(redundancies=[_red("PLO1", "PLO2")]))
+    assert action.outcome_reason_th == pf.REASON_DESIGNER_SENT_BACK
+
+
+async def test_hand_edit_wins_the_reason_when_a_plo_is_also_sent_back(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    plos[1] = plos[1].model_copy(
+        update={"designer_edited_at": datetime(2026, 11, 4), "designer_sent_back_at": SENT_BACK}
+    )
+    _Env(monkeypatch, plos)
+    (action,) = await _sb(_review(bloom=[_bloom("PLO2")]))
+    assert action.outcome_reason_th == pf.REASON_DESIGNER_EDITED
+
+
+async def test_alignment_skips_designer_sent_back(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    plos[1] = plos[1].model_copy(update={"designer_sent_back_at": SENT_BACK})
+    env = _Env(monkeypatch, plos)
+    (action,) = await _sb(_review(alignment=[_align("PLO2")]))
+    assert (action.outcome, action.outcome_reason_th) == ("skipped", pf.REASON_DESIGNER_SENT_BACK)
+    env.redraft.assert_not_awaited()
+
+
+async def test_an_unsent_neighbour_of_a_sent_back_plo_is_still_acted_on(
+    monkeypatch: pytest.MonkeyPatch, plos: list[PLO]
+) -> None:
+    plos[1] = plos[1].model_copy(update={"designer_sent_back_at": SENT_BACK})
+    env = _Env(monkeypatch, plos)
+    (action,) = await _sb(_review(bloom=[_bloom("PLO3")]))
+    assert action.outcome == "applied"
+    env.redraft.assert_awaited_once()
