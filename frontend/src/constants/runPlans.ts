@@ -103,7 +103,7 @@ export const PLO_REPORT_PLAN: RunPlan = {
  *  by `plo_review_timeout_seconds` (300s) on the backend, so the usual range
  *  stops well short of it. */
 export const PLO_REVIEW_PLAN: RunPlan = {
-  title: 'กำลังตรวจคุณภาพชุด PLO',
+  title: 'กำลังทบทวนผลลัพธ์การเรียนรู้',
   steps: ['เตรียมข้อมูลชุด PLO', 'agent ตรวจและเช็กข้อสงสัย', 'สรุปข้อเสนอแนะ'],
   typical: [30, 120],
 }

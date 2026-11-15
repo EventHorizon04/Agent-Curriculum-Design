@@ -355,7 +355,7 @@ export default function PloSynthesis() {
         </p>
         {!single && (
           <p className="mt-1 text-xs text-lead">
-            เมื่อสังเคราะห์เสร็จ ระบบตรวจคุณภาพทั้งชุดต่อทันที และอาจส่งบาง PLO กลับไปแก้ — ดูผลที่ขั้นตรวจคุณภาพ
+            เมื่อสังเคราะห์เสร็จ ระบบทบทวนทั้งชุดต่อทันที และอาจส่งบาง PLO กลับไปแก้ — ดูผลที่ขั้นทบทวนผลลัพธ์การเรียนรู้
           </p>
         )}
         <p className="data mt-1 text-xs text-lead">{programId}</p>
@@ -365,7 +365,7 @@ export default function PloSynthesis() {
         <div className="notice notice-error mb-6">{error}</div>
       )}
       {running?.kind === 'plo_review' && (
-        <p className="notice notice-warn mb-6">กำลังตรวจคุณภาพชุด PLO ต่อจากการสังเคราะห์ — PLO อาจเปลี่ยนเมื่อตรวจเสร็จ</p>
+        <p className="notice notice-warn mb-6">กำลังทบทวนผลลัพธ์การเรียนรู้ต่อจากการสังเคราะห์ — PLO อาจเปลี่ยนเมื่อตรวจเสร็จ</p>
       )}
       {singleStop && (
         <div className="notice notice-warn mb-6">
@@ -545,7 +545,7 @@ export default function PloSynthesis() {
           ready={Boolean(programId) && plos.length > 0 && mine === null && !merging}
           blockedReason={
             mine !== null || merging
-              ? 'รอให้งานที่กำลังทำเสร็จก่อน — การตรวจคุณภาพต้องอ่านจาก PLO ชุดนี้'
+              ? 'รอให้งานที่กำลังทำเสร็จก่อน — การทบทวนต้องอ่านจาก PLO ชุดนี้'
               : 'ยังไม่มี PLO — รันสังเคราะห์ PLO ก่อน'
           }
         />
@@ -781,7 +781,7 @@ function PLOCard({
               {p.is_optional ? 'เสริม' : 'หลัก'}
             </span>
             {reviewFixed && (
-              <Link to="/plo-review" className="chip chip-marker" title="ข้อนี้ถูกส่งกลับไปแก้ตามผลตรวจชุด PLO — ดูรายละเอียดที่หน้าตรวจคุณภาพ">
+              <Link to="/plo-review" className="chip chip-marker" title="ข้อนี้ถูกส่งกลับไปแก้ตามผลตรวจชุด PLO — ดูรายละเอียดที่หน้าทบทวนผลลัพธ์การเรียนรู้">
                 แก้ตามผลตรวจ
               </Link>
             )}

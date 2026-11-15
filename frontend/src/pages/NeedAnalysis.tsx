@@ -519,7 +519,7 @@ export default function NeedAnalysis() {
         ready={needs.length > 0 && mine === null}
         blockedReason={
           mine !== null
-            ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ PLO ต้องอ่านจาก Need ชุดนี้'
+            ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ผลลัพธ์การเรียนรู้ ต้องอ่านจาก Need ชุดนี้'
             : 'ยังไม่มี Need — รวมกลุ่มทักษะเป็น Need ให้เสร็จก่อน'
         }
       />

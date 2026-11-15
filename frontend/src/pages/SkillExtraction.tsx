@@ -203,7 +203,7 @@ export default function SkillExtraction() {
         <p className="eyebrow">ขั้นที่ 3</p>
         <h1 className="page-title mb-1">สกัดทักษะ</h1>
         <p className="text-sm text-pencil">
-          ทักษะดิบที่สกัดจาก evidence และกลุ่มทักษะในแต่ละหมวด KSEC — ส่งต่อให้ขั้นวิเคราะห์ Need
+          ทักษะดิบที่สกัดจาก evidence และกลุ่มทักษะในแต่ละหมวด KSEC — ส่งต่อให้ขั้นวิเคราะห์ความต้องการ
         </p>
         <p className="data mt-1 text-xs text-lead">{programId}</p>
       </div>
@@ -218,8 +218,8 @@ export default function SkillExtraction() {
       )}
       {agent2Running && (
         <div className="notice notice-info mb-6">
-          สกัดทักษะเสร็จแล้ว — Agent 2 เริ่มวิเคราะห์ Need แล้ว ดูผลที่หน้า{' '}
-          <Link to="/need-analysis" className="underline underline-offset-2">วิเคราะห์ Need</Link>
+          สกัดทักษะเสร็จแล้ว — Agent 2 เริ่มวิเคราะห์ความต้องการแล้ว ดูผลที่หน้า{' '}
+          <Link to="/need-analysis" className="underline underline-offset-2">วิเคราะห์ความต้องการ</Link>
         </div>
       )}
 
@@ -258,14 +258,14 @@ export default function SkillExtraction() {
               สกัดทักษะใหม่
             </button>
             <Link to="/need-analysis" className="link text-sm">
-              ไปหน้าวิเคราะห์ Need ({needs.length})
+              ไปหน้าวิเคราะห์ความต้องการ ({needs.length})
             </Link>
           </div>
 
           {staleNeedCount > 0 && (
             <div className="notice notice-warn mb-4">
               Need {staleNeedCount} รายการมาจากทักษะชุดก่อน — รวม Need ใหม่ที่หน้า{' '}
-              <Link to="/need-analysis" className="underline underline-offset-2">วิเคราะห์ Need</Link>
+              <Link to="/need-analysis" className="underline underline-offset-2">วิเคราะห์ความต้องการ</Link>
             </div>
           )}
 
@@ -340,7 +340,7 @@ export default function SkillExtraction() {
         ready={groups.length > 0 && mine === null}
         blockedReason={
           mine !== null
-            ? 'รอให้รันเสร็จก่อน — ขั้นวิเคราะห์ Need ต้องอ่านจากกลุ่มทักษะชุดนี้'
+            ? 'รอให้รันเสร็จก่อน — ขั้นวิเคราะห์ความต้องการ ต้องอ่านจากกลุ่มทักษะชุดนี้'
             : 'ยังไม่มีกลุ่มทักษะ — สกัดทักษะให้เสร็จก่อน'
         }
       />

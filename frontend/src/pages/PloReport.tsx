@@ -252,7 +252,7 @@ export default function PloReport() {
   // A single-agent program approves at its PLO page; multi approves at the review page.
   const single = mode === 'single'
   const approveRoute = single ? '/plo-synthesis' : '/plo-review'
-  const approveStage = single ? 'ตรวจ PLO' : 'ตรวจคุณภาพ'
+  const approveStage = single ? 'สังเคราะห์ผลลัพธ์การเรียนรู้' : 'ทบทวนผลลัพธ์การเรียนรู้'
   const [plos, setPlos] = useState<PLO[]>([])
   const [needsById, setNeedsById] = useState<Record<string, NeedSummary>>({})
   const [counts, setCounts] = useState<ReportCounts>({
@@ -370,7 +370,7 @@ export default function PloReport() {
           </p>
           <div className="mt-5">
             <Link to={approveRoute} className="link text-sm">
-              {single ? 'ไปตรวจ PLO' : 'ไปตรวจคุณภาพชุด PLO'}
+              {`ไปหน้า${approveStage}`}
             </Link>
           </div>
         </div>
@@ -426,7 +426,7 @@ export default function PloReport() {
 
           <p className="border-t border-hair pt-4 text-sm text-pencil">
             <Link to={approveRoute} className="link">
-              {single ? '← กลับไปหน้าตรวจ PLO' : '← กลับไปหน้าตรวจคุณภาพชุด PLO'}
+              {`← กลับไปหน้า${approveStage}`}
             </Link>
           </p>
         </>
@@ -472,7 +472,7 @@ function ExcludedNeeds({ needs }: { needs: ExcludedNeed[] }) {
   return (
     <section id="excluded-needs" className="border-t border-hair pt-5">
       <h2 className="section-title">Need ที่ผู้ออกแบบตัดออก</h2>
-      <p className="mt-1 text-sm text-pencil">ตัดออกที่ขั้นวิเคราะห์ Need — กู้คืนได้ที่หน้า Need</p>
+      <p className="mt-1 text-sm text-pencil">ตัดออกที่ขั้นวิเคราะห์ความต้องการ — กู้คืนได้ที่หน้า Need</p>
       <ul className="mt-3 divide-y divide-hair rounded-[4px] border border-hair bg-sunk">
         {needs.map((n) => (
           <li key={n.need_id} className="flex items-baseline gap-3 px-4 py-2.5 text-sm">
@@ -540,7 +540,7 @@ function UnusedNeedRow({ need: n, programId }: { need: NeedSummary; programId: s
           </>
         ) : (
           <span
-            title={`ผ่านเกณฑ์ขอบเขตแล้ว แต่ demand score ต่ำกว่า Need ${MAX_CORE_PLOS} ข้อที่ถูกเลือกไปเขียนเป็น PLO หลัก — ยังเลือกไปรวมเป็น PLO ได้ที่หน้าสังเคราะห์ PLO`}
+            title={`ผ่านเกณฑ์ขอบเขตแล้ว แต่ demand score ต่ำกว่า Need ${MAX_CORE_PLOS} ข้อที่ถูกเลือกไปเขียนเป็น PLO หลัก — ยังเลือกไปรวมเป็น PLO ได้ที่หน้าสังเคราะห์ผลลัพธ์การเรียนรู้`}
           >
             <Tag>ไม่ติด {MAX_CORE_PLOS} อันดับแรก</Tag>
           </span>

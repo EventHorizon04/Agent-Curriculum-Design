@@ -224,7 +224,7 @@ export default function PloReview() {
             <>
               {' '}
               <Link to="/plo-synthesis" className="link">
-                ไปสังเคราะห์ PLO
+                ไปหน้าสังเคราะห์ผลลัพธ์การเรียนรู้
               </Link>
             </>
           )}
@@ -421,7 +421,7 @@ function Overview({ review }: { review: PLOSetReview }) {
             ))}
           </ul>
           <p className="mt-1.5 text-xs text-lead">
-            K ความรู้ · S ทักษะวิชาชีพ · E จริยธรรม · C คุณลักษณะบุคคล
+            Knowledge (K) · Skill (S) · Ethics (E) · Character (C)
           </p>
           {ksec.flags.length > 0 && (
             <ul className="mt-2 space-y-1">
@@ -504,7 +504,7 @@ function Redundancies({ review }: { review: PLOSetReview }) {
           <p className="mt-3 text-sm text-pencil">
             รวม PLO ที่ซ้ำได้โดยรวม Need ที่หน้า{' '}
             <Link to="/plo-synthesis" className="link">
-              สังเคราะห์ PLO
+              สังเคราะห์ผลลัพธ์การเรียนรู้
             </Link>
           </p>
         </>
@@ -767,7 +767,7 @@ function UnusedNeeds({ review }: { review: PLOSetReview }) {
                     <>
                       <span className="chip chip-marker">ควรพิจารณา</span>
                       <Link to="/plo-synthesis" className="link text-xs">
-                        ไปที่สังเคราะห์ PLO
+                        ไปที่หน้าสังเคราะห์ผลลัพธ์การเรียนรู้
                       </Link>
                     </>
                   ) : (
