@@ -215,6 +215,14 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   `from-needs` is a new draft. The marker, not `smart_validated_by="stale"`, is what
   send-back (`unavailable_reason`) and `allow_repair` read, because a revalidate
   overwrites `stale`. A program copy carries it (rows are cloned by column).
+- **`designer_sent_back_at` / `designer_send_back_reason_th` mark a designer send-back
+  (migration `d9f4a5b6c738`, decision of 2026-11-15).** Same shape as `designer_edited_at`
+  (naive UTC in the DB, `+00:00` in JSON, carried by revalidate and a program copy).
+  `POST /plos/send-back` `{items: [{plo_id, reason_th}]}` starts job `plo_send_back`; each
+  item goes through `plo_redraft.redraft_from_needs` with the reason as `note_th`, and the
+  replaced row lands in `superseded_plos` with `cause="send_back"` (values are now
+  `designer` | `review` | `send_back`; None reads as designer). A hand-edited PLO may be sent
+  back. Single `POST /needs/run` also takes `{note_th}` for the whole set.
 - **`llm_usage` has the life of the program's own rows, not of a run.** One row per
   provider response (`LLMUsage`, instructor retries included), attributed by
   `llm_context.llm_scope(program_id=..., job_id=... | session_id=...)`. The scope is set in

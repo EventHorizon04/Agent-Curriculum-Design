@@ -45,6 +45,7 @@ _DENY_NAME_PARTS = (
 _MAX_STR_LEN = 80
 
 _CONSTANT_MODULE_GLOBS = (
+    "stages/need_dedup.py",
     "stages/need_grouping.py",
     "stages/need_merge.py",
     "stages/single_*.py",

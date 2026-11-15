@@ -318,6 +318,8 @@ class PLO(BaseModel):
     smart_diagnosis_th: str | None = None  # the validator's reason, for the designer
     is_optional: bool = False  # PLO from want-dominant Need(s), exempt from the core-Need count
     designer_edited_at: datetime | None = None  # set by PUT /plos/{id} on a changed statement; cleared by nothing but replacing the outcome. Send-back and SMART repair leave such a PLO alone
+    designer_sent_back_at: datetime | None = None  # set when the designer sends the PLO back (POST /plos/send-back, job plo_send_back); the review loop never rewrites it
+    designer_send_back_reason_th: str | None = None  # the designer's reason, carried as the redraft note
 ```
 
 **`SupersededPLO` — history of replaced outcomes.** `POST /plos/from-needs` (and review send-back, `cause=review`) replaces every PLO citing a selected Need; `PLORepository.replace` snapshots each removed row into `superseded_plos` in the same transaction as the delete. Read-only: nothing restores from it.
@@ -329,7 +331,7 @@ class SupersededPLO(BaseModel):
     superseded_by: str       # plo_id of the PLO that replaced it
     superseded_at: datetime  # naive UTC in the DB; "+00:00" in JSON output
     plo: PLO                 # the row as it stood when removed (JSONB snapshot)
-    cause: str | None = None # designer | review; None (older rows) reads as designer
+    cause: str | None = None # designer | review | send_back; None (older rows) reads as designer
 ```
 
 `GET /programs/{id}/plos/superseded` lists newest first (ties by `plo_id`) and skips, with a warning, a snapshot that no longer passes `PLO.model_validate`. The table is cleared with the program's PLOs and cascade-deleted with the program; a full program copy clones it (fresh ids, remapped), `evidence_only` copies none.

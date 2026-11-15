@@ -89,3 +89,8 @@ def test_dirty_tree_is_flagged_at_top() -> None:
     manifest = _manifest()
     manifest["git"] = {**manifest["git"], "dirty": True, "status": " M x.py"}
     assert "DIRTY" in lm.render_markdown(manifest).splitlines()[2]
+
+
+def test_constants_list_max_group_size() -> None:
+    names = {(c["module"], c["name"]) for c in _manifest()["constants"]}
+    assert ("curriculum_agent.stages.need_dedup", "MAX_GROUP_SIZE") in names

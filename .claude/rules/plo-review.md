@@ -230,3 +230,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   ไม่เขียนทับ"; the findings still show as comments. The check order is replaced
   this round, edited since the review, designer-edited, missing. The marker is the
   stored row's own: `stale` is not enough, because a revalidate overwrites it.
+  **A PLO the designer sent back (`designer_sent_back_at`, decision of 2026-11-15, option ก)
+  is guarded the same way:** `unavailable_reason` skips it with its own Thai reason and
+  `PLORepository.replace(cause="review")` refuses it, so a review after a send-back never
+  rewrites it; the findings stay as comments.
