@@ -1,9 +1,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Link } from 'react-router-dom'
-import NextStageLink from '../components/NextStageLink'
+import { Link, useNavigate } from 'react-router-dom'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { SINGLE_NEEDS_PLAN, SKILL_RUN_PLANS } from '../constants/runPlans'
-import { SINGLE_STOP_REASON_TH, ordinalOf } from '../constants/stages'
+import { SINGLE_STOP_REASON_TH, ordinalOf, stagesFor } from '../constants/stages'
 import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
@@ -14,10 +13,14 @@ import NeedCard, { type NeedRow } from './components/NeedCard'
 import { scopeVerdict } from '../constants/scope'
 import { MAX_CORE_PLOS, MAX_MERGE_NEEDS, MIN_CORE_PLOS, fallbackKind } from '../constants/needPolicy'
 import DesignerNote from './components/DesignerNote'
+import type { PLO } from '../types/plo'
 
 /** Agent 2 (or the single agent's Need job). Extraction jobs are not this page's:
  *  these are the runs that change what it lists. */
 const PAGE_KINDS: JobKind[] = ['need_combination', 'single_needs']
+
+/** Multi follows the whole chain the evidence page starts: Agent 1, then Agent 2. */
+const MULTI_KINDS: JobKind[] = ['skill_extraction', 'need_combination']
 
 interface SkillName {
   skill_id: string
@@ -53,6 +56,8 @@ export default function NeedAnalysis() {
   const { programId } = useProgram()
   const mode = useAgentMode(programId)
   const single = mode === 'single'
+  const navigate = useNavigate()
+  const pageKinds = single ? PAGE_KINDS : MULTI_KINDS
   // Every stored Need, merged-away originals included: the merged card shows
   // its originals, and only rows with no `merged_into` are listed as Needs.
   const [allNeeds, setAllNeeds] = useState<NeedRow[]>([])
@@ -74,19 +79,27 @@ export default function NeedAnalysis() {
   const [note, setNote] = useState('')
   // The send-back replaces the whole Need set, so it takes a second press.
   const [confirming, setConfirming] = useState(false)
+  // Approving starts a PLO run; stored PLOs are replaced by it, so it takes a
+  // second press when there are any.
+  const [ploCount, setPloCount] = useState(0)
+  const [confirmingApprove, setConfirmingApprove] = useState(false)
+  const [approving, setApproving] = useState(false)
+  const [approveError, setApproveError] = useState('')
 
-  // Both belong to the program they were typed for.
+  // All of these belong to the program they were typed for.
   useEffect(() => {
     setConfirming(false)
     setNote('')
+    setConfirmingApprove(false)
+    setApproveError('')
   }, [programId])
 
   const { running, latestOf, started, refresh } = useJobs()
-  const mine = running && PAGE_KINDS.includes(running.kind) ? running : null
-  const last = latestOf(PAGE_KINDS)
+  const mine = running && pageKinds.includes(running.kind) ? running : null
+  const last = latestOf(pageKinds)
   // Any job of the program blocks every start button, not just this page's kind:
   // the backend allows one writer per program.
-  const busy = running !== null || starting || acting || merging
+  const busy = running !== null || starting || acting || merging || approving
 
   const fetchAll = useCallback(async () => {
     // The mode decides which routes exist: a single-agent program has no skill
@@ -95,12 +108,15 @@ export default function NeedAnalysis() {
     setLoading(true)
     setError('')
     try {
-      const [needRes, skillRes] = await Promise.all([
+      const [needRes, skillRes, ploRes] = await Promise.all([
         api.get<NeedRow[]>(`/programs/${programId}/needs/?active_only=false`),
         mode === 'single'
           ? Promise.resolve({ data: [] as SkillName[] })
           : api.get<SkillName[]>(`/programs/${programId}/needs/skills`),
+        // Only whether any are stored matters; an unreadable list counts as none.
+        api.get<PLO[]>(`/programs/${programId}/plos/`).catch(() => ({ data: [] as PLO[] })),
       ])
+      setPloCount(ploRes.data.length)
       setAllNeeds(needRes.data)
       // A Need that left the active list (restored ones come back unticked) is
       // dropped from the pick, so a stale tick never survives a reload.
@@ -117,7 +133,7 @@ export default function NeedAnalysis() {
   }, [programId, mode])
 
   // Reload once when an Agent 2 job ends, whichever way it ends.
-  const watch = useReloadOnJobs(PAGE_KINDS, () => void fetchAll())
+  const watch = useReloadOnJobs(pageKinds, () => void fetchAll())
 
   const rerun = useCallback(async () => {
     if (!programId) return
@@ -141,6 +157,25 @@ export default function NeedAnalysis() {
       setStarting(false)
     }
   }, [programId, single, note, watch, started, refresh])
+
+  const approve = useCallback(async () => {
+    if (!programId) return
+    setApproving(true)
+    setApproveError('')
+    try {
+      const job = await startJob(`/programs/${programId}/plos/run`)
+      started(job)
+      navigate(single ? '/plo-synthesis' : '/plo-review')
+    } catch (err: unknown) {
+      const res = (err as { response?: { status?: number; data?: { detail?: unknown } } })?.response
+      const detail = res?.data?.detail
+      setApproveError(typeof detail === 'string' ? detail : 'สร้าง PLO ไม่สำเร็จ')
+      setConfirmingApprove(false)
+      if (res?.status === 409) void refresh()
+    } finally {
+      setApproving(false)
+    }
+  }, [programId, single, started, refresh, navigate])
 
   /** One card action. 404 / 422 / 409 all carry a Thai `detail` that says what
    *  to do next; a 409 means another writer is running, so the job list is stale. */
@@ -299,6 +334,9 @@ export default function NeedAnalysis() {
       ? (last.result as SingleNeedsResult | null)
       : null
   const mergedCount = needs.filter(n => n.merged_from.length > 0).length
+  const stages = stagesFor(mode ?? 'multi')
+  const nextStage = stages[stages.findIndex(st => st.key === 'need_analysis') + 1]
+  const approveBlocked = needs.length === 0 || running !== null || busy
 
   return (
     <div className="max-w-4xl">
@@ -323,7 +361,7 @@ export default function NeedAnalysis() {
       <SingleRunNotes result={lastSingle} />
 
       {mine ? (
-        <RunProgress key={mine.job_id} plan={single ? SINGLE_NEEDS_PLAN : SKILL_RUN_PLANS.needs} since={Date.parse(mine.created_at)} />
+        <RunProgress key={mine.job_id} plan={single ? SINGLE_NEEDS_PLAN : mine.kind === 'skill_extraction' ? SKILL_RUN_PLANS.skills : SKILL_RUN_PLANS.needs} since={Date.parse(mine.created_at)} />
       ) : loading || mode === null ? (
         <LoadingLine />
       ) : needs.length === 0 && excludedNeeds.length === 0 ? (
@@ -440,7 +478,7 @@ export default function NeedAnalysis() {
                   {single ? (
                     <>
                       แล้วกด <span className="font-semibold">ให้ตัวแทนเขียน Need ใหม่</span> —
-                      ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ
+                      ระบบรันใหม่เฉพาะเมื่อกดเท่านั้น
                     </>
                   ) : (
                     <>
@@ -448,7 +486,7 @@ export default function NeedAnalysis() {
                       <Link to="/skill-extraction" className="underline underline-offset-2">
                         สกัดทักษะ
                       </Link>{' '}
-                      — ทั้งโปรแกรมถูกสกัดใหม่ (ระบบไม่รันให้เอง ทุกขั้นต้องผ่านการอนุมัติ)
+                      — ทั้งโปรแกรมถูกสกัดใหม่ (ระบบรันใหม่เฉพาะเมื่อกดเท่านั้น)
                     </>
                   )}
                 </p>
@@ -534,18 +572,50 @@ export default function NeedAnalysis() {
         </>
       )}
 
-      {/* The review gate: approving here is moving on. plo_synthesis drafts one
-          PLO per Need and never reads the skill rows. */}
-      <NextStageLink
-        from="need_analysis"
-        mode={mode ?? 'multi'}
-        ready={needs.length > 0 && mine === null}
-        blockedReason={
-          mine !== null
-            ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ผลลัพธ์การเรียนรู้ ต้องอ่านจาก Need ชุดนี้'
-            : 'ยังไม่มี Need — รวมกลุ่มทักษะเป็น Need ให้เสร็จก่อน'
-        }
-      />
+      {/* The review gate: approving here is moving on, and starts the PLO run.
+          plo_synthesis drafts one PLO per Need and never reads the skill rows. */}
+      <div className="mt-10 flex flex-wrap items-center justify-between gap-3 border-t-[3px] border-double border-hair-strong pt-5">
+        <p className="text-xs text-pencil">
+          <span className="eyebrow mr-1.5">ขั้นถัดไป</span>
+          {confirmingApprove ? 'ชุด PLO เดิมจะถูกแทนที่ด้วยชุดใหม่' : nextStage?.summary}
+        </p>
+        {confirmingApprove ? (
+          <div className="flex gap-2">
+            <button type="button" className="btn btn-sm btn-primary" disabled={approveBlocked} onClick={() => void approve()}>
+              ยืนยันสร้างใหม่
+            </button>
+            <button type="button" className="btn btn-sm btn-secondary" disabled={approving} onClick={() => setConfirmingApprove(false)}>
+              ยกเลิก
+            </button>
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary max-w-full text-left"
+            disabled={approveBlocked}
+            onClick={() => {
+              setApproveError('')
+              if (ploCount > 0) setConfirmingApprove(true)
+              else void approve()
+            }}
+          >
+            อนุมัติ Need และสร้าง PLO
+          </button>
+        )}
+        {ploCount > 0 && (
+          <Link to={single ? '/plo-synthesis' : '/plo-review'} className="link w-full text-sm">
+            ไปหน้า PLO โดยไม่สร้างใหม่
+          </Link>
+        )}
+        {approveBlocked && !approving && (
+          <p className="notice notice-warn w-full">
+            {running !== null
+              ? 'รอให้รันเสร็จก่อน — ขั้นสังเคราะห์ผลลัพธ์การเรียนรู้ ต้องอ่านจาก Need ชุดนี้'
+              : 'ยังไม่มี Need — รวมกลุ่มทักษะเป็น Need ให้เสร็จก่อน'}
+          </p>
+        )}
+        {approveError && <p className="notice notice-error w-full">{approveError}</p>}
+      </div>
     </div>
   )
 }
