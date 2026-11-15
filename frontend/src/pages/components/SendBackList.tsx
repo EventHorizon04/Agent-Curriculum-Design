@@ -29,6 +29,8 @@ const STATUS_TH: Record<SendBackOutcome['status'], { label: string; cls: string 
  *  statement. Used on the PLO checkpoint, with a review or without one. */
 export default function SendBackList({ programId }: { programId: string }) {
   const [plos, setPlos] = useState<PLO[] | null>(null)
+  // The version each PLO had when last read: a rewrite under the same id is a new text.
+  const versions = useRef<Record<string, number>>({})
   const [loadError, setLoadError] = useState(false)
   // plo_id -> reason; a key present means the row is ticked.
   const [picked, setPicked] = useState<Record<string, string>>({})
@@ -50,8 +52,15 @@ export default function SendBackList({ programId }: { programId: string }) {
       setPlos(res.data)
       setLoadError(false)
       // A PLO that left the set (merged, redrafted) can no longer be ticked.
-      const ids = new Set(res.data.map((p) => p.plo_id))
-      setPicked((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(id))))
+      // A PLO rewritten under the same id has a new version; its tick and reason were for the old text.
+      const before = versions.current
+      const now = Object.fromEntries(res.data.map((p) => [p.plo_id, p.version]))
+      versions.current = now
+      setPicked((prev) =>
+        Object.fromEntries(
+          Object.entries(prev).filter(([id]) => id in now && (!(id in before) || before[id] === now[id])),
+        ),
+      )
     } catch {
       if (n === latestRead.current) setLoadError(true)
     }

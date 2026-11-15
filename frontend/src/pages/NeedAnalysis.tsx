@@ -75,6 +75,12 @@ export default function NeedAnalysis() {
   // The send-back replaces the whole Need set, so it takes a second press.
   const [confirming, setConfirming] = useState(false)
 
+  // Both belong to the program they were typed for.
+  useEffect(() => {
+    setConfirming(false)
+    setNote('')
+  }, [programId])
+
   const { running, latestOf, started, refresh } = useJobs()
   const mine = running && PAGE_KINDS.includes(running.kind) ? running : null
   const last = latestOf(PAGE_KINDS)

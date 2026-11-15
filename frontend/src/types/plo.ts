@@ -66,7 +66,7 @@ export interface SupersededPLO {
   superseded_by: string
   /** ISO timestamp with an offset. */
   superseded_at: string
-  /** Who replaced it: the designer's merge, or the review's send-back. Null on rows from before the field: the designer. */
-  cause?: 'designer' | 'review' | null
+  /** Who replaced it: the designer's merge, the review's send-back, or the designer's own send-back. Null on rows from before the field: the designer. */
+  cause?: 'designer' | 'review' | 'send_back' | null
   plo: PLO
 }

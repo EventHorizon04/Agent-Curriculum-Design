@@ -33,11 +33,13 @@ function startedAt(iso: string): string {
  * stage, or reload — so without this the only sign that a program is busy is a
  * 409 from the next thing they try. The dial is the same mark the run screen
  * uses, so "something is being filled in" reads the same in both places. */
-function RunningJobLine({ pathname }: { pathname: string }) {
+function RunningJobLine({ pathname, single }: { pathname: string; single: boolean }) {
   const { running } = useJobs()
   if (!running) return null
 
-  const owner = JOB_PAGE[running.kind]?.path
+  // A single program has no review page: its send-back is on the PLO page.
+  const owner =
+    running.kind === 'plo_send_back' && single ? '/plo-synthesis' : JOB_PAGE[running.kind]?.path
   const start = startedAt(running.created_at)
   return (
     <div className="mt-4 px-4 sm:px-6 lg:px-10">
@@ -128,7 +130,7 @@ export default function StageLayout() {
         {/* Not on the program list or while a new program is being typed: in
             both the stored id is not the program on the screen, and a line
             about it would say a job is running on something not in view. */}
-        {!bare && !creating && <RunningJobLine pathname={pathname} />}
+        {!bare && !creating && <RunningJobLine pathname={pathname} single={program?.agent_mode === 'single'} />}
         {pathname === '/' ? (
           <main className="flex-1">
             <Outlet />

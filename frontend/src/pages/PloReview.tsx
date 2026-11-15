@@ -13,7 +13,7 @@ import { ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import FeedbackTrail from './components/FeedbackTrail'
 import SendBackList from './components/SendBackList'
 import { KIND_TH, OUTCOME_TH, isLoopEnd, jobIsFor, jobsOf, ms } from './components/feedbackJobs'
-import type { SupersededPLO } from '../types/plo'
+import type { PLO, SupersededPLO } from '../types/plo'
 import type {
   FeedbackAction,
   KsecFinding,
@@ -93,7 +93,7 @@ export default function PloReview() {
   const data = read?.programId === programId ? read.response : null
   const [loadError, setLoadError] = useState('')
   // The send-back trail and the history it points into. Secondary: a failed read leaves them empty.
-  const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[]; failed: boolean } | null>(null)
+  const [trail, setTrail] = useState<{ programId: string; feedback: FeedbackAction[]; superseded: SupersededPLO[]; failed: boolean; anySentBack: boolean } | null>(null)
   const [starting, setStarting] = useState(false)
   const [runError, setRunError] = useState<RunError | null>(null)
   const navigate = useNavigate()
@@ -120,7 +120,7 @@ export default function PloReview() {
     setLoadError('')
     try {
       let trailFailed = false
-      const [res, fb, sup] = await Promise.all([
+      const [res, fb, sup, live] = await Promise.all([
         api.get<PLOReviewResponse>(`/programs/${programId}/plos/review`),
         api.get<FeedbackAction[]>(`/programs/${programId}/plos/feedback`).catch(() => {
           trailFailed = true
@@ -130,10 +130,11 @@ export default function PloReview() {
           trailFailed = true
           return { data: [] as SupersededPLO[] }
         }),
+        api.get<PLO[]>(`/programs/${programId}/plos/`).catch(() => ({ data: [] as PLO[] })),
       ])
       if (mineRead === latestRead.current) {
         setRead({ programId, response: res.data })
-        setTrail({ programId, feedback: fb.data, superseded: sup.data, failed: trailFailed })
+        setTrail({ programId, feedback: fb.data, superseded: sup.data, failed: trailFailed, anySentBack: live.data.some((x) => x.designer_sent_back_at) })
       }
     } catch {
       if (mineRead === latestRead.current) {
@@ -257,7 +258,9 @@ export default function PloReview() {
           {data?.stale && (
             <p className="notice notice-warn">
               ชุด PLO เปลี่ยนหลังการตรวจ — ตรวจใหม่ก่อนอนุมัติ
-              <span className="mt-1 block">ข้อที่ส่งกลับจะไม่ถูกระบบตรวจเขียนทับ</span>
+              {trailNow?.anySentBack && (
+                <span className="mt-1 block">ข้อที่ส่งกลับจะไม่ถูกระบบตรวจเขียนทับ</span>
+              )}
             </p>
           )}
 
@@ -280,7 +283,7 @@ export default function PloReview() {
             />
           )}
 
-          <SendBackList programId={programId} />
+          <SendBackList key={programId} programId={programId} />
 
           <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
             <p className="min-w-0 flex-1 text-sm text-pencil">
@@ -341,7 +344,7 @@ export default function PloReview() {
           </div>
         )
       )}
-      {!review && !approving && !mine && !loadError && data !== null && <SendBackList programId={programId} />}
+      {!review && !approving && !mine && !loadError && data !== null && <SendBackList key={programId} programId={programId} />}
     </div>
   )
 }

@@ -13,6 +13,7 @@ import api from '../api/client'
 import { startJob, type JobKind } from '../api/jobs'
 import DesignerNote from './components/DesignerNote'
 import SupersededPlos from './components/SupersededPlos'
+import SendBackList from './components/SendBackList'
 import { plosCiting } from './components/plosCiting'
 import MergeNeedPicker from './components/MergeNeedPicker'
 import { attachBlockedReason, unusedNeedsOf, type PickerNeed } from './components/pickerNeed'
@@ -519,6 +520,12 @@ export default function PloSynthesis() {
             />
           )}
         </>
+      )}
+
+      {single && !loading && plos.length > 0 && (
+        <div className="mt-10">
+          <SendBackList key={programId} programId={programId} />
+        </div>
       )}
 
       {single ? (

@@ -99,9 +99,6 @@ export const PLO_REPORT_PLAN: RunPlan = {
   typical: [5, 30],
 }
 
-/** The set review reads the finished PLOs once; the agent's own loop is bounded
- *  by `plo_review_timeout_seconds` (300s) on the backend, so the usual range
- *  stops well short of it. */
 /** The designer's send-back: the AI rewrites only the PLOs they chose. */
 export const PLO_SEND_BACK_PLAN: RunPlan = {
   title: 'AI กำลังแก้ PLO ที่ส่งกลับ',
@@ -113,6 +110,9 @@ export const PLO_SEND_BACK_PLAN: RunPlan = {
   typical: [30, 300],
 }
 
+/** The set review reads the finished PLOs once; the agent's own loop is bounded
+ *  by `plo_review_timeout_seconds` (300s) on the backend, so the usual range
+ *  stops well short of it. */
 export const PLO_REVIEW_PLAN: RunPlan = {
   title: 'กำลังทบทวนผลลัพธ์การเรียนรู้',
   steps: ['เตรียมข้อมูลชุด PLO', 'agent ตรวจและเช็กข้อสงสัย', 'สรุปข้อเสนอแนะ'],
