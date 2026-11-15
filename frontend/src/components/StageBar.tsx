@@ -36,8 +36,8 @@ export default function StageBar({
 }) {
   if (!creating && !programId) {
     return (
-      <div className={`${SHELL} py-3`} style={SHELL_STYLE}>
-        <p className="mx-auto max-w-5xl px-4 text-sm text-pencil sm:px-6 lg:px-10">
+      <div data-stage-bar className={`${SHELL} px-4 py-3 sm:px-6 lg:px-10`} style={SHELL_STYLE}>
+        <p className="mx-auto w-full max-w-5xl text-sm text-pencil">
           ยังไม่ได้เลือกหลักสูตร{' '}
           <Link to="/my-programs" className="link">
             เลือกจากรายการหลักสูตร
@@ -56,8 +56,8 @@ export default function StageBar({
         .join(' · ')
 
   return (
-    <div className={SHELL} style={SHELL_STYLE}>
-      <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:px-6 lg:px-10">
+    <div data-stage-bar className={`${SHELL} px-4 sm:px-6 lg:px-10`} style={SHELL_STYLE}>
+      <div className="mx-auto flex w-full max-w-5xl flex-wrap items-center gap-x-4 gap-y-1 py-2">
         <div className="flex min-w-0 items-center gap-3">
           <div className="min-w-0">
             {/* Not an h1: the page below owns that. */}

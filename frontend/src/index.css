@@ -66,8 +66,11 @@
 }
 
 @layer base {
-  html {
+  html:has([data-stage-bar]) {
     scroll-padding-top: 7.5rem;
+  }
+  html {
+    scroll-padding-top: 3.5rem;
     -webkit-text-size-adjust: 100%;
   }
 

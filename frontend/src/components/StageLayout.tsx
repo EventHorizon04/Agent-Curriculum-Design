@@ -40,7 +40,8 @@ function RunningJobLine({ pathname }: { pathname: string }) {
   const owner = JOB_PAGE[running.kind]?.path
   const start = startedAt(running.created_at)
   return (
-    <div className="mx-auto mt-4 w-full max-w-5xl px-4 sm:px-6 lg:px-10">
+    <div className="mt-4 px-4 sm:px-6 lg:px-10">
+    <div className="mx-auto w-full max-w-5xl">
     <div
       role="status"
       className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-2xl bg-stamp-wash px-4 py-3 text-sm text-stamp-deep"
@@ -55,6 +56,7 @@ function RunningJobLine({ pathname }: { pathname: string }) {
           ไปที่หน้างานนี้
         </Link>
       )}
+    </div>
     </div>
     </div>
   )

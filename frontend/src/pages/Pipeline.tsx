@@ -19,14 +19,13 @@ interface Session {
 }
 
 /** The graph's interrupt messages are English and fixed (graph.py), and each
- *  one belongs to exactly one checkpoint — so the page says it in Thai from the
+ *  one belongs to exactly one of the graph's three pauses (REVIEW_NODE_STAGE) — so the page says it in Thai from the
  *  stage the session stopped at, and keeps the original for anything it does
  *  not recognise. */
 const CHECKPOINT_TH: Record<string, string> = {
   stakeholder_needs: 'รวบรวมหลักฐานเสร็จแล้ว — ตรวจการจำแนกหลักฐานก่อนสกัดทักษะ',
-  skill_extraction: 'สกัดทักษะเสร็จแล้ว — ตรวจทักษะก่อนวิเคราะห์ความต้องการ',
   need_analysis: 'วิเคราะห์ความต้องการเสร็จแล้ว — ตรวจ Need ที่รวมกันก่อนสังเคราะห์ผลลัพธ์การเรียนรู้',
-  plo_synthesis: 'สังเคราะห์ผลลัพธ์การเรียนรู้เสร็จแล้ว — ตรวจและแก้ PLO ก่อนสร้างรายงานและทบทวนผลลัพธ์การเรียนรู้',
+  plo_review: 'ทบทวนผลลัพธ์การเรียนรู้เสร็จแล้ว — ตรวจและอนุมัติชุด PLO ก่อนสร้างรายงานผลลัพธ์การเรียนรู้',
 }
 
 // A finished, rejected or failed run is a terminal state a person (or the run)

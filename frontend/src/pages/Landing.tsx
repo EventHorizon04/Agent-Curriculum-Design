@@ -112,7 +112,7 @@ export default function Landing() {
         </div>
       </section>
 
-      <section id="steps" className={`${BAND} scroll-mt-16`}>
+      <section id="steps" className={BAND}>
         <div className={WRAP}>
           <h2 className={H2}>ใช้งานใน 4 ขั้น</h2>
           <p className={`${SUB} text-pencil`}>

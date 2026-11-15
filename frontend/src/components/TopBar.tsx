@@ -13,14 +13,14 @@ export default function TopBar({
   const navigate = useNavigate()
   return (
     <header
-      className="sticky top-0 z-40 flex h-12 items-center border-b border-hair text-[0.8125rem]"
+      className="sticky top-0 z-40 flex h-12 items-center border-b border-hair px-4 text-[0.8125rem] sm:px-6 lg:px-10"
       style={{
         background: 'rgb(251 251 253 / 0.8)',
         backdropFilter: 'saturate(180%) blur(20px)',
         WebkitBackdropFilter: 'saturate(180%) blur(20px)',
       }}
     >
-      <div className="mx-auto flex w-full max-w-5xl items-center gap-4 px-4 sm:gap-7 sm:px-6 lg:px-10">
+      <div className="mx-auto flex w-full max-w-5xl items-center gap-4 sm:gap-7">
       <Link to="/" className="min-w-0 truncate font-semibold tracking-tight text-graphite">
         Curriculum Design Agent
       </Link>
