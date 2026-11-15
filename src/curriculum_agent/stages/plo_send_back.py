@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Literal
 
+from fastapi import HTTPException
 from loguru import logger
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -104,6 +105,22 @@ async def send_back_plos(
                 PloSendBackOutcome(plo_id=item.plo_id, status="refused", detail_th=exc.detail_th)
             )
         except RedraftFailed:
+            outcomes.append(
+                PloSendBackOutcome(
+                    plo_id=item.plo_id, status="failed", detail_th=REASON_REDRAFT_FAILED_TH
+                )
+            )
+        except HTTPException as exc:
+            logger.warning(f"send-back: {item.plo_id} failed with HTTP {exc.status_code}")
+            outcomes.append(
+                PloSendBackOutcome(
+                    plo_id=item.plo_id,
+                    status="failed",
+                    detail_th=exc.detail if isinstance(exc.detail, str) else REASON_REDRAFT_FAILED_TH,
+                )
+            )
+        except Exception:
+            logger.exception(f"send-back: {item.plo_id} failed unexpectedly")
             outcomes.append(
                 PloSendBackOutcome(
                     plo_id=item.plo_id, status="failed", detail_th=REASON_REDRAFT_FAILED_TH

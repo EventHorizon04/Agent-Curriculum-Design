@@ -99,3 +99,42 @@ async def test_missing_refused_failed_do_not_stop_later_items(
         ("PLO2", "failed", "AI เขียนข้อนี้ใหม่ไม่สำเร็จ"),
         ("PLO1", "rewritten", ""),
     ]
+
+
+async def test_http_and_generic_errors_fail_one_item_not_the_job(
+    stored: list[PLO], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fastapi import HTTPException
+
+    outcomes = iter(
+        [
+            HTTPException(502, "ไม่ได้ PLO กลับมา"),
+            RuntimeError("provider down"),
+            (_plo("PLO2", ["N2"]), []),
+        ]
+    )
+
+    async def fake_redraft(*args, **kwargs):  # noqa: ANN002, ANN003
+        o = next(outcomes)
+        if isinstance(o, Exception):
+            raise o
+        return o
+
+    monkeypatch.setattr(sb, "redraft_from_needs", fake_redraft)
+    result = await send_back_plos(
+        _program(),
+        "cs-test",
+        _items(("PLO1", "ก"), ("PLO2", "ข")),
+        drafter=AsyncMock(),
+    )
+    # a third item would be needed for the success; reuse PLO1 twice is not allowed
+    # by the request model, but the function itself takes any sequence
+    result2 = await send_back_plos(
+        _program(), "cs-test", _items(("PLO2", "ค")), drafter=AsyncMock()
+    )
+    got = [(o.plo_id, o.status, o.detail_th) for o in result.outcomes]
+    assert got == [
+        ("PLO1", "failed", "ไม่ได้ PLO กลับมา"),
+        ("PLO2", "failed", "AI เขียนข้อนี้ใหม่ไม่สำเร็จ"),
+    ]
+    assert result2.outcomes[0].status == "rewritten"
