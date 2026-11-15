@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
+import ReviewNoteChip from '../components/ReviewNoteChip'
 import { LoadingLine } from '../components/RunProgress'
 import api from '../api/client'
 import type { JobKind } from '../api/jobs'
@@ -343,7 +344,7 @@ export default function PloReport() {
     <div className="space-y-6">
       <header>
         <p className="eyebrow">ขั้นที่ {ordinalOf('plo_report', mode ?? 'multi')}</p>
-        <h1 className="page-title">รายงาน PLO</h1>
+        <h1 className="page-title">รายงานผลลัพธ์การเรียนรู้</h1>
         <p className="mt-1 text-sm text-pencil">
           ชุด PLO ที่อนุมัติแล้ว พร้อมที่มาของแต่ละข้อ — ตรวจให้ครบก่อนส่งออก
         </p>
@@ -674,7 +675,7 @@ function PloRow({
             <ul className="mt-2 space-y-1">
               {softFindings.map((f) => (
                 <li key={f.criterion} className="text-sm text-marker-ink">
-                  <span className="chip chip-marker mr-1.5">ข้อสังเกต</span>
+                  <ReviewNoteChip className="mr-1.5" />
                   {findingLabel(f.criterion)}
                   {f.note_th && <span className="text-pencil"> · {f.note_th}</span>}
                 </li>
@@ -684,7 +685,7 @@ function PloRow({
             <ul className="mt-2 space-y-1">
               {p.soft_flags.map((f) => (
                 <li key={f} className="text-sm text-marker-ink">
-                  <span className="chip chip-marker mr-1.5">ข้อสังเกต</span>
+                  <ReviewNoteChip className="mr-1.5" />
                   {findingLabel(f)}
                 </li>
               ))}

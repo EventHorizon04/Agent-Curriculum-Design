@@ -13,8 +13,8 @@ const DEGREE_OPTIONS = [
 ]
 
 const AGENT_MODE_OPTIONS: { value: AgentMode; label: string }[] = [
-  { value: 'multi', label: 'หลายตัวแทน (4 agents): แต่ละขั้นมีตัวแทนของตัวเอง มีการโหวตและตรวจซ้ำ' },
-  { value: 'single', label: 'ตัวแทนเดียว: LLM ตัวเดียวทำทุกขั้นและตรวจงานตัวเอง' },
+  { value: 'multi', label: 'Multi-agent (4 agents): แต่ละขั้นมีตัวแทนของตัวเอง มีการโหวตและตรวจซ้ำ' },
+  { value: 'single', label: 'Single-agent: LLM ตัวเดียวทำทุกขั้นและตรวจงานตัวเอง' },
 ]
 
 interface FormState {
@@ -167,7 +167,7 @@ export default function Intake() {
     <div className="mx-auto max-w-3xl text-left">
       <div className="mb-6">
         <p className="eyebrow">ขั้นที่ 1</p>
-        <h1 className="page-title">ข้อมูลหลักสูตร</h1>
+        <h1 className="page-title">ข้อมูลพื้นฐานของหลักสูตร</h1>
         <p className="mt-1 text-sm text-pencil">
           {editing
             ? 'ข้อมูลของหลักสูตรที่กำลังทำอยู่ — แก้ไขแล้วกดบันทึกได้'

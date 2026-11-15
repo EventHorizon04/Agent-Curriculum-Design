@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import NextStageLink from '../components/NextStageLink'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { PLO_SYNTHESIS_PLAN, PLO_SYNTHESIS_CODE_ONLY_PLAN, SINGLE_PLOS_PLAN } from '../constants/runPlans'
+import ReviewNoteChip from '../components/ReviewNoteChip'
 import { SINGLE_STOP_REASON_TH, ordinalOf } from '../constants/stages'
 import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
@@ -346,7 +347,7 @@ export default function PloSynthesis() {
     <div>
       <div className="mb-6">
         <p className="eyebrow">ขั้นที่ {ordinalOf('plo_synthesis', mode ?? 'multi')}</p>
-        <h1 className="page-title">{single ? 'ตรวจ PLO' : 'สังเคราะห์ PLO'}</h1>
+        <h1 className="page-title">สังเคราะห์ผลลัพธ์การเรียนรู้</h1>
         <p className="mt-1 text-sm text-pencil">
           {single
             ? 'ตัวแทนเขียน PLO จาก Need ที่อนุมัติและตรวจงานตัวเอง — ตรวจ แก้ไข แล้วอนุมัติที่ขั้นนี้'
@@ -830,6 +831,7 @@ function PLOCard({
           ) : p.soft_flags?.length > 0 ? (
             <div className="mt-1 mb-2 flex flex-wrap items-center gap-1">
               {single && <span className="eyebrow mr-1">ตัวแทนประเมินเอง</span>}
+              <ReviewNoteChip count={p.soft_flags.length} />
               {p.soft_flags.map(f => (
                 <span key={f} className="chip chip-marker">
                   {findingLabel(f)}

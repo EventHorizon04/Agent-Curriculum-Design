@@ -287,7 +287,7 @@ export default function StakeholderNeeds() {
     <div className="mx-auto max-w-3xl space-y-6 text-left">
       <div>
         <p className="eyebrow">ขั้นที่ 2</p>
-        <h1 className="page-title">หลักฐานผู้มีส่วนได้ส่วนเสีย</h1>
+        <h1 className="page-title">ข้อมูลผู้มีส่วนได้ส่วนเสีย</h1>
         <p className="mt-1 text-sm text-pencil">
           เพิ่มหลักฐานจากแหล่งต่างๆ เพื่อใช้ในการสังเคราะห์ PLO
         </p>

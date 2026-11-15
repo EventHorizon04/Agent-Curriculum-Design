@@ -57,11 +57,11 @@ export const isRequirementStakeholder = (value: string): boolean =>
   REQUIREMENT_STAKEHOLDER_TYPES.has(value)
 
 export const KSEC_LABEL: Record<string, string> = {
-  K: 'K · ความรู้',
-  S: 'S · ทักษะ',
-  EC: 'E|C · คุณธรรมและคุณลักษณะ',
-  E: 'E · คุณธรรมจริยธรรม',
-  C: 'C · คุณลักษณะบุคคล',
+  K: 'Knowledge',
+  S: 'Skill',
+  EC: 'Ethics & Character',
+  E: 'Ethics',
+  C: 'Character',
 }
 
 export const KSEC_COLOR: Record<string, string> = {

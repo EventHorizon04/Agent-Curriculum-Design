@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
+import ReviewNoteChip from '../components/ReviewNoteChip'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { PLO_REPORT_PLAN, PLO_REVIEW_PLAN } from '../constants/runPlans'
 import api from '../api/client'
@@ -209,7 +210,7 @@ export default function PloReview() {
     <div className="space-y-6">
       <header>
         <p className="eyebrow">ขั้นที่ 6</p>
-        <h1 className="page-title">ตรวจคุณภาพชุด PLO</h1>
+        <h1 className="page-title">ทบทวนผลลัพธ์การเรียนรู้</h1>
         <p className="mt-1 text-sm text-pencil">
           QA agent อ่าน PLO ทั้งชุดที่ทำเสร็จแล้ว แล้วให้คำแนะนำ — ข้อที่ตรงกันและแก้ได้จะถูกส่งกลับไปแก้ให้ พร้อมบันทึกว่าแก้อะไร
         </p>
@@ -426,7 +427,7 @@ function Overview({ review }: { review: PLOSetReview }) {
             <ul className="mt-2 space-y-1">
               {ksec.flags.map((f) => (
                 <li key={f} className="text-sm text-marker-ink">
-                  <span className="chip chip-marker mr-1.5">ข้อสังเกต</span>
+                  <ReviewNoteChip className="mr-1.5" />
                   {KSEC_FLAG_TH[f] ?? f}
                 </li>
               ))}
@@ -452,7 +453,7 @@ function Overview({ review }: { review: PLOSetReview }) {
             <ul className="mt-2 space-y-1">
               {bloom.flags.map((f) => (
                 <li key={f} className="text-sm text-marker-ink">
-                  <span className="chip chip-marker mr-1.5">ข้อสังเกต</span>
+                  <ReviewNoteChip className="mr-1.5" />
                   {BLOOM_FLAG_TH[f] ?? f}
                 </li>
               ))}

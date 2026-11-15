@@ -22,28 +22,28 @@ export const STAGES: StageDef[] = [
     key: 'intake',
     route: '/intake',
     ordinal: 1,
-    label: 'ข้อมูลหลักสูตร',
+    label: 'Program',
     summary: 'มหาวิทยาลัย คณะ สาขา ระดับปริญญา',
   },
   {
     key: 'stakeholder_needs',
     route: '/stakeholder-needs',
     ordinal: 2,
-    label: 'ความต้องการผู้มีส่วนได้ส่วนเสีย',
+    label: 'Evidence',
     summary: 'เก็บหลักฐานจากสภาวิชาชีพ ผู้ประกอบการ ศิษย์เก่า',
   },
   {
     key: 'skill_extraction',
     route: '/skill-extraction',
     ordinal: 3,
-    label: 'สกัดทักษะ',
+    label: 'Skills',
     summary: 'อ่านหลักฐานเป็นทักษะ แล้วจัดกลุ่มตาม KSEC',
   },
   {
     key: 'need_analysis',
     route: '/need-analysis',
     ordinal: 4,
-    label: 'วิเคราะห์ Need',
+    label: 'Needs',
     summary: 'รวมกลุ่มทักษะเป็น Need และรวม Need ที่ซ้ำกัน',
     gateNote: 'ตรวจและอนุมัติที่ขั้นนี้',
   },
@@ -51,14 +51,14 @@ export const STAGES: StageDef[] = [
     key: 'plo_synthesis',
     route: '/plo-synthesis',
     ordinal: 5,
-    label: 'สังเคราะห์ PLO',
+    label: 'PLO',
     summary: 'หนึ่ง Need เป็นหนึ่ง PLO สูงสุด 10 ข้อหลัก',
   },
   {
     key: 'plo_review',
     route: '/plo-review',
     ordinal: 6,
-    label: 'ตรวจคุณภาพชุด PLO',
+    label: 'Review',
     summary: 'ตรวจทั้งชุด ส่งกลับไปแก้ แล้วผู้ออกแบบอนุมัติ',
     gateNote: 'ตรวจและอนุมัติที่ขั้นนี้',
   },
@@ -66,7 +66,7 @@ export const STAGES: StageDef[] = [
     key: 'plo_report',
     route: '/plo-report',
     ordinal: 7,
-    label: 'รายงาน PLO',
+    label: 'Report',
     summary: 'ชุด PLO สุดท้ายหลังอนุมัติ ย้อนรอยหลักฐาน และส่งออก',
   },
 ]
@@ -75,8 +75,8 @@ export const STAGES: StageDef[] = [
 export type AgentMode = 'multi' | 'single'
 
 export const AGENT_MODE_LABEL_TH: Record<AgentMode, string> = {
-  multi: 'หลายตัวแทน',
-  single: 'ตัวแทนเดียว',
+  multi: 'Multi-agent',
+  single: 'Single-agent',
 }
 
 /** The rail for one mode. A single-agent program has no skill stage and no
@@ -92,7 +92,7 @@ export function stagesFor(mode: AgentMode): StageDef[] {
       ordinal: i + 1,
       ...(s.key === 'plo_synthesis'
         ? {
-            label: 'ตรวจ PLO',
+            label: 'PLO',
             summary: 'ตัวแทนเขียน PLO จาก Need ที่อนุมัติ แล้วผู้ออกแบบตรวจและอนุมัติ',
             gateNote: review?.gateNote,
           }

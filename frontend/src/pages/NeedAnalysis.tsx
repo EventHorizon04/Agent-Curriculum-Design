@@ -296,7 +296,7 @@ export default function NeedAnalysis() {
     <div className="max-w-4xl">
       <div className="mb-6">
         <p className="eyebrow">ขั้นที่ {ordinalOf('need_analysis', mode ?? 'multi')}</p>
-        <h1 className="page-title mb-1">วิเคราะห์ Need</h1>
+        <h1 className="page-title mb-1">วิเคราะห์ความต้องการ</h1>
         <p className="text-sm text-pencil">
           {single
             ? 'Need ที่ตัวแทนเขียนจากหลักฐานโดยตรง — ตรวจและอนุมัติที่ขั้นนี้'
