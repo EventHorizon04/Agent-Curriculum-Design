@@ -18,7 +18,9 @@ const SHELL_STYLE = {
 
 /** Which program every page below is reading and writing, and how far it has
  *  got. Reached-ness comes from the program's own `current_stage`, never from
- *  which page happens to be open. */
+ *  which page happens to be open: the filled pill is the open page the program
+ *  has reached, an outlined pill is an open page it has not reached yet, and
+ *  the `ตรวจ` badge marks a designer checkpoint, not a finished stage. */
 export default function StageBar({
   program,
   programId,
@@ -88,12 +90,14 @@ export default function StageBar({
                   to={stage.route}
                   title={`ขั้นที่ ${stage.ordinal} · ${stage.summary}${stage.gateNote ? ' · ' + stage.gateNote : ''}`}
                   className={[
-                    'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-3 py-1.5 transition-colors',
+                    'inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 transition-colors',
                     current
-                      ? 'bg-graphite text-white'
+                      ? done
+                        ? 'border-transparent bg-graphite text-white'
+                        : 'border-graphite text-graphite'
                       : done
-                        ? 'text-graphite hover:bg-paper'
-                        : 'text-pencil hover:bg-paper',
+                        ? 'border-transparent text-graphite hover:bg-paper'
+                        : 'border-transparent text-pencil hover:bg-paper',
                   ].join(' ')}
                 >
                   {done && !current && (
@@ -102,15 +106,14 @@ export default function StageBar({
                   {stage.label}
                   {done && !current && <span className="sr-only"> — ผ่านแล้ว</span>}
                   {stage.gateNote && <span className="sr-only"> — {stage.gateNote}</span>}
+                  {current && !done && <span className="sr-only"> — ยังไม่ถึงขั้นนี้</span>}
                   {stage.gateNote && (
-                    <svg
-                      viewBox="0 0 16 16"
-                      className={`h-3.5 w-3.5 ${current ? 'text-white' : 'text-stamp'}`}
+                    <span
+                      className="rounded-full bg-marker-wash px-1.5 text-[0.625rem] leading-4 font-medium text-marker-ink"
                       aria-hidden="true"
                     >
-                      <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                      <path d="M5 8.2l2 2 4-4.4" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                    </svg>
+                      ตรวจ
+                    </span>
                   )}
                 </NavLink>
               </li>
