@@ -81,7 +81,8 @@ export default function NeedAnalysis() {
   const [confirming, setConfirming] = useState(false)
   // Approving starts a PLO run; stored PLOs are replaced by it, so it takes a
   // second press when there are any.
-  const [ploCount, setPloCount] = useState(0)
+  // null = not known yet (loading, or the read failed): treated as 'may exist'.
+  const [ploCount, setPloCount] = useState<number | null>(null)
   const [confirmingApprove, setConfirmingApprove] = useState(false)
   const [approving, setApproving] = useState(false)
   const [approveError, setApproveError] = useState('')
@@ -92,6 +93,8 @@ export default function NeedAnalysis() {
     setNote('')
     setConfirmingApprove(false)
     setApproveError('')
+    setPloCount(null)
+    setAllNeeds([])
   }, [programId])
 
   const { running, latestOf, started, refresh } = useJobs()
@@ -113,10 +116,10 @@ export default function NeedAnalysis() {
         mode === 'single'
           ? Promise.resolve({ data: [] as SkillName[] })
           : api.get<SkillName[]>(`/programs/${programId}/needs/skills`),
-        // Only whether any are stored matters; an unreadable list counts as none.
-        api.get<PLO[]>(`/programs/${programId}/plos/`).catch(() => ({ data: [] as PLO[] })),
+        // Only whether any are stored matters; an unreadable list leaves it unknown.
+        api.get<PLO[]>(`/programs/${programId}/plos/`).catch(() => null),
       ])
-      setPloCount(ploRes.data.length)
+      setPloCount(ploRes ? ploRes.data.length : null)
       setAllNeeds(needRes.data)
       // A Need that left the active list (restored ones come back unticked) is
       // dropped from the pick, so a stale tick never survives a reload.
@@ -336,7 +339,7 @@ export default function NeedAnalysis() {
   const mergedCount = needs.filter(n => n.merged_from.length > 0).length
   const stages = stagesFor(mode ?? 'multi')
   const nextStage = stages[stages.findIndex(st => st.key === 'need_analysis') + 1]
-  const approveBlocked = needs.length === 0 || running !== null || busy
+  const approveBlocked = needs.length === 0 || running !== null || busy || loading
 
   return (
     <div className="max-w-4xl">
@@ -595,14 +598,14 @@ export default function NeedAnalysis() {
             disabled={approveBlocked}
             onClick={() => {
               setApproveError('')
-              if (ploCount > 0) setConfirmingApprove(true)
+              if (ploCount !== 0) setConfirmingApprove(true)
               else void approve()
             }}
           >
             อนุมัติ Need และสร้าง PLO
           </button>
         )}
-        {ploCount > 0 && (
+        {ploCount !== 0 && (
           <Link to={single ? '/plo-synthesis' : '/plo-review'} className="link w-full text-sm">
             ไปหน้า PLO โดยไม่สร้างใหม่
           </Link>
