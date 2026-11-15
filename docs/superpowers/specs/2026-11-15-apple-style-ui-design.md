@@ -196,10 +196,25 @@ All landing copy is static; it calls no API.
    and keeps the single-mode summary). `STAGE_LABELS` keeps its "ขั้นที่ N: label" shape with
    the English label. The ordinal moves into the pill's tooltip with the Thai summary
    ("ขั้นที่ 5 · หนึ่ง Need เป็นหนึ่ง PLO …").
-5. **Label scope.** English technical terms apply to constants, the shell, and each page's
-   `h1` title (which matches its stage pill, e.g. "PLO Synthesis", "Need Analysis",
-   "Skill Extraction", "Stakeholder Evidence", "PLO Review", "PLO Report", "Pipeline").
-   Buttons, notices and body sentences inside pages stay as they are.
+5. **Label scope.** English technical terms apply to constants and the shell (top bar,
+   stage pills). Buttons, notices and body sentences inside pages stay as they are.
+   **Page `h1` titles are Thai** (designer's decision, 2026-11-15), taken from the thesis
+   vocabulary of table 3.2 (the four agents: สกัดทักษะ, วิเคราะห์ความต้องการ,
+   สังเคราะห์ผลลัพธ์การเรียนรู้, ทบทวนผลลัพธ์การเรียนรู้; inputs: ข้อมูลพื้นฐานของหลักสูตร,
+   ข้อมูลผู้มีส่วนได้ส่วนเสีย):
+
+   | Route | Stage pill | Page title (h1) |
+   |---|---|---|
+   | `/intake` | Program | ข้อมูลพื้นฐานของหลักสูตร |
+   | `/stakeholder-needs` | Evidence | ข้อมูลผู้มีส่วนได้ส่วนเสีย |
+   | `/skill-extraction` | Skills | สกัดทักษะ |
+   | `/need-analysis` | Needs | วิเคราะห์ความต้องการ |
+   | `/plo-synthesis` | PLO | สังเคราะห์ผลลัพธ์การเรียนรู้ |
+   | `/plo-review` | Review | ทบทวนผลลัพธ์การเรียนรู้ |
+   | `/plo-report` | Report | รายงานผลลัพธ์การเรียนรู้ |
+
+   Titles for Report (not an agent in table 3.2) and the two input pages follow the table's
+   wording; `/pipeline` and `/programs` keep their current Thai titles.
 6. **Fonts.** Loaded from Google Fonts as today (Noto Sans Thai + Sarabun replace the four
    current families). Self-hosting is a separate change if campus networks block it.
 7. **Status stamp.** The session-status stamp drops the rotated double-rule frame and
