@@ -581,9 +581,14 @@ class PLO(BaseModel):
     # but a replacement of the outcome clears it. Agent 4's send-back reads it to
     # leave a hand-written outcome alone. Naive UTC like every column here.
     designer_edited_at: datetime | None = None
+    # Set when the designer sent this PLO back to the AI for a rewrite, with the
+    # note they wrote. Stamped on the rewritten PLO; the automatic review loop
+    # leaves such a PLO alone. Naive UTC like every column here.
+    designer_sent_back_at: datetime | None = None
+    designer_send_back_reason_th: str | None = None
 
     # Sent with its offset because a browser reads a naive ISO string as local time.
-    @field_serializer("designer_edited_at", when_used="json")
+    @field_serializer("designer_edited_at", "designer_sent_back_at", when_used="json")
     def _utc_edited(self, value: datetime | None) -> str | None:
         if value is None:
             return None

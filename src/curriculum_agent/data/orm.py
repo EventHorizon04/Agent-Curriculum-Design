@@ -180,6 +180,8 @@ class PLOTable(Base):
     smart_diagnosis_th: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_optional: Mapped[bool] = mapped_column(Boolean, default=False)
     designer_edited_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    designer_sent_back_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    designer_send_back_reason_th: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class SupersededPLOTable(Base):
