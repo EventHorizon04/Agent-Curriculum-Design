@@ -68,7 +68,7 @@ npm run dev:mock                  # http://localhost:5174 — ข้อมูล
 | React UI (mock) | http://localhost:5174 |
 | API | http://localhost:8000 |
 | API docs (Swagger) | http://localhost:8000/docs |
-| MinIO console | http://localhost:9001 (minioadmin / minioadmin_dev) |
+| MinIO console | http://localhost:9001 (login ด้วย `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` ใน `.env` — ค่าเริ่มต้นดู `.env.example`) |
 
 ## Stop
 
