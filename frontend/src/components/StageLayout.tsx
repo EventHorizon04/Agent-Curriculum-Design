@@ -155,7 +155,7 @@ function RailLink({ to, label, note }: { to: string; label: string; note: string
   return (
     <NavLink
       to={to}
-      end={to === '/'}
+      end={to === '/programs'}
       className={({ isActive }) =>
         [
           'block rounded-[3px] px-3 py-1.5 text-sm text-graphite transition-colors',
@@ -212,7 +212,7 @@ function ProgramBar({
       <div className="border-b border-hair bg-sheet px-4 py-3 sm:px-6 lg:px-10">
         <p className="text-sm text-pencil">
           ยังไม่ได้เลือกหลักสูตร{' '}
-          <NavLink to="/" className="link">
+          <NavLink to="/programs" className="link">
             เลือกจากรายการหลักสูตร
           </NavLink>
         </p>
@@ -314,7 +314,7 @@ export default function StageLayout() {
   // reading "หลักสูตรที่กำลังทำงาน" above a table of every program says the
   // designer is inside one while they are standing outside all of them — and it
   // is the one page that shows which is selected on its own row.
-  const picking = pathname === '/'
+  const picking = pathname === '/' || pathname === '/programs'
 
   // Re-read on navigation: approving a checkpoint on one page moves the program
   // forward, and the rail has to show that without a reload. The shell degrades
@@ -366,7 +366,7 @@ export default function StageLayout() {
         </div>
 
         <div className="mt-4 space-y-0.5 border-t border-hair px-3 pt-4">
-          <RailLink to="/" label="หลักสูตรทั้งหมด" note="เลือกหลักสูตรที่จะทำงานด้วย" />
+          <RailLink to="/programs" label="หลักสูตรทั้งหมด" note="เลือกหลักสูตรที่จะทำงานด้วย" />
           {program?.agent_mode !== 'single' && (
             <RailLink to="/pipeline" label="รันทั้งชุด" note="รันต่อเนื่องและอนุมัติทีละขั้น" />
           )}

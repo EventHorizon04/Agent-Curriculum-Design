@@ -328,7 +328,7 @@ export default function PloSynthesis() {
     return (
       <div className="panel mx-auto max-w-2xl border-dashed px-6 py-12 text-center">
         <p className="mb-3 text-pencil">ยังไม่ได้เลือกโปรแกรม</p>
-        <Link to="/" className="link">ไปหน้า Intake</Link>
+        <Link to="/programs" className="link">เลือกหลักสูตร</Link>
       </div>
     )
   }

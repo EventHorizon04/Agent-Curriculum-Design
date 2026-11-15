@@ -405,7 +405,7 @@ export default function Pipeline() {
       {!programId && (
         <p className="notice notice-error">
           ยังไม่ได้เลือกหลักสูตร —{' '}
-          <Link to="/" className="font-medium underline underline-offset-2">
+          <Link to="/programs" className="font-medium underline underline-offset-2">
             เลือกจากรายการหลักสูตร
           </Link>
         </p>

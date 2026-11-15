@@ -281,7 +281,7 @@ export default function NeedAnalysis() {
     return (
       <div className="mx-auto max-w-2xl py-16 text-center">
         <p className="mb-4 text-pencil">ยังไม่ได้เลือกโปรแกรม</p>
-        <Link to="/" className="link">ไปหน้า Intake</Link>
+        <Link to="/programs" className="link">เลือกหลักสูตร</Link>
       </div>
     )
   }
