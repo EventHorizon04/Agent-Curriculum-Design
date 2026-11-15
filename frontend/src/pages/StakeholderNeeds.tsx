@@ -89,7 +89,11 @@ export default function StakeholderNeeds() {
           return
         }
       } catch {
-        // An unreadable lock does not block: the API refuses what it must.
+        // POST /needs/run does not check the lock itself, so an unreadable
+        // lock must stop the start rather than let it through.
+        setStartError('ตรวจสถานะหลักฐานไม่สำเร็จ — ลองอีกครั้ง')
+        setConfirmingStart(false)
+        return
       }
       const job = await startJob(`/programs/${programId}/needs/run`)
       started(job)
