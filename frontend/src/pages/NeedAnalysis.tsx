@@ -72,6 +72,8 @@ export default function NeedAnalysis() {
   const [mergeReason, setMergeReason] = useState('')
   const [mergeError, setMergeError] = useState('')
   const [note, setNote] = useState('')
+  // The send-back replaces the whole Need set, so it takes a second press.
+  const [confirming, setConfirming] = useState(false)
 
   const { running, latestOf, started, refresh } = useJobs()
   const mine = running && PAGE_KINDS.includes(running.kind) ? running : null
@@ -118,11 +120,11 @@ export default function NeedAnalysis() {
     setActionError(null)
     setMergeError('')
     try {
+      const noteBody = { note_th: note.trim() || null }
       const job = single
-        ? await startJob(`/programs/${programId}/needs/run`)
-        : await startJob(`/programs/${programId}/needs/combine/run`, {
-            note_th: note.trim() || null,
-          })
+        ? await startJob(`/programs/${programId}/needs/run`, noteBody)
+        : await startJob(`/programs/${programId}/needs/combine/run`, noteBody)
+      setConfirming(false)
       watch(job)
       started(job)
     } catch (err: unknown) {
@@ -324,6 +326,9 @@ export default function NeedAnalysis() {
           {single ? (
             <>
               <p className="mb-6 text-sm text-pencil">ยังไม่มี Need — ให้ตัวแทนอ่านหลักฐานแล้วเขียน Need</p>
+              <div className="mx-auto mb-2 max-w-md">
+                <DesignerNote value={note} onChange={setNote} />
+              </div>
               <button onClick={rerun} disabled={busy} className="btn btn-primary">
                 ให้ตัวแทนเขียน Need
               </button>
@@ -347,20 +352,32 @@ export default function NeedAnalysis() {
         </div>
       ) : (
         <>
-          {!single && <DesignerNote value={note} onChange={setNote} disabled={busy} />}
+          <DesignerNote value={note} onChange={setNote} disabled={busy} />
           <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
-            <button
-              onClick={rerun}
-              disabled={busy}
-              title={
-                single
-                  ? 'ให้ตัวแทนอ่านหลักฐานแล้วเขียน Need ใหม่'
-                  : 'รวมกลุ่มทักษะที่มีอยู่เป็น Need ใหม่ (ไม่สกัดทักษะซ้ำ)'
-              }
-              className="btn btn-sm btn-secondary"
-            >
-              {single ? 'ให้ตัวแทนเขียน Need ใหม่' : 'รวม Need ใหม่'}
-            </button>
+            {confirming ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm text-graphite">ชุด Need ปัจจุบันจะถูกแทนที่ด้วยชุดใหม่</span>
+                <button onClick={rerun} disabled={busy} className="btn btn-sm btn-primary">
+                  ยืนยันส่งกลับ
+                </button>
+                <button onClick={() => setConfirming(false)} disabled={busy} className="btn btn-sm btn-secondary">
+                  ยกเลิก
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConfirming(true)}
+                disabled={busy}
+                title={
+                  single
+                    ? 'ให้ตัวแทนอ่านหลักฐานแล้วเขียน Need ใหม่ ตามหมายเหตุที่เขียนไว้'
+                    : 'รวมกลุ่มทักษะที่มีอยู่เป็น Need ใหม่ ตามหมายเหตุที่เขียนไว้ (ไม่สกัดทักษะซ้ำ)'
+                }
+                className="btn btn-sm btn-secondary"
+              >
+                ส่งกลับให้ AI ทำใหม่
+              </button>
+            )}
             <p className="max-w-sm text-xs text-pencil">
               {single
                 ? 'รันใหม่จะล้างการรวมและการตัดออกที่ทำด้วยมือ'

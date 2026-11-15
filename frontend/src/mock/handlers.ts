@@ -588,6 +588,7 @@ const JOB_LABEL_TH: Record<JobKind, string> = {
   plo_revalidate: 'ตรวจ SMART ซ้ำ',
   single_needs: 'วิเคราะห์ Need (single agent)',
   single_plos: 'สังเคราะห์ PLO (single agent)',
+  plo_send_back: 'ส่งกลับ PLO ให้ AI แก้',
 }
 
 /** Which slots a job of each kind calls (config.py SLOTS), with a rough call
@@ -603,6 +604,7 @@ const JOB_SLOTS: Record<JobKind, Array<[string, number]>> = {
   // One agent, so one slot: its turns are model calls.
   single_needs: [['extraction', 30]],
   single_plos: [['plo_synthesis', 20]],
+  plo_send_back: [['plo_synthesis', 2], ['validation', 2]],
 }
 
 function addTotals(a: UsageTotals, b: UsageTotals): UsageTotals {
@@ -851,6 +853,7 @@ function reviewJobSpec(pid: string): MockJob {
       // Built when the job finishes, from the set as it is by then, and stored
       // the way the real run replaces the previous review.
       const db = getDb()
+      db.reviewStale = (db.reviewStale ?? []).filter((id) => id !== pid)
       const degree = db.programs.find((p) => p.program_id === pid)?.degree_level ?? 'bachelor'
       const review = buildMockReview(pid, of(db.plos, pid), of(db.needs, pid), degree)
       db.reviews = [...(db.reviews ?? []).filter((x) => x.program_id !== pid), review]
@@ -1263,11 +1266,11 @@ export function buildRouter(): Router {
 
   /** `single_needs`: one agent reads the evidence and writes the Needs. Stores no
    *  skills; the result says how the run ended and what it left unread. */
-  const singleNeedsJob = (pid: string): MockResponse =>
+  const singleNeedsJob = (pid: string, note: string | null = null): MockResponse =>
     startJob({
       pid,
       kind: 'single_needs',
-      params: {},
+      params: { note_th: note },
       failure: runFailureText('need_combination'),
       work: () => {
         const needs = singleAgentNeeds(pid, of(getDb().evidence, pid))
@@ -1289,7 +1292,7 @@ export function buildRouter(): Router {
     const pid = req.params.pid
     const refused = extractionPrecondition(pid)
     if (refused) return refused
-    if (isSingle(pid)) return singleNeedsJob(pid)
+    if (isSingle(pid)) return singleNeedsJob(pid, body<{ note_th: string }>(req).note_th ?? null)
     return startJob({
       pid,
       kind: 'skill_extraction',
@@ -1338,7 +1341,7 @@ export function buildRouter(): Router {
     if (!findProgram(pid)) return detail(404, 'Program not found')
     if (isSingle(pid)) {
       const refused = extractionPrecondition(pid)
-      return refused ?? singleNeedsJob(pid)
+      return refused ?? singleNeedsJob(pid, body<{ note_th: string }>(req).note_th ?? null)
     }
     if (!of(getDb().skills, pid).length) {
       return detail(422, 'ยังไม่มีทักษะที่สกัดไว้ กรุณารัน Skill Extraction ก่อน')
@@ -1534,7 +1537,7 @@ export function buildRouter(): Router {
    *  reports it stale — nothing here fingerprints the set. */
   r.get('/programs/:pid/plos/review', (req) => {
     const review = (getDb().reviews ?? []).find((x) => x.program_id === req.params.pid) ?? null
-    return ok({ review, stale: false, review_enabled: true })
+    return ok({ review, stale: (getDb().reviewStale ?? []).includes(req.params.pid), review_enabled: true })
   })
 
   r.post('/programs/:pid/plos/review/run', (req) => {
@@ -1543,6 +1546,54 @@ export function buildRouter(): Router {
       return detail(422, 'ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน')
     }
     return startJob(reviewJobSpec(pid))
+  })
+
+  /** The designer's send-back: the AI rewrites only the PLOs chosen, each for the
+   *  reason given. The mock marks a rewritten statement visibly, and a reason
+   *  containing "ทดสอบปฏิเสธ" is refused, so both outcomes can be seen. */
+  r.post('/programs/:pid/plos/send-back', (req) => {
+    const pid = req.params.pid
+    if (!findProgram(pid)) return detail(404, 'Program not found')
+    const items = body<{ items: Array<{ plo_id?: string; reason_th?: string }> }>(req).items ?? []
+    if (items.length === 0) return detail(422, 'เลือก PLO อย่างน้อย 1 ข้อเพื่อส่งกลับ')
+    if (items.some((i) => !i.plo_id || !(i.reason_th ?? '').trim())) {
+      return detail(422, 'ต้องเขียนเหตุผลที่ส่งกลับทุกข้อ')
+    }
+    if (new Set(items.map((i) => i.plo_id)).size !== items.length) {
+      return detail(422, 'เลือก PLO ซ้ำกันในคำขอเดียว')
+    }
+    return startJob({
+      pid,
+      kind: 'plo_send_back',
+      params: { plo_ids: items.map((i) => i.plo_id) },
+      failure: 'ส่งกลับ PLO ไม่สำเร็จ',
+      work: () => {
+        const db = getDb()
+        const at = utcIso()
+        const outcomes = items.map((item) => {
+          const plo = of(db.plos, pid).find((p) => p.plo_id === item.plo_id)
+          const reason = (item.reason_th ?? '').trim()
+          if (!plo) {
+            return { plo_id: item.plo_id as string, status: 'refused' as const, detail_th: 'ไม่พบ PLO นี้ในชุดแล้ว — ไม่ได้เขียนอะไร', result_plo_id: null, result_statement_th: null }
+          }
+          if (reason.includes('ทดสอบปฏิเสธ')) {
+            return { plo_id: plo.plo_id, status: 'refused' as const, detail_th: 'Need ต้นทางถูกตัดออกหรือรวมไปแล้ว — ร่างข้อนี้ใหม่ไม่ได้ คงข้อความเดิมไว้', result_plo_id: null, result_statement_th: null }
+          }
+          const base = plo.statement_th.replace(/^\[แก้ตามที่ส่งกลับ\]\s*/, '')
+          plo.statement_th = `[แก้ตามที่ส่งกลับ] ${base}`
+          plo.designer_sent_back_at = at
+          plo.designer_send_back_reason_th = reason
+          plo.version += 1
+          return { plo_id: plo.plo_id, status: 'rewritten' as const, detail_th: 'ร่างใหม่ผ่านเกณฑ์ SMART', result_plo_id: plo.plo_id, result_statement_th: plo.statement_th }
+        })
+        // A multi program's review no longer describes the set: approval waits
+        // for a new review. A single program has none.
+        if (!isSingle(pid) && outcomes.some((o) => o.status === 'rewritten')) {
+          db.reviewStale = [...new Set([...(db.reviewStale ?? []), pid])]
+        }
+        return ok({ outcomes })
+      },
+    })
   })
 
   r.post(

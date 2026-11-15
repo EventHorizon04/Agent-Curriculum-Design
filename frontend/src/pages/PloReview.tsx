@@ -11,6 +11,7 @@ import { startJob, type JobKind } from '../api/jobs'
 import { BLOOM_ORDER, bloomLabel } from '../constants/bloom'
 import { ksecLabel, stakeholderLabel } from '../constants/stakeholder'
 import FeedbackTrail from './components/FeedbackTrail'
+import SendBackList from './components/SendBackList'
 import { KIND_TH, OUTCOME_TH, isLoopEnd, jobIsFor, jobsOf, ms } from './components/feedbackJobs'
 import type { SupersededPLO } from '../types/plo'
 import type {
@@ -31,6 +32,8 @@ const RELOAD_KINDS: JobKind[] = [
   'plo_report',
   'plo_synthesis',
   'plo_revalidate',
+  'plo_send_back',
+  'single_plos',
   'needs_pipeline',
   'skill_extraction',
   'need_combination',
@@ -252,7 +255,10 @@ export default function PloReview() {
           )}
 
           {data?.stale && (
-            <p className="notice notice-warn">ชุด PLO เปลี่ยนหลังการตรวจ — ตรวจใหม่ก่อนอนุมัติ</p>
+            <p className="notice notice-warn">
+              ชุด PLO เปลี่ยนหลังการตรวจ — ตรวจใหม่ก่อนอนุมัติ
+              <span className="mt-1 block">ข้อที่ส่งกลับจะไม่ถูกระบบตรวจเขียนทับ</span>
+            </p>
           )}
 
           {(review.runs_requested ?? 1) > 1 && runsOf(review) === 1 && (
@@ -273,6 +279,8 @@ export default function PloReview() {
               review={review}
             />
           )}
+
+          <SendBackList programId={programId} />
 
           <div className="panel flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4">
             <p className="min-w-0 flex-1 text-sm text-pencil">
@@ -333,6 +341,7 @@ export default function PloReview() {
           </div>
         )
       )}
+      {!review && !approving && !mine && !loadError && data !== null && <SendBackList programId={programId} />}
     </div>
   )
 }

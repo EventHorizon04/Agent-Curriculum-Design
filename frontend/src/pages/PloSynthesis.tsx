@@ -71,6 +71,7 @@ const RELOAD_KINDS: JobKind[] = [
   'need_combination',
   'single_needs',
   'single_plos',
+  'plo_send_back',
 ]
 /** The approval's report job: only a single-agent page starts one here. */
 const SINGLE_RELOAD_KINDS: JobKind[] = [...RELOAD_KINDS, 'plo_report']
@@ -785,6 +786,11 @@ function PLOCard({
                 แก้ตามผลตรวจ
               </Link>
             )}
+            {p.designer_sent_back_at && (
+              <span className="chip chip-marker" title={p.designer_send_back_reason_th ?? undefined}>
+                ส่งกลับโดยผู้ออกแบบ
+              </span>
+            )}
             {p.smart_escalated && (
               <span className="chip bg-mandate font-semibold whitespace-normal text-sheet">
                 ไม่ผ่าน SMART หลังแก้ {p.smart_retry_count} รอบ — ต้องแก้ด้วยมือ
@@ -856,6 +862,11 @@ function PLOCard({
           ) : (
             <div>
               <p className="record">{p.statement_th}</p>
+              {p.designer_sent_back_at && p.designer_send_back_reason_th && (
+                <p className="mt-1 text-sm text-marker-ink">
+                  เหตุผลที่ส่งกลับ: {p.designer_send_back_reason_th}
+                </p>
+              )}
               {p.statement_en && (
                 <p className="mt-1 text-sm italic text-pencil">{p.statement_en}</p>
               )}

@@ -51,6 +51,10 @@ export interface PLO {
   is_optional: boolean
   /** ISO timestamp (+00:00) of the designer's last hand edit; null when none. */
   designer_edited_at?: string | null
+  /** ISO timestamp (+00:00) of the designer's send-back to the AI; null when none. */
+  designer_sent_back_at?: string | null
+  /** The reason the designer gave when sending it back. */
+  designer_send_back_reason_th?: string | null
 }
 
 /** A PLO a merge replaced, kept so the designer can see what it said. The live

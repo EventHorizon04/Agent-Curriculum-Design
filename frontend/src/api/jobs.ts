@@ -12,6 +12,7 @@ export type JobKind =
   | 'plo_revalidate'
   | 'single_needs' // single-agent program: one agent reads evidence and writes Needs
   | 'single_plos' // single-agent program: one agent writes the PLOs
+  | 'plo_send_back' // the designer's send-back of chosen PLOs to the AI
 
 export type JobStatus = 'running' | 'succeeded' | 'failed'
 
@@ -44,6 +45,7 @@ export const JOB_PAGE: Record<JobKind, { path: string }> = {
   plo_report: { path: '/plo-report' },
   single_needs: { path: '/need-analysis' },
   single_plos: { path: '/plo-synthesis' },
+  plo_send_back: { path: '/plo-review' },
 }
 
 /** Start a stage run. The route answers 202 with the job it has just recorded,
