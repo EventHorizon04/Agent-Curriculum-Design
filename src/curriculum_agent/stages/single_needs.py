@@ -77,8 +77,14 @@ def program_context_for(program: ProgramMetadata) -> str:
 class NeedsHandler:
     """Holds the Need drafts and keeps the tool context current. Implements TaskHandler."""
 
-    def __init__(self, program: ProgramMetadata, evidence: list[StakeholderEvidence]) -> None:
+    def __init__(
+        self,
+        program: ProgramMetadata,
+        evidence: list[StakeholderEvidence],
+        note_th: str | None = None,
+    ) -> None:
         self._program = program
+        self._note_th = note_th
         self._evidence = list(evidence)
         self._type_by_evidence = {e.evidence_id: e.stakeholder_type for e in evidence}
         self._source_by_evidence = {e.evidence_id: e.source_name for e in evidence}
@@ -108,6 +114,7 @@ class NeedsHandler:
             program_context=program_context_for(self._program),
             scope_th=self._program.scope_th or None,
             evidence_index=rows,
+            note_th=self._note_th,
         )
 
     def note_for(self, evidence_id: str) -> str | None:
@@ -277,7 +284,7 @@ def build_single_needs(
     return needs
 
 
-async def run_single_needs(program_id: str) -> SingleNeedsResult:
+async def run_single_needs(program_id: str, note_th: str | None = None) -> SingleNeedsResult:
     program = await ProgramRepository().get(program_id)
     if program is None:
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตร")
@@ -288,7 +295,7 @@ async def run_single_needs(program_id: str) -> SingleNeedsResult:
             detail="ยังไม่มีหลักฐานผู้มีส่วนได้ส่วนเสีย กรุณาเพิ่มหลักฐานก่อนสร้าง Need",
         )
 
-    handler = NeedsHandler(program, evidence)
+    handler = NeedsHandler(program, evidence, note_th=note_th)
     outcome = await run_single_agent(handler)
 
     drafts = handler.drafts()

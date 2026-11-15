@@ -426,6 +426,7 @@ def build_needs_task(
     program_context: str,
     scope_th: str | None,
     evidence_index: Sequence[EvidenceIndexRow],
+    note_th: str | None = None,
 ) -> str:
     """Opening message of the needs task: the program, and every evidence item by id.
 
@@ -452,7 +453,7 @@ def build_needs_task(
         "เมื่ออ่านครบทุกรายการแล้วจึงเขียน Need ด้วย save_need ทบทวนทั้งชุด แล้ว finish "
         "เริ่มที่ get_evidence ของรายการแรก"
     )
-    return "\n".join(lines)
+    return append_note("\n".join(lines), note_th)
 
 
 def build_plos_task(

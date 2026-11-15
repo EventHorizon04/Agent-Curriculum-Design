@@ -416,15 +416,15 @@ async def _start_need_job(
     return await starter(program_id, "need_combination", params, work)
 
 
-async def _start_single_needs(program_id: str) -> JobInfo:
+async def _start_single_needs(program_id: str, note_th: str | None = None) -> JobInfo:
     """The single-agent needs half as one job. Chains nothing: there is no
     need_combination to follow, and PLOs are left alone like a multi re-run."""
     from curriculum_agent.stages.single_needs import run_single_needs  # noqa: PLC0415
 
     async def work() -> SingleNeedsResult:
-        return await run_single_needs(program_id)
+        return await run_single_needs(program_id, note_th)
 
-    return await start_job_or_409(program_id, "single_needs", {}, work)
+    return await start_job_or_409(program_id, "single_needs", {"note_th": note_th}, work)
 
 
 @router.post(
@@ -440,7 +440,7 @@ async def run_need_pipeline(program_id: str, body: DesignerNoteRequest | None = 
     """
     state = await _build_stage_state(program_id, body)
     if state["metadata"].get("agent_mode") == "single":
-        return await _start_single_needs(program_id)
+        return await _start_single_needs(program_id, body.note_th if body else None)
 
     async def chain() -> None:
         try:
@@ -501,7 +501,7 @@ async def run_need_combination(program_id: str, body: DesignerNoteRequest | None
                 status_code=422,
                 detail="ไม่มี evidence สำหรับโปรแกรมนี้ กรุณาเพิ่ม evidence ก่อน",
             )
-        return await _start_single_needs(program_id)
+        return await _start_single_needs(program_id, body.note_th if body else None)
     if not await SkillRepository().list_by_program(program_id):
         raise HTTPException(
             status_code=422,
