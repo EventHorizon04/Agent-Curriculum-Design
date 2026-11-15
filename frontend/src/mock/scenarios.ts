@@ -763,6 +763,27 @@ export function combineNeeds(
   return sortNeeds(mergeMockDuplicates(needs, idFor(`${programId}:need:merged`)))
 }
 
+/**
+ * The Needs a single-agent run writes: the agent reads the evidence itself, so a
+ * Need has no member skills and cites evidence directly, and `freq` counts the
+ * evidence items it cites. The mock reuses the skill pass in memory to know what
+ * the evidence says, and stores none of the skills.
+ */
+export function singleAgentNeeds(
+  programId: string,
+  evidence: EvidenceRow[],
+  idFor: (key: string) => string = () => newId(),
+): NeedRow[] {
+  const { skills } = extractSkills(programId, evidence, idFor)
+  return combineNeeds(programId, skills, idFor).map((n) => ({
+    ...n,
+    origin: 'single' as const,
+    member_skill_ids: [],
+    top_skill_ids: [],
+    freq: n.source_evidence_ids.length,
+  }))
+}
+
 /** is_optional_group: a mandate makes a group core, a group of nothing but
  *  unclassified members is optional, otherwise one evidence item is optional. */
 function isOptionalGroup(classCoverage: Record<string, number>, evidenceCount: number): boolean {
@@ -1237,6 +1258,24 @@ function session(
   }
 }
 
+/** A single-agent program: evidence, and the Needs and PLOs one agent wrote from it.
+ *  No skills are stored and no review exists; its PLOs say they were judged by
+ *  the agent itself. */
+function seedSingleAgent(db: MockDb, programId: string, createdAt: string): void {
+  db.programs.push({
+    ...translationProgram(programId, createdAt),
+    field: 'การแปลและล่าม',
+    agent_mode: 'single',
+  })
+  const evidence = evidenceFromSeeds(programId, TRANSLATION_EVIDENCE, createdAt)
+  db.evidence.push(...evidence)
+  const needs = singleAgentNeeds(programId, evidence, fakeUuid)
+  db.needs.push(...needs)
+  const plos = synthesizePlos(programId, needs, [])
+  for (const plo of plos) plo.smart_validated_by = 'single_agent'
+  db.plos.push(...plos)
+}
+
 /** The translation programme up to and including its Needs. */
 function seedTranslation(db: MockDb, programId: string, createdAt: string): void {
   db.programs.push(translationProgram(programId, createdAt))
@@ -1453,6 +1492,9 @@ function seedMany(): MockDb {
       target: 1,
     }),
   )
+
+  // One agent wrote the Needs and PLOs: the single-agent rail and checkpoint.
+  seedSingleAgent(db, 'program-single', '2026-10-20T03:00:00')
 
   // Created, nothing else yet.
   db.programs.push(

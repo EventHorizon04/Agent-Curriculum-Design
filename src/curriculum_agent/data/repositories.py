@@ -245,6 +245,7 @@ class ProgramRepository:
                 ),
                 session_status=(latest[p.program_id].status if p.program_id in latest else None),
                 copied_from=p.copied_from,
+                agent_mode=p.agent_mode,
             )
             for p in prog_rows
         ]
@@ -480,6 +481,19 @@ class NeedRepository:
             await session.commit()
             return result.rowcount
 
+    async def replace_by_program(self, program_id: str, needs: list[Need]) -> None:
+        """Delete this program's Needs and insert `needs`, in one session and one commit.
+
+        `delete_by_program` + `bulk_insert` are two commits: a failure between them
+        leaves the program with no Needs. Here a failed insert rolls the delete back.
+        """
+        async with AsyncSessionLocal() as session:
+            await session.execute(delete(NeedTable).where(NeedTable.program_id == program_id))
+            for need in needs:
+                data = _fix_datetimes(need.model_dump(mode="json"), NeedTable)
+                session.add(NeedTable(**data))
+            await session.commit()
+
     async def has_any(self, program_id: str) -> bool:
         async with AsyncSessionLocal() as session:
             result = await session.execute(
@@ -606,23 +620,40 @@ class PLORepository:
         re-run starts clean.
         """
         async with AsyncSessionLocal() as session:
-            await session.execute(
-                delete(SupersededPLOTable).where(SupersededPLOTable.program_id == program_id)
-            )
-            await session.execute(
-                delete(PLOFeedbackActionTable).where(
-                    PLOFeedbackActionTable.program_id == program_id
-                )
-            )
-            await session.execute(
-                delete(PLOReportTable).where(PLOReportTable.program_id == program_id)
-            )
-            result = cast(
-                CursorResult[Any],
-                await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id)),
-            )
+            removed = await self._delete_program_rows(session, program_id)
             await session.commit()
-            return result.rowcount
+            return removed
+
+    async def replace_by_program(self, program_id: str, plos: list[PLO]) -> int:
+        """`delete_by_program` + `bulk_insert` in one session and one commit.
+
+        Two commits leave a program with no PLOs (and no history or report) if the
+        insert fails between them; here a failed insert rolls the delete back.
+        Returns the number of PLO rows removed.
+        """
+        async with AsyncSessionLocal() as session:
+            removed = await self._delete_program_rows(session, program_id)
+            for plo in plos:
+                session.add(PLOTable(**_plo_row_data(plo)))
+            await session.commit()
+            return removed
+
+    @staticmethod
+    async def _delete_program_rows(session: AsyncSession, program_id: str) -> int:
+        await session.execute(
+            delete(SupersededPLOTable).where(SupersededPLOTable.program_id == program_id)
+        )
+        await session.execute(
+            delete(PLOFeedbackActionTable).where(PLOFeedbackActionTable.program_id == program_id)
+        )
+        await session.execute(
+            delete(PLOReportTable).where(PLOReportTable.program_id == program_id)
+        )
+        result = cast(
+            CursorResult[Any],
+            await session.execute(delete(PLOTable).where(PLOTable.program_id == program_id)),
+        )
+        return result.rowcount
 
     async def bulk_insert(self, plos: list[PLO]) -> None:
         async with AsyncSessionLocal() as session:

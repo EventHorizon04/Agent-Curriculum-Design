@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,6 +32,7 @@ from curriculum_agent.models import (
     JobInfo,
     Need,
     PLOSetReview,
+    ProgramMetadata,
     SMARTCheck,
     StakeholderEvidence,
     SupersededPLO,
@@ -38,6 +40,8 @@ from curriculum_agent.models import (
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused, redraft_from_needs
 from curriculum_agent.stages.plo_review_facts import is_stale, need_demands, plo_fingerprint
+from curriculum_agent.stages.single_plos import SinglePlosResult
+from curriculum_agent.stages.smart_agent_tools import SiblingSummary
 
 router = APIRouter()
 _repo = PLORepository()
@@ -271,6 +275,17 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
             detail="ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน",
         )
 
+    if metadata.agent_mode == "single":
+        from curriculum_agent.stages.single_plos import run_single_plos  # noqa: PLC0415
+
+        note_th = body.note_th if body else None
+
+        async def single_work() -> SinglePlosResult:
+            return await run_single_plos(program_id, note_th=note_th)
+
+        # No review chained and `run_validation` ignored: the single half has neither.
+        return await start_job_or_409(program_id, "single_plos", {"note_th": note_th}, single_work)
+
     state: AgentState = {
         "program_id": program_id,
         "metadata": metadata.model_dump(mode="json"),
@@ -391,11 +406,22 @@ async def get_plo_review(program_id: str) -> PLOReviewResponse:
     )
 
 
-async def _start_review_job(program_id: str, *, or_409: bool) -> JobInfo:
+_SINGLE_NO_REVIEW_TH = "หลักสูตรโหมด single ไม่มีขั้นตรวจคุณภาพและการส่งกลับ"
+
+
+async def _start_review_job(program_id: str, *, or_409: bool) -> JobInfo | None:
     """The QA review as a job. Its input is read from storage when the job starts,
     so the same job serves `POST /review/run` and the one chained after synthesis.
-    `or_409=False` raises `JobConflict` instead of an HTTP 409, for the chain."""
+    `or_409=False` raises `JobConflict` instead of an HTTP 409, for the chain.
+
+    A single-mode program has no review and no send-back: this starts nothing and
+    returns None, so no caller can chain one onto it."""
     from curriculum_agent.stages import plo_review  # noqa: PLC0415
+
+    program = await ProgramRepository().get(program_id)
+    if program is not None and program.agent_mode == "single":
+        logger.warning(f"plo_review not started for {program_id}: single-mode program")
+        return None
 
     plos = await _repo.list_by_program(program_id)
     if not plos:
@@ -434,7 +460,13 @@ async def run_plo_review(program_id: str) -> JobInfo:
     agent, so there is no disabled-feature 503 — `review_enabled` in the result
     says whether the agent judged it.
     """
-    return await _start_review_job(program_id, or_409=True)
+    program = await ProgramRepository().get(program_id)
+    if program is not None and program.agent_mode == "single":
+        raise HTTPException(status_code=409, detail=_SINGLE_NO_REVIEW_TH)
+    job = await _start_review_job(program_id, or_409=True)
+    if job is None:  # a single program is refused above; this is the same guard, kept total
+        raise HTTPException(status_code=409, detail=_SINGLE_NO_REVIEW_TH)
+    return job
 
 
 class MergeNeedsRequest(DesignerNoteRequest):
@@ -474,15 +506,52 @@ async def create_plo_from_needs(program_id: str, body: MergeNeedsRequest) -> PLO
 
     async with sync_writer(program_id, "หลักสูตรนี้กำลังรวม Need เป็น PLO อยู่ — รอให้เสร็จก่อน"):
         try:
+            drafter = None
+            if program.agent_mode == "single":
+                drafter = await _single_drafter(program_id)
             with llm_scope(program_id=program_id):
                 plo, _replaced = await redraft_from_needs(
-                    program, program_id, body.need_ids, note_th=body.note_th, cause="designer"
+                    program,
+                    program_id,
+                    body.need_ids,
+                    note_th=body.note_th,
+                    cause="designer",
+                    drafter=drafter,
                 )
         except RedraftRefused as exc:
             raise HTTPException(status_code=exc.status, detail=exc.detail_th) from exc
         except RedraftFailed as exc:
             raise HTTPException(status_code=502, detail="สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่") from exc
         return plo
+
+
+async def _single_drafter(program_id: str) -> Callable[..., Awaitable[PLO | None]]:
+    """A `redraft_from_needs` drafter that writes through the single agent."""
+    from curriculum_agent.stages.single_plos import draft_single_plo  # noqa: PLC0415
+
+    evidence = await EvidenceRepository().list_by_program(program_id)
+
+    async def drafter(
+        program: ProgramMetadata,
+        needs: Sequence[Need],
+        _program_id: str,
+        known_need_ids: set[str],
+        plo_id: str,
+        *,
+        note_th: str | None = None,
+        siblings: Sequence[SiblingSummary] = (),
+    ) -> PLO:
+        return await draft_single_plo(
+            program,
+            needs,
+            evidence,
+            plo_id=plo_id,
+            known_need_ids=known_need_ids,
+            siblings=siblings,
+            note_th=note_th,
+        )
+
+    return drafter
 
 
 _PLO_CHANGED_DURING_EDIT_TH = "PLO นี้ถูกเปลี่ยนระหว่างแก้ไข — โหลดใหม่แล้วลองอีกครั้ง"
@@ -631,7 +700,6 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
     every outcome in the batch.
     """
     from curriculum_agent.stages.plo_synthesis import (  # noqa: PLC0415
-        SiblingSummary,
         _PLODraft,
         validate_and_build,
     )
@@ -655,28 +723,46 @@ async def revalidate_plo(program_id: str, plo_id: str) -> JobInfo:
             detail=f"{plo_id} อ้างถึง Need ที่ไม่มีอยู่แล้ว — ตรวจร่องรอยหลักฐานก่อน",
         )
 
-    draft = _PLODraft(
-        statement_th=match.statement_th,
-        statement_en=match.statement_en,
-        bloom_level=match.bloom_level,
-        action_verb_th=match.action_verb_th,
-        source_need_ids=list(match.source_need_ids),
-        rationale_th=match.rationale_th,
-        distinctive_feature_th=match.distinctive_feature_th,
-    )
-
     async def work() -> PLO:
-        revalidated = await validate_and_build(
-            draft,
-            metadata=program,
-            needs=cited,
-            program_id=program_id,
-            plo_id=plo_id,
-            known_need_ids={n.need_id for n in all_needs},
-            siblings=[SiblingSummary.from_plo(p) for p in stored if p.plo_id != plo_id],
-            # A designer's own sentence is judged, never rewritten.
-            allow_repair=match.designer_edited_at is None,
-        )
+        siblings = [SiblingSummary.from_plo(p) for p in stored if p.plo_id != plo_id]
+        revalidated: PLO | None
+        if program.agent_mode == "single":
+            from curriculum_agent.stages.single_plos import draft_single_plo  # noqa: PLC0415
+
+            evidence = await EvidenceRepository().list_by_program(program_id)
+            # Raises 502 itself when the agent saves nothing. A hand-edited
+            # sentence is judged, never rewritten (kept inside draft_single_plo).
+            revalidated = await draft_single_plo(
+                program,
+                cited,
+                evidence,
+                plo_id=plo_id,
+                known_need_ids={n.need_id for n in all_needs},
+                siblings=siblings,
+                note_th=None,
+                current=match,
+            )
+        else:
+            draft = _PLODraft(
+                statement_th=match.statement_th,
+                statement_en=match.statement_en,
+                bloom_level=match.bloom_level,
+                action_verb_th=match.action_verb_th,
+                source_need_ids=list(match.source_need_ids),
+                rationale_th=match.rationale_th,
+                distinctive_feature_th=match.distinctive_feature_th,
+            )
+            revalidated = await validate_and_build(
+                draft,
+                metadata=program,
+                needs=cited,
+                program_id=program_id,
+                plo_id=plo_id,
+                known_need_ids={n.need_id for n in all_needs},
+                siblings=siblings,
+                # A designer's own sentence is judged, never rewritten.
+                allow_repair=match.designer_edited_at is None,
+            )
         if revalidated is None:
             raise HTTPException(status_code=502, detail="ตรวจ SMART ไม่สำเร็จ กรุณาลองใหม่")
 

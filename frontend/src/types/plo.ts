@@ -28,7 +28,7 @@ export interface SMARTCheck {
 }
 
 /** Which validator produced a verdict — see the Thai labels in constants/smart. */
-export type ValidatedBy = 'agent' | 'code_only' | 'stale' | 'legacy'
+export type ValidatedBy = 'agent' | 'code_only' | 'stale' | 'legacy' | 'single_agent'
 
 export interface PLO {
   plo_id: string

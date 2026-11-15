@@ -3,44 +3,43 @@
 /* ---------------------------------------------------------------------------
    Design tokens.
 
-   The subject is a document a faculty submits to MHESI, and every token comes
-   from the desk that document is made on. Photocopy paper for the ground, a
-   white sheet for anything the designer reads, graphite for text — and three
-   inks, each with exactly one meaning:
+   An Apple.com-like language: a light-grey ground, white rounded sheets with no
+   borders, pill buttons, large tight headings, system UI type. Three
+   colours carry meaning, and nothing else is coloured except the KSEC
+   categories:
 
-   - STAMP (rubber-stamp violet): the designer's act. Primary actions, approved
-     checkpoints, a passed check. Every approval in a Thai office is a stamp,
-     and every stage boundary here is a human approving.
-   - MANDATE (seal red): what cannot be argued with. สภาวิชาชีพ and the
+   - STAMP (navy): the designer's act. Primary actions, approved checkpoints,
+     a passed check, links.
+   - MARKER (gold): what a reviewer should look at. Warnings, soft flags
+     (ข้อสังเกต), quoted evidence spans.
+   - MANDATE (red): what cannot be argued with. สภาวิชาชีพ and the
      `requirement` class, blocking errors, destructive actions.
-   - MARKER (highlighter yellow): what a reviewer should look at. Quoted
-     evidence spans, warnings, soft SMART flags.
 
-   Nothing else is coloured, except the KSEC categories, which are categorical
-   data and get muted hues that never compete with the three inks.
+   KSEC categories are categorical data and get muted hues that never compete
+   with the three.
 --------------------------------------------------------------------------- */
 @theme {
-  --color-paper: #eff1f4;
+  --color-paper: #f5f5f7;
   --color-sheet: #ffffff;
-  --color-sunk: #f6f7f9;
-  --color-hair: #dcdee6;
-  --color-hair-strong: #c3c6d3;
+  --color-sunk: #f5f5f7;
+  --color-hair: #d2d2d7;
+  --color-hair-strong: #c7c7cc;
 
-  --color-graphite: #22232b;
-  --color-pencil: #5f6176;
-  --color-lead: #9496a8;
+  --color-graphite: #1d1d1f;
+  --color-pencil: #6e6e73;
+  --color-lead: #86868b;
 
-  --color-stamp: #4a3c8e;
-  --color-stamp-deep: #362b6d;
-  --color-stamp-wash: #ecebf6;
+  --color-stamp: #2e3191;
+  --color-stamp-deep: #202570;
+  --color-stamp-wash: #eceefa;
 
-  --color-mandate: #a8261f;
-  --color-mandate-deep: #841b15;
-  --color-mandate-wash: #f8e7e5;
+  --color-mandate: #c4161c;
+  --color-mandate-deep: #9e1015;
+  --color-mandate-wash: #fdecec;
 
-  --color-marker: #f4e27a;
-  --color-marker-wash: #fbf5d2;
-  --color-marker-ink: #6e5400;
+  --color-marker: #ffc709;
+  --color-marker-wash: #fff6d6;
+  --color-marker-ink: #7a5a00;
 
   /* KSEC — categorical, deliberately low-chroma. */
   --color-k: #2f5872;
@@ -54,41 +53,43 @@
   --color-c: #7a5a2a;
   --color-c-wash: #f4ece0;
 
-  /* Trirong for page titles only — looped, academic, the register of a
-     university seal. Sarabun for the record: it is the Google release of
-     TH Sarabun New, the face every มคอ.2 is typed in, so a PLO reads here the
-     way MHESI will read it. Anuphan for the interface. Chakra Petch for
-     labels, identifiers and figures — it carries Thai, which a monospace
-     face does not. */
-  --font-display: "Trirong", "Noto Serif Thai", Georgia, serif;
-  --font-record: "Sarabun", "TH Sarabun New", "Noto Sans Thai", sans-serif;
-  --font-ui: "Anuphan", "Noto Sans Thai", "Segoe UI", system-ui, sans-serif;
-  --font-label: "Chakra Petch", "Anuphan", ui-monospace, monospace;
+  /* The interface uses the system UI face, with Noto Sans Thai as the Thai
+     fallback. The record (PLO, Need and evidence text) is Sarabun: it is the
+     Google release of TH Sarabun New, the face every มคอ.2 is typed in, so a
+     PLO reads here the way MHESI will read it. The display and label
+     utilities point at the UI stack. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", "Noto Sans Thai", sans-serif;
+  --font-record: "Sarabun", "Noto Sans Thai", sans-serif;
+  --font-display: var(--font-ui);
+  --font-label: var(--font-ui);
 
-  --rail-width: 16.5rem;
 }
 
 @layer base {
+  html:has([data-stage-bar]) {
+    scroll-padding-top: 7.5rem;
+  }
   html {
+    scroll-padding-top: 3.5rem;
     -webkit-text-size-adjust: 100%;
   }
 
-  /* Thai stacks vowels and tone marks above the line; Latin leading clips
-     them. Every Thai-bearing surface inherits this. */
+  /* Thai stacks vowels and tone marks above the line; tight Latin leading
+     clips them. Every Thai-bearing surface inherits this. */
   body {
     margin: 0;
     background: var(--color-paper);
     color: var(--color-graphite);
     font-family: var(--font-ui);
     font-size: 0.9375rem;
-    line-height: 1.7;
+    line-height: 1.6;
     -webkit-font-smoothing: antialiased;
   }
 
   h1,
   h2,
   h3 {
-    line-height: 1.45;
+    line-height: 1.3;
     text-wrap: balance;
   }
 
@@ -101,54 +102,53 @@
   :focus-visible {
     outline: 2px solid var(--color-stamp);
     outline-offset: 2px;
-    border-radius: 2px;
   }
 }
 
 @layer components {
   /* --- Headings ----------------------------------------------------------- */
   .page-title {
-    font-family: var(--font-display);
-    font-size: 1.75rem;
-    font-weight: 600;
-    line-height: 1.35;
+    font-family: var(--font-ui);
+    font-size: 2.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
     color: var(--color-graphite);
   }
 
   .section-title {
     font-family: var(--font-ui);
-    font-size: 1.0625rem;
+    font-size: 1.25rem;
     font-weight: 600;
     color: var(--color-graphite);
   }
 
   .eyebrow {
-    font-family: var(--font-label);
-    font-size: 0.75rem;
-    font-weight: 500;
-    letter-spacing: 0.04em;
-    color: var(--color-pencil);
+    font-family: var(--font-ui);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-stamp);
   }
 
   /* --- Surfaces ----------------------------------------------------------- */
   .panel {
     background: var(--color-sheet);
-    border: 1px solid var(--color-hair);
-    border-radius: 4px;
+    border-radius: 18px;
   }
 
   /* --- Buttons ------------------------------------------------------------ */
   .btn {
-    @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[3px] px-3.5 py-2 text-sm font-medium leading-snug transition-colors disabled:cursor-not-allowed disabled:opacity-45;
+    @apply inline-flex shrink-0 items-center justify-center gap-1.5 rounded-[980px] px-5 py-2.5 text-[15px] font-medium leading-snug transition-colors disabled:cursor-not-allowed disabled:opacity-45;
   }
   .btn-sm {
-    @apply px-2.5 py-1 text-xs;
+    @apply px-4 py-2 text-[13px];
   }
   .btn-primary {
     @apply bg-stamp text-white hover:bg-stamp-deep;
   }
   .btn-secondary {
-    @apply border border-hair-strong bg-sheet text-graphite hover:border-pencil hover:bg-sunk;
+    @apply border border-stamp bg-transparent text-stamp hover:bg-stamp-wash;
   }
   .btn-quiet {
     @apply text-pencil hover:bg-sunk hover:text-graphite;
@@ -159,9 +159,13 @@
   .btn-danger-quiet {
     @apply text-mandate hover:bg-mandate-wash;
   }
+  /* Tertiary action: text only. The caller adds the trailing " ›". */
+  .btn-text {
+    @apply inline-flex items-center gap-1 border-0 bg-transparent p-0 text-[15px] font-medium text-stamp hover:underline disabled:cursor-not-allowed disabled:opacity-45;
+  }
 
   .link {
-    @apply text-stamp underline decoration-stamp/35 underline-offset-[3px] hover:decoration-stamp;
+    @apply text-stamp underline decoration-stamp/30 underline-offset-[3px] hover:decoration-stamp;
   }
 
   /* --- Form fields -------------------------------------------------------- */
@@ -172,16 +176,16 @@
     @apply mt-1 text-xs leading-relaxed text-pencil;
   }
   .input {
-    @apply w-full rounded-[3px] border border-hair-strong bg-sheet px-3 py-2 text-sm text-graphite transition-colors placeholder:text-lead hover:border-pencil focus:border-stamp focus:outline-none focus:ring-2 focus:ring-stamp/20 disabled:bg-sunk disabled:text-lead;
+    @apply w-full rounded-xl border border-hair-strong bg-sheet px-3 py-2 text-sm text-graphite transition-colors placeholder:text-lead hover:border-pencil focus:border-stamp focus:outline-none focus:ring-2 focus:ring-stamp/20 disabled:bg-sunk disabled:text-lead;
   }
 
   /* --- Chips -------------------------------------------------------------- */
   .chip {
-    @apply inline-flex items-center gap-1 rounded-[2px] px-1.5 py-px text-xs leading-5 font-medium whitespace-nowrap;
-    font-family: var(--font-label);
+    @apply inline-flex items-center gap-1 rounded-[980px] px-2.5 py-px text-xs leading-5 font-medium whitespace-nowrap;
+    font-family: var(--font-ui);
   }
   .chip-neutral {
-    @apply bg-sunk text-pencil ring-1 ring-hair ring-inset;
+    @apply bg-paper text-pencil;
   }
   .chip-stamp {
     @apply bg-stamp-wash text-stamp;
@@ -195,16 +199,16 @@
 
   /* --- Notices: what went wrong, what to look at, what to know ------------ */
   .notice {
-    @apply rounded-[3px] border-l-[3px] px-3.5 py-2.5 text-sm leading-relaxed;
+    @apply rounded-[14px] px-4 py-3.5 text-sm leading-relaxed;
   }
   .notice-error {
-    @apply border-mandate bg-mandate-wash text-mandate-deep;
+    @apply bg-mandate-wash text-mandate;
   }
   .notice-warn {
-    @apply border-marker bg-marker-wash text-marker-ink;
+    @apply bg-marker-wash text-marker-ink;
   }
   .notice-info {
-    @apply border-stamp/40 bg-stamp-wash text-stamp-deep;
+    @apply bg-stamp-wash text-stamp-deep;
   }
 
   /* --- Tables ------------------------------------------------------------- */
@@ -213,7 +217,7 @@
   }
   .table th {
     @apply border-b border-hair-strong px-3 py-2 text-left align-bottom text-xs font-medium text-pencil;
-    font-family: var(--font-label);
+    font-family: var(--font-ui);
   }
   .table td {
     @apply border-b border-hair px-3 py-2.5 align-top;
@@ -221,12 +225,11 @@
 
   /* --- The record --------------------------------------------------------- */
   /* A PLO statement, a Need, an evidence excerpt: text that ends up in the
-     document, set the way the document sets it. Sarabun runs small on the
-     body, so the record steps up a size. */
+     document, set in Sarabun the way the document sets it. */
   .record {
     font-family: var(--font-record);
-    font-size: 1.0625rem;
-    line-height: 1.75;
+    font-size: 1.125rem;
+    line-height: 1.7;
     color: var(--color-graphite);
   }
 
@@ -249,28 +252,17 @@
   }
 
   /* --- The stamp ---------------------------------------------------------- */
-  /* The signature. A checkpoint is a human approving, and in the office this
-     document comes from, approval is a rubber stamp: a double-ruled frame,
-     ink that multiplies into the paper, set a degree or two off square. Used
-     only for terminal states a person produced — never for decoration. */
+  /* A terminal state a person produced (approved, flagged, pending): a soft
+     pill. Used only for those states, never for decoration. */
   .stamp {
-    @apply inline-flex items-center gap-1.5 rounded-[3px] px-2 py-0.5 text-xs font-semibold whitespace-nowrap;
-    font-family: var(--font-label);
-    letter-spacing: 0.06em;
-    color: var(--color-stamp);
-    border: 3px double currentColor;
-    transform: rotate(-2deg);
-    mix-blend-mode: multiply;
-    opacity: 0.92;
+    @apply inline-flex items-center gap-1.5 rounded-[980px] bg-stamp-wash px-2.5 py-0.5 text-xs font-semibold whitespace-nowrap text-stamp;
+    font-family: var(--font-ui);
   }
   .stamp-mandate {
-    color: var(--color-mandate);
+    @apply bg-mandate-wash text-mandate;
   }
   .stamp-pending {
-    color: var(--color-marker-ink);
-    border-style: dashed;
-    border-width: 1.5px;
-    transform: none;
+    @apply bg-marker-wash text-marker-ink;
   }
 
   /* --- Mapping marks ● ◐ ○ ------------------------------------------------ */
@@ -364,9 +356,8 @@
 @layer utilities {
   /* Identifiers and figures — program slugs, PLO1, N-003, 0.7412. */
   .data {
-    font-family: var(--font-label);
+    font-family: var(--font-ui);
     font-variant-numeric: tabular-nums;
-    letter-spacing: 0.01em;
   }
 }
 

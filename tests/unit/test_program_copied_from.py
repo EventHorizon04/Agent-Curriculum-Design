@@ -104,6 +104,7 @@ async def test_list_all_carries_copied_from() -> None:
         program_objectives_th=[],
         created_at=datetime(2026, 10, 6),
         copied_from="program-2",
+        agent_mode="multi",  # the server_default, which a transient row never gets
     )
     with patch(
         "curriculum_agent.data.repositories.AsyncSessionLocal",

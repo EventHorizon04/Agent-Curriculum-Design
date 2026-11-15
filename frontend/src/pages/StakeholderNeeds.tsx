@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import { fetchWithKey } from '../api/apiKey'
 import NextStageLink from '../components/NextStageLink'
+import { useAgentMode } from '../hooks/useAgentMode'
 import { useProgram } from '../hooks/useProgram'
 import { STAKEHOLDER_GROUPS, classStyle, stakeholderLabel } from '../constants/stakeholder'
 
@@ -32,6 +33,7 @@ interface EvidencePayload {
 export default function StakeholderNeeds() {
   const navigate = useNavigate()
   const { programId, setProgramId } = useProgram()
+  const mode = useAgentMode(programId)
   const [pidInput, setPidInput] = useState('')
   const [stakeholderType, setStakeholderType] = useState('employer')
   const [sourceName, setSourceName] = useState('')
@@ -285,7 +287,7 @@ export default function StakeholderNeeds() {
     <div className="mx-auto max-w-3xl space-y-6 text-left">
       <div>
         <p className="eyebrow">ขั้นที่ 2</p>
-        <h1 className="page-title">หลักฐานผู้มีส่วนได้ส่วนเสีย</h1>
+        <h1 className="page-title">ข้อมูลผู้มีส่วนได้ส่วนเสีย</h1>
         <p className="mt-1 text-sm text-pencil">
           เพิ่มหลักฐานจากแหล่งต่างๆ เพื่อใช้ในการสังเคราะห์ PLO
         </p>
@@ -295,7 +297,7 @@ export default function StakeholderNeeds() {
         <div className="notice notice-warn">
           <p className="mb-3">
             ยังไม่ได้เลือกหลักสูตร —{' '}
-            <button onClick={() => navigate('/')} className="font-medium underline underline-offset-2">
+            <button onClick={() => navigate('/my-programs')} className="font-medium underline underline-offset-2">
               ไปที่ขั้นตอนที่ 1
             </button>{' '}
             หรือระบุรหัสหลักสูตรที่นี่
@@ -346,7 +348,7 @@ export default function StakeholderNeeds() {
       {programId && lock.locked && (
         <div className="notice notice-warn flex flex-wrap items-center justify-between gap-x-4 gap-y-1" role="status">
           <span>{lock.reason_th ?? 'หลักฐานของหลักสูตรนี้แก้ไม่ได้ในขณะนี้'}</span>
-          <Link to="/" className="font-medium underline underline-offset-2">
+          <Link to="/my-programs" className="font-medium underline underline-offset-2">
             ไปที่รายการหลักสูตร →
           </Link>
         </div>
@@ -561,8 +563,13 @@ export default function StakeholderNeeds() {
           the classify pass is pure code. */}
       <NextStageLink
         from="stakeholder_needs"
+        mode={mode ?? 'multi'}
         ready={Boolean(programId) && items.length > 0}
-        blockedReason="เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นสกัดทักษะอ่านจากหลักฐานเหล่านี้"
+        blockedReason={
+          mode === 'single'
+            ? 'เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นถัดไปอ่านจากหลักฐานเหล่านี้'
+            : 'เพิ่มหลักฐานอย่างน้อย 1 รายการก่อน — ขั้นสกัดทักษะอ่านจากหลักฐานเหล่านี้'
+        }
       />
     </div>
   )

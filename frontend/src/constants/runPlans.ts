@@ -41,6 +41,28 @@ export const SKILL_RUN_PLANS: Record<'all' | 'skills' | 'needs', RunPlan> = {
   },
 }
 
+/** Single-agent program: one agent reads the evidence and writes the Needs. */
+export const SINGLE_NEEDS_PLAN: RunPlan = {
+  title: 'ตัวแทนกำลังอ่านหลักฐานและเขียน Need',
+  steps: [
+    'อ่านหลักฐานทีละรายการผ่านเครื่องมือ',
+    'จดบันทึกสิ่งที่พบ แล้วจัดเป็น Need พร้อมอ้างหลักฐาน',
+    'ตรวจว่าหลักฐานทุกชิ้นถูกอ่านและมี Need อ้างถึง',
+  ],
+  typical: [60, 600],
+}
+
+/** Single-agent program: one agent writes the PLOs from the approved Needs. */
+export const SINGLE_PLOS_PLAN: RunPlan = {
+  title: 'ตัวแทนกำลังเขียน PLO และตรวจงานตัวเอง',
+  steps: [
+    'อ่าน Need ที่อนุมัติทีละข้อ',
+    'เขียน PLO หนึ่งข้อต่อหนึ่ง Need ด้วยกริยา Bloom หนึ่งตัว',
+    'ตรวจเกณฑ์ SMART ด้วยตัวเอง และแก้ข้อที่ไม่ผ่าน',
+  ],
+  typical: [60, 600],
+}
+
 export const PLO_SYNTHESIS_PLAN: RunPlan = {
   title: 'กำลังสังเคราะห์ PLO',
   steps: [
@@ -81,7 +103,7 @@ export const PLO_REPORT_PLAN: RunPlan = {
  *  by `plo_review_timeout_seconds` (300s) on the backend, so the usual range
  *  stops well short of it. */
 export const PLO_REVIEW_PLAN: RunPlan = {
-  title: 'กำลังตรวจคุณภาพชุด PLO',
+  title: 'กำลังทบทวนผลลัพธ์การเรียนรู้',
   steps: ['เตรียมข้อมูลชุด PLO', 'agent ตรวจและเช็กข้อสงสัย', 'สรุปข้อเสนอแนะ'],
   typical: [30, 120],
 }

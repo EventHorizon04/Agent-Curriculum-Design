@@ -20,14 +20,11 @@ Copy-Item .env.example .env   # แก้ LLM_PROVIDER/CLUSTERING_PROVIDER/model
 uv sync --all-extras
 ```
 
-### 2. Pull LLM models (ครั้งแรกเท่านั้น)
+### 2. LLM provider
 
-```powershell
-ollama pull scb10x/typhoon2-8b-instruct
-ollama pull qwen2.5:7b
-```
+บน branch `feat/four-agent-pipeline` ทุก LLM slot ใช้ OpenRouter โมเดล `z-ai/glm-5.3-flash` เป็นค่า default (`PIPELINE_PROVIDER` / `PIPELINE_MODEL`) — ใส่ `OPENROUTER_API_KEY` ใน `.env` อย่างเดียวก็รันได้ ต้องการแยก provider ราย slot ดูคำอธิบายใน `.env.example`
 
-> **Note:** ต้องเปิด Ollama (icon ใน system tray) **เฉพาะเมื่อ** มี provider slot ไหนตั้งเป็น `ollama` — `start-backend.ps1` อ่าน config เองแล้วเช็คให้เท่าที่จำเป็น ถ้าทุก slot ชี้ไป endpoint บนคลาวด์ (ค่า default ตอนนี้) จะข้ามการเช็คนี้ไป
+> **Note:** ต้องเปิด Ollama **เฉพาะเมื่อ** มี slot ไหนตั้ง provider เป็น `ollama` — `start-backend.ps1` อ่าน config แล้วเช็คให้เอง ถ้าทุก slot ชี้ไป endpoint บนคลาวด์ (ค่า default) จะข้ามการเช็คนี้
 
 ### 3. Start data services (postgres + minio + migrations)
 
@@ -54,14 +51,24 @@ ollama pull qwen2.5:7b
 
 > ทางลัด: `.\scripts\start-dev.ps1` = services + backend ในคำสั่งเดียว (UI ยังต้องแยก)
 
+### UI แบบไม่ต้องมี backend (mock mode)
+
+```powershell
+cd frontend
+npm run dev:mock                  # http://localhost:5174 — ข้อมูลจำลองใน browser ไม่เรียก API
+```
+
+ใช้ดูหน้าตา UI หรือทดสอบ flow ได้โดยไม่ต้องเปิด DB / backend / LLM
+
 ## URLs
 
 | Service | URL |
 |---|---|
-| React UI | http://localhost:5173 |
+| React UI | http://localhost:5173 (หน้าแรก = วิธีใช้, หลักสูตรของฉัน = `/my-programs`) |
+| React UI (mock) | http://localhost:5174 |
 | API | http://localhost:8000 |
 | API docs (Swagger) | http://localhost:8000/docs |
-| MinIO console | http://localhost:9001 (minioadmin / minioadmin_dev) |
+| MinIO console | http://localhost:9001 (login ด้วย `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` ใน `.env` — ค่าเริ่มต้นดู `.env.example`) |
 
 ## Stop
 
@@ -85,14 +92,28 @@ uv run ruff format src/ tests/
 
 # Type check
 uv run mypy src/
+
+# Frontend (ใน frontend/)
+npm run build
+npm run lint
 ```
 
 ## Architecture
 
-5-stage LangGraph pipeline พร้อม HITL checkpoint ทุก stage. Scope จบที่ PLO — YLO/CLO เป็นงานของคณะ:
+LangGraph pipeline ที่อาจารย์ผู้ออกแบบหลักสูตรอนุมัติเป็นช่วง ๆ (human-in-the-loop). Scope จบที่ PLO — YLO/CLO เป็นงานของคณะ:
 
 ```
-intake → stakeholder_needs → skill_extraction → plo_synthesis → plo_report
+intake → stakeholder_needs → skill_extraction → need_analysis → plo_synthesis → plo_review → plo_report
+          [อนุมัติหลักฐาน]                         [อนุมัติ Need]                     [อนุมัติชุด PLO]
 ```
 
-อ่าน `docs/diagrams/` สำหรับ component diagram และ workflow diagram
+หลักสูตรเลือกโหมดตอนสร้าง และเปลี่ยนภายหลังไม่ได้:
+
+| โหมด | ทำงานอย่างไร |
+|---|---|
+| **Multi-agent** (default) | Agent 1 สกัดและจัดกลุ่มทักษะ → Agent 2 รวมเป็น Need → สังเคราะห์ PLO พร้อม SMART vote → review loop ทบทวนและส่งกลับแก้อัตโนมัติ |
+| **Single-agent** | agent ตัวเดียวอ่านหลักฐานเองแล้วเขียน Need (ระบบไม่รับ finish ถ้า Need หลักไม่ถึง 6 ข้อ) และ PLO ไม่มี vote และไม่มี review loop |
+
+ทั้งสองโหมด PLO ทุกข้อต้องย้อนกลับไปหาหลักฐานได้ และผ่าน SMART hard check ที่เป็น pure code
+
+รายละเอียดการตัดสินใจและกฎ OBE อยู่ใน `CLAUDE.md` และ skill `.claude/skills/curriculum-design-agent/` · diagram ใน `docs/diagrams/`

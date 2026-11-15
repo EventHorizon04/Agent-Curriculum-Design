@@ -10,6 +10,8 @@ export type JobKind =
   | 'plo_review'
   | 'plo_report'
   | 'plo_revalidate'
+  | 'single_needs' // single-agent program: one agent reads evidence and writes Needs
+  | 'single_plos' // single-agent program: one agent writes the PLOs
 
 export type JobStatus = 'running' | 'succeeded' | 'failed'
 
@@ -40,6 +42,8 @@ export const JOB_PAGE: Record<JobKind, { path: string }> = {
   plo_revalidate: { path: '/plo-synthesis' },
   plo_review: { path: '/plo-review' },
   plo_report: { path: '/plo-report' },
+  single_needs: { path: '/need-analysis' },
+  single_plos: { path: '/plo-synthesis' },
 }
 
 /** Start a stage run. The route answers 202 with the job it has just recorded,

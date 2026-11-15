@@ -1,6 +1,8 @@
+import SingleRedirect from './components/SingleRedirect'
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import ApiKeyDialog from './components/ApiKeyDialog'
 import StageLayout from './components/StageLayout'
+import Landing from './pages/Landing'
 import Programs from './pages/Programs'
 import Intake from './pages/Intake'
 import StakeholderNeeds from './pages/StakeholderNeeds'
@@ -17,15 +19,37 @@ export default function App() {
       <ApiKeyDialog />
       <Routes>
         <Route element={<StageLayout />}>
-          <Route index element={<Programs />} />
+          <Route index element={<Landing />} />
+          <Route path="my-programs" element={<Programs />} />
           <Route path="intake" element={<Intake />} />
           <Route path="stakeholder-needs" element={<StakeholderNeeds />} />
-          <Route path="skill-extraction" element={<SkillExtraction />} />
+          <Route
+            path="skill-extraction"
+            element={
+              <SingleRedirect to="/need-analysis">
+                <SkillExtraction />
+              </SingleRedirect>
+            }
+          />
           <Route path="need-analysis" element={<NeedAnalysis />} />
           <Route path="plo-synthesis" element={<PloSynthesis />} />
           <Route path="plo-report" element={<PloReport />} />
-          <Route path="plo-review" element={<PloReview />} />
-          <Route path="pipeline" element={<Pipeline />} />
+          <Route
+            path="plo-review"
+            element={
+              <SingleRedirect to="/plo-synthesis">
+                <PloReview />
+              </SingleRedirect>
+            }
+          />
+          <Route
+            path="pipeline"
+            element={
+              <SingleRedirect notice="หลักสูตรโหมด single ใช้การรันทีละขั้นจากหน้าเว็บ ไม่ใช้ session">
+                <Pipeline />
+              </SingleRedirect>
+            }
+          />
         </Route>
       </Routes>
     </BrowserRouter>

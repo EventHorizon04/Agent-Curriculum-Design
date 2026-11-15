@@ -46,6 +46,9 @@ export interface ProgramRow {
   /** Set only by POST /programs/{id}/copy. Optional here because the seeded
    *  scenarios predate the field; every read treats a missing value as null. */
   copied_from?: string | null
+  /** Which pipeline runs the program. Absent on seeded rows from before the
+   *  field: multi. Fixed at creation. */
+  agent_mode?: 'multi' | 'single'
 }
 
 /** StakeholderEvidence. `unclassified` is a pre-migration value the current
@@ -116,6 +119,8 @@ export interface NeedRow {
   classification_coverage: Record<string, number>
   in_field_skill_count: number
   graduate_capability_skill_count: number
+  /** Which mode wrote it; absent means multi. A single-agent Need has no skills. */
+  origin?: 'multi' | 'single'
 }
 
 export type PloRow = PLO

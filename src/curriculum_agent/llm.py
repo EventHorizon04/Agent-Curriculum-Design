@@ -281,6 +281,7 @@ async def _complete(
     *,
     slot: str,
     reasoning_max_tokens: int | None = None,
+    usage_sink: list[int] | None = None,
     **kwargs: Any,
 ) -> T:
     """One structured completion against one endpoint.
@@ -310,6 +311,11 @@ async def _complete(
     `slot` names the stage that called, for the usage rows (phase 5). Every
     provider response is recorded, instructor's retries included, and the
     recording never changes what this returns or raises; see `_record_usage`.
+
+    `usage_sink`, when given, receives the prompt-token count of the attempt that
+    produced the returned value (the last ok attempt), so a tool loop can size its
+    next turn against the context window. It is consumed here, never forwarded to
+    instructor, and nothing is appended when no attempt reported usage.
     """
     logger.debug(f"LLM call: {model} ({provider})")
     extra_body = _extra_body(provider)
@@ -331,6 +337,10 @@ async def _complete(
             **kwargs,
         )
         failed = False
+        if usage_sink is not None:
+            ok = [a for a in attempts if a.ok]
+            if ok and ok[-1].prompt_tokens:
+                usage_sink.append(ok[-1].prompt_tokens)
         return result
     finally:
         # Intended under cancellation too (a job's time budget): the last attempt is
@@ -419,6 +429,21 @@ async def complete_plo_synthesis(
     """
     return await _complete(
         *_resolve("plo_synthesis"), response_model, messages, slot="plo_synthesis", **kwargs
+    )
+
+
+async def complete_single_agent(
+    response_model: type[T],
+    messages: list[dict[str, Any]],
+    **kwargs: Any,
+) -> T:
+    """The single-agent loop's own endpoint — see Settings.single_agent_provider.
+
+    Accepts `usage_sink` (see `_complete`): the loop reads the prompt tokens of
+    its last call from it to stay inside the context budget.
+    """
+    return await _complete(
+        *_resolve("single_agent"), response_model, messages, slot="single_agent", **kwargs
     )
 
 

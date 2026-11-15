@@ -18,6 +18,7 @@ from curriculum_agent.data.repositories import (
 )
 from curriculum_agent.graph import discard_thread
 from curriculum_agent.models import (
+    AgentMode,
     ProgramCreateRequest,
     ProgramMetadata,
     ProgramSummary,
@@ -90,6 +91,9 @@ class ProgramCopyRequest(BaseModel):
     """Optional body of the copy route; a request without one is a full copy."""
 
     mode: CopyMode = "full"
+    # None keeps the source's mode. Only an evidence_only copy may change it: a
+    # full copy clones skills and Needs that belong to the mode they were made in.
+    agent_mode: AgentMode | None = None
 
 
 async def _generate_copy_id(source_id: str, repo: ProgramRepository) -> str:
@@ -121,9 +125,17 @@ async def copy_program_route(
     is how a designer changes evidence after extraction.
     """
     mode: CopyMode = req.mode if req is not None else "full"
+    agent_mode: AgentMode | None = req.agent_mode if req is not None else None
     repo = ProgramRepository()
     if not await repo.exists(program_id):
         raise HTTPException(status_code=404, detail="ไม่พบหลักสูตรนี้")
+    if mode == "full" and agent_mode is not None:
+        source = await repo.get(program_id)
+        if source is not None and source.agent_mode != agent_mode:
+            raise HTTPException(
+                status_code=422,
+                detail="สำเนาแบบเต็มเปลี่ยนโหมดไม่ได้ ให้ใช้สำเนาเฉพาะหลักฐาน",
+            )
 
     async with program_lock(program_id):
         if (reason := await program_busy(program_id)) is not None:
@@ -132,7 +144,7 @@ async def copy_program_route(
         for _ in range(_MAX_ID_ATTEMPTS):
             new_id = await _generate_copy_id(program_id, repo)
             try:
-                copied = await copy_program(program_id, new_id, mode=mode)
+                copied = await copy_program(program_id, new_id, mode=mode, agent_mode=agent_mode)
             except IntegrityError:
                 # Only an id collision is worth retrying under the next id; any
                 # other IntegrityError (e.g. a stale FK inside the copy) would
@@ -218,7 +230,9 @@ async def update_program(
         # existing value has to be carried over explicitly or a PUT would erase
         # which program this one was copied from.
         copied_from=existing.copied_from,
-        **req.model_dump(),
+        # The mode is fixed at creation; whatever the body says, the stored one stays.
+        agent_mode=existing.agent_mode,
+        **req.model_dump(exclude={"agent_mode"}),
     )
     await repo.upsert(updated)
 

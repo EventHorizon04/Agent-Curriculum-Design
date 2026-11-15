@@ -154,6 +154,11 @@ def _select_slots(units: list[list[Need]]) -> list[_Slot]:
     return slots
 
 
+def select_slots(units: list[list[Need]]) -> list[_Slot]:
+    """Public entry to `_select_slots` for callers outside this stage (single mode)."""
+    return _select_slots(units)
+
+
 class _PLODraft(BaseModel):
     """Intermediate schema for LLM output before SMART check is added.
 

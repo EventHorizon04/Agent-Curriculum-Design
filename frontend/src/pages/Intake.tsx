@@ -3,12 +3,18 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import api from '../api/client'
 import NextStageLink from '../components/NextStageLink'
 import { CREATING_INTAKE, isCreatingIntake } from '../constants/intakeMode'
+import type { AgentMode } from '../constants/stages'
 import { useProgram } from '../hooks/useProgram'
 
 const DEGREE_OPTIONS = [
   { value: 'bachelor', label: 'ปริญญาตรี' },
   { value: 'master',   label: 'ปริญญาโท' },
   { value: 'doctoral', label: 'ปริญญาเอก' },
+]
+
+const AGENT_MODE_OPTIONS: { value: AgentMode; label: string }[] = [
+  { value: 'multi', label: 'Multi-agent (4 agents): แต่ละขั้นมีตัวแทนของตัวเอง มีการโหวตและตรวจซ้ำ' },
+  { value: 'single', label: 'Single-agent: LLM ตัวเดียวทำทุกขั้นและตรวจงานตัวเอง' },
 ]
 
 interface FormState {
@@ -18,11 +24,12 @@ interface FormState {
   scope_th: string
   degree_level: string
   duration_years: number
+  agent_mode: AgentMode
 }
 
 const INITIAL: FormState = {
   university: '', faculty: '', field: '', scope_th: '',
-  degree_level: 'bachelor', duration_years: 4,
+  degree_level: 'bachelor', duration_years: 4, agent_mode: 'multi',
 }
 
 // Shown under the scope field. Every line answers a measured result: an
@@ -73,6 +80,7 @@ export default function Intake() {
           scope_th: r.data.scope_th ?? '',
           degree_level: r.data.degree_level ?? 'bachelor',
           duration_years: r.data.duration_years ?? 4,
+          agent_mode: r.data.agent_mode ?? 'multi',
         }
         setForm(next)
         // Kept so the save can tell which fields actually moved — two of them
@@ -122,12 +130,14 @@ export default function Intake() {
     }
     try {
       if (editing) {
+        // The mode is fixed at creation: it is not part of the PUT body.
         await api.put(`/programs/${programId}`, payload)
         setLoaded({ ...form, scope_th: payload.scope_th })
         // Only these two reach the skill-extraction cache key, so only these two
         // leave the stored skills answering a question nobody is asking any more.
         const stale =
           loaded !== null &&
+          form.agent_mode !== 'single' &&
           (loaded.field !== payload.field || loaded.scope_th.trim() !== payload.scope_th)
         setSuccess(
           stale
@@ -135,7 +145,7 @@ export default function Intake() {
             : 'บันทึกการแก้ไขแล้ว'
         )
       } else {
-        const resp = await api.post('/programs/', payload)
+        const resp = await api.post('/programs/', { ...payload, agent_mode: form.agent_mode })
         const newId = resp.data.program_id
         setProgramId(newId)
         setCreating(false)
@@ -157,14 +167,14 @@ export default function Intake() {
     <div className="mx-auto max-w-3xl text-left">
       <div className="mb-6">
         <p className="eyebrow">ขั้นที่ 1</p>
-        <h1 className="page-title">ข้อมูลหลักสูตร</h1>
+        <h1 className="page-title">ข้อมูลพื้นฐานของหลักสูตร</h1>
         <p className="mt-1 text-sm text-pencil">
           {editing
             ? 'ข้อมูลของหลักสูตรที่กำลังทำอยู่ — แก้ไขแล้วกดบันทึกได้'
             : 'กรอกข้อมูลพื้นฐานของหลักสูตรเพื่อเริ่มกระบวนการออกแบบ OBE'}
         </p>
         <p className="mt-1 text-xs text-pencil">
-          วิสัยทัศน์ พันธกิจ และอัตลักษณ์ ให้บันทึกเป็นหลักฐานที่หน้า Stakeholder Needs
+          วิสัยทัศน์ พันธกิจ และอัตลักษณ์ ให้บันทึกเป็นหลักฐานที่หน้าข้อมูลผู้มีส่วนได้ส่วนเสีย
           (ประเภท "วิสัยทัศน์/พันธกิจ/อัตลักษณ์")
         </p>
         {programId && (
@@ -279,6 +289,24 @@ export default function Intake() {
           </div>
         </div>
 
+        <div>
+          <label className="field-label">วิธีทำงานของตัวแทน</label>
+          <select
+            name="agent_mode"
+            value={form.agent_mode}
+            onChange={handleChange}
+            disabled={editing}
+            className="input"
+          >
+            {AGENT_MODE_OPTIONS.map(o => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+          {editing && (
+            <p className="field-hint">เลือกได้ตอนสร้างหลักสูตรเท่านั้น — ถ้าจะเปลี่ยน ให้คัดลอกหลักสูตรเฉพาะหลักฐาน</p>
+          )}
+        </div>
+
         <button
           type="submit" disabled={loading}
           className="btn btn-primary w-full py-2.5"
@@ -296,6 +324,7 @@ export default function Intake() {
           its evidence to hang on. */}
       <NextStageLink
         from="intake"
+        mode={form.agent_mode}
         ready={Boolean(programId) && !creating}
         blockedReason="บันทึกข้อมูลหลักสูตรก่อน แล้วจึงเพิ่มหลักฐานผู้มีส่วนได้ส่วนเสียได้"
       />

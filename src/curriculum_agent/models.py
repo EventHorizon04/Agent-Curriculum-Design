@@ -157,6 +157,11 @@ BLOOM_ORDER = [
 # --------------------------- Stage 0 -----------------------------
 
 
+# Which pipeline produces a program's Needs and PLOs: the multi-agent chain, or the
+# single agent that reads the evidence directly. Rows without the field are multi.
+AgentMode = Literal["multi", "single"]
+
+
 class ProgramCreateRequest(BaseModel):
     # Intake identifies a program by where it sits — university, faculty, field.
     # The names stay for programs created before that change, and for any client
@@ -185,6 +190,7 @@ class ProgramCreateRequest(BaseModel):
     # does supply them is still accepted.
     program_objectives_th: list[str] = []
     program_goals_th: list[str] = []
+    agent_mode: AgentMode = "multi"
 
     @model_validator(mode="after")
     def _validate_isced_code(self) -> ProgramCreateRequest:
@@ -228,6 +234,7 @@ class ProgramSummary(BaseModel):
     current_stage: str
     session_status: str | None = None
     copied_from: str | None = None
+    agent_mode: AgentMode = "multi"
 
 
 # --------------------------- Stage 1 -----------------------------
@@ -322,7 +329,9 @@ class Need(BaseModel):
     # What most of the group asks for — the lower mention-weighted median of the
     # members' levels (need_grouping.group_bloom), not the highest one.
     bloom_level: BloomLevel
-    member_skill_ids: list[str] = Field(min_length=1)
+    # Non-empty unless origin == "single": the single agent reads evidence directly
+    # and has no skill rows to cite (_members_unless_single).
+    member_skill_ids: list[str] = Field(default_factory=list)
     source_evidence_ids: list[str] = Field(min_length=1)
     stakeholder_coverage: dict[StakeholderType, int] = Field(default_factory=dict)
     # Distinct source stakeholder types, external first (enum declaration order).
@@ -358,6 +367,14 @@ class Need(BaseModel):
     # Who wrote a merged Need: Agent 2's duplicate check or the designer's manual
     # merge. None on an original and on rows that predate the field.
     merged_by: Literal["agent", "designer"] | None = None
+    # Which pipeline wrote this Need. Rows and checkpoints without it are multi.
+    origin: AgentMode = "multi"
+
+    @model_validator(mode="after")
+    def _members_unless_single(self) -> Need:
+        if self.origin != "single" and not self.member_skill_ids:
+            raise ValueError("member_skill_ids must not be empty unless origin is 'single'")
+        return self
 
     @model_validator(mode="before")
     @classmethod
@@ -550,7 +567,7 @@ class PLO(BaseModel):
     # could not run (endpoint down, budget exhausted) and pure code decided
     # alone; "stale" means a designer edited the statement and nothing has
     # re-judged it since.
-    smart_validated_by: Literal["agent", "code_only", "stale", "legacy"] = "legacy"
+    smart_validated_by: Literal["agent", "code_only", "stale", "legacy", "single_agent"] = "legacy"
     # The validator's overall diagnosis in Thai — the one genuinely new thing a
     # designer reads. The tool-call trail is not persisted: it is the largest
     # object in the row by an order of magnitude, PLO is the response model of
@@ -1001,6 +1018,8 @@ JobKind = Literal[
     "plo_review",
     "plo_report",
     "plo_revalidate",
+    "single_needs",
+    "single_plos",
 ]
 JobStatus = Literal["running", "succeeded", "failed"]
 

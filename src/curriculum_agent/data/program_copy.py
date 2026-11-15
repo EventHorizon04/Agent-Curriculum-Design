@@ -53,7 +53,7 @@ from curriculum_agent.data.orm import (
 )
 from curriculum_agent.data.postgres import AsyncSessionLocal
 from curriculum_agent.data.repositories import _row_to_dict
-from curriculum_agent.models import PLO
+from curriculum_agent.models import PLO, AgentMode
 from curriculum_agent.stages.plo_review_facts import plo_fingerprint
 
 _Row = TypeVar("_Row", bound=Base)
@@ -160,12 +160,14 @@ def build_copy(
     now: datetime,
     new_uuid: Callable[[], str] = _uuid4,
     mode: CopyMode = "full",
+    agent_mode: AgentMode | None = None,
 ) -> ProgramRows:
     """New ORM rows for `new_id`, every evidence/skill/Need id fresh and rewired.
 
     Pure: reads `src`, mutates nothing, touches no session. In `evidence_only`
     mode the derived rows (skills, groups, Needs, PLOs, review) are left out, so
-    nothing is re-keyed or re-fingerprinted for them.
+    nothing is re-keyed or re-fingerprinted for them. `agent_mode=None` keeps the
+    source's mode; a value overrides it (the route allows that for `evidence_only`).
     """
     if mode == "evidence_only":
         src = ProgramRows(
@@ -196,6 +198,7 @@ def build_copy(
         program_id=new_id,
         created_at=now,
         copied_from=src.program.program_id,
+        **({"agent_mode": agent_mode} if agent_mode is not None else {}),
     )
     # Each row's own primary key is an id in `id_map` too, but it is not one of
     # the remapped columns (it is neither a named reference column nor JSONB —
@@ -285,7 +288,12 @@ async def load_rows(session: AsyncSession, program_id: str) -> ProgramRows | Non
 
 
 async def copy_program(
-    source_id: str, new_id: str, *, now: datetime | None = None, mode: CopyMode = "full"
+    source_id: str,
+    new_id: str,
+    *,
+    now: datetime | None = None,
+    mode: CopyMode = "full",
+    agent_mode: AgentMode | None = None,
 ) -> bool:
     """Copy `source_id` to `new_id` in one session. False if the source is gone.
 
@@ -304,7 +312,9 @@ async def copy_program(
         src = await load_rows(session, source_id)
         if src is None:
             return False
-        copy = build_copy(src, new_id, now=now or datetime.utcnow(), mode=mode)
+        copy = build_copy(
+            src, new_id, now=now or datetime.utcnow(), mode=mode, agent_mode=agent_mode
+        )
         session.add(copy.program)
         await session.flush()
         for group in (

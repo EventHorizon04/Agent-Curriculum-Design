@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useProgram } from '../hooks/useProgram'
 import { useJobs } from '../hooks/useProgramJobs'
 import { useReloadOnJobs } from '../hooks/useReloadOnJobs'
+import ReviewNoteChip from '../components/ReviewNoteChip'
 import RunProgress, { LoadingLine, RunFailure } from '../components/RunProgress'
 import { PLO_REPORT_PLAN, PLO_REVIEW_PLAN } from '../constants/runPlans'
 import api from '../api/client'
@@ -193,7 +194,7 @@ export default function PloReview() {
     return (
       <div className="py-16 text-center">
         <p className="mb-3 text-pencil">ยังไม่ได้เลือกหลักสูตร</p>
-        <Link to="/" className="link">
+        <Link to="/my-programs" className="link">
           เลือกจากรายการหลักสูตร
         </Link>
       </div>
@@ -209,7 +210,7 @@ export default function PloReview() {
     <div className="space-y-6">
       <header>
         <p className="eyebrow">ขั้นที่ 6</p>
-        <h1 className="page-title">ตรวจคุณภาพชุด PLO</h1>
+        <h1 className="page-title">ทบทวนผลลัพธ์การเรียนรู้</h1>
         <p className="mt-1 text-sm text-pencil">
           QA agent อ่าน PLO ทั้งชุดที่ทำเสร็จแล้ว แล้วให้คำแนะนำ — ข้อที่ตรงกันและแก้ได้จะถูกส่งกลับไปแก้ให้ พร้อมบันทึกว่าแก้อะไร
         </p>
@@ -223,7 +224,7 @@ export default function PloReview() {
             <>
               {' '}
               <Link to="/plo-synthesis" className="link">
-                ไปสังเคราะห์ PLO
+                ไปหน้าสังเคราะห์ผลลัพธ์การเรียนรู้
               </Link>
             </>
           )}
@@ -420,13 +421,13 @@ function Overview({ review }: { review: PLOSetReview }) {
             ))}
           </ul>
           <p className="mt-1.5 text-xs text-lead">
-            K ความรู้ · S ทักษะวิชาชีพ · E จริยธรรม · C คุณลักษณะบุคคล
+            Knowledge (K) · Skill (S) · Ethics (E) · Character (C)
           </p>
           {ksec.flags.length > 0 && (
             <ul className="mt-2 space-y-1">
               {ksec.flags.map((f) => (
                 <li key={f} className="text-sm text-marker-ink">
-                  <span className="chip chip-marker mr-1.5">ข้อสังเกต</span>
+                  <ReviewNoteChip className="mr-1.5" />
                   {KSEC_FLAG_TH[f] ?? f}
                 </li>
               ))}
@@ -452,7 +453,7 @@ function Overview({ review }: { review: PLOSetReview }) {
             <ul className="mt-2 space-y-1">
               {bloom.flags.map((f) => (
                 <li key={f} className="text-sm text-marker-ink">
-                  <span className="chip chip-marker mr-1.5">ข้อสังเกต</span>
+                  <ReviewNoteChip className="mr-1.5" />
                   {BLOOM_FLAG_TH[f] ?? f}
                 </li>
               ))}
@@ -503,7 +504,7 @@ function Redundancies({ review }: { review: PLOSetReview }) {
           <p className="mt-3 text-sm text-pencil">
             รวม PLO ที่ซ้ำได้โดยรวม Need ที่หน้า{' '}
             <Link to="/plo-synthesis" className="link">
-              สังเคราะห์ PLO
+              สังเคราะห์ผลลัพธ์การเรียนรู้
             </Link>
           </p>
         </>
@@ -766,7 +767,7 @@ function UnusedNeeds({ review }: { review: PLOSetReview }) {
                     <>
                       <span className="chip chip-marker">ควรพิจารณา</span>
                       <Link to="/plo-synthesis" className="link text-xs">
-                        ไปที่สังเคราะห์ PLO
+                        ไปที่หน้าสังเคราะห์ผลลัพธ์การเรียนรู้
                       </Link>
                     </>
                   ) : (

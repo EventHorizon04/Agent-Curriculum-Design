@@ -47,6 +47,7 @@ class ProgramTable(Base):
     # Set only by POST /programs/{id}/copy. Not a ForeignKey: deleting the
     # source program must not reach its copies.
     copied_from: Mapped[str | None] = mapped_column(Text, nullable=True)
+    agent_mode: Mapped[str] = mapped_column(String(10), nullable=False, server_default="multi")
 
 
 class EvidenceTable(Base):
@@ -117,6 +118,7 @@ class NeedTable(Base):
     merge_reason_th: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     excluded_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     merged_by: Mapped[str | None] = mapped_column(String, nullable=True)
+    origin: Mapped[str] = mapped_column(String(10), nullable=False, server_default="multi")
 
 
 class SkillGroupTable(Base):

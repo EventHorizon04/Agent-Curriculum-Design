@@ -185,6 +185,10 @@ SLOTS: tuple[SlotSpec, ...] = (
         default_models={"openrouter": "z-ai/glm-5.3-flash"},
         disableable=True,
     ),
+    # Single-agent mode: one tool-using loop that does the whole pipeline's work.
+    # Same defaults as plo_synthesis (Thai prose a designer submits); not
+    # disableable, since the mode has no fallback without it.
+    SlotSpec("single_agent", "single_agent_provider", "single_agent_model"),
 )
 
 
@@ -292,6 +296,17 @@ class Settings(BaseSettings):
     # window of every evidence item, so it is not what exhausts a quota.
     plo_synthesis_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "opentyphoon"
     plo_synthesis_model: str = ""
+    single_agent_provider: Literal["ollama", "openrouter", "opentyphoon"] | None = "opentyphoon"
+    single_agent_model: str = ""
+    single_agent_max_turns: int = Field(default=80, ge=1)
+    single_agent_timeout_seconds: int = Field(default=1800, ge=1)
+    # The one-shot designer actions (merge Needs, merge/redraft/revalidate a PLO)
+    # run the loop inside an HTTP request, so they get their own, much smaller budget.
+    single_agent_oneshot_max_turns: int = Field(default=20, ge=1)
+    single_agent_oneshot_timeout_seconds: int = Field(default=240, ge=1)
+    single_agent_evidence_part_chars: int = Field(default=6000, ge=1)
+    single_agent_context_budget_ratio: float = Field(default=0.7, gt=0, le=1)
+    single_agent_context_window_tokens: int = Field(default=128000, ge=1)
     # The SMART validation agent is its own slot, and specifically NOT `heavy`:
     # heavy is LLM clustering and nothing else, and a slot sharing that knob
     # could not be moved without moving clustering. It defaults to OpenRouter —

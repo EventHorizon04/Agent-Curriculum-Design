@@ -244,6 +244,7 @@ def test_every_slot_is_reported_and_warmed_from_one_list(typhoon: Settings) -> N
         "plo_synthesis",
         "validation",
         "plo_review",
+        "single_agent",
     ]
     assert len(set(labels)) == len(labels)
 

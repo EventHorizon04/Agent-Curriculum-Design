@@ -43,6 +43,7 @@ def _program_row(program_id: str, created_at: datetime) -> ProgramTable:
         program_goals_th=["เป้าหมาย 1"],
         program_objectives_th=["objective 1"],
         created_at=created_at,
+        agent_mode="multi",  # the server_default, which a transient row never gets
     )
 
 

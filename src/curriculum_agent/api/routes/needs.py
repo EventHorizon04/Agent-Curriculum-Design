@@ -40,6 +40,7 @@ from curriculum_agent.stages.need_grouping import (
     is_unwritten_need,
 )
 from curriculum_agent.stages.plo_synthesis import plos_citing
+from curriculum_agent.stages.single_needs import SingleNeedsResult, merge_single_needs
 
 router = APIRouter()
 _repo = NeedRepository()
@@ -235,6 +236,20 @@ async def merge_needs(program_id: str, body: ManualMergeRequest) -> Need:
         if out_of_scope:
             logger.info(f"manual merge for {program_id} includes out-of-scope Needs {out_of_scope}")
 
+        reason = (body.reason_th or "").strip() or _MANUAL_MERGE_REASON_TH
+        if metadata.agent_mode == "single":
+            # No skill rows exist in single mode, and the multi slot is never called.
+            evidence = await EvidenceRepository().list_by_program(program_id)
+            ordered = need_merge._demand_order(selected)
+            with llm_scope(program_id=program_id):
+                single_merged = await merge_single_needs(
+                    metadata, ordered, active, evidence, reason_th=reason
+                )
+            try:
+                return await _repo.write_merge(program_id, ordered, single_merged)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail="ไม่พบ Need นี้") from exc
+
         skills = await SkillRepository().list_by_program(program_id)
         # `/needs/skills/run` replaces every skill row under fresh ids without
         # redrawing the Needs, so their member ids can all be dead. `_write_merged`
@@ -401,6 +416,17 @@ async def _start_need_job(
     return await starter(program_id, "need_combination", params, work)
 
 
+async def _start_single_needs(program_id: str) -> JobInfo:
+    """The single-agent needs half as one job. Chains nothing: there is no
+    need_combination to follow, and PLOs are left alone like a multi re-run."""
+    from curriculum_agent.stages.single_needs import run_single_needs  # noqa: PLC0415
+
+    async def work() -> SingleNeedsResult:
+        return await run_single_needs(program_id)
+
+    return await start_job_or_409(program_id, "single_needs", {}, work)
+
+
 @router.post(
     "/run", response_model=JobInfo, status_code=202, dependencies=[Depends(require_api_key)]
 )
@@ -413,6 +439,8 @@ async def run_need_pipeline(program_id: str, body: DesignerNoteRequest | None = 
     stays succeeded. Re-running one stage alone goes through the two routes below.
     """
     state = await _build_stage_state(program_id, body)
+    if state["metadata"].get("agent_mode") == "single":
+        return await _start_single_needs(program_id)
 
     async def chain() -> None:
         try:
@@ -442,6 +470,11 @@ async def run_skill_extraction(program_id: str, body: DesignerNoteRequest | None
     whether the Needs should be redrawn.
     """
     state = await _build_stage_state(program_id, body)
+    if state["metadata"].get("agent_mode") == "single":
+        raise HTTPException(
+            status_code=409,
+            detail="หลักสูตรโหมด single ไม่มีขั้นสกัดทักษะ — ใช้ปุ่มวิเคราะห์ Need แทน",
+        )
     return await start_job_or_409(
         program_id,
         "skill_extraction",
@@ -462,6 +495,13 @@ async def run_need_combination(program_id: str, body: DesignerNoteRequest | None
     not want repeated. The evidence corpus is not loaded at all.
     """
     state = await _base_state(program_id, body)  # 404 for an unknown program
+    if state["metadata"].get("agent_mode") == "single":
+        if not await EvidenceRepository().list_by_program(program_id):
+            raise HTTPException(
+                status_code=422,
+                detail="ไม่มี evidence สำหรับโปรแกรมนี้ กรุณาเพิ่ม evidence ก่อน",
+            )
+        return await _start_single_needs(program_id)
     if not await SkillRepository().list_by_program(program_id):
         raise HTTPException(
             status_code=422,

@@ -70,6 +70,9 @@ async def _run_graph(
         await repo.set_status(session_id, "failed", message=str(exc))
 
 
+SINGLE_MODE_NO_SESSION_TH = "หลักสูตรโหมด single ใช้การรันทีละขั้นจากหน้าเว็บ ไม่ใช้ session"
+
+
 @router.post("/", response_model=SessionInfo, dependencies=[Depends(require_api_key)])
 async def create_session(
     program_id: str,
@@ -79,6 +82,9 @@ async def create_session(
     program = await ProgramRepository().get(program_id)
     if program is None:
         raise HTTPException(status_code=404, detail="Program not found")
+    # getattr: the session tests hand in a bare stand-in for the program row.
+    if getattr(program, "agent_mode", "multi") == "single":
+        raise HTTPException(status_code=409, detail=SINGLE_MODE_NO_SESSION_TH)
 
     # Checked before the session exists, not after. `stakeholder_needs` raises on
     # an empty corpus — deliberately, so the run dies at the stage that is
@@ -150,6 +156,9 @@ async def approve_session(
         raise HTTPException(status_code=404, detail="Session not found")
     if session.status != "suspended":
         raise HTTPException(status_code=409, detail=f"Session is '{session.status}', not suspended")
+    program = await ProgramRepository().get(program_id)
+    if program is not None and program.agent_mode == "single":
+        raise HTTPException(status_code=409, detail=SINGLE_MODE_NO_SESSION_TH)
 
     # The session being approved is `suspended`, so it does not count as a running
     # one; a job or another running session on this program does. Same lock as

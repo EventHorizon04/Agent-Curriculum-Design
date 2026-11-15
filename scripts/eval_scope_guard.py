@@ -49,8 +49,8 @@ from curriculum_agent.stages.need_grouping import (
     passes_scope_axes,
 )
 from curriculum_agent.stages.skill_extraction import (
-    _compute_skill_importance,
     _bound_kwargs,
+    _compute_skill_importance,
     _ExtractedSkillsResponse,
     chunk_evidence_text,
     classify_skills,
