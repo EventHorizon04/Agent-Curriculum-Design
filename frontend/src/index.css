@@ -63,7 +63,6 @@
   --font-display: var(--font-ui);
   --font-label: var(--font-ui);
 
-  --rail-width: 16.5rem;
 }
 
 @layer base {
