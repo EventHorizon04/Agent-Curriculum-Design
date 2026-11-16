@@ -33,6 +33,12 @@ Caveat: no PLO in these runs needed more than one repair, so the new ceiling of 
 - **Stage bar:** the checkpoint badge and the outline on unreached pages.
 - **Documentation edits.**
 
+**After the lock: Need-approval record (2026-11-16).** Commits `ecce0e4` and `460d21f` came after the tag. They make `POST /plos/run` (pressing "อนุมัติ Need และสร้าง PLO") store two extra keys in its job's `params`:
+- `approved_need_ids`: the sorted ids of the active Needs.
+- `need_fingerprint`: from `plo_review_facts.need_set_fingerprint`, over each Need's id, statement, demand score and KSEC tags.
+
+This gives the Need checkpoint the same audit trail the PLO checkpoint has through its stored report: when (`created_at`), why (`note_th`) and which set. No prompt, slot, token cap, temperature, code constant or setting changed. No migration was needed. The stage still reads its input exactly as before. A research run at a later commit is therefore the same system as the tag.
+
 **Deployment.** Migration `d9f4a5b6c738` is unchanged. Both the shared DB and the copy DB `curriculum_phase1` are at head.
 
 ---
