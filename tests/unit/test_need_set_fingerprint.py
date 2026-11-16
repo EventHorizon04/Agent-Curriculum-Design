@@ -33,3 +33,15 @@ def test_a_changed_demand_score_changes_it() -> None:
 
 def test_a_removed_need_changes_it() -> None:
     assert need_set_fingerprint([_need("N1"), _need("N2")]) != need_set_fingerprint([_need("N1")])
+
+
+def test_a_moved_field_boundary_changes_it() -> None:
+    a = _need("N1", "xa")
+    b = _need("N1x", "a")
+    assert need_set_fingerprint([a]) != need_set_fingerprint([b])
+
+
+def test_changed_ksec_categories_change_it() -> None:
+    a = _need("N1")
+    b = _need("N1").model_copy(update={"ksec_categories": [KSECCategory.K]})
+    assert need_set_fingerprint([a]) != need_set_fingerprint([b])

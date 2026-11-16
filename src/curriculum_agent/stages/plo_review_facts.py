@@ -241,7 +241,7 @@ def need_set_fingerprint(needs: Sequence[Need]) -> str:
     the input does not matter.
     """
     parts = [
-        "".join(
+        "\x1f".join(
             [
                 n.need_id,
                 n.statement_th,
@@ -251,7 +251,7 @@ def need_set_fingerprint(needs: Sequence[Need]) -> str:
         )
         for n in sorted(needs, key=lambda n: n.need_id)
     ]
-    return hashlib.sha256("".join(parts).encode()).hexdigest()
+    return hashlib.sha256("\x1e".join(parts).encode()).hexdigest()
 
 
 def is_stale(review: PLOSetReview, plos: Sequence[PLO], demands: Mapping[str, float]) -> bool:
