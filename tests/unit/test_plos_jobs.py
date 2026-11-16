@@ -32,7 +32,11 @@ from curriculum_agent.models import (
     SMARTCheck,
 )
 from curriculum_agent.stages.plo_review import ReviewAlreadyRunning
-from curriculum_agent.stages.plo_review_facts import need_demands, plo_fingerprint
+from curriculum_agent.stages.plo_review_facts import (
+    need_demands,
+    need_set_fingerprint,
+    plo_fingerprint,
+)
 from curriculum_agent.stages.plo_synthesis import SynthesisAlreadyRunning
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
 
@@ -45,15 +49,6 @@ pytestmark = pytest.mark.review_chain
 BASE = "/programs/cs-test/plos"
 NOTE = "เน้นทักษะด้าน AI"
 NO_PLOS_TH = "ยังไม่มี PLO สำหรับโปรแกรมนี้ กรุณารัน PLO Synthesis ก่อน"
-
-# (url, job kind, params a bare POST records)
-ROUTES = [
-    (f"{BASE}/run", "plo_synthesis", {"note_th": None, "run_validation": True}),
-    (f"{BASE}/report/run", "plo_report", {}),
-    (f"{BASE}/review/run", "plo_review", {}),
-    (f"{BASE}/PLO1/revalidate", "plo_revalidate", {"plo_id": "PLO1"}),
-]
-ROUTE_IDS = ["plo_synthesis", "plo_report", "plo_review", "plo_revalidate"]
 
 
 def _program() -> ProgramMetadata:
@@ -83,6 +78,25 @@ def _need() -> Need:
         freq=1,
         demand_score=0.8,
     )
+
+
+# (url, job kind, params a bare POST records)
+ROUTES = [
+    (
+        f"{BASE}/run",
+        "plo_synthesis",
+        {
+            "note_th": None,
+            "run_validation": True,
+            "approved_need_ids": ["N1"],
+            "need_fingerprint": need_set_fingerprint([_need()]),
+        },
+    ),
+    (f"{BASE}/report/run", "plo_report", {}),
+    (f"{BASE}/review/run", "plo_review", {}),
+    (f"{BASE}/PLO1/revalidate", "plo_revalidate", {"plo_id": "PLO1"}),
+]
+ROUTE_IDS = ["plo_synthesis", "plo_report", "plo_review", "plo_revalidate"]
 
 
 def _plo() -> PLO:
@@ -390,7 +404,8 @@ def test_the_default_run_leaves_the_switch_out_of_the_stage_state(
 ) -> None:
     r = client.post(f"{BASE}/run", json={})
 
-    assert r.json()["params"] == {"note_th": None, "run_validation": True}
+    params = r.json()["params"]
+    assert params["note_th"] is None and params["run_validation"] is True
     spawned.drain()
 
     assert "run_validation" not in env.synth.await_args.args[0]
@@ -402,10 +417,25 @@ def test_the_note_is_recorded_and_reaches_the_stage_state(
 ) -> None:
     r = client.post(f"{BASE}/run", json={"note_th": NOTE})
 
-    assert r.json()["params"] == {"note_th": NOTE, "run_validation": True}
+    params = r.json()["params"]
+    assert params["note_th"] == NOTE and params["run_validation"] is True
     spawned.drain()
 
     assert env.synth.await_args.args[0]["designer_note"] == NOTE
+
+
+def test_the_run_records_the_approved_need_set_in_the_params(
+    env: _Env, jobs_store: InMemoryJobs, spawned: SpawnRecorder
+) -> None:
+    # The route reads only active Needs (merged-away and excluded ones are not returned).
+    n2 = _need().model_copy(update={"need_id": "N2", "demand_score": 0.5})
+    env.needs.return_value = [n2, _need()]
+
+    r = client.post(f"{BASE}/run", json={})
+
+    params = r.json()["params"]
+    assert params["approved_need_ids"] == ["N1", "N2"]
+    assert params["need_fingerprint"] == need_set_fingerprint([_need(), n2])
 
 
 # --- preconditions stay synchronous and create no job row --------------------

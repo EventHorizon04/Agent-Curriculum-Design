@@ -25,6 +25,7 @@ from curriculum_agent.models import (
     SMARTCheck,
     StakeholderEvidence,
 )
+from curriculum_agent.stages.plo_review_facts import need_set_fingerprint
 from curriculum_agent.stages.single_needs import SingleNeedsResult
 from curriculum_agent.stages.single_plos import SinglePlosResult
 from tests.support.jobs import InMemoryJobs, SpawnRecorder
@@ -242,6 +243,19 @@ def test_plos_run_on_a_single_program_starts_single_plos_without_a_review(
     stages.single_plos.assert_awaited_once_with(PID, note_th="โน้ต")
     stages.plo_synthesis.assert_not_awaited()
     assert review_chain_calls == []
+
+
+def test_plos_run_on_a_single_program_records_the_approved_need_set(
+    single_program: None, stages: _Stages, spawned: SpawnRecorder, jobs_store: InMemoryJobs
+) -> None:
+    r = client.post(f"/programs/{PID}/plos/run", json={"note_th": "โน้ต"})
+    assert r.status_code == 202, r.text
+    params = next(iter(jobs_store.rows.values())).params
+    assert params == {
+        "note_th": "โน้ต",
+        "approved_need_ids": ["N1"],
+        "need_fingerprint": need_set_fingerprint([_need()]),
+    }
 
 
 def test_plos_run_on_a_multi_program_still_chains_the_review(

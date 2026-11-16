@@ -39,7 +39,12 @@ from curriculum_agent.models import (
 )
 from curriculum_agent.stages.need_dedup import MAX_GROUP_SIZE
 from curriculum_agent.stages.plo_redraft import RedraftFailed, RedraftRefused, redraft_from_needs
-from curriculum_agent.stages.plo_review_facts import is_stale, need_demands, plo_fingerprint
+from curriculum_agent.stages.plo_review_facts import (
+    is_stale,
+    need_demands,
+    need_set_fingerprint,
+    plo_fingerprint,
+)
 from curriculum_agent.stages.plo_send_back import (
     PloSendBackRequest,
     PloSendBackResult,
@@ -280,16 +285,24 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
             detail="ไม่มี Needs สำหรับโปรแกรมนี้ กรุณารัน Need Combination ก่อน",
         )
 
+    # Pressing this is the Need checkpoint approval; the `needs` table keeps only
+    # current state, so the approved set is recorded in the job's params.
+    approved: dict[str, Any] = {
+        "approved_need_ids": sorted(n.need_id for n in needs),
+        "need_fingerprint": need_set_fingerprint(needs),
+    }
+
     if metadata.agent_mode == "single":
         from curriculum_agent.stages.single_plos import run_single_plos  # noqa: PLC0415
 
         note_th = body.note_th if body else None
+        single_params: dict[str, Any] = {"note_th": note_th, **approved}
 
         async def single_work() -> SinglePlosResult:
             return await run_single_plos(program_id, note_th=note_th)
 
         # No review chained and `run_validation` ignored: the single half has neither.
-        return await start_job_or_409(program_id, "single_plos", {"note_th": note_th}, single_work)
+        return await start_job_or_409(program_id, "single_plos", single_params, single_work)
 
     state: AgentState = {
         "program_id": program_id,
@@ -322,6 +335,7 @@ async def run_plo_synthesis(program_id: str, body: PLOSynthesisRunRequest | None
         {
             "note_th": body.note_th if body else None,
             "run_validation": body.run_validation if body else True,
+            **approved,
         },
         work,
         on_success=chain,

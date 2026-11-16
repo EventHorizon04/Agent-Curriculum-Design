@@ -92,7 +92,7 @@ These are standing project rules, not suggestions — same weight as CLAUDE.md.
   409 when the program is busy),
   then `api/jobs.start_job` records a `jobs` row and runs the old body in a
   background task; they answer 202 with a `JobInfo`, and the page reads
-  `GET /programs/{id}/jobs`. Holding the request open lost the running state on
+  `GET /programs/{id}/jobs`. `POST /plos/run` also records the approved Need set in the job params (`approved_need_ids`, `need_fingerprint` from `plo_review_facts.need_set_fingerprint`), because pressing it is the Need checkpoint approval and the `needs` table keeps only current state. Holding the request open lost the running state on
   navigation, never reached a refreshed page, and was cut by the tunnel at
   ~100 s. A running job **or a running graph session** blocks another job and
   the synchronous writers (`POST /sessions/`, `/approve`, `/plos/from-needs`,

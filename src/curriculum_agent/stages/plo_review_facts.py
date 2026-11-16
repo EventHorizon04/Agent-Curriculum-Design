@@ -233,5 +233,26 @@ def plo_fingerprint(plos: Sequence[PLO], demands: Mapping[str, float]) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 
 
+def need_set_fingerprint(needs: Sequence[Need]) -> str:
+    """What the designer approved at the Need checkpoint: the active Need set.
+
+    Recorded in the synthesis job's params, because the `needs` table keeps only
+    current state and a later split, exclusion or merge overwrites it. Order of
+    the input does not matter.
+    """
+    parts = [
+        "".join(
+            [
+                n.need_id,
+                n.statement_th,
+                f"{n.demand_score:.6f}",
+                ",".join(sorted(getattr(c, "value", c) for c in n.ksec_categories)),
+            ]
+        )
+        for n in sorted(needs, key=lambda n: n.need_id)
+    ]
+    return hashlib.sha256("".join(parts).encode()).hexdigest()
+
+
 def is_stale(review: PLOSetReview, plos: Sequence[PLO], demands: Mapping[str, float]) -> bool:
     return review.plo_fingerprint != plo_fingerprint(plos, demands)
