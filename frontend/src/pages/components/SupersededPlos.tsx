@@ -30,6 +30,7 @@ export default function SupersededPlos({ items, needs }: { items: SupersededPLO[
               <span className="data ml-auto text-lead">{localTime(s.superseded_at)}</span>
             </div>
             <p className="record mt-1.5 text-sm">{s.plo.statement_th}</p>
+            {s.note_th && s.note_th.trim() && <p className="mt-1 text-xs text-lead">เหตุผล: {s.note_th}</p>}
             <ul className="mt-1.5 space-y-0.5 text-xs text-lead">
               {s.plo.source_need_ids.map((id) => {
                 const text = statementOf.get(id)

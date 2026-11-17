@@ -401,6 +401,7 @@ def _with_history(src: ProgramRows) -> ProgramRows:
         snapshot=snapshot,
         superseded_by="PLO1",
         superseded_at=datetime(2026, 10, 5),
+        note_th="เหตุผลของผู้ออกแบบ",
     )
     return replace(src, superseded=[history])
 
@@ -418,6 +419,7 @@ def test_full_copy_clones_superseded_history() -> None:
     assert row.plo_id == "PLO2"
     assert row.superseded_by == "PLO1"
     assert row.superseded_at == datetime(2026, 10, 5)
+    assert row.note_th == "เหตุผลของผู้ออกแบบ"
 
     need_ids = {n.need_id for n in copy.needs}
     evidence_ids = {e.evidence_id for e in copy.evidence}

@@ -68,5 +68,7 @@ export interface SupersededPLO {
   superseded_at: string
   /** Who replaced it: the designer's merge, the review's send-back, or the designer's own send-back. Null on rows from before the field: the designer. */
   cause?: 'designer' | 'review' | 'send_back' | null
+  /** The designer's own reason (merge note or send-back reason). Absent for review rows and older rows. */
+  note_th?: string | null
   plo: PLO
 }

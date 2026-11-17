@@ -664,9 +664,13 @@ class SupersededPLO(BaseModel):
     superseded_by: str
     superseded_at: datetime
     plo: PLO
-    # Who replaced it: "designer" (a merge on the PLO page) or "review" (Agent 4's
-    # send-back). None on rows written before the column existed; read as designer.
+    # Who replaced it: "designer" (a merge on the PLO page), "review" (Agent 4's
+    # send-back) or "send_back" (the designer's own send-back). None on rows written
+    # before the column existed; read as designer.
     cause: str | None = None
+    # The designer's own reason (merge note or send-back reason); None for review
+    # rows and for rows from before the column.
+    note_th: str | None = None
 
     # Stored naive UTC; sent with its offset because a browser reads a naive ISO
     # string as local time. JSON only, like JobInfo.

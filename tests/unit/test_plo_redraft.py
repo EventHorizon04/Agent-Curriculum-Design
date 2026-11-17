@@ -56,8 +56,27 @@ async def test_cause_reaches_replace(monkeypatch: pytest.MonkeyPatch) -> None:
     # `expect` carries the superseded PLOs as read before the draft (final review I1).
     assert replace.await_args.kwargs == {
         "cause": "review",
+        "note_th": None,
         "expect": {"PLO1": existing[0].version},
     }
+
+
+@pytest.mark.parametrize(
+    ("cause", "expected"),
+    [("designer", "เหตุผลของผู้ออกแบบ"), ("send_back", "เหตุผลของผู้ออกแบบ"), ("review", None)],
+)
+async def test_only_the_designers_note_reaches_replace(
+    monkeypatch: pytest.MonkeyPatch, cause: str, expected: str | None
+) -> None:
+    needs = [_need(f"N{i}") for i in range(1, 7)]
+    existing = [_plo(f"PLO{i}", [f"N{i}"]) for i in range(1, 7)]
+    replace, _ = _install(monkeypatch, needs, existing, _plo("PLO1", ["N1"]))
+
+    await redraft_from_needs(
+        _program(), "cs-test", ["N1"], note_th="เหตุผลของผู้ออกแบบ", cause=cause
+    )
+
+    assert replace.await_args.kwargs["note_th"] == expected
 
 
 async def test_refusal_raises_422_and_replaces_nothing(monkeypatch: pytest.MonkeyPatch) -> None:

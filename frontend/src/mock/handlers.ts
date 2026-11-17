@@ -381,7 +381,12 @@ function finishSession(pid: string): void {
  *  them, numbered from what survives, and keep what it replaced. The core of
  *  POST /plos/from-needs, shared with the review's send-back; the caller has
  *  already checked the bounds. */
-function replaceFromNeeds(pid: string, selected: NeedRow[], cause: 'designer' | 'review'): PloRow {
+function replaceFromNeeds(
+  pid: string,
+  selected: NeedRow[],
+  cause: 'designer' | 'review',
+  noteTh: string | null = null,
+): PloRow {
   const db = getDb()
   const needIds = selected.map((n) => n.need_id)
   const isOptional = selected.every((n) => n.is_optional)
@@ -411,6 +416,8 @@ function replaceFromNeeds(pid: string, selected: NeedRow[], cause: 'designer' | 
       superseded_by: plo.plo_id,
       superseded_at: at,
       cause,
+      // Only the designer's own words are kept, as the server does.
+      note_th: cause === 'designer' ? noteTh : null,
       plo: old,
     })),
   ]
@@ -1639,7 +1646,7 @@ export function buildRouter(): Router {
       }
       if (consumeFailNextRun()) return detail(502, 'สร้าง PLO ไม่สำเร็จ กรุณาลองใหม่')
 
-      const plo = replaceFromNeeds(pid, selected, 'designer')
+      const plo = replaceFromNeeds(pid, selected, 'designer', (b.note_th ?? '').trim() || null)
       return ok(plo)
     },
     'slow',

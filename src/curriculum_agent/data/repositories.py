@@ -708,6 +708,7 @@ class PLORepository:
         add: list[PLO],
         *,
         cause: str = "designer",
+        note_th: str | None = None,
         expect: Mapping[str, int] | None = None,
         trail_row: FeedbackAction | None = None,
     ) -> int:
@@ -726,7 +727,8 @@ class PLORepository:
 
         `cause` is written on each history row: "designer" for a merge on the PLO
         page, "review" for Agent 4's send-back, "send_back" for the designer's own
-        send-back of a PLO.
+        send-back of a PLO. `note_th` is the designer's own reason (a merge note or
+        a send-back reason), written on each history row this call creates.
 
         `expect` (plo_id -> `version` as the caller read it before drafting)
         is optimistic concurrency for a redraft: the draft takes minutes and
@@ -796,6 +798,7 @@ class PLORepository:
                                 superseded_by=add[0].plo_id,
                                 superseded_at=now,
                                 cause=cause,
+                                note_th=note_th,
                             )
                         )
                 result = cast(
@@ -891,6 +894,7 @@ class SupersededPLORepository:
                         superseded_at=row.superseded_at,
                         plo=PLO.model_validate(row.snapshot),
                         cause=row.cause,
+                        note_th=row.note_th,
                     )
                 )
             except ValidationError as exc:

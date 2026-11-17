@@ -215,3 +215,28 @@ async def test_list_reads_legacy_null_cause_as_none() -> None:
     snap = _row_to_dict(_plo_row("PLO1", "ออกแบบระบบ ก ได้"))
     row = _history_row("old", snap, datetime(2026, 11, 3))
     assert [s.cause for s in await _list([row])] == [None]
+
+
+async def test_replace_records_note_th_on_every_history_row() -> None:
+    session = _Session(
+        select_rows=[_plo_row("PLO1", "ออกแบบระบบ ก ได้"), _plo_row("PLO2", "ออกแบบระบบ ข ได้")]
+    )
+    with _patched(session):
+        await PLORepository().replace(
+            PID, ["PLO1", "PLO2"], [_plo("PLO1")], note_th="ซ้ำซ้อนกัน"
+        )
+    history = [a for a in session.added if isinstance(a, SupersededPLOTable)]
+    assert [h.note_th for h in history] == ["ซ้ำซ้อนกัน", "ซ้ำซ้อนกัน"]
+    assert {s.note_th for s in await _list(history)} == {"ซ้ำซ้อนกัน"}
+
+
+async def test_replace_note_th_defaults_to_none() -> None:
+    session = await _replace([_plo_row("PLO1", "ออกแบบระบบ ก ได้")], ["PLO1"], [_plo("PLO1")])
+    history = [a for a in session.added if isinstance(a, SupersededPLOTable)]
+    assert [h.note_th for h in history] == [None]
+
+
+async def test_list_reads_a_row_from_before_the_column_as_none() -> None:
+    snap = _row_to_dict(_plo_row("PLO1", "ออกแบบระบบ ก ได้"))
+    row = _history_row("h-1", snap, datetime(2026, 11, 3, 12, 0, 0))
+    assert [s.note_th for s in await _list([row])] == [None]

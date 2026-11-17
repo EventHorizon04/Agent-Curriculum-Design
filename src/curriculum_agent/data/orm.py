@@ -202,8 +202,10 @@ class SupersededPLOTable(Base):
     snapshot: Mapped[dict[str, Any]] = mapped_column(JSONB)
     superseded_by: Mapped[str] = mapped_column(String)
     superseded_at: Mapped[datetime] = mapped_column(DateTime)
-    # "designer" | "review"; null on rows from before phase 4 (reads as designer).
+    # "designer" | "review" | "send_back"; null on rows from before phase 4 (reads as designer).
     cause: Mapped[str | None] = mapped_column(String, nullable=True)
+    # The designer's own reason (merge note or send-back reason); null for review rows and rows from before the column.
+    note_th: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class PLOFeedbackActionTable(Base):

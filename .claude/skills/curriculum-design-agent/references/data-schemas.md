@@ -332,6 +332,7 @@ class SupersededPLO(BaseModel):
     superseded_at: datetime  # naive UTC in the DB; "+00:00" in JSON output
     plo: PLO                 # the row as it stood when removed (JSONB snapshot)
     cause: str | None = None # designer | review | send_back; None (older rows) reads as designer
+    note_th: str | None = None  # the designer's own reason (merge note / send-back reason); None for review rows and older rows
 ```
 
 `GET /programs/{id}/plos/superseded` lists newest first (ties by `plo_id`) and skips, with a warning, a snapshot that no longer passes `PLO.model_validate`. The table is cleared with the program's PLOs and cascade-deleted with the program; a full program copy clones it (fresh ids, remapped), `evidence_only` copies none.

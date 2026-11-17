@@ -262,6 +262,10 @@ async def redraft_from_needs(
             sorted(superseded_ids),
             [plo],
             cause=cause,
+            # Only the designer's own words are a decision record; a review note is
+            # built by code from the reviewer's finding and already lives in
+            # plo_feedback_actions.
+            note_th=note_th if cause in ("designer", "send_back") else None,
             expect={p.plo_id: p.version for p in superseded},
             **extra,
         )
