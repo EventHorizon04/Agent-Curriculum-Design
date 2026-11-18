@@ -39,7 +39,9 @@ Caveat: no PLO in these runs needed more than one repair, so the new ceiling of 
 
 This gives the Need checkpoint the same audit trail the PLO checkpoint has through its stored report: when (`created_at`), why (`note_th`) and which set. No prompt, slot, token cap, temperature, code constant or setting changed. No migration was needed. The stage still reads its input exactly as before. A research run at a later commit is therefore the same system as the tag.
 
-**Deployment.** Migration `d9f4a5b6c738` is unchanged. Both the shared DB and the copy DB `curriculum_phase1` are at head.
+**After the lock: merge reason record (2026-11-17).** Commit `56cce02` adds a nullable column `superseded_plos.note_th` (migration `e1a5b6c7d849`). When the designer merges PLOs at the PLO checkpoint, or sends one back, their note is now kept on each history row as well as passed to the drafter. A `review` replace stores none. Only designer actions write it. No prompt, slot, token cap, temperature, code constant or setting changed, so a research run with no designer action is the same system as the tag.
+
+**Deployment.** The schema moved from `d9f4a5b6c738` to `e1a5b6c7d849`, one added nullable column that no LLM call reads. Both the shared DB and the copy DB `curriculum_phase1` are at head.
 
 ---
 
